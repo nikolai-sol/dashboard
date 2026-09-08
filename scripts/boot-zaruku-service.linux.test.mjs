@@ -7,8 +7,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { bootRuntimeAsService } from './runtime-release-remote.mjs';
+import { applyHostBoundary, createHostAdapter, rollbackNewHostBoundary } from './zaruku-shadow-host.mjs';
 
 if (process.platform !== 'linux' || process.getuid() !== 0 || !fs.existsSync('/.dockerenv')) throw new Error('This behavioral fixture requires a disposable Linux root container');
 const base = fs.mkdtempSync('/tmp/zaruku-privilege-');
@@ -17,8 +18,13 @@ const artifact = path.join(base, 'artifact');
 const control = path.join(base, 'control');
 const sibling = path.join(base, 'sibling');
 const proof = path.join('/tmp', path.basename(base) + '-proof.json');
-execFileSync('/usr/sbin/groupadd', ['-g', '12345', 'dashboard-zaruku']);
-execFileSync('/usr/sbin/useradd', ['-u', '12345', '-g', '12345', '-M', '-s', '/usr/sbin/nologin', 'dashboard-zaruku']);
+const host = createHostAdapter({ commandRunner(bin, args, options) {
+  // The locked test image has no iproute2; no fixed runtime is listening in this container.
+  if (bin === '/usr/bin/ss') return { status: 0, stdout: '', stderr: '' };
+  return spawnSync(bin, args, options);
+} });
+const boundary = await applyHostBoundary(host);
+const { uid, gid } = boundary.user;
 fs.mkdirSync(path.join(artifact, 'apps/zaruku'), { recursive: true, mode: 0o755 });
 fs.mkdirSync(control, { mode: 0o700 }); fs.mkdirSync(sibling, { mode: 0o755 });
 fs.writeFileSync(path.join(control, 'manifest'), 'protected', { mode: 0o600 });
@@ -36,17 +42,31 @@ test('real boot drops all privilege before app code and cannot mutate authority,
   try { identity = await bootRuntimeAsService(artifact); }
   finally { delete process.env.PARENT_SENTINEL; delete process.env.UV_USE_IO_URING; }
   const data = JSON.parse(fs.readFileSync(proof));
-  assert.deepEqual([data.uid, data.euid, data.gid, data.egid], [12345, 12345, 12345, 12345]);
-  assert.ok(data.groups.every(group => group === 12345));
+  assert.deepEqual([data.uid, data.euid, data.gid, data.egid], [uid, uid, gid, gid]);
+  assert.ok(data.groups.every(group => group === gid));
   assert.match(data.status, /^Groups:[\t ]*$/m);
   assert.match(data.status, /^NoNewPrivs:[\t ]*1$/m);
   for (const name of ['CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb']) assert.match(data.status, new RegExp('^' + name + ':[\\t ]*0+$', 'm'));
   assert.equal(data.cwd, path.join(artifact, 'apps/zaruku'));
   assert.deepEqual(data.env, ['HOSTNAME', 'NODE_ENV', 'PORT']);
   assert.deepEqual(data.attempts, [false, false, false]);
-  assert.equal(identity.uid, 12345); assert.equal(identity.gid, 12345);
+  assert.equal(identity.uid, uid); assert.equal(identity.gid, gid);
   assert.deepEqual(identity.supplementaryGroups, []);
   assert.equal(fs.readFileSync(path.join(control, 'manifest'), 'utf8'), 'protected');
+});
+
+test('real staged and rollback boots traverse the actual provisioned roots without listing or writing them', async () => {
+  for (const root of ['/var/www/dashboard-zaruku-releases', '/var/www/dashboard-zaruku-backups']) {
+    const target = path.join(root, 'a'.repeat(32));
+    fs.cpSync(artifact, target, { recursive: true });
+    try {
+      const observed = await bootRuntimeAsService(target);
+      assert.equal(observed.cwd, path.join(target, 'apps/zaruku'));
+      assert.equal(fs.statSync(root).mode & 0o777, 0o711);
+      const checks = execFileSync('/usr/bin/setpriv', [`--reuid=${uid}`, `--regid=${gid}`, '--clear-groups', '--', process.execPath, '-e', `const fs=require('node:fs');const root=${JSON.stringify(root)}; for(const action of [()=>fs.readdirSync(root),()=>fs.writeFileSync(root+'/foreign','x')]){try{action();process.exit(1)}catch(error){if(error.code!=='EACCES')throw error;}}`]);
+      assert.equal(checks.length, 0);
+    } finally { fs.rmSync(target, { recursive: true }); }
+  }
 });
 
 test('missing or unsafe independent env boundary fails before application execution', async () => {
@@ -71,6 +91,12 @@ test('missing or impersonating setpriv fails before application execution', asyn
     await assert.rejects(bootRuntimeAsService(artifact), /identity|boot/i);
     assert.ok(!fs.existsSync(proof));
   } finally { fs.rmSync(original, { force: true }); fs.renameSync(saved, original); }
+});
+
+test('owned host rollback removes the production-mode roots and actual created account', async () => {
+  const record = JSON.parse(fs.readFileSync('/var/www/.dashboard-zaruku-host-creation.json'));
+  await rollbackNewHostBoundary(host, record);
+  assert.equal(host.serviceIdentity(), null);
 });
 
 process.on('exit', () => { fs.rmSync(base, { recursive: true, force: true }); fs.rmSync(proof, { force: true }); });

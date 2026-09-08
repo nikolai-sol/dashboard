@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { loadShadowAuthority } from './zaruku-production-shadow-authority.mjs';
-import { parseZarukuSecrets, serializeZarukuSecrets, renderEnvironment } from './runtime-release-remote.mjs';
+import { parseZarukuSecrets, serializeZarukuSecrets, renderEnvironment, HOST_DIRECTORY_MODES } from './runtime-release-remote.mjs';
 
 const NAME = 'dashboard-zaruku';
 const AUTHORITY = path.resolve(import.meta.dirname, '../deploy/zaruku/production-shadow.json');
@@ -13,7 +13,7 @@ const JOURNAL = '/var/www/.dashboard-zaruku-host-creation.json';
 const SOURCE = '/var/www/www-root/data/.production.env';
 const SECRET = '/var/www/.dashboard-zaruku-secrets/runtime.env';
 const AUTH = '/var/www/.dashboard-zaruku-shadow/auth.json';
-const ROOTS = Object.freeze(['/var/www/dashboard-zaruku-releases', '/var/www/dashboard-zaruku-backups', '/var/www/.dashboard-zaruku-control', '/var/www/.dashboard-zaruku-secrets', '/var/www/.dashboard-zaruku-shadow', '/var/www/.dashboard-zaruku-shadow/evidence']);
+const ROOTS = Object.freeze(Object.keys(HOST_DIRECTORY_MODES));
 const PLAN = Object.freeze([{ kind: 'group', target: NAME }, { kind: 'user', target: NAME }, ...ROOTS.map(target => ({ kind: 'directory', target }))]);
 const fail = () => { throw new Error('Unsafe Zaruku host boundary'); };
 const same = (a, b) => isDeepStrictEqual(a, b);
@@ -130,7 +130,7 @@ function statDirectory(adapter, filename) {
   if (filename === ROOTS.at(-1) && !adapter.fs.lstatSync(ROOTS.at(-2), { throwIfNoEntry: false })) return null;
   return withParent(adapter, filename, addressed => {
     const stat = adapter.fs.lstatSync(addressed, { throwIfNoEntry: false });
-    return stat ? directory(stat, 0o700) : null;
+    return stat ? directory(stat, HOST_DIRECTORY_MODES[filename]) : null;
   });
 }
 
@@ -192,9 +192,10 @@ export async function applyHostBoundary(adapter) {
       if (step.kind === 'group') adapter.createGroup();
       else if (step.kind === 'user') adapter.createUser();
       else withParent(adapter, step.target, (addressed, parentFd) => {
-        adapter.fs.mkdirSync(addressed, { mode: 0o700 });
+        const mode = HOST_DIRECTORY_MODES[step.target];
+        adapter.fs.mkdirSync(addressed, { mode });
         const fd = adapter.fs.openSync(addressed, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
-        try { adapter.fs.fchmodSync(fd, 0o700); adapter.fs.fchownSync(fd, 0, 0); adapter.fs.fsyncSync(fd); }
+        try { adapter.fs.fchmodSync(fd, mode); adapter.fs.fchownSync(fd, 0, 0); adapter.fs.fsyncSync(fd); }
         finally { adapter.fs.closeSync(fd); }
         adapter.fs.fsyncSync(parentFd);
       });

@@ -99,7 +99,7 @@ test('host check is read-only; apply creates exact no-login identity and six pri
       { bin: '/usr/sbin/groupadd', args: ['--system', 'dashboard-zaruku'] },
       { bin: '/usr/sbin/useradd', args: ['--system', '--gid', 'dashboard-zaruku', '--shell', '/usr/sbin/nologin', '--home-dir', '/nonexistent', '--no-create-home', '--no-user-group', 'dashboard-zaruku'] },
     ]);
-    for (const name of roots) assert.equal(fs.statSync(f.resolve(name)).mode & 0o777, 0o700);
+    for (const name of roots) assert.equal(fs.statSync(f.resolve(name)).mode & 0o777, roots.indexOf(name) < 2 ? 0o711 : 0o700);
     for (const name of ['/var/www/dashboard-zaruku', '/var/www/.dashboard-zaruku-deploy.lock']) assert.equal(fs.existsSync(f.resolve(name)), false);
     assert.equal(fs.statSync(f.resolve(recordPath)).mode & 0o777, 0o600);
     const record = JSON.parse(fs.readFileSync(f.resolve(recordPath)));

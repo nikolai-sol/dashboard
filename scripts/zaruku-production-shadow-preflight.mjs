@@ -13,8 +13,8 @@ const FIXED = Object.freeze({
 });
 
 const RESOURCE_RULES = Object.freeze(new Map([
-  ['/var/www/dashboard-zaruku-releases', { type: 'directory', owner: 'root', group: 'root', mode: '0700' }],
-  ['/var/www/dashboard-zaruku-backups', { type: 'directory', owner: 'root', group: 'root', mode: '0700' }],
+  ['/var/www/dashboard-zaruku-releases', { type: 'directory', owner: 'root', group: 'root', mode: '0711' }],
+  ['/var/www/dashboard-zaruku-backups', { type: 'directory', owner: 'root', group: 'root', mode: '0711' }],
   ['/var/www/.dashboard-zaruku-control', { type: 'directory', owner: 'root', group: 'root', mode: '0700' }],
   ['/var/www/.dashboard-zaruku-secrets', { type: 'directory', owner: 'root', group: 'root', mode: '0700' }],
   ['/var/www/.dashboard-zaruku-secrets/runtime.env', { type: 'file', owner: 'root', group: 'root', mode: '0600', links: 1 }],

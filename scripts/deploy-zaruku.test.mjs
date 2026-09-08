@@ -253,7 +253,8 @@ async function fixture() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-lifecycle-'));
   const source = read('scripts/runtime-release-remote.mjs')
     .replace("const BASE = '/var/www';", `const BASE = ${JSON.stringify(temp)};`)
-    .replace('const DEPLOY_UID = 0;', `const DEPLOY_UID = ${process.getuid()};`);
+    .replace('const DEPLOY_UID = 0;', `const DEPLOY_UID = ${process.getuid()};`)
+    .replace('const DEPLOY_GID = 0;', `const DEPLOY_GID = ${process.getgid()};`);
   assert.notEqual(source, read('scripts/runtime-release-remote.mjs'));
   const name = path.join(temp, 'worker.mjs'); fs.writeFileSync(name, source);
   const mod = await import(pathToFileURL(name).href);

@@ -98,7 +98,7 @@ test('preflight accepts only fully compliant existing Zaruku identities and root
     exists: true,
     type: resource.path.endsWith('.env') || resource.path.endsWith('.json') || resource.path.endsWith('.tsv') ? 'file' : 'directory',
     owner: 'root', group: 'root',
-    mode: resource.path.endsWith('.env') || resource.path.endsWith('.json') || resource.path.endsWith('.tsv') ? '0600' : '0700',
+    mode: /dashboard-zaruku-(releases|backups)$/.test(resource.path) ? '0711' : resource.path.endsWith('.env') || resource.path.endsWith('.json') || resource.path.endsWith('.tsv') ? '0600' : '0700',
     links: resource.path.endsWith('.env') || resource.path.endsWith('.json') || resource.path.endsWith('.tsv') ? 1 : 2,
   }));
   const evidence = await inspectShadowPrerequisites(fixtureAdapter({

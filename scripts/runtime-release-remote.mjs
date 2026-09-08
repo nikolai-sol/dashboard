@@ -9,12 +9,21 @@ import { pathToFileURL } from 'node:url';
 
 const BASE = '/var/www';
 const DEPLOY_UID = 0;
+const DEPLOY_GID = 0;
 const APP = `${BASE}/dashboard-zaruku`;
 const RELEASES = `${BASE}/dashboard-zaruku-releases`;
 const BACKUPS = `${BASE}/dashboard-zaruku-backups`;
 const CONTROL = `${BASE}/.dashboard-zaruku-control`;
 const LOCK = `${BASE}/.dashboard-zaruku-deploy.lock`;
 const CURRENT = `${CONTROL}/current.json`;
+export const HOST_DIRECTORY_MODES = Object.freeze({
+  [RELEASES]: 0o711,
+  [BACKUPS]: 0o711,
+  [CONTROL]: 0o700,
+  [`${BASE}/.dashboard-zaruku-secrets`]: 0o700,
+  [`${BASE}/.dashboard-zaruku-shadow`]: 0o700,
+  [`${BASE}/.dashboard-zaruku-shadow/evidence`]: 0o700,
+});
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
 const ID = /^[a-f0-9]{32}$/;
@@ -75,6 +84,8 @@ function owned(filename, directory = false) {
 function ensureDirectory(filename, mode = 0o755) {
   if (!fs.existsSync(filename)) { fs.mkdirSync(filename, { mode }); fs.chmodSync(filename, mode); }
   owned(filename, true);
+  const stat = fs.lstatSync(filename);
+  if (stat.gid !== DEPLOY_GID || (stat.mode & 0o7777) !== mode) fail('Unsafe exact deploy directory mode');
 }
 
 function createFile(filename, bytes, mode = 0o600) {
@@ -423,7 +434,7 @@ export async function transact(request, platform = realPlatform) {
   try { fs.mkdirSync(LOCK, { mode: 0o700 }); } catch { fail('Zaruku deployment lock is already held or unsafe'); }
   createFile(`${LOCK}/owner`, owner);
   try {
-    for (const dir of [RELEASES, BACKUPS, CONTROL]) ensureDirectory(dir, dir === CONTROL ? 0o700 : 0o755);
+    for (const dir of [RELEASES, BACKUPS, CONTROL]) ensureDirectory(dir, HOST_DIRECTORY_MODES[dir]);
     const old = current();
     if (request.action === 'inspect') return old;
     if ((old?.sourceSha ?? null) !== request.expectedActiveSha) fail('Active Zaruku SHA changed; recheck source ancestry');
