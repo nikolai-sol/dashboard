@@ -173,6 +173,35 @@ function collectStaticSqlExpressions(source, filename) {
         .flatMap(result => evaluate(result, next) ?? []);
       return values.length ? values : null;
     }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      if (node.expression.name.text === 'map' && node.arguments.length === 1 &&
+          (ts.isArrowFunction(node.arguments[0]) || ts.isFunctionExpression(node.arguments[0]))) {
+        // Cardinality does not affect the owner set. Inspect every static callback
+        // alternative; unknown callback/table composition remains a dynamic marker.
+        return functionReturns(node.arguments[0]).flatMap(value => evaluate(value, resolving) ?? [DYNAMIC_SQL]);
+      }
+      if (node.expression.name.text === 'join' && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
+        let receiver = unwrapExpression(node.expression.expression), next = new Set(resolving);
+        while (ts.isIdentifier(receiver) && bindings.has(receiver.text)) {
+          const key = `binding:${receiver.text}`;
+          if (next.has(key)) return null;
+          next.add(key); receiver = unwrapExpression(bindings.get(receiver.text));
+        }
+        if (ts.isArrayLiteralExpression(receiver)) {
+          let alternatives = [''];
+          for (const [index, item] of receiver.elements.entries()) {
+            const values = evaluate(item, next) ?? [DYNAMIC_SQL];
+            alternatives = alternatives.flatMap(prefix => values.map(value => prefix + (index ? node.arguments[0].text : '') + value));
+          }
+          return alternatives;
+        }
+        if (ts.isCallExpression(receiver) && ts.isPropertyAccessExpression(receiver.expression) && receiver.expression.name.text === 'map') {
+          // Two symbolic members also expose SQL in the join separator. Never
+          // discard a delimiter merely because actual array cardinality is unknown.
+          return (evaluate(receiver, next) ?? [DYNAMIC_SQL]).map(value => value + node.arguments[0].text + value);
+        }
+      }
+    }
     return null;
   }
 
@@ -236,44 +265,72 @@ function sqlTokens(statement) {
 }
 
 function statementTableReferences(statement) {
-  const tokens = sqlTokens(statement), tables = new Set(), ctes = new Set();
+  const tokens = sqlTokens(statement), tables = new Set(), closing = new Map(), stack = [];
   const keyword = (token, value) => token?.value === value && !token.quoted;
-  // CTEs are declared only after WITH or the closing parenthesis of a preceding CTE.
+  const punctuation = (token, value) => token?.value === value && !token.quoted;
   for (let index = 0; index < tokens.length; index++) {
-    if (!keyword(tokens[index], 'with')) continue;
-    let cursor = index + 1;
-    if (keyword(tokens[cursor], 'recursive')) cursor++;
-    while (tokens[cursor]?.identifier && keyword(tokens[cursor + 1], 'as') && tokens[cursor + 2]?.value === '(') {
-      ctes.add(tokens[cursor].value);
-      cursor += 3; let depth = 1;
-      while (cursor < tokens.length && depth) { if (tokens[cursor].value === '(') depth++; if (tokens[cursor].value === ')') depth--; cursor++; }
-      if (tokens[cursor]?.value !== ',') break;
+    if (punctuation(tokens[index], '(')) stack.push(index);
+    if (punctuation(tokens[index], ')')) {
+      if (!stack.length) fail('Zaruku runtime unbalanced SQL owner');
+      closing.set(stack.pop(), index);
+    }
+  }
+  if (stack.length) fail('Zaruku runtime unbalanced SQL owner');
+  function scan(start, end, inherited = new Set()) {
+    const ctes = new Set(inherited);
+    let cursor = start, from = false, expected = false;
+    if (keyword(tokens[cursor], 'with')) {
       cursor++;
+      const recursive = keyword(tokens[cursor], 'recursive');
+      if (recursive) cursor++;
+      while (true) {
+        const alias = tokens[cursor];
+        if (!alias?.identifier || !keyword(tokens[cursor + 1], 'as') || !punctuation(tokens[cursor + 2], '(')) fail('Zaruku runtime unsupported CTE SQL owner');
+        const close = closing.get(cursor + 2);
+        if (close >= end) fail('Zaruku runtime unsupported CTE SQL owner');
+        // A nonrecursive CTE cannot conceal a physical table in its own body;
+        // later CTEs and the containing query can reference the completed alias.
+        scan(cursor + 3, close, recursive ? new Set([...ctes, alias.value]) : ctes);
+        ctes.add(alias.value); cursor = close + 1;
+        if (!punctuation(tokens[cursor], ',')) break;
+        cursor++;
+      }
     }
-  }
-  const scopes = [{ from: false, expected: false }];
-  for (let index = 0; index < tokens.length; index++) {
-    const token = tokens[index], scope = scopes.at(-1);
-    if (token.value === '(') { scope.expected = false; scopes.push({ from: false, expected: false }); continue; }
-    if (token.value === ')') { if (scopes.length > 1) scopes.pop(); continue; }
-    if (token.value === ';') { scope.from = false; scope.expected = false; continue; }
-    if (keyword(token, 'from') || keyword(token, 'join')) { scope.from = true; scope.expected = true; continue; }
-    if (!token.quoted && ['where', 'group', 'having', 'order', 'limit', 'union', 'except', 'intersect', 'window', 'for', 'into', 'set', 'values'].includes(token.value)) { scope.from = false; scope.expected = false; continue; }
-    if (token.value === ',' && scope.from) { scope.expected = true; continue; }
-    if (!scope.expected) continue;
-    scope.expected = false;
-    if (!token.identifier || token.value === DYNAMIC_SQL.toLowerCase()) fail('Zaruku runtime dynamic SQL owner');
-    let table = token.value, qualified = false;
-    if (tokens[index + 1]?.value === '.') {
-      if (table !== 'report_bd') fail('Zaruku runtime foreign-schema SQL owner');
-      const next = tokens[index + 2];
-      if (!next?.identifier || next.value === DYNAMIC_SQL.toLowerCase()) fail('Zaruku runtime dynamic SQL owner');
-      table = next.value; qualified = true; index += 2;
-      if (tokens[index + 1]?.value === '.') fail('Zaruku runtime unsupported SQL owner');
+    for (let index = cursor; index < end; index++) {
+      const token = tokens[index];
+      if (punctuation(token, '(')) {
+        if (expected) {
+          let query = index + 1;
+          while (punctuation(tokens[query], '(')) query++;
+          if (!keyword(tokens[query], 'select') && !keyword(tokens[query], 'with')) fail('Zaruku runtime grouped-table SQL owner unsupported');
+        }
+        expected = false;
+        const close = closing.get(index); scan(index + 1, close, ctes); index = close; continue;
+      }
+      if (punctuation(token, ';')) {
+        if (index !== end - 1) fail('Zaruku runtime multiple SQL statements unsupported');
+        continue;
+      }
+      if (keyword(token, 'with') && (keyword(tokens[index + 1], 'recursive') || keyword(tokens[index + 2], 'as'))) fail('Zaruku runtime unsupported CTE SQL owner');
+      if (keyword(token, 'from') || keyword(token, 'join')) { from = true; expected = true; continue; }
+      if (!token.quoted && ['where', 'group', 'having', 'order', 'limit', 'union', 'except', 'intersect', 'window', 'for', 'into', 'set', 'values'].includes(token.value)) { from = false; expected = false; continue; }
+      if (punctuation(token, ',') && from) { expected = true; continue; }
+      if (!expected) continue;
+      expected = false;
+      if (!token.identifier || token.value === DYNAMIC_SQL.toLowerCase()) fail('Zaruku runtime dynamic SQL owner');
+      let table = token.value, qualified = false;
+      if (punctuation(tokens[index + 1], '.')) {
+        if (table !== 'report_bd') fail('Zaruku runtime foreign-schema SQL owner');
+        const next = tokens[index + 2];
+        if (!next?.identifier || next.value === DYNAMIC_SQL.toLowerCase()) fail('Zaruku runtime dynamic SQL owner');
+        table = next.value; qualified = true; index += 2;
+        if (punctuation(tokens[index + 1], '.')) fail('Zaruku runtime unsupported SQL owner');
+      }
+      if (qualified || !ctes.has(table)) tables.add(table);
     }
-    if (qualified || !ctes.has(table)) tables.add(table);
+    if (expected) fail('Zaruku runtime incomplete SQL owner');
   }
-  if (scopes.at(-1).expected) fail('Zaruku runtime incomplete SQL owner');
+  scan(0, tokens.length);
   return tables;
 }
 

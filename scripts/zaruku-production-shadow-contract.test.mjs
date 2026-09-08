@@ -284,6 +284,43 @@ test('SQL owner scanner detects comma joins and comments in every table position
   } finally { fs.rmSync(directory, { recursive: true }); }
 });
 
+test('SQL owner scanner refuses grouped tables without hiding owners in nested queries or CTEs', () => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-sql-group-')),filename=path.join(directory,'apps/zaruku/entry.ts');
+  fs.mkdirSync(path.dirname(filename),{recursive:true});
+  const scan=sql=>{fs.writeFileSync(filename,`export const sql = ${JSON.stringify(sql)};`);return scanZarukuRuntimeMysqlTables(directory);};
+  try {
+    for(const sql of [
+      'SELECT * FROM (dashboards, report_bd_private.canonical_fact_metrika_visits)',
+      'SELECT * FROM dashboards JOIN (report_bd_private.canonical_fact_metrika_visits) ON 1=1',
+      'SELECT * FROM ((dashboards, report_bd_private.canonical_fact_metrika_visits))',
+      'SELECT * FROM (SELECT * FROM dashboards JOIN (report_bd_private.canonical_fact_metrika_visits) ON 1=1) q',
+      'WITH rows AS (SELECT * FROM (dashboards, report_bd_private.canonical_fact_metrika_visits)) SELECT * FROM rows',
+      'SELECT * FROM (SELECT * FROM report_bd_private.canonical_fact_metrika_visits) q',
+      'SELECT * FROM (SELECT * FROM dashboards',
+    ]) assert.throws(()=>scan(sql),/SQL|schema|authority/i,sql);
+    assert.deepEqual(scan('WITH rows AS (SELECT * FROM dashboards) SELECT * FROM ((SELECT * FROM rows)) q JOIN dashboard_sources s ON 1=1'),['dashboard_sources','dashboards']);
+    assert.deepEqual(scan('SELECT * FROM (WITH rows AS (SELECT * FROM dashboards) SELECT * FROM rows) q JOIN rows r ON 1=1'),['dashboards','rows']);
+    assert.deepEqual(scan('WITH rows AS (SELECT * FROM rows) SELECT * FROM rows'),['rows']);
+    assert.deepEqual(scan('WITH RECURSIVE rows AS (SELECT * FROM dashboards UNION SELECT * FROM rows) SELECT * FROM rows'),['dashboards']);
+    assert.throws(()=>scan('WITH rows AS (SELECT * FROM dashboards) SELECT * FROM rows; SELECT * FROM rows'),/SQL|authority/i);
+  } finally {fs.rmSync(directory,{recursive:true});}
+});
+
+test('SQL owner scan resolves static mapped subqueries but never permits dynamic or private mapped owners', () => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-sql-map-')),filename=path.join(directory,'apps/zaruku/entry.ts');
+  fs.mkdirSync(path.dirname(filename),{recursive:true});
+  const scan=body=>{fs.writeFileSync(filename,`declare const reports: unknown[]; function query() { return ${body}; } const blocks=reports.map(report=>\`(\${query()})\`); export const sql=\`SELECT * FROM (\${blocks.join(" UNION ALL ")}) q\`;`);return scanZarukuRuntimeMysqlTables(directory);};
+  try {
+    assert.deepEqual(scan('"SELECT * FROM dashboards"'),['dashboards']);
+    assert.throws(()=>scan('"SELECT * FROM report_bd_private.canonical_fact_metrika_visits"'),/SQL|schema|authority/i);
+    assert.throws(()=>scan('runtimeSql()'),/SQL|authority/i);
+    fs.writeFileSync(filename,'export const sql=["SELECT *", "FROM dashboards"].join(" ");');
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(directory),['dashboards']);
+    fs.writeFileSync(filename,'declare const reports: unknown[]; export const sql=reports.map(()=>"SELECT * FROM dashboards").join(" UNION SELECT * FROM report_bd_private.canonical_fact_metrika_visits UNION ");');
+    assert.throws(()=>scanZarukuRuntimeMysqlTables(directory),/SQL|schema|authority/i);
+  } finally {fs.rmSync(directory,{recursive:true});}
+});
+
 test('source-only shadow tests are a dedicated predeploy gate with no apply mode', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const gate=pkg.scripts['test:zaruku-production-shadow'];
