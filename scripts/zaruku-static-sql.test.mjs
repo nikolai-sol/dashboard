@@ -154,6 +154,23 @@ test('SQL extraction checks explicit sinks nested inside candidate containers', 
       'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
     ));
   }
+
+  for (const expression of [
+    '(db.query("SELECT * FROM dashboards"), hidden)',
+    'choose(db.query("SELECT * FROM dashboards"), hidden)',
+    'db.query("SELECT * FROM dashboards") || hidden',
+  ]) {
+    const genericSibling = extractStaticSql(`
+      declare const db:{query(value:string):unknown};
+      declare function choose(left:unknown,right:unknown):unknown;
+      const hidden="SELECT * FROM report_bd_private.canonical_fact_metrika_visits";
+      const [row]=[${expression}];
+    `, 'fixture.ts').statements;
+    assert.ok(genericSibling.includes('SELECT * FROM dashboards'));
+    assert.ok(genericSibling.includes(
+      'SELECT * FROM report_bd_private.canonical_fact_metrika_visits',
+    ));
+  }
 });
 
 test('SQL extraction ignores a concrete non-query branch while retaining the query branch', () => {
@@ -288,16 +305,21 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare const pool:{query(value:string):unknown}; pool.query(("SELECT * FROM report_bd_private.canonical_fact_metrika_visits" as unknown as {sql:string}).sql);',
     'export const queries=["SELECT * FROM dashboards",(null as unknown as {sql:string}).sql];',
     'const queries=[]; queries.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'export const queries:string[]=[]; queries.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");',
+    'const queries:string[]=[]; queries.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const result=queries.join("");',
     'function append(queries:string[]){queries.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");} const queries:string[]=[]; append(queries); export const sql=queries.join("");',
     'const queries=[]; const alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'function append(queries:string[]){const alias=queries;alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");} const queries:string[]=[]; append(queries); export const sql=queries.join("");',
     'const queries:string[]=[]; let alias:string[]=[]; alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'const queries:string[]=[]; const [alias]=[queries]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'const queries:string[]=[]; const {alias}={alias:queries}; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'const queries:string[]=[]; const box=[queries]; const alias=box[0]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'function identity(value:string[]){const alias=value;return alias;} const queries:string[]=[]; const alias=identity(queries); alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'function identity(value:string[]){const alias=value;return alias;} const queries:string[]=[]; let alias:string[]=[]; alias=identity(queries); alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'const queries:string[]=[]; [queries].map(alias=>alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits")); export const sql=queries.join("");',
     'const queries:string[]=[]; [queries].map(alias=>{alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");return 0;}); export const sql=queries.join("");',
+    'function mutate(alias:string[]){alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits");} const queries:string[]=[]; [queries].map(mutate); export const sql=queries.join("");',
     'const queries:string[]=[]; const alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export {queries};',
     'const queries:string[]=[]; Object.assign(queries,{0:"SELECT * FROM report_bd_private.canonical_fact_metrika_visits",length:1}); export const sql=queries.join("");',
     'function query(){return query();} export const sql=query();',
@@ -306,8 +328,21 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'let rows=[0]; export const queries=rows.map(()=>"SELECT * FROM dashboards");',
   ];
   for (const source of unsafe) {
-    assert.throws(() => extractStaticSql(source, 'fixture.ts'), /UNRESOLVED_SQL|UNSUPPORTED_EXPRESSION/);
+    assert.throws(
+      () => extractStaticSql(source, 'fixture.ts'),
+      /UNRESOLVED_SQL|UNSUPPORTED_EXPRESSION/,
+      source,
+    );
   }
+
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    function maybe(flag:boolean,queries:string[]){return flag?queries:[];}
+    const ui=maybe(false,safe);
+    ui.push("label");
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
 });
 
 test('SQL extraction exposes keyword, schema, comment and separator boundary attacks', () => {
@@ -354,6 +389,7 @@ test('typed evaluator enforces fixed variant, array, depth and string limits', (
     depth: 128,
     stringLength: 524288,
     work: 100000,
+    preprocessingWork: 1000000,
   });
   const oversizedArray = `[${Array.from({ length: 65 }, (_, index) => index).join(',')}]`;
   const arrayResult = initializer(`const unused=0; const value=${oversizedArray};`).sourceFile;
@@ -413,9 +449,16 @@ test('typed evaluator enforces fixed variant, array, depth and string limits', (
   assert.ok(createStaticEvaluator(workSource).evaluate(workExpression).variants
     .some(variant => variant.value.kind === 'unknown' && variant.value.reason === 'ANALYSIS_LIMIT'));
 
-  const preprocessingSource = `${';'.repeat(100001)}export const sql="SELECT * FROM dashboards";`;
+  const preprocessingSource = `${';'.repeat(STATIC_ANALYSIS_LIMITS.preprocessingWork + 1)}export const sql="SELECT * FROM dashboards";`;
   assert.throws(
     () => extractStaticSql(preprocessingSource, 'fixture.ts'),
     /ANALYSIS_LIMIT/,
+  );
+
+  const oversizedMutation = `export const sql:string[]=[];sql.push("${'x'.repeat(524289)}")`;
+  assert.throws(
+    () => extractStaticSql(oversizedMutation, '/tmp/private/fixture.ts'),
+    error => /fixture\.ts:1:\d+ ANALYSIS_LIMIT/.test(error.message) &&
+      error.constructor === Error,
   );
 });

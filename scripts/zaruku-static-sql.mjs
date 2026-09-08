@@ -228,7 +228,7 @@ export function extractStaticSql(source, filename) {
   }
   collectForwardedCalls(sourceFile);
 
-  function add(expression, sqlSink = false) {
+  function add(expression, sqlSink = false, relevanceExpression = expression) {
     const analysis = evaluator.evaluate(expression);
     const variantResults = analysis.variants.map(variant => {
       const strings = [];
@@ -243,9 +243,11 @@ export function extractStaticSql(source, filename) {
     const unresolvedSqlRelevance = blockingUnknowns.some(value =>
       value.staticText && SQL_RELEVANCE.test(value.staticText));
     if (blockingUnknowns.length > 0 &&
-        (sqlSink || unresolvedSqlRelevance || hasSqlRelevance(expression))) {
-      const first = blockingUnknowns[0];
-      const reason = first.reason === 'ANALYSIS_LIMIT'
+        (blockingUnknowns.some(value => value.reason === 'PREPROCESSING_LIMIT') || sqlSink ||
+         unresolvedSqlRelevance || hasSqlRelevance(relevanceExpression))) {
+      const first = blockingUnknowns.find(value => value.reason === 'PREPROCESSING_LIMIT') ??
+        blockingUnknowns[0];
+      const reason = ['ANALYSIS_LIMIT', 'PREPROCESSING_LIMIT'].includes(first.reason)
         ? 'ANALYSIS_LIMIT'
         : sqlSink ? 'UNRESOLVED_SQL' : 'UNSUPPORTED_EXPRESSION';
       throw analysisError(
@@ -354,7 +356,14 @@ export function extractStaticSql(source, filename) {
       }
       return;
     }
-    ts.forEachChild(current, collectContainerMembers);
+    ts.forEachChild(current, child => {
+      if (ts.isExpression(child)) {
+        if (containsExplicitSink(child)) collectContainerMembers(child);
+        else add(child);
+      } else if (containsExplicitSink(child)) {
+        collectContainerMembers(child);
+      }
+    });
   }
 
   function isExported(binding) {
@@ -402,7 +411,7 @@ export function extractStaticSql(source, filename) {
         if (ts.isBlock(initializer.body)) collectCandidates(initializer.body, consumed);
         else if (!consumed) add(initializer.body);
       } else {
-        add(initializer, ts.isIdentifier(node.name) && /sql$/i.test(node.name.text));
+        add(node.name, /sql$/i.test(node.name.text), initializer);
       }
       return;
     }

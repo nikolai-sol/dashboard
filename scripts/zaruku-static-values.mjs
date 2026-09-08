@@ -5,6 +5,7 @@ const MAX_ARRAY_ITEMS = 64;
 const MAX_DEPTH = 128;
 const MAX_STRING_LENGTH = 524_288;
 const MAX_WORK = 100_000;
+const MAX_PREPROCESSING_WORK = 1_000_000;
 
 class StaticFailure extends Error {
   constructor(reason, node) {
@@ -92,7 +93,7 @@ export function createStaticEvaluator(sourceFile) {
 
   function preprocessStep() {
     preprocessingWork += 1;
-    if (preprocessingWork > MAX_WORK) preprocessingExceeded = true;
+    if (preprocessingWork > MAX_PREPROCESSING_WORK) preprocessingExceeded = true;
     return !preprocessingExceeded;
   }
 
@@ -193,7 +194,16 @@ export function createStaticEvaluator(sourceFile) {
   function markMutated(binding, evidence) {
     if (!binding) return;
     mutatedBindings.add(binding);
-    const text = mutationText(evidence);
+    let text;
+    try {
+      text = mutationText(evidence);
+    } catch (error) {
+      if (error instanceof StaticFailure && error.reason === 'ANALYSIS_LIMIT') {
+        preprocessingExceeded = true;
+        return;
+      }
+      throw error;
+    }
     if (text.length === 0) return;
     const texts = mutationTexts.get(binding) ?? new Set();
     texts.add(text);
@@ -228,8 +238,14 @@ export function createStaticEvaluator(sourceFile) {
   collectDirectMutations(sourceFile);
 
   function localFunction(call) {
-    if (!ts.isIdentifier(call.expression)) return null;
-    const binding = declaration(call.expression, call.expression.text);
+    return functionExpression(call.expression);
+  }
+
+  function functionExpression(expression) {
+    const current = unwrapExpression(expression);
+    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) return current;
+    if (!ts.isIdentifier(current)) return null;
+    const binding = declaration(current, current.text);
     if (binding && ts.isFunctionDeclaration(binding)) return binding;
     if (binding && ts.isVariableDeclaration(binding) && binding.initializer &&
         (ts.isArrowFunction(binding.initializer) || ts.isFunctionExpression(binding.initializer))) {
@@ -265,7 +281,8 @@ export function createStaticEvaluator(sourceFile) {
       if (!preprocessStep()) return;
       const value = unwrapExpression(expression);
       if (ts.isIdentifier(pattern)) {
-        linkBindings(declaration(pattern, pattern.text), rootBinding(value));
+        const target = declaration(pattern, pattern.text);
+        for (const source of sourceBindings(value)) linkBindings(target, source);
         return;
       }
       const patternItems = ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern)
@@ -312,19 +329,104 @@ export function createStaticEvaluator(sourceFile) {
       }
     }
 
+    function resolvedContainer(expression) {
+      const current = unwrapExpression(expression);
+      if (!ts.isIdentifier(current)) return current;
+      const binding = declaration(current, current.text);
+      return binding && ts.isVariableDeclaration(binding) && binding.initializer
+        ? unwrapExpression(binding.initializer) : current;
+    }
+
+    function sourceBindings(expression, seen = new Set()) {
+      if (!preprocessStep()) return [];
+      const current = unwrapExpression(expression);
+      if (ts.isIdentifier(current)) {
+        const binding = declaration(current, current.text);
+        return binding ? [binding] : [];
+      }
+      if (ts.isConditionalExpression(current)) {
+        return [
+          ...sourceBindings(current.whenTrue, seen),
+          ...sourceBindings(current.whenFalse, seen),
+        ];
+      }
+      if (ts.isBinaryExpression(current) && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)) {
+        return [...sourceBindings(current.left, seen), ...sourceBindings(current.right, seen)];
+      }
+      if (ts.isElementAccessExpression(current) && current.argumentExpression) {
+        const container = resolvedContainer(current.expression);
+        const key = unwrapExpression(current.argumentExpression);
+        if (ts.isArrayLiteralExpression(container) && ts.isNumericLiteral(key)) {
+          const element = container.elements[Number(key.text)];
+          return element ? sourceBindings(element, seen) : [];
+        }
+        if (ts.isObjectLiteralExpression(container) &&
+            (ts.isStringLiteral(key) || ts.isNumericLiteral(key))) {
+          const property = container.properties.find(item =>
+            ts.isPropertyAssignment(item) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+             ts.isNumericLiteral(item.name)) && item.name.text === key.text);
+          return property && ts.isPropertyAssignment(property)
+            ? sourceBindings(property.initializer, seen) : [];
+        }
+        return [];
+      }
+      if (ts.isPropertyAccessExpression(current)) {
+        const container = resolvedContainer(current.expression);
+        if (ts.isObjectLiteralExpression(container)) {
+          const property = container.properties.find(item =>
+            ts.isPropertyAssignment(item) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
+            item.name.text === current.name.text);
+          return property && ts.isPropertyAssignment(property)
+            ? sourceBindings(property.initializer, seen) : [];
+        }
+        return [];
+      }
+      return [];
+    }
+
     const returnBindingCache = new Map();
-    function returnedBindings(fn) {
-      if (returnBindingCache.has(fn)) return returnBindingCache.get(fn);
+    function returnedBindings(fn, call) {
+      if (returnBindingCache.has(call)) return returnBindingCache.get(call);
       const bindings = new Set();
+
+      function concreteBoolean(expression) {
+        const current = unwrapExpression(expression);
+        if (current.kind === ts.SyntaxKind.TrueKeyword) return true;
+        if (current.kind === ts.SyntaxKind.FalseKeyword) return false;
+        if (ts.isIdentifier(current)) {
+          const index = fn.parameters.findIndex(parameter =>
+            ts.isIdentifier(parameter.name) && parameter.name.text === current.text);
+          const argument = index >= 0 ? call.arguments[index] : null;
+          if (argument) return concreteBoolean(argument);
+        }
+        if (ts.isPrefixUnaryExpression(current) &&
+            current.operator === ts.SyntaxKind.ExclamationToken) {
+          const inner = concreteBoolean(current.operand);
+          return inner === null ? null : !inner;
+        }
+        return null;
+      }
+
       function collectExpression(expression) {
         if (!preprocessStep()) return;
         const current = unwrapExpression(expression);
-        const binding = rootBinding(current);
-        if (binding) bindings.add(binding);
         if (ts.isConditionalExpression(current)) {
-          collectExpression(current.whenTrue);
-          collectExpression(current.whenFalse);
+          const selected = concreteBoolean(current.condition);
+          if (selected === true) collectExpression(current.whenTrue);
+          else if (selected === false) collectExpression(current.whenFalse);
+          else {
+            collectExpression(current.whenTrue);
+            collectExpression(current.whenFalse);
+          }
+          return;
         }
+        for (const binding of sourceBindings(current)) bindings.add(binding);
       }
       function inspect(current) {
         if (!preprocessStep()) return;
@@ -339,7 +441,7 @@ export function createStaticEvaluator(sourceFile) {
         if (ts.isBlock(fn.body)) inspect(fn.body);
         else collectExpression(fn.body);
       }
-      returnBindingCache.set(fn, bindings);
+      returnBindingCache.set(call, bindings);
       return bindings;
     }
 
@@ -374,7 +476,9 @@ export function createStaticEvaluator(sourceFile) {
         if (ts.isIdentifier(current.name) && ts.isCallExpression(current.initializer)) {
           const fn = localFunction(current.initializer);
           if (fn) {
-            for (const binding of returnedBindings(fn)) linkBindings(current, binding);
+            for (const binding of returnedBindings(fn, current.initializer)) {
+              linkBindings(current, binding);
+            }
           }
         }
       } else if (ts.isBinaryExpression(current) &&
@@ -384,7 +488,7 @@ export function createStaticEvaluator(sourceFile) {
           const fn = localFunction(current.right);
           const target = rootBinding(current.left);
           if (fn) {
-            for (const binding of returnedBindings(fn)) linkBindings(target, binding);
+            for (const binding of returnedBindings(fn, current.right)) linkBindings(target, binding);
           }
         }
       } else if (ts.isCallExpression(current)) {
@@ -397,12 +501,10 @@ export function createStaticEvaluator(sourceFile) {
           });
         }
         if (ts.isPropertyAccessExpression(current.expression) &&
-            current.expression.name.text === 'map' && current.arguments[0] &&
-            (ts.isArrowFunction(current.arguments[0]) ||
-             ts.isFunctionExpression(current.arguments[0]))) {
-          const callback = current.arguments[0];
-          const parameter = callback.parameters[0];
-          if (parameter && ts.isIdentifier(parameter.name)) {
+            current.expression.name.text === 'map' && current.arguments[0]) {
+          const callback = functionExpression(current.arguments[0]);
+          const parameter = callback?.parameters[0];
+          if (callback && parameter && ts.isIdentifier(parameter.name)) {
             for (const binding of containedBindings(current.expression.expression)) {
               linkBindings(parameter, binding);
             }
@@ -419,11 +521,11 @@ export function createStaticEvaluator(sourceFile) {
   }
 
   function evaluate(expression) {
-    work = preprocessingWork;
-    if (preprocessingExceeded || work > MAX_WORK) {
+    work = 0;
+    if (preprocessingExceeded || preprocessingWork > MAX_PREPROCESSING_WORK) {
       return {
         variants: [{
-          value: unknownValue('ANALYSIS_LIMIT', expression),
+          value: unknownValue('PREPROCESSING_LIMIT', expression),
           decisions: new Map(),
         }],
       };
@@ -842,7 +944,9 @@ export function createStaticEvaluator(sourceFile) {
           }
           const members = value(receiver, frame, depth + 1);
           if (members.kind !== 'array' || members.items.length > MAX_ARRAY_ITEMS) {
-            return unknownValue('UNSUPPORTED_EXPRESSION', node);
+            return members.kind === 'unknown'
+              ? unknownValue(members.reason, node, members.decisionKey ?? null, staticText(members))
+              : unknownValue('UNSUPPORTED_EXPRESSION', node);
           }
           const parts = [];
           let unresolved = null;
@@ -868,7 +972,9 @@ export function createStaticEvaluator(sourceFile) {
             (ts.isArrowFunction(node.arguments[0]) || ts.isFunctionExpression(node.arguments[0]))) {
           const members = value(node.expression.expression, frame, depth + 1);
           if (members.kind !== 'array' || members.items.length > MAX_ARRAY_ITEMS) {
-            return unknownValue('UNSUPPORTED_EXPRESSION', node);
+            return members.kind === 'unknown'
+              ? unknownValue(members.reason, node, members.decisionKey ?? null, staticText(members))
+              : unknownValue('UNSUPPORTED_EXPRESSION', node);
           }
           return {
             kind: 'array',
@@ -894,4 +1000,5 @@ export const STATIC_ANALYSIS_LIMITS = Object.freeze({
   depth: MAX_DEPTH,
   stringLength: MAX_STRING_LENGTH,
   work: MAX_WORK,
+  preprocessingWork: MAX_PREPROCESSING_WORK,
 });
