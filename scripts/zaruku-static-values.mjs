@@ -326,7 +326,10 @@ export function createStaticEvaluator(sourceFile) {
         if (object.kind === 'array' && node.name.text === 'length') {
           return scalarValue(object.items.length);
         }
-        if (object.kind !== 'record' || !object.fields.has(node.name.text)) {
+        if (object.kind === 'record' && !object.fields.has(node.name.text)) {
+          return unknownValue('UNSUPPORTED_EXPRESSION', node);
+        }
+        if (object.kind !== 'record') {
           return unknownValue('INAPPLICABLE_VARIANT', node);
         }
         return object.fields.get(node.name.text);
@@ -344,6 +347,9 @@ export function createStaticEvaluator(sourceFile) {
         }
         if (object.kind === 'record' && object.fields.has(String(rawKey))) {
           return object.fields.get(String(rawKey));
+        }
+        if (object.kind === 'array' || object.kind === 'record') {
+          return unknownValue('UNSUPPORTED_EXPRESSION', node);
         }
         return unknownValue('INAPPLICABLE_VARIANT', node);
       }

@@ -144,6 +144,7 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare const rows:unknown[]; export const sql=rows;',
     'declare const runtimeSql:()=>string; export const sql=runtimeSql();',
     'declare function runtimeSql():string; export const queries=["SELECT * FROM dashboards",runtimeSql(),"SELECT * FROM dashboard_sources"];',
+    'declare const pool:{execute(value:string):unknown}; const query={safe:"SELECT * FROM dashboards"}; pool.execute(query.missing);',
     'function query(){return query();} export const sql=query();',
     'const rows=[0]; export const sql=rows.map(async()=>"SELECT * FROM dashboards").join("");',
     'let rows=[0]; export const queries=rows.map(()=>"SELECT * FROM dashboards");',
