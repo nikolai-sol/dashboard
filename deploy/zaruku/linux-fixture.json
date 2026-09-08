@@ -8,6 +8,6 @@
     "passwd": "1:4.13+dfsg1-1+deb12u2"
   },
   "dockerfileSha256": "639d06c96a31fa9c1092957a5cf9ff7f621907dc624e0987fdc62a21f1e9a61e",
-  "packageManifestSha256": null,
-  "imageId": null
+  "packageManifestSha256": "1c85a5e7095e9e3164e96d7dc09339c2899e63db700625b180d346f636af8178",
+  "imageId": "sha256:510ace0a42c62640b67a09af9783e3fae03325e1b277794082ea9634ed0eebd6"
 }
