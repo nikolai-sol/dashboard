@@ -201,6 +201,44 @@ test('Nginx inspection fails closed when an active include cannot be resolved', 
   }
 });
 
+test('Nginx glob traversal inspects a symlinked directory beside an ordinary matching directory', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-nginx-symlink-'));
+  try {
+    const routes = path.join(directory, 'routes');
+    const ordinary = path.join(routes, 'ordinary');
+    const linkedTarget = path.join(directory, 'linked-target');
+    fs.mkdirSync(ordinary, { recursive: true });
+    fs.mkdirSync(linkedTarget);
+    fs.writeFileSync(path.join(ordinary, 'combined.conf'), 'proxy_pass http://127.0.0.1:3001;\n');
+    fs.writeFileSync(path.join(linkedTarget, 'shadow.conf'), 'proxy_pass http://127.0.0.1:3002;\n');
+    fs.symlinkSync(linkedTarget, path.join(routes, 'linked'));
+    const entry = path.join(directory, 'nginx.conf');
+    fs.writeFileSync(entry, 'http { include routes/*/*.conf; }\n');
+
+    const nginx = readNginxIncludeGraph(entry, { prefix: directory });
+    const evidence = await inspectShadowPrerequisites(fixtureAdapter({ nginxInspection: nginx }));
+    assert.equal(evidence.nginx.referencesIsolatedPort, true);
+    assert.throws(() => assertShadowPrerequisites(evidence), /public routing|3002/);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('Nginx glob traversal fails closed on a symlinked directory cycle', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-nginx-cycle-'));
+  try {
+    const ordinary = path.join(directory, 'routes', 'ordinary');
+    fs.mkdirSync(ordinary, { recursive: true });
+    fs.writeFileSync(path.join(ordinary, 'combined.conf'), 'proxy_pass http://127.0.0.1:3001;\n');
+    fs.symlinkSync(path.join(directory, 'routes'), path.join(directory, 'routes', 'cycle'));
+    const entry = path.join(directory, 'nginx.conf');
+    fs.writeFileSync(entry, 'http { include routes/*/*.conf; }\n');
+    assert.throws(() => readNginxIncludeGraph(entry, { prefix: directory }), /cycle|include|Nginx/i);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
 test('real adapter distinguishes confirmed absence from stat, getent, group, and supplementary-group command failure', () => {
   const result = (status, stdout = '', stderr = '') => ({ status, stdout, stderr, signal: null });
   const absent = createReadOnlyPreflightAdapter({

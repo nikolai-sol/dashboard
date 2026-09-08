@@ -268,18 +268,35 @@ function resolveInclude(pattern, io) {
   const matcher = globRegex(pattern);
   const matches = [];
   let visited = 0;
-  function walk(directory) {
-    let names;
-    try { names = io.readdir(directory); }
-    catch { fail('Unresolved Nginx include'); }
+  function walk(directory, ancestors = new Set()) {
+    let canonical, directoryStat, names;
+    try {
+      canonical = io.realpath(directory);
+      directoryStat = io.stat(canonical);
+      if (!directoryStat.isDirectory()) fail('Invalid Nginx include directory');
+      if (ancestors.has(canonical)) fail('Nginx include directory cycle');
+      names = io.readdir(directory);
+    } catch (error) {
+      if (/Nginx include/.test(error?.message ?? '')) throw error;
+      fail('Unresolved Nginx include');
+    }
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(canonical);
     for (const name of names.sort()) {
       if (++visited > 10000) fail('Nginx include graph is too large');
       const filename = path.join(directory, name);
       let stat;
       try { stat = io.lstat(filename); }
       catch { fail('Unresolved Nginx include'); }
-      if (stat.isDirectory()) walk(filename);
-      else if (matcher.test(filename)) matches.push(filename);
+      if (stat.isDirectory()) { walk(filename, nextAncestors); continue; }
+      if (stat.isSymbolicLink()) {
+        let target, targetStat;
+        try { target = io.realpath(filename); targetStat = io.stat(target); }
+        catch { fail('Unresolved Nginx include symlink'); }
+        if (targetStat.isDirectory()) { walk(filename, nextAncestors); continue; }
+        if (!targetStat.isFile()) fail('Invalid Nginx include symlink');
+      }
+      if (matcher.test(filename)) matches.push(filename);
     }
   }
   walk(base);
