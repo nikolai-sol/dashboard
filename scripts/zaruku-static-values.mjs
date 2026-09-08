@@ -550,39 +550,111 @@ export function createStaticEvaluator(sourceFile) {
       }
     }
 
-    const definednessInProgress = new Set();
-    function undefinedState(expression) {
-      if (definednessInProgress.has(expression)) {
+    function undefinedState(expression, state = {
+      bindings: new Set(), calls: new Set(), parameters: new Map(), depth: 0,
+    }) {
+      if (!expression || !preprocessStep()) return { mayBeUndefined: true, mayBeDefined: true };
+      if (state.depth > MAX_DEPTH) {
+        preprocessingExceeded = true;
         return { mayBeUndefined: true, mayBeDefined: true };
       }
-      definednessInProgress.add(expression);
-      try {
-        const candidates = valueExpressions(expression);
-        if (candidates.length === 0) return { mayBeUndefined: true, mayBeDefined: true };
-        let mayBeUndefined = false;
-        let mayBeDefined = false;
-        for (const candidate of candidates) {
-          const current = unwrapExpression(candidate);
-          if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current) ||
-              ts.isArrowFunction(current) || ts.isFunctionExpression(current) ||
-              ts.isClassExpression(current) || ts.isNewExpression(current)) {
-            mayBeDefined = true;
-            continue;
-          }
-          const value = staticPrimitiveValue(current);
-          if (!value.known) {
-            mayBeUndefined = true;
-            mayBeDefined = true;
-          } else if (value.value === undefined) {
-            mayBeUndefined = true;
-          } else {
-            mayBeDefined = true;
-          }
+      const current = unwrapExpression(expression);
+      const next = overrides => ({ ...state, ...overrides, depth: state.depth + 1 });
+      const combine = variants => ({
+        mayBeUndefined: variants.some(item => item.mayBeUndefined),
+        mayBeDefined: variants.some(item => item.mayBeDefined),
+      });
+      if (ts.isIdentifier(current)) {
+        const binding = declaration(current, current.text);
+        if (!binding && current.text === 'undefined') {
+          return { mayBeUndefined: true, mayBeDefined: false };
         }
-        return { mayBeUndefined, mayBeDefined };
-      } finally {
-        definednessInProgress.delete(expression);
+        if (!binding || state.bindings.has(binding)) {
+          return { mayBeUndefined: true, mayBeDefined: true };
+        }
+        if (state.parameters.has(binding)) return state.parameters.get(binding);
+        if (ts.isVariableDeclaration(binding) && binding.initializer &&
+            (binding.parent.flags & ts.NodeFlags.Const)) {
+          return undefinedState(binding.initializer, next({
+            bindings: new Set(state.bindings).add(binding),
+          }));
+        }
+        return { mayBeUndefined: true, mayBeDefined: true };
       }
+      if (ts.isConditionalExpression(current)) {
+        const condition = staticPrimitiveValue(current.condition);
+        if (condition.known) {
+          return undefinedState(condition.value ? current.whenTrue : current.whenFalse, next({}));
+        }
+        return combine([
+          undefinedState(current.whenTrue, next({})),
+          undefinedState(current.whenFalse, next({})),
+        ]);
+      }
+      if (ts.isBinaryExpression(current) && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)) {
+        const left = staticPrimitiveValue(current.left);
+        if (left.known) {
+          if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+            return undefinedState(left.value ? current.right : current.left, next({}));
+          }
+          if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+            return undefinedState(left.value ? current.left : current.right, next({}));
+          }
+          return undefinedState(left.value !== null && left.value !== undefined
+            ? current.left : current.right, next({}));
+        }
+        return combine([
+          undefinedState(current.left, next({})),
+          undefinedState(current.right, next({})),
+        ]);
+      }
+      if (ts.isCallExpression(current)) {
+        if (state.calls.has(current)) return { mayBeUndefined: true, mayBeDefined: true };
+        const fn = localFunction(current);
+        if (!fn) return { mayBeUndefined: true, mayBeDefined: true };
+        const parameters = new Map(state.parameters);
+        fn.parameters.forEach((parameter, index) => {
+          const argument = current.arguments[index];
+          const argumentState = argument
+            ? undefinedState(argument, state)
+            : { mayBeUndefined: true, mayBeDefined: false };
+          if (!parameter.initializer) {
+            parameters.set(parameter, argumentState);
+            return;
+          }
+          const initializerState = undefinedState(parameter.initializer, {
+            ...state, parameters, depth: state.depth + 1,
+          });
+          parameters.set(parameter, {
+            mayBeUndefined: argumentState.mayBeUndefined && initializerState.mayBeUndefined,
+            mayBeDefined: argumentState.mayBeDefined ||
+              (argumentState.mayBeUndefined && initializerState.mayBeDefined),
+          });
+        });
+        const callState = next({
+          calls: new Set(state.calls).add(current),
+          parameters,
+        });
+        const returned = selectedReturnExpressions(fn, current);
+        if (returned.length === 0) return { mayBeUndefined: true, mayBeDefined: false };
+        return combine(returned.map(value => undefinedState(value, callState)));
+      }
+      if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current) ||
+          ts.isArrowFunction(current) || ts.isFunctionExpression(current) ||
+          ts.isClassExpression(current) || ts.isNewExpression(current) ||
+          ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current) ||
+          ts.isTemplateExpression(current) || ts.isNumericLiteral(current) ||
+          current.kind === ts.SyntaxKind.TrueKeyword ||
+          current.kind === ts.SyntaxKind.FalseKeyword ||
+          current.kind === ts.SyntaxKind.NullKeyword ||
+          ts.isPrefixUnaryExpression(current) || ts.isBinaryExpression(current)) {
+        return { mayBeUndefined: false, mayBeDefined: true };
+      }
+      return { mayBeUndefined: true, mayBeDefined: true };
     }
 
     function mayBeUndefined(expression) {
@@ -1019,6 +1091,39 @@ export function createStaticEvaluator(sourceFile) {
       return closure;
     }
 
+    function callAwareSourceBindings(expression, seenCalls = new Set()) {
+      const current = unwrapExpression(expression);
+      const direct = new Set(sourceBindings(current));
+      if (!ts.isCallExpression(current) || seenCalls.has(current)) return [...direct];
+      const fn = localFunction(current);
+      if (!fn) return [...direct];
+      const nextCalls = new Set(seenCalls).add(current);
+      for (const returned of selectedReturnExpressions(fn, current)) {
+        const returnedSources = sourceBindings(returned);
+        if (returnedSources.length === 0 && ts.isCallExpression(unwrapExpression(returned))) {
+          for (const binding of callAwareSourceBindings(returned, nextCalls)) direct.add(binding);
+          continue;
+        }
+        for (const returnedSource of returnedSources) {
+          const closure = aliasClosure(returnedSource);
+          const parameterIndexes = fn.parameters.flatMap((parameter, index) =>
+            closure.has(parameter) ? [index] : []);
+          if (parameterIndexes.length === 0) {
+            direct.add(returnedSource);
+            continue;
+          }
+          for (const index of parameterIndexes) {
+            for (const parameterValue of parameterExpressions(fn.parameters[index], index, current)) {
+              for (const binding of callAwareSourceBindings(parameterValue, nextCalls)) {
+                direct.add(binding);
+              }
+            }
+          }
+        }
+      }
+      return [...direct];
+    }
+
     for (const { target, fn, call } of pendingReturnLinks) {
       for (const returned of returnedBindings(fn, call)) {
         const closure = aliasClosure(returned);
@@ -1030,7 +1135,9 @@ export function createStaticEvaluator(sourceFile) {
         }
         for (const index of parameterIndexes) {
           for (const expression of parameterExpressions(fn.parameters[index], index, call)) {
-            for (const actual of sourceBindings(expression)) linkBindings(target, actual);
+            for (const actual of callAwareSourceBindings(expression)) {
+              linkBindings(target, actual);
+            }
           }
         }
       }
@@ -1039,7 +1146,7 @@ export function createStaticEvaluator(sourceFile) {
     for (const { fn, call } of pendingCalls) {
       fn.parameters.forEach((parameter, index) => {
         for (const expression of parameterExpressions(parameter, index, call)) {
-          for (const actual of sourceBindings(expression)) {
+          for (const actual of callAwareSourceBindings(expression)) {
             linkDirected(parameter, actual);
           }
         }
@@ -1148,9 +1255,20 @@ export function createStaticEvaluator(sourceFile) {
       const local = new Map(outerFrame);
       fn.parameters.forEach((parameter, index) => {
         if (index < args.length) {
-          local.set(parameter, args[index]);
+          const argument = args[index];
+          if (parameter.initializer && argument.kind === 'scalar' &&
+              argument.value === undefined) {
+            local.set(parameter, value(parameter.initializer, local, depth + 1));
+          } else if (parameter.initializer && argument.kind === 'unknown') {
+            const key = `parameter-default:${parameter.pos}:${choiceKey(argument)}`;
+            if (!decisions.has(key)) throw new StaticChoice(key);
+            local.set(parameter, decisions.get(key)
+              ? value(parameter.initializer, local, depth + 1) : argument);
+          } else {
+            local.set(parameter, argument);
+          }
         } else if (parameter.initializer) {
-          local.set(parameter, value(parameter.initializer, outerFrame, depth + 1));
+          local.set(parameter, value(parameter.initializer, local, depth + 1));
         } else {
           local.set(parameter, unknownValue('UNSUPPORTED_EXPRESSION', parameter));
         }
@@ -1258,6 +1376,7 @@ export function createStaticEvaluator(sourceFile) {
 
       if (ts.isIdentifier(node)) {
         const binding = declaration(node, node.text);
+        if (!binding && node.text === 'undefined') return scalarValue(undefined);
         if (!binding) return unknownValue('UNSUPPORTED_EXPRESSION', node);
         if (frame.has(binding)) return frame.get(binding);
         if (mutatedBindings.has(binding)) {
