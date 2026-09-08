@@ -144,6 +144,7 @@ export function createStaticEvaluator(sourceFile) {
   const mutationTexts = new Map();
   const aliasEdges = new Map();
   const directedTaintEdges = new Map();
+  const mutationReceivers = [];
   const mutationMethods = new Set([
     'copyWithin', 'delete', 'fill', 'pop', 'push', 'reverse', 'set', 'shift',
     'sort', 'splice', 'unshift', 'clear',
@@ -238,20 +239,25 @@ export function createStaticEvaluator(sourceFile) {
           node.expression.name.text,
         ) && node.arguments[0]) {
       markMutated(rootBinding(node.arguments[0]), node.arguments.slice(1));
+      mutationReceivers.push({ receiver: node.arguments[0], evidence: node.arguments.slice(1) });
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
         mutationMethods.has(node.expression.name.text)) {
       markMutated(rootBinding(node.expression.expression), node.arguments);
+      mutationReceivers.push({ receiver: node.expression.expression, evidence: node.arguments });
     } else if (ts.isBinaryExpression(node) && assignmentOperators.has(node.operatorToken.kind)) {
       if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
           ts.isPropertyAccessExpression(unwrapExpression(node.left)) ||
           ts.isElementAccessExpression(unwrapExpression(node.left))) {
         markMutated(rootBinding(node.left), node.right);
+        mutationReceivers.push({ receiver: node.left, evidence: node.right });
       }
     } else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
         [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator)) {
       markMutated(rootBinding(node.operand), node.operand);
+      mutationReceivers.push({ receiver: node.operand, evidence: node.operand });
     } else if (ts.isDeleteExpression(node)) {
       markMutated(rootBinding(node.expression), node.expression);
+      mutationReceivers.push({ receiver: node.expression, evidence: node.expression });
     }
     ts.forEachChild(node, collectDirectMutations);
   }
@@ -1102,13 +1108,106 @@ export function createStaticEvaluator(sourceFile) {
       const current = unwrapExpression(expression);
       const direct = new Set(ts.isIdentifier(current) ? sourceBindings(current) : []);
       const next = overrides => ({ ...state, ...overrides, depth: state.depth + 1 });
-      function contextualPrimitive(value) {
-        for (let index = state.frames.length - 1; index >= 0; index -= 1) {
-          const frame = state.frames[index];
-          const result = concretePrimitive(frame.fn, frame.call, value);
-          if (result.known) return result;
+      function contextualPrimitive(value, seen = new Set(), depth = 0) {
+        if (!preprocessStep()) return { known: false };
+        if (depth > MAX_DEPTH) {
+          preprocessingExceeded = true;
+          return { known: false };
         }
-        return staticPrimitiveValue(value);
+        const node = unwrapExpression(value);
+        function known(result) {
+          if (typeof result === 'string' && result.length > MAX_STRING_LENGTH) {
+            preprocessingExceeded = true;
+            return { known: false };
+          }
+          return { known: true, value: result };
+        }
+        if (node.kind === ts.SyntaxKind.TrueKeyword) return known(true);
+        if (node.kind === ts.SyntaxKind.FalseKeyword) return known(false);
+        if (node.kind === ts.SyntaxKind.NullKeyword) return known(null);
+        if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+          return known(node.text);
+        }
+        if (ts.isNumericLiteral(node)) return known(Number(node.text));
+        if (ts.isIdentifier(node)) {
+          const binding = declaration(node, node.text);
+          if (!binding && node.text === 'undefined') return known(undefined);
+          if (!binding || seen.has(binding)) return { known: false };
+          for (let index = state.frames.length - 1; index >= 0; index -= 1) {
+            const frame = state.frames[index];
+            const parameterIndex = frame.fn.parameters.indexOf(binding);
+            if (parameterIndex < 0) continue;
+            const expressions = parameterExpressions(binding, parameterIndex, frame.call);
+            if (expressions.length !== 1) return { known: false };
+            return contextualPrimitive(
+              expressions[0], new Set(seen).add(binding), depth + 1,
+            );
+          }
+          if (ts.isVariableDeclaration(binding) && binding.initializer &&
+              (binding.parent.flags & ts.NodeFlags.Const)) {
+            return contextualPrimitive(
+              binding.initializer, new Set(seen).add(binding), depth + 1,
+            );
+          }
+          return { known: false };
+        }
+        if (ts.isTemplateExpression(node)) {
+          const parts = [node.head.text];
+          for (const span of node.templateSpans) {
+            const expressionValue = contextualPrimitive(span.expression, seen, depth + 1);
+            if (!expressionValue.known) return expressionValue;
+            parts.push(String(expressionValue.value), span.literal.text);
+          }
+          try {
+            return known(concatenateTexts(parts, node));
+          } catch (error) {
+            if (error instanceof StaticFailure && error.reason === 'ANALYSIS_LIMIT') {
+              preprocessingExceeded = true;
+              return { known: false };
+            }
+            throw error;
+          }
+        }
+        if (ts.isPrefixUnaryExpression(node)) {
+          const operand = contextualPrimitive(node.operand, seen, depth + 1);
+          if (!operand.known) return operand;
+          if (node.operator === ts.SyntaxKind.ExclamationToken) return known(!operand.value);
+          if (node.operator === ts.SyntaxKind.MinusToken && typeof operand.value === 'number') {
+            return known(-operand.value);
+          }
+          return { known: false };
+        }
+        if (!ts.isBinaryExpression(node)) return { known: false };
+        const left = contextualPrimitive(node.left, seen, depth + 1);
+        if (!left.known) return { known: false };
+        if (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && !left.value) {
+          return left;
+        }
+        if (node.operatorToken.kind === ts.SyntaxKind.BarBarToken && left.value) return left;
+        if (node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+            left.value !== null && left.value !== undefined) return left;
+        const right = contextualPrimitive(node.right, seen, depth + 1);
+        if (!right.known) return { known: false };
+        const operations = new Map([
+          [ts.SyntaxKind.PlusToken, (a, b) => a + b],
+          [ts.SyntaxKind.MinusToken, (a, b) => a - b],
+          [ts.SyntaxKind.AsteriskToken, (a, b) => a * b],
+          [ts.SyntaxKind.SlashToken, (a, b) => a / b],
+          [ts.SyntaxKind.EqualsEqualsEqualsToken, (a, b) => a === b],
+          [ts.SyntaxKind.ExclamationEqualsEqualsToken, (a, b) => a !== b],
+          [ts.SyntaxKind.EqualsEqualsToken, (a, b) => a == b],
+          [ts.SyntaxKind.ExclamationEqualsToken, (a, b) => a != b],
+          [ts.SyntaxKind.LessThanToken, (a, b) => a < b],
+          [ts.SyntaxKind.LessThanEqualsToken, (a, b) => a <= b],
+          [ts.SyntaxKind.GreaterThanToken, (a, b) => a > b],
+          [ts.SyntaxKind.GreaterThanEqualsToken, (a, b) => a >= b],
+          [ts.SyntaxKind.AmpersandAmpersandToken, (a, b) => a && b],
+          [ts.SyntaxKind.BarBarToken, (a, b) => a || b],
+          [ts.SyntaxKind.QuestionQuestionToken, (a, b) => a ?? b],
+        ]);
+        return operations.has(node.operatorToken.kind)
+          ? known(operations.get(node.operatorToken.kind)(left.value, right.value))
+          : { known: false };
       }
       if (ts.isIdentifier(current)) {
         const binding = declaration(current, current.text);
@@ -1223,6 +1322,58 @@ export function createStaticEvaluator(sourceFile) {
       return [...direct];
     }
 
+    function memberPathFromParameter(expression, parameter) {
+      const path = [];
+      let current = unwrapExpression(expression);
+      while (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+        if (ts.isPropertyAccessExpression(current)) {
+          path.unshift(current.name.text);
+        } else {
+          if (!current.argumentExpression) return null;
+          const key = staticKey(current.argumentExpression);
+          if (key === null) return null;
+          path.unshift(key);
+        }
+        current = unwrapExpression(current.expression);
+      }
+      if (!ts.isIdentifier(current) || declaration(current, current.text) !== parameter) return null;
+      return path;
+    }
+
+    function bindingsAtMemberPath(expression, path, depth = 0) {
+      if (!preprocessStep() || depth > MAX_DEPTH) {
+        if (depth > MAX_DEPTH) preprocessingExceeded = true;
+        return [];
+      }
+      if (path.length === 0) return callAwareSourceBindings(expression);
+      const [key, ...rest] = path;
+      const bindings = new Set();
+      for (const container of valueExpressions(expression)) {
+        const resolved = unwrapExpression(container);
+        let member = null;
+        if (ts.isArrayLiteralExpression(resolved)) {
+          member = resolved.elements[Number(key)] ?? null;
+        } else if (ts.isObjectLiteralExpression(resolved)) {
+          const property = resolved.properties.find(item =>
+            (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+             ts.isNumericLiteral(item.name)) && item.name.text === key);
+          member = property && ts.isPropertyAssignment(property)
+            ? property.initializer
+            : property && ts.isShorthandPropertyAssignment(property) ? property.name : null;
+        }
+        if (!member) continue;
+        for (const binding of bindingsAtMemberPath(member, rest, depth + 1)) {
+          bindings.add(binding);
+        }
+      }
+      return [...bindings];
+    }
+
+    for (const { receiver, evidence } of mutationReceivers) {
+      for (const binding of callAwareSourceBindings(receiver)) markMutated(binding, evidence);
+    }
+
     for (const { target, fn, call } of pendingReturnLinks) {
       for (const returned of returnedBindings(fn, call)) {
         const closure = aliasClosure(returned);
@@ -1244,9 +1395,20 @@ export function createStaticEvaluator(sourceFile) {
 
     for (const { fn, call } of pendingCalls) {
       fn.parameters.forEach((parameter, index) => {
-        for (const expression of parameterExpressions(parameter, index, call)) {
+        const parameterValues = parameterExpressions(parameter, index, call);
+        for (const expression of parameterValues) {
           for (const actual of callAwareSourceBindings(expression)) {
             linkDirected(parameter, actual);
+          }
+        }
+        for (const { receiver, evidence } of mutationReceivers) {
+          if (!inside(receiver, fn)) continue;
+          const path = memberPathFromParameter(receiver, parameter);
+          if (!path || path.length === 0) continue;
+          for (const expression of parameterValues) {
+            for (const binding of bindingsAtMemberPath(expression, path)) {
+              markMutated(binding, evidence);
+            }
           }
         }
       });

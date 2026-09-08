@@ -341,6 +341,11 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; function getQueries(){return queries;} function choose(){return true?getQueries():[];} function append(value=choose()){value.push(runtimeSql());} append(); export const sql=queries.join("");',
     'declare function runtimeSql():string; declare const flag:boolean; const queries:string[]=[]; const ui:string[]=[]; function getQueries(){return queries;} function choose(value:boolean){return value?getQueries():ui;} function identity(value=choose(flag)){return value;} const alias=identity(); alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; declare const flag:boolean; const queries:string[]=[]; const ui:string[]=[]; function pass(value:string[]){return value;} function choose(value:boolean){return pass(value?queries:ui);} function identity(value=choose(flag)){return value;} const alias=identity(); alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function pass<T>(value:T){return value;} const box=pass([queries]); box[0].push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function pass<T>(value:T){return value;} const box=pass({value:queries}); box.value.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:string[][]){box[0].push(runtimeSql());} mutate([queries]); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:{value:string[]}){box.value.push(runtimeSql());} mutate({value:queries}); export const sql=queries.join("");',
+    'declare function runtimeSql():string; declare const outerFlag:boolean; const queries:string[]=[]; const ui:string[]=[]; function pass(value:string[]){return value;} function outer(flag:boolean){function inner(innerFlag:boolean){return pass(innerFlag&&flag?queries:ui);} return inner(true);} const alias=outer(outerFlag); alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=true?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; declare function runtimeSql():string; const queries:string[]=[]; const alias=flag?queries:[]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -574,6 +579,47 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
       function pass(value:string[]){return value;}
       function choose(flag:boolean){return pass(${argument});}
       function identity(value=choose(false)){return value;}
+      const alias=identity();
+      alias.push("label");
+      export const sql=safe.join("");
+    `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+  }
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function pass<T>(value:T){return value;}
+    const arrayBox=pass([safe,ui]);
+    const objectBox=pass({safe,ui});
+    arrayBox[1].push("label");
+    objectBox.ui.push("label");
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function mutateArray(box:string[][]){box[1].push("label");}
+    function mutateObject(box:{safe:string[],ui:string[]}){box.ui.push("label");}
+    mutateArray([safe,ui]);
+    mutateObject({safe,ui});
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  for (const argument of [
+    'innerFlag&&outerFlag?safe:ui',
+    '[innerFlag&&outerFlag?safe:ui][0]',
+    '{value:innerFlag&&outerFlag?safe:ui}.value',
+  ]) {
+    assert.deepEqual(extractStaticSql(`
+      const safe=["SELECT * FROM dashboards"];
+      const ui:string[]=[];
+      function pass(value:string[]){return value;}
+      function outer(outerFlag:boolean){
+        function inner(innerFlag:boolean){return pass(${argument});}
+        return inner(true);
+      }
+      function identity(value=outer(false)){return value;}
       const alias=identity();
       alias.push("label");
       export const sql=safe.join("");
