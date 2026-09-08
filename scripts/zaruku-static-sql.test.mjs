@@ -322,6 +322,10 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; const source=[queries]; const [alias]=source; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const [alias]=true?[queries]:[ui]; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const {alias}=true?{alias:queries}:{alias:ui}; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const [alias=queries]=[]; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const {alias=queries}={}; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; declare const maybe:string[]|undefined; const queries:string[]=[]; const [alias=queries]=[maybe]; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; declare const maybe:string[]|undefined; const queries:string[]=[]; const {alias=queries}={alias:maybe}; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=true?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; declare function runtimeSql():string; const queries:string[]=[]; const alias=flag?queries:[]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -450,6 +454,24 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     const safe=["SELECT * FROM dashboards"];
     const ui:string[]=[];
     const alias=(false?[safe]:[ui])[0];
+    alias.push("label");
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    const word="safe";
+    const mode=\`\${word}\`;
+    const alias=mode==="private"?safe:ui;
+    alias.push("label");
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    const [alias=safe]=[ui];
     alias.push("label");
     export const sql=safe.join("");
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);

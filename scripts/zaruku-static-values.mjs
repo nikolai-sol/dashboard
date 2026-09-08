@@ -276,15 +276,40 @@ export function createStaticEvaluator(sourceFile) {
   function staticPrimitiveValue(expression, seen = new Set(), depth = 0) {
     if (!preprocessStep() || depth > MAX_DEPTH) return { known: false };
     const current = unwrapExpression(expression);
+    function known(value) {
+      if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) {
+        preprocessingExceeded = true;
+        return { known: false };
+      }
+      return { known: true, value };
+    }
     if (current.kind === ts.SyntaxKind.TrueKeyword) return { known: true, value: true };
     if (current.kind === ts.SyntaxKind.FalseKeyword) return { known: true, value: false };
     if (current.kind === ts.SyntaxKind.NullKeyword) return { known: true, value: null };
     if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
-      return { known: true, value: current.text };
+      return known(current.text);
     }
     if (ts.isNumericLiteral(current)) return { known: true, value: Number(current.text) };
+    if (ts.isTemplateExpression(current)) {
+      const parts = [current.head.text];
+      for (const span of current.templateSpans) {
+        const value = staticPrimitiveValue(span.expression, seen, depth + 1);
+        if (!value.known) return value;
+        parts.push(String(value.value), span.literal.text);
+      }
+      try {
+        return known(concatenateTexts(parts, current));
+      } catch (error) {
+        if (error instanceof StaticFailure && error.reason === 'ANALYSIS_LIMIT') {
+          preprocessingExceeded = true;
+          return { known: false };
+        }
+        throw error;
+      }
+    }
     if (ts.isIdentifier(current)) {
       const binding = declaration(current, current.text);
+      if (!binding && current.text === 'undefined') return { known: true, value: undefined };
       if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) ||
           !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) {
         return { known: false };
@@ -333,7 +358,7 @@ export function createStaticEvaluator(sourceFile) {
       [ts.SyntaxKind.QuestionQuestionToken, (a, b) => a ?? b],
     ]);
     return operations.has(current.operatorToken.kind)
-      ? { known: true, value: operations.get(current.operatorToken.kind)(left.value, right.value) }
+      ? known(operations.get(current.operatorToken.kind)(left.value, right.value))
       : { known: false };
   }
 
@@ -465,9 +490,14 @@ export function createStaticEvaluator(sourceFile) {
           const resolved = unwrapExpression(container);
           if (!ts.isArrayLiteralExpression(resolved)) continue;
           patternItems.forEach((item, index) => {
-            if (!item || ts.isOmittedExpression(item) || !resolved.elements[index]) return;
+            if (!item || ts.isOmittedExpression(item)) return;
             const target = ts.isBindingElement(item) ? item.name : item;
-            linkPattern(target, resolved.elements[index]);
+            const source = resolved.elements[index];
+            if (source) linkPattern(target, source);
+            if (ts.isBindingElement(item) && item.initializer &&
+                (!source || mayBeUndefined(source))) {
+              linkPattern(target, item.initializer);
+            }
           });
         }
         return;
@@ -496,7 +526,13 @@ export function createStaticEvaluator(sourceFile) {
               const keyNode = item.propertyName ?? item.name;
               if ((ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode)) &&
                   sourceByKey.has(keyNode.text)) {
-                linkPattern(item.name, sourceByKey.get(keyNode.text));
+                const source = sourceByKey.get(keyNode.text);
+                linkPattern(item.name, source);
+                if (item.initializer && mayBeUndefined(source)) {
+                  linkPattern(item.name, item.initializer);
+                }
+              } else if (item.initializer) {
+                linkPattern(item.name, item.initializer);
               }
             } else if (ts.isShorthandPropertyAssignment(item) && sourceByKey.has(item.name.text)) {
               linkPattern(item.name, sourceByKey.get(item.name.text));
@@ -508,6 +544,19 @@ export function createStaticEvaluator(sourceFile) {
           }
         }
       }
+    }
+
+    function mayBeUndefined(expression) {
+      const candidates = valueExpressions(expression);
+      if (candidates.length === 0) return true;
+      return candidates.some(candidate => {
+        const current = unwrapExpression(candidate);
+        if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current) ||
+            ts.isArrowFunction(current) || ts.isFunctionExpression(current) ||
+            ts.isClassExpression(current) || ts.isNewExpression(current)) return false;
+        const value = staticPrimitiveValue(current);
+        return !value.known || value.value === undefined;
+      });
     }
 
     function staticKey(expression, seen = new Set()) {
