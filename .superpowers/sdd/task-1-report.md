@@ -1,144 +1,91 @@
-# Task 1 Report: SEO OS Domain Types And Week Utilities
+# Task 1 Report — Production-Shadow Authority and Read-Only Preflight
 
-## Scope
+## Status
 
-Implemented the Task 1 domain contract and pure ISO-week utilities only. No SEO OS database query, loader, or UI behavior was implemented. The existing Zaruku SEO loader now returns the required empty SEO OS shape so `ZarukuSeoData` remains type-safe until Task 2 supplies real data.
+DONE
 
-## RED
+Commit: `7df2156` (`feat(zaruku): add production shadow preflight authority`)
 
-Command:
+No production mutation, external source API call, database write, Nginx change, deployment, process change, or secret read was performed.
 
-```bash
-npm test
-```
+## Implementation
 
-Output (exit 1):
+- Added the exact frozen Zaruku production-shadow authority at `deploy/zaruku/production-shadow.json`.
+- Added `loadShadowAuthority(filename)` with strict object-key and exact-value checks, loopback URL checks, normalized absolute-path checks, fixed reporting-period checks, deep freezing, and cross-validation against both `RUNTIME_MANIFESTS.zaruku` and `deploy/zaruku/release.json`.
+- Added the Task 1 `loadMysqlTableAuthority(filename)` boundary for a strict Zaruku/report_bd/fixed-account table authority. It rejects unknown keys, invalid or duplicate table identifiers, and unsorted table lists, and deep-freezes its result. The exact table inventory remains Task 2.
+- Added injected `inspectShadowPrerequisites(adapter)` and `assertShadowPrerequisites(evidence)` interfaces.
+- Sanitized preflight evidence contains only booleans, fixed paths, identity/process names, numeric IDs/ports, modes, and hashes. Raw Nginx text, PM2 environment, database rows, environment values, and secret contents are not returned.
+- Added a real read-only adapter limited to `id`, `getent`, fixed `command -v` lookups, `stat`, `ss`, `pm2 status`, `sha256sum`, read-only MySQL identity/schema metadata queries, and reads of selected Nginx configuration paths.
+- Added fail-closed assertions for the fixed online combined runtime/listener, port 3002 vacancy, no Nginx reference to port 3002, Nginx hash presence, exact tool paths, root local-socket MySQL authority, and safe existing Zaruku identities/resources.
+- Added `test:zaruku-production-shadow` and placed it in the shared predeploy gate without any `--apply` path.
+- Updated the existing predeploy ordering fixture because it intentionally enumerates every required predeploy command.
 
-```text
-Error: Cannot find module '@/lib/zaruku-seo-os'
-Require stack:
-- /Users/nafanya/ReportingDash/dashboard-next/src/lib/zaruku-seo-os.test.ts
-...
-tests 1
-pass 0
-fail 1
-```
-
-The failure was expected: the test suite imported the not-yet-created `zaruku-seo-os.ts` module.
-
-## GREEN
-
-Command:
-
-```bash
-npm test && npm run typecheck && git diff --check
-```
-
-Output (exit 0):
-
-```text
-tests 7
-pass 7
-fail 0
-
-> dashboard-next@0.1.0 typecheck
-> tsc --noEmit
-```
-
-`git diff --check` produced no output and exited 0.
-
-## Files Changed
-
-- `package.json`
-  - Added the Node test runner command: `node --import tsx --test src/**/*.test.ts`.
-- `src/lib/types.ts`
-  - Added the `seo_os` source ID and normalized SEO OS DTOs for patterns, trends, clusters, opportunities, tasks, run telemetry, traffic visibility, and the aggregate `ZarukuSeoOsData` payload.
-- `src/lib/zaruku-seo-os.ts`
-  - Added pure ISO-week sorting/selection/iteration, deterministic section-pattern matching, nullable position aggregation, approve-rate calculation, and missing-rhythm-week generation.
-- `src/lib/zaruku-seo-os.test.ts`
-  - Added seven real-behavior unit tests for all required transformations and edge cases.
-- `src/lib/zaruku-seo.ts`
-  - Added the typed unavailable SEO OS placeholder required by the new mandatory `ZarukuSeoData.seo_os` property. It performs no database work and is the explicit Task 2 replacement point.
-- `.superpowers/sdd/task-1-report.md`
-  - Added this implementation report.
-
-## Self-Review
-
-- `ZarukuSeoSourceId` includes `seo_os`; `ZarukuSeoData` contains the required `seo_os` payload.
-- Position aggregation preserves null positions, excludes them from averages, and counts `no_data` rows in coverage denominators.
-- ISO week parsing validates the ISO week range and iterates calendar boundaries without parsing locale-formatted dates.
-- Pattern matching uses longest `url_pattern` first, then lowest numeric priority, with input order only as a deterministic final tie-breaker.
-- Approve rate uses approved plus rejected opportunities only and returns `null` when no decision exists.
-- Rhythm generation fills every calendar week between first and last run with a `missing` run row.
-- No mocks, test-only production APIs, database access, or UI changes were added.
-
-## Concerns
-
-No active blocker. `seo_os` is intentionally unavailable and empty until Task 2 replaces the placeholder with the account-scoped read-only loader.
-
-## Task 1 Review Fix: Early ISO Years
-
-### Fix Details
-
-- `formatIsoWeek` now pads numeric years to four digits, preserving canonical `YYYY-Www` labels while iterating rhythm weeks.
-- `isoWeeksInYear` now uses `setUTCFullYear(year, 0, 1)` on an existing `Date`, avoiding the `Date.UTC` remapping of years `0000` through `0099` to `1900` through `1999`.
-- Added regression coverage for valid `0004-W53` and iteration across the `2020-W53` to `2021-W01` rollover.
+## TDD evidence
 
 ### RED
 
 Command:
 
-```bash
-node --import tsx --test --test-name-pattern='buildRhythmWeeks (accepts and preserves a zero-padded early ISO week 53|iterates through a 53-week ISO year boundary)' src/lib/zaruku-seo-os.test.ts
-```
-
-Output (exit 1):
-
 ```text
-✖ buildRhythmWeeks accepts and preserves a zero-padded early ISO week 53
-✔ buildRhythmWeeks iterates through a 53-week ISO year boundary
-tests 2
-pass 1
-fail 1
-
-Error: Invalid ISO week: 0004-W53
+node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
 ```
+
+Initial result: exit 1. Both test files failed with `ERR_MODULE_NOT_FOUND` for the intentionally absent contract and preflight implementation modules.
+
+The wiring test was also added before package/predeploy changes and failed with the expected assertion that `test:zaruku-production-shadow` was undefined.
+
+Additional tightened preflight tests were run before extending the resource/listener checks; they failed because the new required resource inventory and combined-listener linkage were not yet implemented.
 
 ### GREEN
 
-Focused command:
-
-```bash
-node --import tsx --test --test-name-pattern='buildRhythmWeeks (accepts and preserves a zero-padded early ISO week 53|iterates through a 53-week ISO year boundary)' src/lib/zaruku-seo-os.test.ts
-```
-
-Output (exit 0):
+Final focused command:
 
 ```text
-✔ buildRhythmWeeks accepts and preserves a zero-padded early ISO week 53
-✔ buildRhythmWeeks iterates through a 53-week ISO year boundary
-tests 2
-pass 2
-fail 0
+npm run test:zaruku-production-shadow
 ```
 
-Full verification command:
+Result: exit 0, 10 tests passed, 0 failed.
 
-```bash
-npm test && npm run typecheck
-```
-
-Output (exit 0):
+Final source-deploy command:
 
 ```text
-tests 9
-pass 9
-fail 0
-
-> dashboard-next@0.1.0 typecheck
-> tsc --noEmit
+npm run test:deploy-source
 ```
 
-### Review-Fix Concerns
+Result: exit 0. Deploy source guards, dashboard deploy lock tests, dashboard deploy integration tests, release source metadata bootstrap tests, and predeploy verification contract tests all passed.
 
-No remaining concerns. The accepted ISO-year range remains exactly four digits (`0000` through `9999`), matching the existing parser contract.
+Additional verification:
+
+```text
+npm exec -- eslint scripts/zaruku-production-shadow-contract.mjs scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
+git diff --check
+```
+
+Result: exit 0 with no lint errors or warnings and no whitespace errors.
+
+## Files changed
+
+- `deploy/zaruku/production-shadow.json`
+- `scripts/zaruku-production-shadow-contract.mjs`
+- `scripts/zaruku-production-shadow-contract.test.mjs`
+- `scripts/zaruku-production-shadow-preflight.mjs`
+- `scripts/zaruku-production-shadow-preflight.test.mjs`
+- `package.json`
+- `scripts/predeploy-verify.sh`
+- `scripts/predeploy-verify.test.sh`
+
+`package-lock.json` did not change because npm script-only edits do not alter lockfile content.
+
+## Self-review
+
+- Scope: changes are confined to the new Zaruku production-shadow authority/preflight and the source-only predeploy test wiring. Combined dashboard, Abbott, advertising, collector, schema, migration, and runtime deployment code are unchanged.
+- Authority: the JSON matches the brief exactly, extra/missing/changed values fail closed, nested values are frozen, and runtime/release contracts are checked.
+- Read-only behavior: the implementation contains no apply mode and no mutation command. MySQL statements are SELECT-only metadata checks. The test gate invokes fixtures only.
+- Isolation: the isolated listener must be absent, the combined PID must own a loopback 3001 listener, and Nginx must reference 3001 but not 3002.
+- Disclosure: raw Nginx input is reduced to booleans plus a digest; process/database environments, data rows, and secret-file contents are never included in evidence.
+- Existing state: absent state is accepted for initial provisioning; existing fixed resources/identities are accepted only with exact owner/group/mode/path/identity metadata, while incomplete, unsafe, or foreign state is rejected.
+- Integration: the existing predeploy order test was updated to cover the new gate, and the existing `test:deploy-source` script remained byte-for-byte unchanged.
+
+## Concerns
+
+None for Task 1. The real production adapter was not executed against production because this task explicitly permits source-only, read-only fixture verification and forbids production access/actions. Task 2 still owns the exact physical-table allowlist and database grant verification.
