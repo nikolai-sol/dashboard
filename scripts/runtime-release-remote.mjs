@@ -168,16 +168,10 @@ export function renderEnvironment(source) {
   return result;
 }
 
-export function readZarukuSecrets() {
+export function parseZarukuSecrets(bytes) {
   try {
-    const filename = `${BASE}/.dashboard-zaruku-secrets/runtime.env`;
-    owned(path.dirname(filename), true);
-    if (fs.lstatSync(path.dirname(filename)).mode & 0o077) fail('Unsafe credential directory');
-    owned(filename);
-    if (fs.lstatSync(filename).size > 65536) fail('Oversized credential file');
-    const bytes = stableRead(filename, true);
-    if (bytes.length > 65536) fail('Oversized credential file');
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    if (!Buffer.isBuffer(bytes) || bytes.length > 65536) fail('Invalid credential file');
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
     if (!text.endsWith('\n')) fail('Invalid credential file');
     const source = {};
     for (const line of text.slice(0, -1).split('\n')) {
@@ -188,6 +182,25 @@ export function readZarukuSecrets() {
     }
     renderEnvironment(source);
     return source;
+  } catch { fail('Missing or unsafe dedicated Zaruku credential file'); }
+}
+
+export function serializeZarukuSecrets(source) {
+  renderEnvironment(source);
+  const bytes = Buffer.from(Object.entries(source).map(([key, value]) => `${key}='${value}'\n`).join(''));
+  parseZarukuSecrets(bytes);
+  return bytes;
+}
+
+export function readZarukuSecrets() {
+  try {
+    const filename = `${BASE}/.dashboard-zaruku-secrets/runtime.env`;
+    owned(path.dirname(filename), true);
+    if (fs.lstatSync(path.dirname(filename)).mode & 0o077) fail('Unsafe credential directory');
+    owned(filename);
+    if (fs.lstatSync(filename).size > 65536) fail('Oversized credential file');
+    const bytes = stableRead(filename, true);
+    return parseZarukuSecrets(bytes);
   } catch { fail('Missing or unsafe dedicated Zaruku credential file'); }
 }
 

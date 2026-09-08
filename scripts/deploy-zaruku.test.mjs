@@ -19,6 +19,16 @@ const api = await import('./deploy-runtime.mjs');
 const worker = await import('./runtime-release-remote.mjs');
 const dedicatedInput = { ZARUKU_DB_HOST: 'localhost', ZARUKU_DB_PORT: '3306', ZARUKU_DB_USER: 'zaruku_fixture', ZARUKU_DB_PASSWORD: 'fixture-password', ZARUKU_DB_NAME: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture-auth' };
 
+test('shared dedicated serializer round-trips exact reader grammar and sanitizes rejected values', () => {
+  const bytes = worker.serializeZarukuSecrets(dedicatedInput);
+  assert.deepEqual(worker.parseZarukuSecrets(bytes), dedicatedInput);
+  assert.equal(bytes.toString(), Object.entries(dedicatedInput).map(([key, value]) => `${key}='${value}'\n`).join(''));
+  for (const value of ["invalid'value", 'invalid\\value', 'invalid`value', 'invalid\nvalue']) {
+    assert.throws(() => worker.serializeZarukuSecrets({ ...dedicatedInput, DASHBOARD_AUTH_SECRET: value }), error => !error.message.includes(value));
+  }
+  assert.throws(() => worker.parseZarukuSecrets(Buffer.concat([bytes, bytes])), /Zaruku credential/);
+});
+
 test('release authority exactly matches compiled contract and fixed process config', () => {
   assert.deepEqual(JSON.parse(read('deploy/zaruku/release.json')), RUNTIME_MANIFESTS.zaruku);
   const require = createRequire(import.meta.url);

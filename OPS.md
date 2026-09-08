@@ -186,6 +186,63 @@ values. Provisioning the dedicated account, verifying only the required canonica
 read grants, installing this file, and validating the target filesystem/service permissions remain
 cutover prerequisites; none is performed by these source changes.
 
+Fixed shadow provisioning is implemented by `scripts/zaruku-shadow-host.mjs`. Its CLI accepts
+exactly `check`, `apply`, or `rollback-created`, followed by the absolute path to this reviewed
+checkout's `deploy/zaruku/production-shadow.json`; there are no account, directory, credential,
+or journal path overrides. `check` is read-only. Mutation requires Linux with real and effective
+UID `0`. Run only within the separately reviewed production-shadow procedure.
+
+`apply` creates the `dashboard-zaruku` system group and user, with only that group, shell
+`/usr/sbin/nologin`, home `/nonexistent`, and no home creation. It creates these root:root `0700`
+directories: `/var/www/dashboard-zaruku-releases`, `/var/www/dashboard-zaruku-backups`,
+`/var/www/.dashboard-zaruku-control`, `/var/www/.dashboard-zaruku-secrets`,
+`/var/www/.dashboard-zaruku-shadow`, and its `evidence` child. Compliant complete state is an
+idempotent no-op; partial or foreign state, unsafe ancestry, and an occupied port `3002` fail
+before mutation. The active app path and deploy lock are not created by provisioning.
+
+Before its first host mutation, apply exclusively creates the root-owned, single-link `0600`
+creation journal `/var/www/.dashboard-zaruku-host-creation.json`. It records the run identity,
+absent predecessor, and verified post-step account or device/inode/owner/group/mode metadata,
+persisting each step atomically. The journal contains no credential values and remains after
+success. `rollback-created` consumes only that fixed journal and validates every removal before
+starting. Changed identities/inodes, foreign directory contents, and incomplete post-step
+evidence stop rollback. A process crash between a mutation and recording its resulting identity
+requires operator review; rollback never guesses ownership from a path name. Rollback preserves
+the journal, marked `rolled-back`, and never removes a nonempty secret, auth, release, or evidence
+directory. A subsequent fresh provisioning run therefore requires a separately reviewed journal
+retention/recovery decision.
+
+The exported `installRuntimeSecrets(adapter, databasePasswordFd)` is called by the reviewed
+provisioning coordinator with an inherited descriptor numbered at least `3`; it has no password
+argument or environment fallback. The caller owns and closes that inherited descriptor. Password
+bytes are strict UTF-8, at most 4096 bytes, without a trailing newline, and must satisfy the existing
+renderer restrictions. It reads only `/var/www/www-root/data/.production.env`, requiring root:root
+`0600`, a single regular-file link, safe root-owned ancestry, and a stable read of at most 65,536
+bytes. Source syntax allows blank lines, full-line comments, and `KEY=value`, `KEY='value'`, or
+`KEY="value"`. Duplicate names anywhere, controls, malformed UTF-8, `export`, interpolation,
+escapes, multiline values, and inline comments are rejected without evaluation. Only
+`DASHBOARD_AUTH_SECRET` and optional `PUPPETEER_EXECUTABLE_PATH` are copied. Dedicated DB values
+are fixed to `127.0.0.1:3306`, `dashboard_zaruku_reader`, and `report_bd`; the public base URL is
+`https://dashboards.adreports.ru`. The shared serializer preserves the existing exact single-quoted
+reader grammar and rejects unsupported characters instead of escaping them.
+
+Secret publication writes and fsyncs a new `0600` inode, publishes atomically, fsyncs its directory,
+then reopens without following links and validates through the release reader and renderer.
+Existing unsafe destinations are rejected. Output contains only installation and permission
+results and key names; no credential value or credential digest is returned.
+
+`node scripts/install-zaruku-shadow-auth.mjs` accepts descriptor bytes only from stdin, with no
+arguments. It accepts exactly `{"headers":{"cookie":"..."}}`, with a nonempty cookie of at most
+4096 characters and total input at most 65,536 bytes. Extra/duplicate keys, other headers
+(including `authorization` and `host`), malformed UTF-8, and control characters fail closed.
+Interactive input has terminal echo disabled before reading and restored in `finally`. It
+atomically publishes root-owned single-link `0600`
+`/var/www/.dashboard-zaruku-shadow/auth.json`; a preexisting nonempty descriptor is never replaced.
+It prints only `status` and the SHA-256 of the exact descriptor bytes. The cookie-only contract is
+a strict subset of the read-only verifier's accepted header descriptor. These tools have been
+tested only with injected identities and disposable local files; this source change performs no
+production provisioning, deployment, MySQL operation, proxy edit, or runtime start.
+
 Local comparison requires two already-running loopback runtimes backed by the same canonical
 MySQL snapshot and the same explicit historical range. Build the combined runtime and the isolated
 artifact first, then start them in separate terminals with credentials loaded from private files or
