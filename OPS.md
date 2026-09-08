@@ -267,9 +267,16 @@ inventory of the other runtimes' authoritative SHA files. Neither file belongs i
 evidence directory. Open the auth descriptor on a file descriptor so credential values never
 appear in argv, logs, or evidence:
 
+The standalone command below is an adapter/fixture interface, not the production entrypoint.
+It additionally requires an inherited `ZARUKU_SHADOW_COVERAGE_FD` that provides a fresh bounded
+`{"sha256":"<64 lowercase hex>"}` metadata token on each `observe` request. Never fabricate a
+production token or reuse a saved one. Production supplies this descriptor through the fixed worker.
+
 ```bash
 exec 9</private/path/zaruku-shadow-auth.json
 export ZARUKU_SHADOW_AUTH_FD=9
+# FD 8 must already be supplied by the reviewed live canonical metadata adapter.
+export ZARUKU_SHADOW_COVERAGE_FD=8
 export ZARUKU_SHADOW_ARTIFACT_ROOT="$PWD/apps/zaruku/.next-zaruku/standalone"
 export ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE=/private/path/other-runtime-shas.tsv
 export ZARUKU_SHADOW_CANONICAL_SNAPSHOT=reviewed-snapshot-label
@@ -316,6 +323,64 @@ Before any production shadow start, all of these separate prerequisites are mand
 
 A public exact-path Zaruku route cutover requires a separate reviewed production plan after a real
 production shadow passes. This runbook section does not authorize or perform that cutover.
+
+### Fixed production-shadow tooling (separate authorization required)
+
+Task 4 adds source/control tooling only. No production command in this section was executed as
+part of its implementation. Public routing remains combined on `127.0.0.1:3001`.
+
+Local preparation is explicit:
+
+```bash
+# The two image input files must already be reviewed and committed.
+bash scripts/build-zaruku-linux-fixture.sh --lock
+# Review/commit the resulting immutable image ID and complete package-manifest hash.
+bash scripts/build-zaruku-linux-fixture.sh
+bash scripts/run-zaruku-linux-fixtures.sh
+npm run test:zaruku-production-shadow
+```
+
+The builder uses the pinned official Node 22 Bookworm Slim amd64 manifest, one dated Debian
+snapshot and exact Python/util-linux/passwd versions, with no recommends. No repository or private
+data enters the image. Normal verification cannot build/pull or alter the lock. Runtime uses only
+the recorded local image ID with `--platform linux/amd64 --network none --read-only`, read-only
+source, disposable tmpfs, `--rm` and only `SYS_PTRACE` added. Build/privilege and real memfd/process
+fixtures must all pass. Predeploy runs source tests only; it never builds or runs Docker.
+
+After separately reviewed production authorization, `npm run shadow:zaruku:stage-control` stages
+only the fixed 15-file manifest-covered bundle under
+`/var/www/.dashboard-zaruku-shadow/control/<reviewed-40hex-SHA>`. It accepts no path/host/file-list
+override and cannot provision accounts, secrets, DB grants, release refs, application files, PM2
+or Nginx. Existing bundles must match bytes and pinned inodes exactly.
+
+The authority now includes exactly one foreign SHA entry: `combined-dashboard` at
+`/var/www/dashboard/.release-source-sha`. Run the SHA-addressed
+`scripts/install-zaruku-shadow-inventory.mjs check` or its explicit `install` action only in the
+approved preparation step. It never overwrites a different inventory. Host/DB/secret/auth
+provisioning and release-ref changes remain separate explicit operations.
+
+With every prerequisite already provisioned, the sole production orchestration entrypoint is
+`npm run shadow:zaruku:run` with no arguments or authority environment overrides. It reattests the
+staged bundle read-only before every remote worker action, runs the fixed prerequisites and full
+local gate, checks release authority without fetching/updating it, then invokes the existing sealed
+Zaruku deployer. It verifies the active artifact and exact process/kernel identity and loopback
+listener, performs paired January–August manager/PDF/XLSX comparison, and rechecks the combined PID,
+complete loaded Nginx hash and fixed foreign SHA/inode. No Nginx command or cutover branch exists.
+
+Retry occurs once only if the exact schema-attested 25-family canonical metadata token changes
+during the first differing pair. Dated facts/Alice months are period-scoped; the current Wordstat
+and SEO histories remain account-scoped as in the read model. No tables are locked and collectors
+are not paused. The MySQL bridge uses an attested executable FD and anonymous sealed defaults FD;
+auth and XLSX bodies remain inherited pipe/descriptor data. Evidence contains assertions, counts,
+hashes and fixed labels only. XLSX parsing uses the attested bounded Python stdlib helper, not a
+dependency borrowed from any runtime.
+
+Every completed run publishes a new root-owned immutable `<SHA>-<UUID>` evidence directory.
+Failures after deployment request only `pm2 stop dashboard-zaruku`, preserve public routing and
+record `NO-GO`. `GO` authorizes only later cutover planning. The sealed boot fixture proves the full
+setpriv/no-new-privileges contract; live PM2 checks do not claim an unimplemented bounding-capability
+or `NoNewPrivs` guarantee. The exact amd64 `UV_USE_IO_URING=0` translation marker is normalized only
+immediately before fixture application code; all other unexpected environment values still fail.
 
 ## Deploy
 

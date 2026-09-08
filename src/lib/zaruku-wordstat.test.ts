@@ -390,7 +390,7 @@ test("Wordstat historical availability is separate from weekly current freshness
   const { loadZarukuWordstatData } = await wordstatModule();
   const data = await loadZarukuWordstatData("66624469", fakeQuery({
     metadata: [availableMetadata()],
-  }).run);
+  }).run, new Date("2026-09-02T12:00:00Z"));
 
   assert.equal(data.status, "partial");
   assert.equal(data.source_freshness?.freshness_status, "healthy");

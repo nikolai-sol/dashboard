@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { loadMysqlTableAuthority } from './zaruku-production-shadow-contract.mjs';
+import { loadMysqlTableAuthority } from './zaruku-production-shadow-authority.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AUTHORITY_PATH = path.join(ROOT, 'deploy/zaruku/mysql-read-tables.json');

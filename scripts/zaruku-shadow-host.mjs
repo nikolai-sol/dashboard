@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { loadShadowAuthority } from './zaruku-production-shadow-contract.mjs';
+import { loadShadowAuthority } from './zaruku-production-shadow-authority.mjs';
 import { parseZarukuSecrets, serializeZarukuSecrets, renderEnvironment } from './runtime-release-remote.mjs';
 
 const NAME = 'dashboard-zaruku';

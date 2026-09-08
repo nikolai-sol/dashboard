@@ -147,6 +147,9 @@ function current() {
   return record;
 }
 
+// Read-only use of the same sealed active-tree authority used by deployment.
+export { current as inspectActiveRuntime };
+
 export function renderEnvironment(source) {
   if (!source || typeof source !== 'object' || Object.keys(source).some(key => !SECRET_INPUT_KEYS.includes(key))) fail('Invalid Zaruku credential input keys');
   const get = (key, fallback) => {
@@ -224,6 +227,16 @@ export function assertRuntimeProcess(processes, account, readStatus = filename =
 // Application code is reached only after the fixed OS privilege drop and this
 // trusted bootstrap attest the kernel identity. The privileged parent retains
 // private manifest access; none of its credentials or authority paths are passed.
+export function normalizeBootEnvironment(env) {
+  // The pinned amd64 execution runtime inserts this exact libuv opt-out even
+  // after env -i. No other inherited or runtime-created setting is tolerated.
+  if (Object.hasOwn(env, 'UV_USE_IO_URING')) {
+    if (env.UV_USE_IO_URING !== '0') throw new Error('Zaruku boot environment mismatch');
+    delete env.UV_USE_IO_URING;
+  }
+  if (Object.keys(env).sort().join(',') !== 'HOSTNAME,NODE_ENV,PORT' || env.NODE_ENV !== 'production' || env.HOSTNAME !== '127.0.0.1' || !/^[1-9][0-9]{0,4}$/.test(env.PORT) || Number(env.PORT) > 65535) throw new Error('Zaruku boot environment mismatch');
+}
+
 const BOOT_IDENTITY_BOOTSTRAP = String.raw`
 const fs = require('node:fs');
 const path = require('node:path');
@@ -242,6 +255,7 @@ if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid <= 0 ||
 }
 fs.writeSync(3, JSON.stringify({uid,gid,euid:process.geteuid(),egid:process.getegid(),supplementaryGroups:[],cwd:fs.realpathSync(process.cwd())}) + '\n');
 fs.closeSync(3);
+(${normalizeBootEnvironment.toString()})(process.env);
 require(server);
 `;
 
@@ -261,7 +275,8 @@ export async function bootRuntimeAsService(artifact) {
   if (!Number.isInteger(account.uid) || account.uid <= 0 || !Number.isInteger(account.gid) || account.gid <= 0) fail('Invalid fixed service-account identity');
   // No environment or positional argument can replace the reviewed mechanism.
   const mechanism = '/usr/bin/setpriv';
-  owned(mechanism); owned(process.execPath);
+  const environmentBoundary = '/usr/bin/env';
+  owned(mechanism); owned(environmentBoundary); owned(process.execPath);
   const cwd = `${artifact}/apps/zaruku`, server = `${cwd}/server.js`;
   owned(artifact, true); owned(cwd, true); owned(server);
   const port = await new Promise((resolve, reject) => {
@@ -275,8 +290,9 @@ export async function bootRuntimeAsService(artifact) {
   const child = spawn(mechanism, [
     `--reuid=${account.uid}`, `--regid=${account.gid}`, '--clear-groups', '--no-new-privs',
     '--inh-caps=-all', '--ambient-caps=-all', '--bounding-set=-all', '--',
+    environmentBoundary, '-i', 'NODE_ENV=production', 'HOSTNAME=127.0.0.1', `PORT=${port}`,
     process.execPath, '--input-type=commonjs', '-e', BOOT_IDENTITY_BOOTSTRAP, String(account.uid), String(account.gid), server,
-  ], { cwd, env: { NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'ignore', 'ignore', 'pipe'] });
+  ], { cwd, env: {}, stdio: ['ignore', 'ignore', 'ignore', 'pipe'] });
   let childError = false, message = '', identity;
   child.once('error', () => { childError = true; });
   const closed = new Promise(resolve => child.once('close', resolve));

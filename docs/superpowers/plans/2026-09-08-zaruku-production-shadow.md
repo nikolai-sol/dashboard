@@ -30,7 +30,8 @@
 
 - `deploy/zaruku/production-shadow.json` — immutable loopback, identity, period, evidence, and no-cutover authority.
 - `deploy/zaruku/mysql-read-tables.json` — exact physical-table allowlist for the dedicated reader.
-- `scripts/zaruku-production-shadow-contract.mjs` — parses and validates both authorities and sanitizes evidence.
+- `scripts/zaruku-production-shadow-authority.mjs` — dependency-free strict JSON/key/path/freeze loaders and fixed control inventory, shipped byte-for-byte in the control bundle.
+- `scripts/zaruku-production-shadow-contract.mjs` — re-exports the pure loaders and retains the independent runtime-manifest/release cross-check and transitive SQL scanner; never shipped with TypeScript/npm dependencies.
 - `scripts/zaruku-production-shadow-contract.test.mjs` — contract and foreign-scope negative fixtures.
 - `scripts/zaruku-production-shadow-preflight.mjs` — read-only host/database/Nginx/process inspection.
 - `scripts/zaruku-production-shadow-preflight.test.mjs` — injected host-state and secret-redaction fixtures.
@@ -49,6 +50,15 @@
 - `scripts/run-zaruku-linux-fixtures.test.sh` — source tests for digest pinning, mounts, capabilities, and network isolation.
 - `scripts/run-zaruku-production-shadow.mjs` — orchestrates fixed preflight, existing deploy, live parity, and final evidence.
 - `scripts/run-zaruku-production-shadow.test.mjs` — state-machine tests proving no cutover or foreign-process action.
+- `scripts/zaruku-production-shadow-remote.mjs` and `.test.mjs` — fixed source-side transport; inspect-only bundle attestation precedes every staged worker action.
+- `scripts/zaruku-production-shadow-worker.mjs` and `.test.mjs` — concrete read-only host/secret/auth/DB checks, live process attestation, paired verifier, exact Zaruku stop and immutable evidence.
+- `scripts/install-zaruku-shadow-inventory.mjs` and `.test.mjs` — explicit install/check of the one source-pinned combined-dashboard SHA row; never called implicitly by orchestration.
+- `scripts/zaruku-shadow-coverage.mjs` and `.test.mjs` — exact 25-table schema and scoped metadata token; no business rows or unrelated global runs.
+- `scripts/zaruku-shadow-mysql.py`, `.test.py`, and `.linux.test.py` — fixed MySQL CLI bridge with attested binary FD, anonymous sealed credential FD, bounded output and deadline, plus real disposable Linux descriptor tests.
+- `scripts/zaruku-xlsx-semantic.py` and `.test.py` — bounded stdlib ZIP/XML semantics, stdin bytes and digest-only output; no JSZip/esbuild/runtime dependency borrowing.
+- `scripts/zaruku-shadow-evidence.test.mjs` — real disposable-filesystem inode, exclusive publication and immutable permission fixtures.
+- `scripts/zaruku-linux-fixture-policy.mjs` and `.test.mjs` — fixed build/verify/run image policy and negative authority/platform tests.
+- `scripts/runtime-boot-environment.test.mjs` and existing Linux boot fixture — exact environment regression and independently owned `env -i` boundary.
 - `scripts/predeploy-verify.sh` and `package.json` — run all new source-only fixtures; never run production apply actions.
 - `OPS.md` — exact preparation, apply, verification, failure, and cleanup commands.
 - `docs/superpowers/reports/2026-09-08-zaruku-production-shadow-readiness.md` — generated production evidence summary and final `GO`/`NO-GO` for a later cutover plan.
@@ -123,6 +133,7 @@ Create `deploy/zaruku/production-shadow.json` with this complete shape:
   "secretFile": "/var/www/.dashboard-zaruku-secrets/runtime.env",
   "authDescriptor": "/var/www/.dashboard-zaruku-shadow/auth.json",
   "otherRuntimeShas": "/var/www/.dashboard-zaruku-shadow/other-runtime-shas.tsv",
+  "otherRuntimeShaEntries": [{ "name": "combined-dashboard", "path": "/var/www/dashboard/.release-source-sha" }],
   "evidenceRoot": "/var/www/.dashboard-zaruku-shadow/evidence",
   "period": { "from": "2026-01-01", "to": "2026-08-31" },
   "httpTimeoutMs": 15000,
@@ -429,6 +440,18 @@ git commit -m "feat(zaruku): add fixed shadow provisioning boundary"
 
 ### Task 4: Orchestrate Deployment and Live Parity Without Cutover
 
+Approved integration clarifications (Task 4 source/control implementation only):
+
+- The production architecture is `linux/amd64`; both the immutable base child manifest and final image inspection must match it. The explicit image lock records platform as well as every pinned input and the full installed package-manifest digest. No image build occurs inside predeploy or orchestration.
+- Docker runtime remains network-none/read-only with read-only `/src`, only disposable tmpfs for fixture mutations, and only `SYS_PTRACE` added. The runner additionally tests the MySQL helper's real Linux memfd seals, bounded subprocess output/deadline, and binary identity using container-only fixture tools; no MySQL server is contacted.
+- A pure ESM authority module supplies all staged loaders. The source contract retains its independent TypeScript runtime-manifest cross-check and scanner. The fixed staged closure includes the verifier shell and Python helpers byte-for-byte, not opaque bundles or another runtime's `node_modules`.
+- The fixed `otherRuntimeShaEntries` authority contains exactly `combined-dashboard` → `/var/www/dashboard/.release-source-sha`. Its root-owned `0600` TSV is installed only by an explicit install/check action; the orchestrator pins its bytes and inode and rejects every extra/alternate row.
+- MySQL check credentials travel only through stdin and a sealed anonymous defaults FD. Preflight attests `/usr/bin/mysql`; execution pins that same binary inode/digest through an inherited executable FD. No credential reaches argv, environment, disk, diagnostics, or evidence. SQL probes are read-only except the existing zero-row denied UPDATE in one rollback-only connection.
+- Coverage tokens use only counts and maxima of reviewed identity/ingestion/timestamp/source-hash metadata from all 25 selected tables, with exact live `COLUMN_TYPE` checks. Dated facts and published Alice months use January–August; Wordstat current snapshot/coverage, seed/classification, and all seven SEO OS/intelligence tables are account-only, exactly as their manager read model. Account is fixed at `66624469`. A changed scoped token permits exactly one complete pair retry; unchanged, malformed, missing, or errored coverage cannot permit a retry. Global collector runs are never a trigger.
+- The owned `/usr/bin/env -i` boundary follows `setpriv`. In the pinned amd64 translation runtime, Node receives exactly `UV_USE_IO_URING=0` even after that boundary; native arm64 Node and amd64 Python do not. Official Node/libuv source only reads that variable. Immediately before application require, normalize only that exact key/value, reject any other value, and assert the exact three-key environment. Parent-only/unknown variables still fail.
+- The sealed Linux fixture proves `no_new_privs` and the full capability drop. Live PM2 attestation separately proves exact PID/UID/GID/supplementary groups/cwd/SHA and loopback ownership, rejecting nonzero effective/permitted/inheritable/ambient capabilities. It does not claim a live PM2 `NoNewPrivs` or bounding-capability guarantee and does not redesign PM2.
+- Full-gate maintenance approved during Task 4: inject `2026-09-02T12:00:00Z` through the existing optional clock in the one pre-existing Wordstat historical-availability test. Its September 1 fixture otherwise expires against wall-clock time. No runtime code, freshness threshold, or expectation changes.
+
 **Files:**
 - Create: `scripts/stage-zaruku-shadow-control.mjs`
 - Create: `scripts/stage-zaruku-shadow-control.test.mjs`
@@ -439,6 +462,9 @@ git commit -m "feat(zaruku): add fixed shadow provisioning boundary"
 - Create: `scripts/run-zaruku-linux-fixtures.test.sh`
 - Create: `scripts/run-zaruku-production-shadow.mjs`
 - Create: `scripts/run-zaruku-production-shadow.test.mjs`
+- Create: the pure authority, fixed remote/worker, inventory installer, coverage, MySQL, XLSX, evidence and environment fixture modules listed in File Structure above.
+- Modify: `scripts/runtime-release-remote.mjs`, `scripts/boot-zaruku-service.linux.test.mjs`, `scripts/zaruku-production-shadow-contract.mjs`, and prior authority/host/DB tests/imports for those approved integration boundaries.
+- Modify: `src/lib/zaruku-wordstat.test.ts` only for the approved deterministic test clock.
 - Modify: `scripts/verify-zaruku-shadow.sh`
 - Modify: `scripts/verify-zaruku-shadow.test.sh`
 - Modify: `package.json`

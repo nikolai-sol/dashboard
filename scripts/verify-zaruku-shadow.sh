@@ -13,6 +13,7 @@ COMBINED_URL="$1"
 ISOLATED_URL="$2"
 EVIDENCE_DIR="$3"
 AUTH_FD="${ZARUKU_SHADOW_AUTH_FD:-}"
+COVERAGE_FD="${ZARUKU_SHADOW_COVERAGE_FD:-}"
 ARTIFACT_ROOT="${ZARUKU_SHADOW_ARTIFACT_ROOT:-}"
 OTHER_SHAS_FILE="${ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE:-}"
 SNAPSHOT="${ZARUKU_SHADOW_CANONICAL_SNAPSHOT:-}"
@@ -20,7 +21,8 @@ FROM_DATE="${ZARUKU_SHADOW_FROM:-}"
 TO_DATE="${ZARUKU_SHADOW_TO:-}"
 HTTP_TIMEOUT_MS="${ZARUKU_SHADOW_HTTP_TIMEOUT_MS:-15000}"
 
-[[ "$AUTH_FD" =~ ^[0-9]+$ ]] || fail "ZARUKU_SHADOW_AUTH_FD must name an open descriptor containing auth JSON"
+[[ "$AUTH_FD" =~ ^[0-9]+$ && "$AUTH_FD" -ge 3 ]] || fail "ZARUKU_SHADOW_AUTH_FD must name an open descriptor containing auth JSON"
+[[ "$COVERAGE_FD" =~ ^[0-9]+$ && "$COVERAGE_FD" -ge 3 && "$COVERAGE_FD" != "$AUTH_FD" ]] || fail "canonical coverage descriptor is required"
 [[ -n "$ARTIFACT_ROOT" ]] || fail "ZARUKU_SHADOW_ARTIFACT_ROOT is required"
 [[ -n "$OTHER_SHAS_FILE" ]] || fail "ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE is required"
 [[ "$SNAPSHOT" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || fail "invalid or missing canonical snapshot label"
@@ -36,26 +38,15 @@ else
   mkdir -p "$EVIDENCE_DIR"
 fi
 
-TMP_DIR="$(mktemp -d)"
-cleanup() {
-  rm -rf "$TMP_DIR"
-}
-trap cleanup EXIT
-
-AUTH_FILE="$TMP_DIR/auth.json"
-if ! cat <&"$AUTH_FD" > "$AUTH_FILE"; then
-  fail "could not read auth descriptor"
-fi
-chmod 600 "$AUTH_FILE"
-
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 node --input-type=module - \
-  "$COMBINED_URL" "$ISOLATED_URL" "$EVIDENCE_DIR" "$AUTH_FILE" "$ARTIFACT_ROOT" \
-  "$OTHER_SHAS_FILE" "$SNAPSHOT" "$FROM_DATE" "$TO_DATE" "$HTTP_TIMEOUT_MS" <<'NODE'
+  "$COMBINED_URL" "$ISOLATED_URL" "$EVIDENCE_DIR" "$AUTH_FD" "$ARTIFACT_ROOT" \
+  "$OTHER_SHAS_FILE" "$SNAPSHOT" "$FROM_DATE" "$TO_DATE" "$HTTP_TIMEOUT_MS" "$COVERAGE_FD" "$SCRIPT_DIR/zaruku-xlsx-semantic.py" <<'NODE'
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import JSZip from "jszip";
+import { spawnSync } from "node:child_process";
 
 let failureReported = false;
 function reportSanitizedFailure() {
@@ -66,7 +57,7 @@ function reportSanitizedFailure() {
 process.on("uncaughtException", reportSanitizedFailure);
 process.on("unhandledRejection", reportSanitizedFailure);
 
-const [combinedArgument, isolatedArgument, evidenceArgument, authFile, artifactArgument, shaListArgument, snapshot, from, to, httpTimeoutArgument] = process.argv.slice(2);
+const [combinedArgument, isolatedArgument, evidenceArgument, authFdArgument, artifactArgument, shaListArgument, snapshot, from, to, httpTimeoutArgument, coverageFdArgument, xlsxHelper] = process.argv.slice(2);
 const httpTimeoutMs = Number(httpTimeoutArgument);
 const EXPECTED_ROUTES = [
   "/_not-found",
@@ -80,7 +71,6 @@ const VOLATILE_HEADERS = new Set(["connection", "content-length", "date", "keep-
 const VOLATILE_COMBINED_HEALTH_FIELDS = new Set(["db_latency_ms", "timestamp", "uptime_seconds"]);
 const FORBIDDEN_ARTIFACT_MARKERS = ["/dashboard/abbott", "/api/dashboard/abbott", "abbott-private", "abbott_private", "report_bd_private"];
 const MAX_EXPORT_BYTES = 64 * 1024 * 1024;
-const MAX_XLSX_ENTRIES = 4096;
 
 function fail(message) {
   throw new Error(message);
@@ -100,6 +90,33 @@ function stableJson(value) {
 
 function digest(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+function observeCoverage() {
+  const fd = Number(coverageFdArgument), stat = fs.fstatSync(fd);
+  // Production uses an inherited full-duplex descriptor. Regular files are useful
+  // only for deterministic local fixtures and cannot be selected by the fixed CLI.
+  if (!stat.isFile()) fs.writeSync(fd, 'observe\n');
+  const deadline = Date.now() + httpTimeoutMs, bytes = [], byte = Buffer.alloc(1);
+  while (Date.now() < deadline && bytes.length < 65536) {
+    let count;
+    try { count = fs.readSync(fd, byte, 0, 1, null); }
+    catch (error) { if (error.code !== 'EAGAIN') throw error; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5); continue; }
+    if (count !== 1) fail('canonical coverage descriptor ended early');
+    if (byte[0] === 10) {
+      const token = JSON.parse(Buffer.from(bytes));
+      if (!token || Object.keys(token).join(',') !== 'sha256' || !/^[a-f0-9]{64}$/.test(token.sha256)) fail('invalid canonical coverage inventory');
+      return token;
+    }
+    bytes.push(byte[0]);
+  }
+  fail('canonical coverage observation deadline or size exceeded');
+}
+
+function coverageAdvanced(before, after) {
+  // The fixed worker hashes only the exact schema-attested, account/period
+  // scoped metadata inventory. Unrelated collector activity cannot change it.
+  return before.sha256 !== after.sha256;
 }
 
 function pdfDelimiter(character) {
@@ -353,36 +370,15 @@ function normalizePdf(data, label) {
   return normalized;
 }
 
-function normalizeCoreProperties(data) {
-  const source = data.toString("utf8");
-  const normalizeElement = (name, input) => input.replace(
-    new RegExp(`(<(?:[A-Za-z_][\\w.-]*:)?${name}\\b[^>]*>)[\\s\\S]*?(</(?:[A-Za-z_][\\w.-]*:)?${name}\\s*>)`, "g"),
-    "$1__GENERATION_TIMESTAMP__$2",
-  );
-  return Buffer.from(normalizeElement("modified", normalizeElement("created", source)), "utf8");
-}
-
 async function normalizeXlsx(data, label) {
   if (data.length === 0 || data.length > MAX_EXPORT_BYTES || data[0] !== 0x50 || data[1] !== 0x4b) fail(`${label} is outside XLSX package bounds`);
-  let archive;
-  try {
-    archive = await JSZip.loadAsync(data, { checkCRC32: true, createFolders: false });
-  } catch {
-    fail(`${label} is not a valid XLSX ZIP package`);
-  }
-  const names = Object.keys(archive.files).filter((name) => !archive.files[name].dir).sort((a, b) => a.localeCompare(b, "en"));
-  if (names.length === 0 || names.length > MAX_XLSX_ENTRIES || !names.includes("[Content_Types].xml") || !names.includes("xl/workbook.xml")) fail(`${label} does not have the required XLSX package surface`);
-  let expandedBytes = 0;
-  const entries = [];
-  for (const name of names) {
-    if (name.startsWith("/") || name.includes("\\") || name.split("/").includes("..")) fail(`${label} contains an invalid XLSX entry name`);
-    const original = await archive.files[name].async("nodebuffer");
-    expandedBytes += original.length;
-    if (expandedBytes > MAX_EXPORT_BYTES) fail(`${label} exceeds expanded XLSX bounds`);
-    const normalized = name === "docProps/core.xml" ? normalizeCoreProperties(original) : original;
-    entries.push({ name, bytes: normalized.length, sha256: digest(normalized) });
-  }
-  return Buffer.from(stableJson(entries));
+  // Bytes remain in inherited pipes; no body, ZIP member or diagnostic reaches
+  // argv, a temporary file, or evidence. The attested helper uses stdlib only.
+  const result = spawnSync('/usr/bin/python3', ['-I', '-B', xlsxHelper], { input: data, env: {}, timeout: 15000, maxBuffer: 256, stdio: ['pipe', 'pipe', 'pipe'] });
+  if (result.error || result.signal || result.status !== 0 || result.stderr.length) fail(`${label} is not a valid XLSX package`);
+  let value; try { value = JSON.parse(result.stdout); } catch { fail('XLSX semantic result failed'); }
+  if (Object.keys(value).sort().join(',') !== 'entries,expandedBytes,sha256' || !Number.isSafeInteger(value.entries) || value.entries < 2 || value.entries > 4096 || !Number.isSafeInteger(value.expandedBytes) || value.expandedBytes < 1 || value.expandedBytes > MAX_EXPORT_BYTES || !/^[a-f0-9]{64}$/.test(value.sha256)) fail('XLSX semantic result failed');
+  return Buffer.from(stableJson(value));
 }
 
 async function normalizedBody(response, label, bodyType) {
@@ -415,8 +411,11 @@ function resolveLoopback(value, label) {
 }
 
 function loadAuth() {
-  regularFile(authFile, "auth descriptor copy");
-  const parsed = JSON.parse(fs.readFileSync(authFile, "utf8"));
+  const fd=Number(authFdArgument),bytes=Buffer.alloc(65537);let count=0;
+  try{while(count<bytes.length){const n=fs.readSync(fd,bytes,count,bytes.length-count,null);if(n===0)break;count+=n;}}
+  finally{fs.closeSync(fd);}
+  if(count>65536)fail('auth descriptor exceeds bounds');
+  let parsed;try{parsed=JSON.parse(bytes.subarray(0,count));}finally{bytes.fill(0);}
   if (!parsed || Object.keys(parsed).join(",") !== "headers" || !parsed.headers || Array.isArray(parsed.headers)) fail("auth descriptor must contain only a headers object");
   const entries = Object.entries(parsed.headers);
   if (entries.length === 0 || entries.length > 8) fail("auth descriptor must contain 1..8 headers");
@@ -571,8 +570,7 @@ const isolatedHealthBody = parseJson(isolatedHealth, "isolated health");
 assert.equal(combinedHealthBody.status, "ok", "combined runtime is not healthy");
 assert.equal(combinedHealthBody.database, "connected", "combined canonical database is not connected");
 assert.deepEqual(isolatedHealthBody, { ok: true, scope: "zaruku" }, "isolated runtime health/scope differs");
-const stableCombinedHealth = Object.fromEntries(Object.entries(combinedHealthBody).filter(([key]) => !VOLATILE_COMBINED_HEALTH_FIELDS.has(key)));
-endpoints.health = { combined: stableCombinedHealth, isolated: isolatedHealthBody, result: "pass" };
+endpoints.health = { combinedStatus: combinedHealth.status, isolatedStatus: isolatedHealth.status, result: "pass" };
 
 const [combinedUnauthorized, isolatedUnauthorized] = await Promise.all([request(combined, `/api/dashboard/zaruku${query}`), request(isolated, `/api/dashboard/zaruku${query}`)]);
 await compareResponses(combinedUnauthorized, isolatedUnauthorized, "unauthorized metadata", "json");
@@ -582,17 +580,36 @@ assert.equal(unauthorized.auth_required, true, "unauthorized response omitted au
 assert.equal(unauthorized.dashboard?.client_id, "zaruku", "unauthorized response omitted Zaruku metadata");
 endpoints.unauthorized = await summarize(combinedUnauthorized, isolatedUnauthorized, "json");
 
-const [combinedManager, isolatedManager] = await Promise.all([request(combined, `/api/dashboard/zaruku${query}`, authHeaders), request(isolated, `/api/dashboard/zaruku${query}`, authHeaders)]);
-await compareResponses(combinedManager, isolatedManager, "manager canonical payload", "json");
-assert.equal(combinedManager.status, 200, "manager request did not return 200");
-endpoints.manager = await summarize(combinedManager, isolatedManager, "json");
-
-for (const kind of ["pdf", "excel"]) {
-  const [left, right] = await Promise.all([request(combined, `/api/dashboard/zaruku/${kind}${query}`, authHeaders), request(isolated, `/api/dashboard/zaruku/${kind}${query}`, authHeaders)]);
-  const bodyType = kind === "pdf" ? "pdf" : "xlsx";
-  await compareResponses(left, right, `${kind.toUpperCase()} export`, bodyType);
-  assert.equal(left.status, 200, `${kind.toUpperCase()} export did not return 200`);
-  endpoints[kind] = await summarize(left, right, bodyType);
+const firstCoverage = observeCoverage();
+let pairedReadAttempts = 0, coverageAdvancedDuringFirstPair = false, stableCanonicalComparison = false;
+async function pairedManagerReads() {
+  const compared = {};
+  for (const kind of ['manager', 'pdf', 'excel']) {
+    const suffix = kind === 'manager' ? '' : `/${kind}`;
+    const [left, right] = await Promise.all([request(combined, `/api/dashboard/zaruku${suffix}${query}`, authHeaders), request(isolated, `/api/dashboard/zaruku${suffix}${query}`, authHeaders)]);
+    // Authentication/transport failures cannot be excused by a newer collection.
+    if (left.status !== 200 || right.status !== 200) fail('manager request did not return HTTP 200');
+    const bodyType = kind === 'manager' ? 'json' : kind === 'pdf' ? 'pdf' : 'xlsx';
+    try { await compareResponses(left, right, kind, bodyType); }
+    catch (error) { if (error.code !== 'ERR_ASSERTION') throw error; return null; }
+    compared[kind] = await summarize(left, right, bodyType);
+  }
+  return compared;
+}
+let compared;
+try {
+  pairedReadAttempts = 1;
+  compared = await pairedManagerReads();
+  if (!compared) {
+    const afterFirstPair = observeCoverage();
+    coverageAdvancedDuringFirstPair = coverageAdvanced(firstCoverage, afterFirstPair);
+    if (coverageAdvancedDuringFirstPair) { pairedReadAttempts = 2; compared = await pairedManagerReads(); }
+  }
+  stableCanonicalComparison = compared !== null && compared !== undefined;
+  if (!stableCanonicalComparison) fail('stable canonical comparison failed');
+  Object.assign(endpoints, compared);
+} finally {
+  fs.writeFileSync(path.join(evidence, 'canonical-comparison.json'), JSON.stringify({ pairedReadAttempts, coverageAdvancedDuringFirstPair, stableCanonicalComparison }) + '\n', { mode: 0o600 });
 }
 
 const after = snapshotShas(inventory);
@@ -610,6 +627,9 @@ const summary = {
   isolatedScope: artifact.scope,
   otherRuntimeShasUnchanged: true,
   requestAndBodyDeadlineMs: httpTimeoutMs,
+  pairedReadAttempts,
+  coverageAdvancedDuringFirstPair,
+  stableCanonicalComparison,
   normalizedVolatileValues: {
     headers: [...VOLATILE_HEADERS].sort(),
     combinedHealthFields: [...VOLATILE_COMBINED_HEALTH_FIELDS].sort(),

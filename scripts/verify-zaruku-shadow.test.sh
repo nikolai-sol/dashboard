@@ -95,6 +95,7 @@ const role = process.env.FIXTURE_ROLE;
 const requestLog = process.env.FIXTURE_REQUEST_LOG;
 const mutateSha = process.env.FIXTURE_MUTATE_SHA;
 const exportFixtures = process.env.FIXTURE_EXPORTS;
+let managerCalls = 0;
 const payload = {
   dashboard: {
     id: 28, client_id: "zaruku", client_name: "Zaruku", dashboard_name: "Dashboard",
@@ -130,6 +131,7 @@ function managerPayload() {
   if (fault === "canonical-coverage") value.zaruku_seo.canonical_coverage.metrika_breakdowns.complete_days -= 1;
   if (fault === "source-health") value.zaruku_seo.source_freshness[1].status = "connected";
   if (fault === "private-json") value.private_diagnostic = "PRIVATE_JSON_SENTINEL";
+  if (fault === "coverage-retry" && managerCalls === 1 || fault === "coverage-still-mismatch") value.dashboard.totals.visits += 1;
   return value;
 }
 
@@ -142,7 +144,7 @@ const server = http.createServer((req, res) => {
   fs.appendFileSync(requestLog, `${role}\t${req.method}\t${req.url}\n`);
   if (req.method !== "GET") return json(res, 405, { error: "read only" });
   if (req.url === "/api/health") {
-    if (role === "combined") return json(res, 200, { status: "ok", timestamp: "2026-09-05T12:00:01Z", database: "connected", db_latency_ms: 7, uptime_seconds: 100 }, { "server-timing": "db;dur=7" });
+    if (role === "combined") return json(res, 200, { status: "ok", timestamp: "2026-09-05T12:00:01Z", database: "connected", db_latency_ms: 7, uptime_seconds: 100, ...(fault === 'private-health' ? { diagnostic: 'PRIVATE_HEALTH_SENTINEL' } : {}) }, { "server-timing": "db;dur=7" });
     return json(res, 200, { ok: true, scope: "zaruku" }, { "server-timing": "total;dur=2", ...(fault === "health-header" ? { "cache-control": "public, max-age=60" } : {}) });
   }
   const url = new URL(req.url, "http://fixture");
@@ -157,6 +159,8 @@ const server = http.createServer((req, res) => {
       const next = fault === "sha-rewrite" ? fs.readFileSync(mutateSha) : `${"e".repeat(40)}\n`;
       fs.writeFileSync(mutateSha, next);
     }
+    managerCalls += 1;
+    if (fault === 'manager-auth') return json(res, 401, { error: 'PRIVATE_AUTH_SENTINEL' });
     if (role === "isolated" && fault === "slow-body") {
       res.writeHead(200, { "content-type": "application/json", "cache-control": "private, no-store" });
       res.flushHeaders();
@@ -248,22 +252,29 @@ run_case() {
   fi
   local mutate_path=""
   [[ "$fault" == "sha-mutation" || "$fault" == "sha-rewrite" ]] && mutate_path="$abbott_sha"
-  start_server combined "" "$case_dir/combined.port" "$request_log"
+  start_server combined "$([[ "$fault" == private-health ]] && printf private-health || true)" "$case_dir/combined.port" "$request_log"
   start_server isolated "$fault" "$case_dir/isolated.port" "$request_log" "$mutate_path"
   local combined_url="http://127.0.0.1:$(<"$case_dir/combined.port")"
   local isolated_url="http://127.0.0.1:$(<"$case_dir/isolated.port")"
   local request_timeout=""
   [[ "$fault" == "slow-body" ]] && request_timeout="200"
   local started_seconds=$SECONDS
+  node - "$case_dir/coverage.jsonl" "$fault" <<'NODE'
+const fs = require('node:fs'), [file, fault] = process.argv.slice(2);
+const before = fault === 'coverage-malformed' ? {sha256:'PRIVATE_COVERAGE_SENTINEL'} : {sha256:'a'.repeat(64)};
+const after = {sha256:fault.startsWith('coverage-')?'b'.repeat(64):'a'.repeat(64)};
+fs.writeFileSync(file, JSON.stringify(before) + '\n' + JSON.stringify(after) + '\n');
+NODE
   set +e
   ZARUKU_SHADOW_AUTH_FD=9 \
+    ZARUKU_SHADOW_COVERAGE_FD=8 \
     ZARUKU_SHADOW_HTTP_TIMEOUT_MS="$request_timeout" \
     ZARUKU_SHADOW_ARTIFACT_ROOT="$artifact" \
     ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE="$case_dir/other-runtimes.tsv" \
     ZARUKU_SHADOW_CANONICAL_SNAPSHOT="fixture-2026-07" \
     ZARUKU_SHADOW_FROM="2026-01-01" ZARUKU_SHADOW_TO="2026-07-31" \
     bash "$VERIFY_SCRIPT" "$combined_url" "$isolated_url" "$evidence" \
-    9<"$case_dir/auth.json" >"$case_dir/stdout.log" 2>"$case_dir/stderr.log"
+    9<"$case_dir/auth.json" 8<"$case_dir/coverage.jsonl" >"$case_dir/stdout.log" 2>"$case_dir/stderr.log"
   local status=$?
   set -e
   local elapsed_seconds=$((SECONDS - started_seconds))
@@ -277,7 +288,7 @@ run_case() {
   if [[ "$expected" == "fail" && $status -eq 0 ]]; then
     fail "$name unexpectedly passed"
   fi
-  for marker in manager-secret PRIVATE_JSON_SENTINEL PRIVATE_HEADER_SENTINEL DESCRIPTOR_SECRET_SENTINEL; do
+  for marker in manager-secret PRIVATE_JSON_SENTINEL PRIVATE_HEADER_SENTINEL DESCRIPTOR_SECRET_SENTINEL PRIVATE_HEALTH_SENTINEL PRIVATE_AUTH_SENTINEL; do
     if grep -Fq "$marker" "$case_dir/stdout.log" "$case_dir/stderr.log"; then
       fail "$name leaked sensitive material into process output"
     fi
@@ -289,19 +300,26 @@ run_case() {
     for filename in summary.json endpoint-parity.json artifact-attestation.json zaruku-routes.txt runtime-shas.before.tsv runtime-shas.after.tsv; do
       [[ -s "$evidence/$filename" ]] || fail "$name omitted $filename"
     done
-    node - "$evidence/summary.json" <<'NODE'
+    node - "$evidence/summary.json" "$fault" <<'NODE'
 const summary = JSON.parse(require("node:fs").readFileSync(process.argv[2], "utf8"));
 if (summary.result !== "pass" || summary.readOnly !== true || summary.endpointsPassed !== 5 || summary.sourceSnapshot !== "fixture-2026-07") process.exit(1);
+const retry = process.argv[3] === 'coverage-retry';
+if (summary.pairedReadAttempts !== (retry ? 2 : 1) || summary.coverageAdvancedDuringFirstPair !== retry || summary.stableCanonicalComparison !== true) throw new Error('Missing bounded canonical comparison evidence');
 NODE
     grep -Fqx '/api/dashboard/zaruku' "$evidence/zaruku-routes.txt" || fail "$name omitted route inventory"
     if grep -R -Fq 'manager-secret' "$evidence"; then fail "$name leaked auth material into evidence"; fi
     if grep -Ev $'^([^\t]+)\tGET\t/' "$request_log" | grep -q .; then fail "$name issued a non-GET request"; fi
   fi
+  if [[ "$fault" == coverage-retry || "$fault" == coverage-still-mismatch ]]; then
+    [[ $(grep -c $'^isolated\tGET\t/api/dashboard/zaruku?' "$request_log") -eq 3 ]] || fail "$name did not make exactly two manager attempts"
+  fi
 }
 
 run_case matching "" pass
-for fault in historical-total direct-addition alice-month wordstat-coverage canonical-coverage source-health auth pdf-export excel-export pdf-non-generation-metadata pdf-visible-trailer-id health-header sha-mutation sha-rewrite abbott-artifact private-json private-header malformed-auth slow-body; do
+run_case coverage-retry coverage-retry pass
+run_case private-health private-health pass
+for fault in historical-total direct-addition alice-month wordstat-coverage canonical-coverage source-health auth pdf-export excel-export pdf-non-generation-metadata pdf-visible-trailer-id health-header sha-mutation sha-rewrite abbott-artifact private-json private-header malformed-auth slow-body coverage-still-mismatch manager-auth coverage-malformed; do
   run_case "$fault" "$fault" fail
 done
 
-echo "zaruku shadow verification fixture tests passed (1 positive, 19 negative)"
+echo "zaruku shadow verification fixture tests passed (3 positive, 22 negative)"

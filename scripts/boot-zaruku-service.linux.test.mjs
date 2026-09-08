@@ -30,7 +30,11 @@ http.createServer((req,res) => {res.setHeader('content-type','application/json')
 fs.writeFileSync(path.join(artifact, 'apps/zaruku/server.js'), server, { mode: 0o644 });
 
 test('real boot drops all privilege before app code and cannot mutate authority, sibling or artifact', async () => {
-  const identity = await bootRuntimeAsService(artifact);
+  process.env.PARENT_SENTINEL = 'PRIVATE_PARENT_ONLY';
+  process.env.UV_USE_IO_URING = 'PARENT_ONLY_VALUE';
+  let identity;
+  try { identity = await bootRuntimeAsService(artifact); }
+  finally { delete process.env.PARENT_SENTINEL; delete process.env.UV_USE_IO_URING; }
   const data = JSON.parse(fs.readFileSync(proof));
   assert.deepEqual([data.uid, data.euid, data.gid, data.egid], [12345, 12345, 12345, 12345]);
   assert.ok(data.groups.every(group => group === 12345));
@@ -45,13 +49,25 @@ test('real boot drops all privilege before app code and cannot mutate authority,
   assert.equal(fs.readFileSync(path.join(control, 'manifest'), 'utf8'), 'protected');
 });
 
+test('missing or unsafe independent env boundary fails before application execution', async () => {
+  const original = '/usr/bin/env', saved = '/usr/bin/env-fixture-original';
+  fs.renameSync(original, saved);
+  fs.rmSync(proof, { force: true });
+  try {
+    await assert.rejects(bootRuntimeAsService(artifact), /env|ENOENT|unsafe/i);
+    fs.symlinkSync(saved, original);
+    await assert.rejects(bootRuntimeAsService(artifact), /unsafe|owned|link/i);
+    assert.ok(!fs.existsSync(proof));
+  } finally { fs.rmSync(original, { force: true }); fs.renameSync(saved, original); }
+});
+
 test('missing or impersonating setpriv fails before application execution', async () => {
   const original = '/usr/bin/setpriv', saved = '/usr/bin/setpriv-task6-original';
   fs.renameSync(original, saved);
   try {
     await assert.rejects(bootRuntimeAsService(artifact), /privilege|setpriv|ENOENT/i);
     fs.writeFileSync(original, '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n', { mode: 0o755 });
-    fs.unlinkSync(proof);
+    fs.rmSync(proof, { force: true });
     await assert.rejects(bootRuntimeAsService(artifact), /identity|boot/i);
     assert.ok(!fs.existsSync(proof));
   } finally { fs.rmSync(original, { force: true }); fs.renameSync(saved, original); }
