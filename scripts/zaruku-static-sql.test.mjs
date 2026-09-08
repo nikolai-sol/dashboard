@@ -319,6 +319,9 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'const queries:string[]=[]; let alias:string[]=[]; alias=queries; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'const queries:string[]=[]; const [alias]=[queries]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'const queries:string[]=[]; const {alias}={alias:queries}; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const source=[queries]; const [alias]=source; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const [alias]=true?[queries]:[ui]; alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const {alias}=true?{alias:queries}:{alias:ui}; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=true?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; declare function runtimeSql():string; const queries:string[]=[]; const alias=flag?queries:[]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -440,6 +443,14 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     function noop(value:string[]){}
     const callback=false?mutate:noop;
     [safe].map(callback);
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    const alias=(false?[safe]:[ui])[0];
+    alias.push("label");
     export const sql=safe.join("");
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
 });

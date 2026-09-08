@@ -460,43 +460,51 @@ export function createStaticEvaluator(sourceFile) {
       }
       const patternItems = ts.isArrayBindingPattern(pattern) || ts.isArrayLiteralExpression(pattern)
         ? pattern.elements : null;
-      if (patternItems && ts.isArrayLiteralExpression(value)) {
-        patternItems.forEach((item, index) => {
-          if (!item || ts.isOmittedExpression(item) || !value.elements[index]) return;
-          const target = ts.isBindingElement(item) ? item.name : item;
-          linkPattern(target, value.elements[index]);
-        });
+      if (patternItems) {
+        for (const container of valueExpressions(value)) {
+          const resolved = unwrapExpression(container);
+          if (!ts.isArrayLiteralExpression(resolved)) continue;
+          patternItems.forEach((item, index) => {
+            if (!item || ts.isOmittedExpression(item) || !resolved.elements[index]) return;
+            const target = ts.isBindingElement(item) ? item.name : item;
+            linkPattern(target, resolved.elements[index]);
+          });
+        }
         return;
       }
       const patternItemsByKey = ts.isObjectBindingPattern(pattern) || ts.isObjectLiteralExpression(pattern)
         ? pattern.elements ?? pattern.properties : null;
-      if (patternItemsByKey && ts.isObjectLiteralExpression(value)) {
-        const sourceByKey = new Map();
-        for (const property of value.properties) {
-          if (ts.isPropertyAssignment(property) &&
-              (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
-            sourceByKey.set(property.name.text, property.initializer);
-          } else if (ts.isShorthandPropertyAssignment(property)) {
-            sourceByKey.set(property.name.text, property.name);
+      if (patternItemsByKey) {
+        for (const container of valueExpressions(value)) {
+          const resolved = unwrapExpression(container);
+          if (!ts.isObjectLiteralExpression(resolved)) continue;
+          const sourceByKey = new Map();
+          for (const property of resolved.properties) {
+            if (ts.isPropertyAssignment(property) &&
+                (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))) {
+              sourceByKey.set(property.name.text, property.initializer);
+            } else if (ts.isShorthandPropertyAssignment(property)) {
+              sourceByKey.set(property.name.text, property.name);
+            }
           }
-        }
-        for (const item of patternItemsByKey) {
-          if (ts.isBindingElement(item)) {
-            if (item.dotDotDotToken) {
-              for (const source of sourceByKey.values()) linkPattern(item.name, source);
-              continue;
+          for (const item of patternItemsByKey) {
+            if (ts.isBindingElement(item)) {
+              if (item.dotDotDotToken) {
+                for (const source of sourceByKey.values()) linkPattern(item.name, source);
+                continue;
+              }
+              const keyNode = item.propertyName ?? item.name;
+              if ((ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode)) &&
+                  sourceByKey.has(keyNode.text)) {
+                linkPattern(item.name, sourceByKey.get(keyNode.text));
+              }
+            } else if (ts.isShorthandPropertyAssignment(item) && sourceByKey.has(item.name.text)) {
+              linkPattern(item.name, sourceByKey.get(item.name.text));
+            } else if (ts.isPropertyAssignment(item) &&
+                (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
+                sourceByKey.has(item.name.text)) {
+              linkPattern(item.initializer, sourceByKey.get(item.name.text));
             }
-            const keyNode = item.propertyName ?? item.name;
-            if ((ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode)) &&
-                sourceByKey.has(keyNode.text)) {
-              linkPattern(item.name, sourceByKey.get(keyNode.text));
-            }
-          } else if (ts.isShorthandPropertyAssignment(item) && sourceByKey.has(item.name.text)) {
-            linkPattern(item.name, sourceByKey.get(item.name.text));
-          } else if (ts.isPropertyAssignment(item) &&
-              (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
-              sourceByKey.has(item.name.text)) {
-            linkPattern(item.initializer, sourceByKey.get(item.name.text));
           }
         }
       }
@@ -528,20 +536,30 @@ export function createStaticEvaluator(sourceFile) {
         }));
       }
       if (ts.isConditionalExpression(current)) {
-        return [
-          ...valueExpressions(current.whenTrue, next({})),
-          ...valueExpressions(current.whenFalse, next({})),
-        ];
+        const condition = staticPrimitiveValue(current.condition);
+        const branches = condition.known
+          ? [condition.value ? current.whenTrue : current.whenFalse]
+          : [current.whenTrue, current.whenFalse];
+        return branches.flatMap(branch => valueExpressions(branch, next({})));
       }
       if (ts.isBinaryExpression(current) && [
         ts.SyntaxKind.AmpersandAmpersandToken,
         ts.SyntaxKind.BarBarToken,
         ts.SyntaxKind.QuestionQuestionToken,
       ].includes(current.operatorToken.kind)) {
-        return [
-          ...valueExpressions(current.left, next({})),
-          ...valueExpressions(current.right, next({})),
-        ];
+        const left = staticPrimitiveValue(current.left);
+        if (left.known) {
+          if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+            return valueExpressions(left.value ? current.right : current.left, next({}));
+          }
+          if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+            return valueExpressions(left.value ? current.left : current.right, next({}));
+          }
+          return valueExpressions(left.value !== null && left.value !== undefined
+            ? current.left : current.right, next({}));
+        }
+        return [current.left, current.right].flatMap(branch =>
+          valueExpressions(branch, next({})));
       }
       if (ts.isCallExpression(current)) {
         if (state.calls.has(current)) return [];
