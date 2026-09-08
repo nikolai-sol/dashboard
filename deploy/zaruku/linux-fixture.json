@@ -1,0 +1,13 @@
+{
+  "base": "docker.io/library/node@sha256:4d676821dff059fd00d277ee4261ef34ea712317fed0737c03941481b5760c96",
+  "platform": "linux/amd64",
+  "snapshot": "20260825T000000Z",
+  "packages": {
+    "python3": "3.11.2-1+b1",
+    "util-linux": "2.38.1-5+deb12u3",
+    "passwd": "1:4.13+dfsg1-1+deb12u2"
+  },
+  "dockerfileSha256": "639d06c96a31fa9c1092957a5cf9ff7f621907dc624e0987fdc62a21f1e9a61e",
+  "packageManifestSha256": null,
+  "imageId": null
+}
