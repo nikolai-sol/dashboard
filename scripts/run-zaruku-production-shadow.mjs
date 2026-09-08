@@ -56,6 +56,10 @@ export async function runProductionShadow(adapter) {
     await check('managerAuth', 'manager auth descriptor check', 6);
     await check('fullPredeploy', 'full predeploy', 7);
     if ((await check('releaseAuthority', 'release authority', 8)).sourceSha !== source.sha || !isDeepStrictEqual(await adapter.source(), source)) fail('reviewed source changed');
+    // Confirm the allocation receipt before a deployment can need durable NO-GO.
+    // Losing this response is a pre-deploy refusal, never guessed inode recovery.
+    try { if ((await adapter.allocateEvidence())?.passed !== true) fail('evidence allocation'); }
+    catch { fail('evidence allocation'); }
     // Once deployment starts, failure is conservatively treated as a possible live process.
     deployed = true;
     if ((await check('deploy', 'deploy Zaruku', 9)).sourceSha !== source.sha) fail('deployed source authority');

@@ -13,7 +13,7 @@ import { observeCanonicalCoverage } from './zaruku-shadow-coverage.mjs';
 
 const ROOT=path.resolve(import.meta.dirname,'..');
 const AUTHORITY=loadShadowAuthority(path.join(ROOT,'deploy/zaruku/production-shadow.json'));
-const ACTIONS=Object.freeze(['preflight','hostBoundary','dbBoundary','runtimeSecrets','managerAuth','attest','parity','recheck','cleanup','stop','writeDecision']);
+const ACTIONS=Object.freeze(['preflight','hostBoundary','dbBoundary','runtimeSecrets','managerAuth','allocateEvidence','attest','parity','recheck','cleanup','stop','writeDecision']);
 const STEP_NAMES=['preflight-read-only','linux-build-helper-fixture','linux-privilege-drop-fixture','host-boundary-check','db-boundary-check','runtime-secret-check','manager-auth-descriptor-check','full-predeploy','release-authority-check','deploy-zaruku','process-and-listener-attestation','same-snapshot-parity','foreign-sha-and-nginx-recheck','write-final-decision'];
 const FAILURES=['runtime baseline','foreign runtime authority','combined runtime authority','read-only preflight','Linux build-helper fixture','Linux privilege fixture','host boundary','DB boundary','DB table boundary','runtime secret check','manager auth descriptor check','full predeploy','release authority','reviewed source changed','deploy Zaruku','deployed source authority','process and listener attestation','same-snapshot parity','bounded parity comparison','prerequisite operation','foreign runtime or Nginx changed','foreign SHA and Nginx recheck','cleanup failed','Zaruku stop failed'];
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -176,6 +176,9 @@ function contextCheck(request) {
 }
 
 function safeEvidenceDirectory(request,create=false,io=fs) {
+  if(!request||!/^[a-f0-9]{40}$/.test(request.sourceSha)||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(request.runId)||!request.context)refuse('evidence');
+  const identity=request.context.evidenceIdentity;
+  if(identity!==undefined&&(!identity||!same(Object.keys(identity).sort(),['dev','ino'])||!/^\d+$/.test(identity.dev)||!/^\d+$/.test(identity.ino)))refuse('evidence');
   const directory=path.join(AUTHORITY.evidenceRoot,`${request.sourceSha}-${request.runId}`);
   safeAncestors(directory,io);
   let stat=io.lstatSync(directory,{throwIfNoEntry:false});
@@ -185,6 +188,26 @@ function safeEvidenceDirectory(request,create=false,io=fs) {
   return directory;
 }
 
+/** A separate pre-deploy action owns allocation; no receipt is inferred later. */
+export function allocateEvidence(request,io=fs) {
+  if(request.context?.evidenceIdentity!==undefined)refuse('evidence');
+  const directory=safeEvidenceDirectory(request,true,io),before=snapshot(io.lstatSync(directory));
+  const fd=io.openSync(directory,io.constants.O_RDONLY|io.constants.O_DIRECTORY|io.constants.O_NOFOLLOW);
+  try {
+    if(!same(before,snapshot(io.fstatSync(fd))))refuse('evidence');
+    io.fsyncSync(fd);
+    const parent=io.openSync(AUTHORITY.evidenceRoot,io.constants.O_RDONLY|io.constants.O_DIRECTORY|io.constants.O_NOFOLLOW);
+    try{io.fsyncSync(parent);}finally{io.closeSync(parent);}
+    if(!same(before,snapshot(io.lstatSync(directory))))refuse('evidence');
+    return {passed:true,sourceSha:request.sourceSha,runId:request.runId,evidenceIdentity:{dev:before.dev,ino:before.ino}};
+  } finally {io.closeSync(fd);}
+}
+
+export function requireEvidenceDirectory(request,io=fs) {
+  if(!request.context?.evidenceIdentity)refuse('evidence');
+  return safeEvidenceDirectory(request,false,io);
+}
+
 const EVIDENCE_FILES=['artifact-attestation.json','canonical-comparison.json','endpoint-parity.json','runtime-shas.after.tsv','runtime-shas.before.tsv','summary.json','zaruku-routes.txt'];
 export function terminateVerifier(child,kill=process.kill) {
   if(!Number.isSafeInteger(child.pid)||child.pid<=0)return;
@@ -192,9 +215,9 @@ export function terminateVerifier(child,kill=process.kill) {
 }
 
 async function pairedParity(request) {
+  const directory=requireEvidenceDirectory(request);
   contextCheck(request);
   const auth=readProtected(AUTHORITY.authDescriptor,0o600);validateAuthDescriptor(auth.bytes);
-  const directory=safeEvidenceDirectory(request,true),stat=fs.lstatSync(directory),evidenceIdentity={dev:String(stat.dev),ino:String(stat.ino)};
   if(fs.readdirSync(directory).length)refuse('evidence');
   const fd=fs.openSync(AUTHORITY.authDescriptor,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
   if(!same(snapshot(fs.fstatSync(fd)),auth.identity)){fs.closeSync(fd);refuse();}
@@ -227,12 +250,12 @@ async function pairedParity(request) {
     if(same(Object.keys(value).sort(),Object.keys(comparison).sort())&&[1,2].includes(value.pairedReadAttempts)&&value.coverageAdvancedDuringFirstPair===(value.pairedReadAttempts===2)&&typeof value.stableCanonicalComparison==='boolean')comparison=value;
     else invalid=true;
   }
-  return {passed:!invalid&&status===0&&comparison.stableCanonicalComparison,...comparison,evidenceIdentity};
+  return {passed:!invalid&&status===0&&comparison.stableCanonicalComparison,...comparison};
 }
 
 export function publishDecision(request,io=fs) {
   const value=sanitizeDecision(request.decision,request.sourceSha);
-  const directory=safeEvidenceDirectory(request,true,io),before=snapshot(io.lstatSync(directory));
+  const directory=requireEvidenceDirectory(request,io),before=snapshot(io.lstatSync(directory));
   const files=io.readdirSync(directory);
   if(files.some(name=>!EVIDENCE_FILES.includes(name)))refuse('evidence');
   if(value.decision==='GO'&&EVIDENCE_FILES.some(name=>!files.includes(name)))refuse('evidence');
@@ -270,6 +293,7 @@ function createWorkerAdapter() {
     async dbBoundary(request){contextCheck(request);const secret=readZarukuSecrets(),{admin,reader}=createMysqlAdapters(request.context.mysqlIdentity,secret.ZARUKU_DB_PASSWORD);const result=await verifyReaderBoundary(admin,reader);return {passed:true,tableSelectCount:result.tableSelectCount};},
     runtimeSecrets(request){contextCheck(request);readZarukuSecrets();return {passed:true};},
     managerAuth(request){contextCheck(request);const file=readProtected(AUTHORITY.authDescriptor,0o600);try{validateAuthDescriptor(file.bytes);return {passed:true};}finally{file.bytes.fill(0);}},
+    allocateEvidence:request=>{contextCheck(request);return allocateEvidence(request);},
     attest(request){contextCheck(request);const record=inspectActiveRuntime();if(!record)refuse();const pid=runtimePid('dashboard-zaruku'),host=createHostAdapter(),account=host.serviceIdentity();return attestLiveProcess({processes:[{name:'dashboard-zaruku',pid}],account,status:fs.readFileSync(`/proc/${pid}/status`,'utf8'),cwd:fs.realpathSync(`/proc/${pid}/cwd`),listeners:createReadOnlyPreflightAdapter().listeners(),sourceSha:record.sourceSha},request.sourceSha);},
     parity:pairedParity,
     recheck(request){contextCheck(request);return baseline();},

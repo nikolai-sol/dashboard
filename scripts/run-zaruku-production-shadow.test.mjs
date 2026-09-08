@@ -22,6 +22,7 @@ function fixture(overrides = {}) {
     managerAuth: async () => ({ passed: true }),
     fullPredeploy: async () => ({ passed: true }),
     releaseAuthority: async () => ({ passed: true, sourceSha: sha }),
+    allocateEvidence: async () => ({ passed: true }),
     deploy: async () => { adapter.deployCalls++; return { passed: true, sourceSha: sha }; },
     attest: async () => ({ passed: true, sourceSha: sha, pid:123,cwd:'/var/www/dashboard-zaruku/apps/zaruku',uid: 1001, gid: 1001, groups: [], capabilities: '0', noNewPrivileges: true, loopbackOnly: true, port: 3002, process: 'dashboard-zaruku' }),
     parity: async () => ({ passed: overrides.parity !== 'mismatch', pairedReadAttempts: 1, coverageAdvancedDuringFirstPair: false, stableCanonicalComparison: overrides.parity !== 'mismatch' }),
@@ -30,7 +31,7 @@ function fixture(overrides = {}) {
     cleanup: async () => ({ passed: true }),
     writeDecision: async evidence => { written.push(evidence); return { path: `/var/www/.dashboard-zaruku-shadow/evidence/${sha}-00000000-0000-4000-8000-000000000000`, immutable: true }; },
   };
-  for (const method of ['preflight', 'linuxBuildHelperFixture', 'linuxPrivilegeFixture', 'hostBoundary', 'dbBoundary', 'runtimeSecrets', 'managerAuth', 'fullPredeploy', 'releaseAuthority', 'deploy', 'attest', 'parity', 'recheck', 'cleanup']) {
+  for (const method of ['preflight', 'linuxBuildHelperFixture', 'linuxPrivilegeFixture', 'hostBoundary', 'dbBoundary', 'runtimeSecrets', 'managerAuth', 'fullPredeploy', 'releaseAuthority', 'allocateEvidence', 'deploy', 'attest', 'parity', 'recheck', 'cleanup']) {
     const original = adapter[method]; adapter[method] = async () => { calls.push(method); return original(); };
   }
   return adapter;
@@ -40,6 +41,13 @@ test('orchestrator cannot deploy before every prerequisite passes', async () => 
   const adapter = fixture({ linuxPrivilegeFixture: 'not-run' });
   await assert.rejects(() => runProductionShadow(adapter), /Linux privilege fixture/);
   assert.equal(adapter.deployCalls, 0); assert.equal(adapter.nginxCalls, 0);
+});
+
+test('allocation receipt must be confirmed before any deployment or parity',async()=>{
+  const adapter=fixture();adapter.allocateEvidence=async()=>{throw new Error('PRIVATE_SENTINEL lost allocation response');};
+  await assert.rejects(()=>runProductionShadow(adapter),error=>error.message==='Zaruku production shadow failed: evidence allocation');
+  assert.equal(adapter.deployCalls,0);assert.deepEqual(adapter.stoppedProcesses,[]);
+  assert.ok(!adapter.calls.includes('parity'));
 });
 
 test('fixed successful state machine attests immutable evidence without cutover', async () => {

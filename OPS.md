@@ -382,6 +382,14 @@ setpriv/no-new-privileges contract; live PM2 checks do not claim an unimplemente
 or `NoNewPrivs` guarantee. The exact amd64 `UV_USE_IO_URING=0` translation marker is normalized only
 immediately before fixture application code; all other unexpected environment values still fail.
 
+Before deployment, the orchestrator separately allocates and fsyncs its exact evidence directory
+and confirms the source-SHA/run-ID/device/inode receipt. Parity cannot create or recover a directory
+and cannot replace this stored receipt. A later credential/context failure or lost parity response
+therefore still permits sanitized immutable `NO-GO` publication. Missing or replaced allocation
+identity fails closed; a lost allocation response aborts before deployment. Task 5 must additionally
+freeze and verify exact equality of remote `refs/heads/release/zaruku` to the reviewed candidate;
+an ancestry-only check does not establish that freeze.
+
 ## Deploy
 
 ### Одноразовый bootstrap метаданных для первого guarded rollout

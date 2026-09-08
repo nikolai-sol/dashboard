@@ -450,6 +450,7 @@ Approved integration clarifications (Task 4 source/control implementation only):
 - Coverage tokens use only counts and maxima of reviewed identity/ingestion/timestamp/source-hash metadata from all 25 selected tables, with exact live `COLUMN_TYPE` checks. Dated facts and published Alice months use January–August; Wordstat current snapshot/coverage, seed/classification, and all seven SEO OS/intelligence tables are account-only, exactly as their manager read model. Account is fixed at `66624469`. A changed scoped token permits exactly one complete pair retry; unchanged, malformed, missing, or errored coverage cannot permit a retry. Global collector runs are never a trigger.
 - The owned `/usr/bin/env -i` boundary follows `setpriv`. In the pinned amd64 translation runtime, Node receives exactly `UV_USE_IO_URING=0` even after that boundary; native arm64 Node and amd64 Python do not. Official Node/libuv source only reads that variable. Immediately before application require, normalize only that exact key/value, reject any other value, and assert the exact three-key environment. Parent-only/unknown variables still fail.
 - The sealed Linux fixture proves `no_new_privs` and the full capability drop. Live PM2 attestation separately proves exact PID/UID/GID/supplementary groups/cwd/SHA and loopback ownership, rejecting nonzero effective/permitted/inheritable/ambient capabilities. It does not claim a live PM2 `NoNewPrivs` or bounding-capability guarantee and does not redesign PM2.
+- Task 4 review correction: after prerequisite/release-source checks and before deployment, a separate fixed worker action exclusively allocates/fsyncs the evidence directory and returns its exact source-SHA/run-ID/device/inode receipt. The source adapter must retain that receipt before deployment. Parity and final publication require/revalidate it and never allocate or recover an existing directory; a parity error or lost reply cannot erase or replace the stored receipt. Loss of the allocation reply is a pre-deploy refusal. The public 14-step sequence remains unchanged; allocation is an internal guard before `deploy-zaruku`.
 - Full-gate maintenance approved during Task 4: inject `2026-09-02T12:00:00Z` through the existing optional clock in the one pre-existing Wordstat historical-availability test. Its September 1 fixture otherwise expires against wall-clock time. No runtime code, freshness threshold, or expectation changes.
 
 **Files:**
@@ -672,6 +673,13 @@ git status --short
 Expected: exit `0`, clean worktree, no new warnings, and a clean re-review.
 
 - [ ] **Step 5: Freeze the release authority without overwriting an unknown ref**
+
+Mandatory cross-task follow-up from Task 4 review: enforce exact equality of remote
+`refs/heads/release/zaruku` to the frozen candidate SHA before production provisioning/orchestration.
+The current Task 4 ancestry check is insufficient to prove frozen authority: a different ancestor
+must fail this Task 5 gate. Add a regression for that case and retain refusal to overwrite an
+unknown/different existing ref. This is a Task 5 acceptance requirement, not a Task 4 blocker; Task 4
+does not update the release ref or broaden its current source-only change scope.
 
 ```bash
 git fetch origin

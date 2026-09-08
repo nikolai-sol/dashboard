@@ -5,7 +5,7 @@ import { loadShadowAuthority,loadMysqlTableAuthority } from './zaruku-production
 import { CONTROL_FILES,prepareReviewedControl,readControlSource,receiveControlPayload,reviewedSource } from './stage-zaruku-shadow-control.mjs';
 
 const ROOT=path.resolve(import.meta.dirname,'..');
-const ACTIONS=['preflight','hostBoundary','dbBoundary','runtimeSecrets','managerAuth','attest','parity','recheck','cleanup','stop','writeDecision'];
+const ACTIONS=['preflight','hostBoundary','dbBoundary','runtimeSecrets','managerAuth','allocateEvidence','attest','parity','recheck','cleanup','stop','writeDecision'];
 const fail=()=>{throw new Error('Zaruku fixed shadow adapter failed');};
 const quote=value=>`'${value.replaceAll("'","'\\''")}'`;
 
@@ -31,7 +31,7 @@ export function createProductionAdapter(options={}) {
   };
   const call=async(action,decision)=>{
     if(!prepared||!sourceSha)fail();
-    try{const result=await remoteRunner(action,{sourceSha,runId,context,...(decision?{decision}:{})},prepared);if(action==='parity'&&result.evidenceIdentity)context={...context,evidenceIdentity:result.evidenceIdentity};return result;}catch{fail();}
+    try{return await remoteRunner(action,{sourceSha,runId,context,...(decision?{decision}:{})},prepared);}catch{fail();}
   };
   const adapter={
     source,
@@ -46,6 +46,13 @@ export function createProductionAdapter(options={}) {
       command('/usr/bin/git',['--no-replace-objects','-C',ROOT,'cat-file','-e',match[1]+'^{commit}']);
       command('/usr/bin/git',['--no-replace-objects','-C',ROOT,'merge-base','--is-ancestor',match[1],sourceSha]);
       return {passed:true,sourceSha};
+    },
+    async allocateEvidence(){
+      if(context.evidenceIdentity)fail();
+      const receipt=await call('allocateEvidence');
+      if(!receipt||Object.keys(receipt).sort().join(',')!=='evidenceIdentity,passed,runId,sourceSha'||receipt.passed!==true||receipt.sourceSha!==sourceSha||receipt.runId!==runId||!receipt.evidenceIdentity||Object.keys(receipt.evidenceIdentity).sort().join(',')!=='dev,ino'||['dev','ino'].some(key=>typeof receipt.evidenceIdentity[key]!=='string'||!/^\d+$/.test(receipt.evidenceIdentity[key])))fail();
+      context={...context,evidenceIdentity:Object.freeze({dev:receipt.evidenceIdentity.dev,ino:receipt.evidenceIdentity.ino})};
+      return {passed:true};
     },
     async deploy(){command('/bin/bash',[path.join(ROOT,'scripts/deploy-zaruku.sh')]);return {passed:true,sourceSha};},
     async stop(name){if(name!=='dashboard-zaruku')fail();return call('stop');},

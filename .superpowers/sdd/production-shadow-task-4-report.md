@@ -171,3 +171,43 @@ Operational constraints remain intentional:
 - Coverage is a bounded metadata advance detector, not a transaction-wide database lock. It permits one complete pair retry only; collectors continue running and a persistent mismatch remains NO-GO.
 - Live PM2 does not acquire the stronger sealed-fixture bounding-capability/no-new-privileges guarantees by implication.
 - Existing lint warnings and the existing Next workspace/multiple-lockfile warning are reported by the full gate, not suppressed or modified by this task.
+
+## Independent-review correction: durable allocation receipt
+
+Review of implementation commit `1e4cb7b673c80865b95695d7ef5d79529ec6e242` identified one Important defect: parity created its evidence directory but the source adapter received its inode receipt only on a successful parity return. A later credential read, final context check, JSON parsing failure or lost parity response therefore left cleanup/publication without authority for the already existing directory. The runtime was stopped, but immutable NO-GO could not be published. The review supersedes the initial self-review's absence-of-known-blockers statement above.
+
+The fix uses a separate fixed `allocateEvidence` worker action. After all prerequisite/release-source checks and **before deployment**, it exclusively creates the fixed `<sourceSha>-<runId>` evidence directory, attests root ownership/mode/safe ancestors, pins its device/inode and fsyncs the directory and parent. Its exact receipt contains only passed/sourceSha/runId/device/inode. The source adapter validates the receipt's exact keys, string field types and exact run binding, retains a frozen identity, and never accepts a replacement receipt from parity output. The public 14 step labels remain unchanged; confirmed allocation is an internal guard before deployment.
+
+Parity now requires and revalidates that existing receipt before context/credential reads and cannot create a directory. Final publication also requires it and can no longer allocate or recover a missing receipt. Existing, foreign, reused, linked, wrongly owned, writable or replaced directories remain rejected. A lost allocation response fails before deployment; the code does not guess ownership or reuse an unreceipted directory. Subsequent credential/context/parity-transport failure retains the original receipt, stops only `dashboard-zaruku`, and permits exclusive immutable sanitized NO-GO publication.
+
+### Review-fix RED → GREEN
+
+```bash
+node --test scripts/zaruku-shadow-evidence.test.mjs scripts/run-zaruku-production-shadow.test.mjs
+```
+
+RED: exit 1, 25 passed / 7 failed. All three required integrated fault cases reproduced the actual `immutable evidence publication` failure through the real source adapter, state machine and filesystem publisher: post-allocation credential read, failed final context recheck, and lost parity response after writing comparison evidence. The allocation-before-deploy regression also failed because deployment was not guarded.
+
+```bash
+node --test scripts/zaruku-production-shadow-remote.test.mjs
+```
+
+RED: exit 1, 4 passed / 1 failed for missing independent receipt handling. A follow-up failing regression also rejected numeric rather than string device/inode fields before those values could cause a post-deploy publication failure.
+
+```bash
+node --test scripts/zaruku-production-shadow-remote.test.mjs scripts/zaruku-shadow-evidence.test.mjs scripts/run-zaruku-production-shadow.test.mjs scripts/zaruku-production-shadow-worker.test.mjs scripts/stage-zaruku-shadow-control.test.mjs
+```
+
+GREEN: exit 0, **54/54**. The three fault cases each assert exactly one Zaruku stop, persisted original receipt on parity/cleanup/publication, a real root-mapped immutable `decision.json` containing NO-GO, and no secret/header/body marker. Additional tests cover exclusive allocation, exact source/run binding, no recovery/reuse, missing/foreign/replaced inode, symlinks, owner/mode/ancestor rejection, malformed receipts, and a parity reply attempting to replace the receipt.
+
+Focused ESLint on all six changed code/test files exited 0 with no output. `bash scripts/run-zaruku-linux-fixtures.test.sh` exited 0, 7/7, and `bash scripts/verify-zaruku-shadow.test.sh` exited 0 with 3 positive / 22 negative cases.
+
+The fresh **`npm run predeploy:verify` exited 0 after this fix**: 946/956 main Node tests passed with 10 existing skips; the production-shadow gate is now **124 Node + 7 policy + 5 MySQL Python + 5 XLSX Python**; deploy 31, isolated contracts 41, artifact 157 and Abbott 111 passed. Both typechecks, public-asset checks, standalone boot, both builds, and preview fixtures passed. Lint remained zero errors / 12 existing warnings; no new warning. `git diff --check` exited 0. These results supersede the initial implementation's counts above for the review-fix revision.
+
+### Cross-task follow-up / ledger-ready note
+
+Task 4 Important finding: allocation-receipt loss is fixed by confirmed pre-deploy allocation plus receipt-required parity/publication, with failing-first integrated regressions. No production operation or public cutover occurred. Independent re-review is still required.
+
+**Task 5 must enforce exact equality of remote `refs/heads/release/zaruku` to the frozen candidate SHA.** The existing Task 4 ancestry check is not proof of equality and must not be treated as frozen release authority. Task 5 needs a regression rejecting a different ancestor SHA and must continue refusing implicit overwrite of an unknown/different ref. This follow-up is recorded in the authoritative plan and is not a Task 4 blocker; this fix changes no release ref or release-authority behavior.
+
+Review-fix files: `scripts/run-zaruku-production-shadow.mjs` and its test; `scripts/zaruku-production-shadow-remote.mjs` and its test; `scripts/zaruku-production-shadow-worker.mjs`; `scripts/zaruku-shadow-evidence.test.mjs`; `OPS.md`; the production-shadow plan; this report. The staged control inventory and image authority are unchanged.
