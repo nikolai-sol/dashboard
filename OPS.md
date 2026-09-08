@@ -193,7 +193,10 @@ or journal path overrides. `check` is read-only. Mutation requires Linux with re
 UID `0`. Run only within the separately reviewed production-shadow procedure.
 
 `apply` creates the `dashboard-zaruku` system group and user, with only that group, shell
-`/usr/sbin/nologin`, home `/nonexistent`, and no home creation. It creates these root:root `0700`
+`/usr/sbin/nologin`, home `/nonexistent`, and no home creation. Numeric GID lookup must resolve
+back to `dashboard-zaruku`, and the NSS group listing must contain exactly one entry with that
+GID; a foreign alias or incomplete lookup fails closed before accepting or recording identity.
+It creates these root:root `0700`
 directories: `/var/www/dashboard-zaruku-releases`, `/var/www/dashboard-zaruku-backups`,
 `/var/www/.dashboard-zaruku-control`, `/var/www/.dashboard-zaruku-secrets`,
 `/var/www/.dashboard-zaruku-shadow`, and its `evidence` child. Compliant complete state is an

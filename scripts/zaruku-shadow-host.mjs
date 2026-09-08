@@ -292,12 +292,23 @@ export function createHostAdapter(options = {}) {
     if (result.error || result.signal || result.stderr || result.status !== 0 && !(absent && result.status === 2 && !result.stdout)) fail();
     return result.status === 2 ? null : result.stdout.trim();
   };
+  const parseGroup = result => {
+    const fields = result.split(':');
+    if (fields.length !== 4 || !fields[0] || /[\s\u0000-\u001f\u007f]/.test(fields[0]) || !/^\d+$/.test(fields[2]) || !Number.isSafeInteger(Number(fields[2]))) fail();
+    return { name: fields[0], gid: Number(fields[2]), members: fields[3] ? fields[3].split(',') : [] };
+  };
   adapter.serviceGroupIdentity = () => {
     const result = execute('/usr/bin/getent', ['group', NAME], true);
     if (result === null) return null;
-    const fields = result.split(':');
-    if (fields.length !== 4 || !/^\d+$/.test(fields[2])) fail();
-    return { name: fields[0], gid: Number(fields[2]), members: fields[3] ? fields[3].split(',') : [] };
+    const group = parseGroup(result);
+    if (group.name !== NAME || group.gid <= 0) fail();
+    // Permissions follow the numeric GID. A safe-looking named entry must neither
+    // reverse-resolve to another group nor share its GID with another NSS name.
+    const primary = parseGroup(execute('/usr/bin/getent', ['group', String(group.gid)]));
+    if (!same(primary, group)) fail();
+    const matching = execute('/usr/bin/getent', ['group']).split('\n').map(parseGroup).filter(entry => entry.gid === group.gid);
+    if (matching.length !== 1 || !same(matching[0], group)) fail();
+    return group;
   };
   adapter.serviceIdentity = () => {
     const result = execute('/usr/bin/getent', ['passwd', NAME], true);

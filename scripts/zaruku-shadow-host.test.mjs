@@ -18,7 +18,7 @@ function fixture() {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-host-'));
   const resolve = name => path.join(temp, name);
   for (const name of ['/var/www/www-root/data']) fs.mkdirSync(resolve(name), { recursive: true, mode: 0o755 });
-  let user = null, group = null;
+  let user = null, group = null, resolution = {};
   const calls = [], descriptors = new Map(), overrides = new Map();
   const io = new Proxy(fs, { get(target, key) {
     if (key === 'lstatSync') return (name, options) => {
@@ -43,7 +43,18 @@ function fixture() {
     let stdout = '', status = 0;
     if (bin === '/usr/bin/getent') {
       if (args[0] === 'passwd') { if (user) stdout = `dashboard-zaruku:x:${user.uid}:${user.gid}::${user.home}:${user.shell}\n`; else status = 2; }
-      else { if (group) stdout = `dashboard-zaruku:x:${group.gid}:${group.members.join(',')}\n`; else status = 2; }
+      else if (!group) status = 2;
+      else {
+        stdout = `dashboard-zaruku:x:${group.gid}:${group.members.join(',')}\n`;
+        if (args.length === 1) {
+          stdout += (resolution.aliases ?? []).map(name => `${name}:x:${group.gid}:\n`).join('');
+          if (resolution.enumeration !== undefined) stdout = resolution.enumeration;
+          if (resolution.enumerationStatus !== undefined) status = resolution.enumerationStatus;
+        } else if (args[1] !== 'dashboard-zaruku') {
+          if (resolution.reverseName) stdout = `${resolution.reverseName}:x:${group.gid}:\n`;
+          if (resolution.reverseStatus !== undefined) { status = resolution.reverseStatus; stdout = ''; }
+        }
+      }
     } else if (bin === '/usr/bin/id') stdout = user?.groups?.join(' ') ?? '901';
     else if (bin === '/usr/bin/ss') stdout = '';
     else if (bin === '/usr/sbin/groupadd') group = { gid: 901, members: [] };
@@ -56,6 +67,7 @@ function fixture() {
   const adapter = createHostAdapter({ fs: io, commandRunner, identity: () => ({ uid: 0, euid: 0 }), platform: 'linux', anchoredPath: (fd, name) => path.posix.join(descriptors.get(fd), name) });
   return { adapter, io, calls, descriptors, overrides, resolve,
     setUser(value) { user = value; }, setGroup(value) { group = value; },
+    setGroupResolution(value) { resolution = value; },
     write(name, bytes, mode = 0o600) { fs.writeFileSync(resolve(name), bytes, { mode }); },
     close() { for (const fd of descriptors.keys()) fs.closeSync(fd); fs.rmSync(temp, { recursive: true, force: true }); },
   };
@@ -103,6 +115,43 @@ test('host rejects partial identities, memberships, unsafe ancestry, roots and o
       assert.equal(fs.existsSync(f.resolve(recordPath)), false);
     } finally { f.close(); }
   }
+});
+
+test('host rejects primary GID aliases and incomplete NSS group resolution before accepting existing state', async () => {
+  for (const resolution of [
+    { reverseName: 'sudo' },
+    { aliases: ['sudo'] },
+    { aliases: ['foreign-group'] },
+    { enumeration: '' },
+    { enumeration: 'malformed' },
+    { enumeration: 'other:x:901:\n' },
+    { enumerationStatus: 3 },
+    { reverseStatus: 2 },
+  ]) {
+    const f = fixture();
+    try {
+      await applyHostBoundary(f.adapter);
+      f.setGroup({ gid: 27, members: [] });
+      f.setUser({ uid: 901, gid: 27, home: '/nonexistent', shell: '/usr/sbin/nologin', groups: [27] });
+      f.setGroupResolution(resolution);
+      const mutations = f.calls.filter(call => call.bin.startsWith('/usr/sbin/')).length;
+      await assert.rejects(inspectHostBoundary(f.adapter), /Zaruku host boundary/);
+      await assert.rejects(applyHostBoundary(f.adapter), /Zaruku host boundary/);
+      assert.equal(f.calls.filter(call => call.bin.startsWith('/usr/sbin/')).length, mutations);
+    } finally { f.close(); }
+  }
+});
+
+test('host rejects a newly created GID alias before recording identity or creating the service user', async () => {
+  const f = fixture();
+  try {
+    f.setGroupResolution({ aliases: ['sudo'] });
+    await assert.rejects(applyHostBoundary(f.adapter), /Zaruku host boundary/);
+    assert.equal(f.calls.some(call => call.bin === '/usr/sbin/useradd'), false);
+    const record = JSON.parse(fs.readFileSync(f.resolve(recordPath), 'utf8'));
+    assert.equal(record.steps.length, 1);
+    assert.equal(record.steps[0].after, null);
+  } finally { f.close(); }
 });
 
 test('rollback uses only persisted creation authority and refuses foreign contents or replaced inodes', async () => {
