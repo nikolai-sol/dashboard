@@ -194,7 +194,7 @@ test('transitive SQL owner scan fails closed on dynamic table-position SQL compo
       path.join(directory, 'apps/zaruku/src/entry.ts'),
       'declare function runtimeTable(): string;\nexport const sql = `SELECT * FROM ${runtimeTable()}`;\n',
     );
-    assert.throws(() => scanZarukuRuntimeMysqlTables(directory), /dynamic|composition|SQL owner|authority/i);
+    assert.throws(() => scanZarukuRuntimeMysqlTables(directory), /UNRESOLVED_SQL|dynamic|composition|SQL owner|authority/i);
   } finally {
     fs.rmSync(directory, { recursive: true });
   }
@@ -371,6 +371,26 @@ test('SQL mapped composition is scoped, bounded and permits only exact unknown-l
     assert.deepEqual(scanZarukuRuntimeMysqlTables(root),loadMysqlTableAuthority(mysqlAuthorityPath).tables);
     assert.equal(loadMysqlTableAuthority(mysqlAuthorityPath).tables.length,35);
   } finally {fs.rmSync(directory,{recursive:true});}
+});
+
+test('standalone mapped SQL remains visible to the Zaruku owner scan', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-sql-standalone-map-'));
+  const filename = path.join(directory, 'apps/zaruku/entry.ts');
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  const scan = source => {
+    fs.writeFileSync(filename, source);
+    return scanZarukuRuntimeMysqlTables(directory);
+  };
+  try {
+    assert.throws(() => scan(`const rows=[0]; export const queries=rows.map(() =>
+      "SELECT * FROM report_bd_private.canonical_fact_metrika_visits");`));
+    assert.deepEqual(scan(`const rows=[0]; export const queries=rows.map(() =>
+      "SELECT * FROM dashboards");`), ['dashboards']);
+    assert.throws(() => scan(`const rows=[true,false]; export const sql=rows.map(flag =>
+      flag ? "SELECT * FR" : "OM report_bd_private.canonical_fact_metrika_visits").join("");`));
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
 });
 
 test('source-only shadow tests are a dedicated predeploy gate with no apply mode', () => {
