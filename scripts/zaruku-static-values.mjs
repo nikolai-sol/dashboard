@@ -63,6 +63,7 @@ function choiceKey(value) {
  * The returned evaluator never uses null to mean "could not evaluate".
  */
 export function createStaticEvaluator(sourceFile) {
+  if (!ts.isSourceFile(sourceFile)) throw new TypeError('TypeScript SourceFile required');
   let work = 0;
 
   function declaration(node, name) {
