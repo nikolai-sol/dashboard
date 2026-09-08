@@ -348,6 +348,11 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:string[][]){const alias=box;alias[0].push(runtimeSql());} mutate([queries]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:string[][]){const value=box[0];value.push(runtimeSql());} mutate([queries]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:{value:string[]}){const alias=box;alias.value.push(runtimeSql());} mutate({value:queries}); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function mutate(box:string[][],other:string[][]){const alias=true?box:other;alias[0].push(runtimeSql());} mutate([queries],[ui]); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function mutate(box:string[][],other:string[][]){const alias=true&&box||other;alias[0].push(runtimeSql());} mutate([queries],[ui]); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function pass<T>(value:T){return value;} function mutate(box:string[][]){const alias=pass(box);alias[0].push(runtimeSql());} mutate([queries]); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:string[][]){const [alias]=[box];alias[0].push(runtimeSql());} mutate([queries]); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function mutate(box:{value:string[]}){const {alias}={alias:box};alias.value.push(runtimeSql());} mutate({value:queries}); export const sql=queries.join("");',
     'declare function runtimeSql():string; declare const outerFlag:boolean; const queries:string[]=[]; const ui:string[]=[]; function pass(value:string[]){return value;} function outer(flag:boolean){function inner(innerFlag:boolean){return pass(innerFlag&&flag?queries:ui);} return inner(true);} const alias=outer(outerFlag); alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=true?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -618,6 +623,23 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
       value.push("label");
     }
     mutate([safe,ui]);
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function mutate(box:string[][],other:string[][]){
+      const conditional=false?box:other;
+      const logical=false&&box||other;
+      const [arrayAlias]=[other];
+      const {objectAlias}={objectAlias:{safe,ui}};
+      conditional[0].push("label");
+      logical[0].push("label");
+      arrayAlias[0].push("label");
+      objectAlias.ui.push("label");
+    }
+    mutate([safe],[ui]);
     export const sql=safe.join("");
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
 

@@ -1322,11 +1322,59 @@ export function createStaticEvaluator(sourceFile) {
       return [...direct];
     }
 
-    function memberPathFromParameter(expression, parameter) {
-      function resolve(value, path, seen, depth) {
+    function memberPathsFromParameter(expression, parameter, fn, call) {
+      function pathInBindingPattern(pattern, target, path = []) {
+        if (!ts.isArrayBindingPattern(pattern) && !ts.isObjectBindingPattern(pattern)) return null;
+        for (let index = 0; index < pattern.elements.length; index += 1) {
+          const element = pattern.elements[index];
+          if (!ts.isBindingElement(element)) continue;
+          const keyNode = ts.isArrayBindingPattern(pattern)
+            ? null : element.propertyName ?? element.name;
+          const key = ts.isArrayBindingPattern(pattern)
+            ? String(index)
+            : (ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode) || ts.isNumericLiteral(keyNode))
+              ? keyNode.text : null;
+          if (key === null) continue;
+          const nextPath = [...path, key];
+          if (element === target) return nextPath;
+          const nested = pathInBindingPattern(element.name, target, nextPath);
+          if (nested) return nested;
+        }
+        return null;
+      }
+
+      function selectedBranches(value) {
+        const current = unwrapExpression(value);
+        if (ts.isConditionalExpression(current)) {
+          const condition = concretePrimitive(fn, call, current.condition);
+          return condition.known
+            ? [condition.value ? current.whenTrue : current.whenFalse]
+            : [current.whenTrue, current.whenFalse];
+        }
+        if (ts.isBinaryExpression(current) && [
+          ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.SyntaxKind.BarBarToken,
+          ts.SyntaxKind.QuestionQuestionToken,
+        ].includes(current.operatorToken.kind)) {
+          const left = concretePrimitive(fn, call, current.left);
+          if (!left.known) return [current.left, current.right];
+          if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+            return [left.value ? current.right : current.left];
+          }
+          if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+            return [left.value ? current.left : current.right];
+          }
+          return [left.value !== null && left.value !== undefined
+            ? current.left : current.right];
+        }
+        return null;
+      }
+
+      function resolve(value, path, state) {
+        const { seenBindings, seenCalls, depth } = state;
         if (!preprocessStep() || depth > MAX_DEPTH) {
           if (depth > MAX_DEPTH) preprocessingExceeded = true;
-          return null;
+          return [];
         }
         let current = unwrapExpression(value);
         const resolvedPath = [...path];
@@ -1334,23 +1382,76 @@ export function createStaticEvaluator(sourceFile) {
           if (ts.isPropertyAccessExpression(current)) {
             resolvedPath.unshift(current.name.text);
           } else {
-            if (!current.argumentExpression) return null;
+            if (!current.argumentExpression) return [];
             const key = staticKey(current.argumentExpression);
-            if (key === null) return null;
+            if (key === null) return [];
             resolvedPath.unshift(key);
           }
           current = unwrapExpression(current.expression);
         }
-        if (!ts.isIdentifier(current)) return null;
+        const branches = selectedBranches(current);
+        if (branches) {
+          return branches.flatMap(branch => resolve(branch, resolvedPath, {
+            ...state, depth: depth + 1,
+          }));
+        }
+        if (ts.isCallExpression(current)) {
+          if (seenCalls.has(current)) return [];
+          const values = valueExpressions(current);
+          return values.flatMap(result => unwrapExpression(result) === current ? [] : resolve(
+            result, resolvedPath, {
+              ...state,
+              seenCalls: new Set(seenCalls).add(current),
+              depth: depth + 1,
+            },
+          ));
+        }
+        if (ts.isArrayLiteralExpression(current) || ts.isObjectLiteralExpression(current)) {
+          if (resolvedPath.length === 0) return [];
+          const [key, ...rest] = resolvedPath;
+          let member = null;
+          if (ts.isArrayLiteralExpression(current)) {
+            member = current.elements[Number(key)] ?? null;
+          } else {
+            const property = current.properties.find(item =>
+              (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+              (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+               ts.isNumericLiteral(item.name)) && item.name.text === key);
+            member = property && ts.isPropertyAssignment(property)
+              ? property.initializer
+              : property && ts.isShorthandPropertyAssignment(property) ? property.name : null;
+          }
+          return member ? resolve(member, rest, { ...state, depth: depth + 1 }) : [];
+        }
+        if (!ts.isIdentifier(current)) return [];
         const binding = declaration(current, current.text);
-        if (binding === parameter) return resolvedPath;
-        if (!binding || seen.has(binding) || !ts.isVariableDeclaration(binding) ||
-            !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) return null;
-        return resolve(
-          binding.initializer, resolvedPath, new Set(seen).add(binding), depth + 1,
-        );
+        if (binding === parameter) return [resolvedPath];
+        if (!binding || seenBindings.has(binding)) return [];
+        let initializer = null;
+        let sourcePath = [];
+        if (ts.isVariableDeclaration(binding) && binding.initializer &&
+            (binding.parent.flags & ts.NodeFlags.Const)) {
+          initializer = binding.initializer;
+        } else if (ts.isBindingElement(binding)) {
+          let variable = binding.parent;
+          while (variable && !ts.isVariableDeclaration(variable)) variable = variable.parent;
+          if (variable?.initializer && (variable.parent.flags & ts.NodeFlags.Const)) {
+            initializer = variable.initializer;
+            sourcePath = pathInBindingPattern(variable.name, binding) ?? [];
+          }
+        }
+        if (!initializer) return [];
+        return resolve(initializer, [...sourcePath, ...resolvedPath], {
+          ...state,
+          seenBindings: new Set(seenBindings).add(binding),
+          depth: depth + 1,
+        });
       }
-      return resolve(expression, [], new Set(), 0);
+      const paths = resolve(expression, [], {
+        seenBindings: new Set(), seenCalls: new Set(), depth: 0,
+      });
+      const unique = new Map(paths.map(path => [JSON.stringify(path), path]));
+      return [...unique.values()];
     }
 
     function bindingsAtMemberPath(expression, path, depth = 0) {
@@ -1416,11 +1517,13 @@ export function createStaticEvaluator(sourceFile) {
         }
         for (const { receiver, evidence } of mutationReceivers) {
           if (!inside(receiver, fn)) continue;
-          const path = memberPathFromParameter(receiver, parameter);
-          if (!path || path.length === 0) continue;
-          for (const expression of parameterValues) {
-            for (const binding of bindingsAtMemberPath(expression, path)) {
-              markMutated(binding, evidence);
+          const paths = memberPathsFromParameter(receiver, parameter, fn, call);
+          for (const path of paths) {
+            if (path.length === 0) continue;
+            for (const expression of parameterValues) {
+              for (const binding of bindingsAtMemberPath(expression, path)) {
+                markMutated(binding, evidence);
+              }
             }
           }
         }
