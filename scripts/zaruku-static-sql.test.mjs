@@ -475,6 +475,20 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     alias.push("label");
     export const sql=safe.join("");
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  for (const destructuring of [
+    'const [alias=safe]=[identity(ui)];',
+    'const {alias=safe}={alias:identity(ui)};',
+  ]) {
+    assert.deepEqual(extractStaticSql(`
+      const safe=["SELECT * FROM dashboards"];
+      const ui:string[]=[];
+      function identity(value:string[]){return value;}
+      ${destructuring}
+      alias.push("label");
+      export const sql=safe.join("");
+    `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+  }
 });
 
 test('SQL extraction exposes keyword, schema, comment and separator boundary attacks', () => {
@@ -548,6 +562,22 @@ test('typed evaluator enforces fixed variant, array, depth and string limits', (
   const nestedSource = `function make(){${'if(true){'.repeat(140)}return "SELECT * FROM dashboards";${'}'.repeat(140)}} export const sql=make();`;
   assert.throws(
     () => extractStaticSql(nestedSource, 'fixture.ts'),
+    /ANALYSIS_LIMIT/,
+  );
+
+  let nestedTemplate = '"safe"';
+  for (let depth = 0; depth < 130; depth += 1) {
+    nestedTemplate = `\`\${${nestedTemplate}}\``;
+  }
+  assert.throws(
+    () => extractStaticSql(`
+      const safe=["SELECT * FROM dashboards"];
+      const ui:string[]=[];
+      const mode=${nestedTemplate};
+      const alias=mode==="private"?safe:ui;
+      alias.push("label");
+      export const sql=safe.join("");
+    `, 'fixture.ts'),
     /ANALYSIS_LIMIT/,
   );
 

@@ -274,7 +274,11 @@ export function createStaticEvaluator(sourceFile) {
   }
 
   function staticPrimitiveValue(expression, seen = new Set(), depth = 0) {
-    if (!preprocessStep() || depth > MAX_DEPTH) return { known: false };
+    if (!preprocessStep()) return { known: false };
+    if (depth > MAX_DEPTH) {
+      preprocessingExceeded = true;
+      return { known: false };
+    }
     const current = unwrapExpression(expression);
     function known(value) {
       if (typeof value === 'string' && value.length > MAX_STRING_LENGTH) {
@@ -571,14 +575,20 @@ export function createStaticEvaluator(sourceFile) {
     }
 
     function valueExpressions(expression, state = {
-      bindings: new Set(), calls: new Set(), depth: 0,
+      bindings: new Set(), calls: new Set(), parameters: new Map(), depth: 0,
     }) {
       if (!expression || !preprocessStep() || state.depth > MAX_DEPTH) return [];
       const current = unwrapExpression(expression);
       const next = overrides => ({ ...state, ...overrides, depth: state.depth + 1 });
       if (ts.isIdentifier(current)) {
         const binding = declaration(current, current.text);
-        if (!binding || state.bindings.has(binding) || !ts.isVariableDeclaration(binding) ||
+        if (!binding || state.bindings.has(binding)) return [current];
+        if (state.parameters.has(binding)) {
+          return valueExpressions(state.parameters.get(binding), next({
+            bindings: new Set(state.bindings).add(binding),
+          }));
+        }
+        if (!ts.isVariableDeclaration(binding) ||
             !binding.initializer || !(binding.parent.flags & ts.NodeFlags.Const)) return [current];
         return valueExpressions(binding.initializer, next({
           bindings: new Set(state.bindings).add(binding),
@@ -614,7 +624,14 @@ export function createStaticEvaluator(sourceFile) {
         if (state.calls.has(current)) return [];
         const fn = localFunction(current);
         if (!fn) return [current];
-        const callState = next({ calls: new Set(state.calls).add(current) });
+        const parameters = new Map(state.parameters);
+        fn.parameters.forEach((parameter, index) => {
+          if (current.arguments[index]) parameters.set(parameter, current.arguments[index]);
+        });
+        const callState = next({
+          calls: new Set(state.calls).add(current),
+          parameters,
+        });
         return selectedReturnExpressions(fn, current).flatMap(returned =>
           valueExpressions(returned, callState));
       }
