@@ -22,7 +22,7 @@ const proof = path.join('/tmp', path.basename(base) + '-proof.json');
 const stagedSha = 'a'.repeat(40);
 const prepared = await prepareReviewedControl({ source: () => ({ sha: stagedSha, clean: true, branch: 'codex/linux-fixture' }), readFile: readControlSource }, stagedSha);
 await receiveControlPayload(prepared.bytes, prepared.digest);
-const stagedHost = await import(`/var/www/.dashboard-zaruku-shadow/control/${stagedSha}/scripts/zaruku-shadow-host.mjs`);
+const stagedHost = await import(`/var/www/.dashboard-zaruku-shadow/control/${stagedSha}/scripts/zaruku-shadow-host-implementation.mjs`);
 const host = stagedHost.createHostAdapter({ commandRunner(bin, args, options) {
   // The locked test image has no iproute2; no fixed runtime is listening in this container.
   if (bin === '/usr/bin/ss') return { status: 0, stdout: '', stderr: '' };
@@ -54,6 +54,20 @@ test('direct mutation CLIs reject before auth input or host inspection even insi
     assert.equal(result.stdout, '');
   }
   assert.equal(fs.existsSync('/var/www/.dashboard-zaruku-shadow/auth.json'), false);
+  const marker=path.join(base,'direct-dependency-ran');
+  for(const [entry,dependency,exports] of [
+    ['install-zaruku-shadow-auth.mjs','zaruku-shadow-host.mjs','export const createHostAdapter=()=>({});'],
+    ['zaruku-shadow-host.mjs','runtime-release-remote.mjs','export const parseZarukuSecrets=()=>{},serializeZarukuSecrets=()=>{},renderEnvironment=()=>{},HOST_DIRECTORY_MODES={};'],
+    ['zaruku-shadow-auth-implementation.mjs','zaruku-shadow-host-implementation.mjs','export const createHostAdapter=()=>({});'],
+    ['zaruku-shadow-host-implementation.mjs','runtime-release-remote.mjs','export const parseZarukuSecrets=()=>{},serializeZarukuSecrets=()=>{},renderEnvironment=()=>{},HOST_DIRECTORY_MODES={};'],
+  ]) {
+    const filename=`${staged}/scripts/${dependency}`,saved=fs.readFileSync(filename);
+    fs.chmodSync(filename,0o600);fs.writeFileSync(filename,`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'executed');${exports}`);fs.chmodSync(filename,0o400);
+    try {
+      const result=spawnSync(process.execPath,[`${staged}/scripts/${entry}`,'apply'],{env:{},encoding:'utf8',input:'opaque-unused-descriptor',timeout:5000});
+      assert.equal(fs.existsSync(marker),false);assert.notEqual(result.status,0);assert.match(result.stderr,/staged dispatcher/);assert.equal(result.stdout,'');
+    }finally{fs.chmodSync(filename,0o600);fs.writeFileSync(filename,saved);fs.chmodSync(filename,0o400);}
+  }
 });
 
 test('staged dispatcher checks its entire closure and rejects tampering before loading mutation dependencies', () => {
@@ -62,7 +76,7 @@ test('staged dispatcher checks its entire closure and rejects tampering before l
   const invoke = (action = 'attest', env = {}) => spawnSync(process.execPath, [dispatcher, action], { encoding: 'utf8', env, input: '{"headers":{"cookie":"opaque-test-descriptor"}}', timeout: 5000 });
   const valid = invoke(); assert.equal(valid.status, 0); assert.equal(JSON.parse(valid.stdout).sourceSha, stagedSha);
   assert.notEqual(invoke('attest', { NODE_OPTIONS: '--trace-warnings' }).status, 0);
-  for (const name of ['scripts/zaruku-shadow-host.mjs', '.manifest.json', '.inodes.json']) {
+  for (const name of ['scripts/zaruku-shadow-host.mjs', 'scripts/zaruku-shadow-host-implementation.mjs', '.manifest.json', '.inodes.json']) {
     const file = path.join(staged, name), saved = file + '-original';
     fs.renameSync(file, saved);
     fs.copyFileSync(saved, file); fs.chmodSync(file, 0o400);
@@ -71,7 +85,7 @@ test('staged dispatcher checks its entire closure and rejects tampering before l
   }
   const extra = `${staged}/scripts/extra.mjs`; fs.writeFileSync(extra, 'throw new Error("PRIVATE_SENTINEL")', { mode: 0o400 });
   try { assert.notEqual(invoke().status, 0); } finally { fs.unlinkSync(extra); }
-  const dependency = `${staged}/scripts/zaruku-shadow-host.mjs`, bytes = fs.readFileSync(dependency);
+  const dependency = `${staged}/scripts/zaruku-shadow-host-implementation.mjs`, bytes = fs.readFileSync(dependency);
   fs.chmodSync(dependency, 0o600); fs.writeFileSync(dependency, 'throw new Error("PRIVATE_SENTINEL")'); fs.chmodSync(dependency, 0o400);
   try { const result = invoke('auth-install'); assert.notEqual(result.status, 0); assert.doesNotMatch(result.stderr, /PRIVATE_SENTINEL/); }
   finally { fs.chmodSync(dependency, 0o600); fs.writeFileSync(dependency, bytes); fs.chmodSync(dependency, 0o400); }

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { applyReaderBoundary } from './zaruku-shadow-db.mjs';
-import { createHostAdapter, runtimeSecretBytes, publishAnonymousRuntimeSecret, removeOwnedRuntimeSecret } from './zaruku-shadow-host.mjs';
+import { createHostAdapter, runtimeSecretBytes, publishAnonymousRuntimeSecret, removeOwnedRuntimeSecret } from './zaruku-shadow-host-implementation.mjs';
 import { openAdminSession } from './zaruku-shadow-mysql-session.mjs';
 
 const RECEIPT='/var/www/.dashboard-zaruku-shadow/db-provision.json';

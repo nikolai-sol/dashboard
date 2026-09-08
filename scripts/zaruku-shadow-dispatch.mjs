@@ -8,7 +8,7 @@ export const SHADOW_CONTROL_FILES=Object.freeze([
   'deploy/zaruku/mysql-read-tables.json','deploy/zaruku/production-shadow.json','deploy/zaruku/release.json',
   'scripts/install-zaruku-shadow-auth.mjs','scripts/install-zaruku-shadow-inventory.mjs','scripts/runtime-release-remote.mjs','scripts/verify-zaruku-shadow.sh',
   'scripts/zaruku-production-shadow-authority.mjs','scripts/zaruku-production-shadow-preflight.mjs','scripts/zaruku-production-shadow-worker.mjs',
-  'scripts/zaruku-shadow-coverage.mjs','scripts/zaruku-shadow-db.mjs','scripts/zaruku-shadow-dispatch.mjs','scripts/zaruku-shadow-evidence-lock.py','scripts/zaruku-shadow-host.mjs','scripts/zaruku-shadow-mysql-session.mjs','scripts/zaruku-shadow-mysql-session.py','scripts/zaruku-shadow-mysql.py','scripts/zaruku-shadow-provision.mjs','scripts/zaruku-xlsx-semantic.py',
+  'scripts/zaruku-shadow-auth-implementation.mjs','scripts/zaruku-shadow-coverage.mjs','scripts/zaruku-shadow-db.mjs','scripts/zaruku-shadow-dispatch.mjs','scripts/zaruku-shadow-evidence-lock.py','scripts/zaruku-shadow-host-implementation.mjs','scripts/zaruku-shadow-host.mjs','scripts/zaruku-shadow-mysql-session.mjs','scripts/zaruku-shadow-mysql-session.py','scripts/zaruku-shadow-mysql.py','scripts/zaruku-shadow-provision.mjs','scripts/zaruku-xlsx-semantic.py',
 ]);
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -87,7 +87,7 @@ export async function dispatchStaged(action, payload = null) {
   const guard = () => { fixedEnvironment(); if (attestStagedControl() !== sourceSha) refuse(); };
   if (action === 'attest' && payload === null) return { passed: true, sourceSha };
   if (['host-check', 'host-apply', 'host-rollback'].includes(action) && payload === null) {
-    const host = await import('./zaruku-shadow-host.mjs'); guard();
+    const host = await import('./zaruku-shadow-host-implementation.mjs'); guard();
     const adapter = host.createHostAdapter();
     for (const method of ['createGroup', 'createUser', 'deleteUser', 'deleteGroup']) {
       const original = adapter[method]; adapter[method] = (...args) => { guard(); return original(...args); };
@@ -98,7 +98,7 @@ export async function dispatchStaged(action, payload = null) {
     await host.rollbackNewHostBoundary(adapter, record); return { passed: true };
   }
   if (action === 'auth-install' && payload === null) {
-    const auth = await import('./install-zaruku-shadow-auth.mjs'); guard();
+    const auth = await import('./zaruku-shadow-auth-implementation.mjs'); guard();
     const adapter = auth.createAuthAdapter(), publish = adapter.publishDescriptor;
     adapter.publishDescriptor = bytes => { guard(); return publish(bytes); };
     return auth.installShadowAuth(adapter);

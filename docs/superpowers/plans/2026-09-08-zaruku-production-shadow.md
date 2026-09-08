@@ -10,12 +10,16 @@
 
 **Task 5 audit-fix status (source implementation only):** The nine audit groups have
 regression-backed fixes. The current interfaces below supersede earlier Task 1–4
-design examples: a 20-file core-only staged dispatcher owns mutation entrypoints;
+design examples: a 22-file core-only staged dispatcher owns mutation entrypoints;
 release/backup parents are root:root `0711`; host apply recognizes only the exact
 staged predecessor and pins numeric UID/GID uniqueness; DB and anonymous runtime
 secret publication are one session-bound transaction; cleanup requires a durable
 deployment receipt under the existing deploy lock. Source-side freeze/provision/
-child-deploy checks require exact live remote SHA equality. Independent acceptance,
+child checks now pin the committed literal Git repository authority and isolate
+remote Git in a clean temporary bare repository. Deprecated host/auth paths are
+core-only refusal facades; only the attested dispatcher loads implementation
+libraries, whose own direct invocation refuses before non-core dependencies.
+Every child-deploy check requires exact live remote SHA equality. Independent acceptance,
 real release-ref creation, and all Task 6–7 production actions remain pending.
 
 ## Global Constraints

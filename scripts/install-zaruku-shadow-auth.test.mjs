@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
-import { installShadowAuth, validateAuthDescriptor, createAuthAdapter } from './install-zaruku-shadow-auth.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { installShadowAuth, validateAuthDescriptor, createAuthAdapter } from './zaruku-shadow-auth-implementation.mjs';
 
 const cookie = Buffer.from('opaque-auth-fixture').toString('base64');
 const bytes = Buffer.from(JSON.stringify({ headers: { cookie } }));
@@ -58,6 +61,27 @@ test('auth CLI rejects arguments without echoing their bytes', () => {
   assert.notEqual(result.status, 0);
   assert.equal(result.stdout, '');
   assert.ok(!result.stderr.includes(cookie));
+});
+
+test('deprecated direct CLI paths refuse before any changed dependency side effect', async t => {
+  for(const [entry,dependency,exports] of [
+    ['install-zaruku-shadow-auth.mjs','zaruku-shadow-host.mjs','export const createHostAdapter=()=>({});'],
+    ['zaruku-shadow-host.mjs','runtime-release-remote.mjs','export const parseZarukuSecrets=()=>{},serializeZarukuSecrets=()=>{},renderEnvironment=()=>{},HOST_DIRECTORY_MODES={};'],
+    ['zaruku-shadow-auth-implementation.mjs','zaruku-shadow-host-implementation.mjs','export const createHostAdapter=()=>({});'],
+    ['zaruku-shadow-host-implementation.mjs','runtime-release-remote.mjs','export const parseZarukuSecrets=()=>{},serializeZarukuSecrets=()=>{},renderEnvironment=()=>{},HOST_DIRECTORY_MODES={};'],
+  ]) await t.test(entry,()=>{
+    const directory=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-direct-refusal-'))),marker=path.join(directory,'dependency-ran');
+    try {
+      fs.copyFileSync(path.join(import.meta.dirname,entry),path.join(directory,entry));
+      fs.writeFileSync(path.join(directory,dependency),`import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'executed');${exports}`);
+      const alias=path.join(directory,'entry-alias.mjs');fs.symlinkSync(path.join(directory,entry),alias);
+      for(const filename of [path.join(directory,entry),alias]) {
+        const result=spawnSync(process.execPath,[filename,'apply'],{input:bytes,encoding:'utf8',env:{},timeout:5000});
+        assert.equal(fs.existsSync(marker),false,'changed dependency must not execute before direct refusal');
+        assert.notEqual(result.status,0);assert.match(result.stderr,/staged dispatcher/);assert.equal(result.stdout,'');
+      }
+    } finally {fs.rmSync(directory,{recursive:true});}
+  });
 });
 
 test('real stdin lifecycle restores echo on interruption and removes its signal handlers', async () => {

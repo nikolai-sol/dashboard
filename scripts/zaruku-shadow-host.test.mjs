@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { applyHostBoundary, inspectHostBoundary, rollbackNewHostBoundary, installRuntimeSecrets, createHostAdapter } from './zaruku-shadow-host.mjs';
-import { installShadowAuth } from './install-zaruku-shadow-auth.mjs';
+import { applyHostBoundary, inspectHostBoundary, rollbackNewHostBoundary, installRuntimeSecrets, createHostAdapter } from './zaruku-shadow-host-implementation.mjs';
+import { installShadowAuth } from './zaruku-shadow-auth-implementation.mjs';
 import { prepareReviewedControl, receiveControlPayload, readControlSource } from './stage-zaruku-shadow-control.mjs';
 
 const roots = ['/var/www/dashboard-zaruku-releases', '/var/www/dashboard-zaruku-backups', '/var/www/.dashboard-zaruku-control', '/var/www/.dashboard-zaruku-secrets', '/var/www/.dashboard-zaruku-shadow', '/var/www/.dashboard-zaruku-shadow/evidence'];

@@ -372,16 +372,19 @@ repository, no checkout config/refs/tags/hooks, disabled system/global config,
 one explicit refspec, no follow-tags/hooks/submodule recursion, and an atomic
 expected-absent lease. Alternate/multiple URLs, pushurl and rewrite/include config
 reject; the real CLI accepts no destination override. Only candidate-reachable
-objects are imported; source config/refs remain unchanged. An explicitly approved
-absent ref may be created with `create-if-absent`. It uses an atomic expected-absent
-lease and exact readback; no unknown/different existing ref can be overwritten.
+objects are imported; source config/refs remain unchanged. No unknown/different
+existing ref can be overwritten.
 Before each provisioning or child-deploy action the live ref must still equal HEAD.
 
 After separately reviewed production authorization, `npm run shadow:zaruku:stage-control` stages
-only the fixed 20-file manifest-covered bundle under
+only the fixed 22-file manifest-covered bundle under
 `/var/www/.dashboard-zaruku-shadow/control/<reviewed-40hex-SHA>`. It accepts no path/host/file-list
 override and cannot provision accounts, secrets, DB grants, release refs, application files, PM2
 or Nginx. Existing bundles must match bytes and pinned inodes exactly.
+The deprecated host/auth CLI paths contain core-only refusal facades, with no
+implementation import or re-export. The dispatcher imports the separate internal
+host/auth libraries only after complete staged attestation. Their own direct CLI
+and symlink-alias executions also refuse before loading any non-core dependency.
 
 The authority now includes exactly one foreign SHA entry: `combined-dashboard` at
 `/var/www/dashboard/.release-source-sha`. Run the source interface
