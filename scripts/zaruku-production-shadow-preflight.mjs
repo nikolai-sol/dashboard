@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 const FIXED = Object.freeze({
@@ -40,8 +40,10 @@ function safeInteger(value) {
 }
 
 function sanitizeIdentity(value) {
-  if (!value || value.exists !== true) return { exists: false };
+  if (!value || typeof value.exists !== 'boolean') return { inspected: false, exists: false };
+  if (!value.exists) return { inspected: true, exists: false };
   return {
+    inspected: true,
     exists: true,
     name: typeof value.name === 'string' ? value.name : null,
     uid: safeInteger(value.uid),
@@ -49,17 +51,31 @@ function sanitizeIdentity(value) {
     group: typeof value.group === 'string' ? value.group : null,
     shell: typeof value.shell === 'string' ? value.shell : null,
     home: typeof value.home === 'string' ? value.home : null,
-    supplementaryGroups: Array.isArray(value.supplementaryGroups)
-      ? value.supplementaryGroups.filter(group => typeof group === 'string')
-      : [],
+    supplementaryGroups: Array.isArray(value.supplementaryGroups) && value.supplementaryGroups.every(group => typeof group === 'string')
+      ? [...value.supplementaryGroups]
+      : null,
+  };
+}
+
+function sanitizeGroupIdentity(value) {
+  if (!value || typeof value.exists !== 'boolean') return { inspected: false, exists: false };
+  if (!value.exists) return { inspected: true, exists: false };
+  return {
+    inspected: true,
+    exists: true,
+    name: typeof value.name === 'string' ? value.name : null,
+    gid: safeInteger(value.gid),
+    members: Array.isArray(value.members) && value.members.every(member => typeof member === 'string') ? [...value.members] : null,
   };
 }
 
 function sanitizeResource(value) {
   const filename = typeof value?.path === 'string' ? value.path : null;
-  if (value?.exists !== true) return { path: filename, exists: false };
+  if (!value || typeof value.exists !== 'boolean') return { path: filename, inspected: false, exists: false };
+  if (!value.exists) return { path: filename, inspected: true, exists: false };
   return {
     path: filename,
+    inspected: true,
     exists: true,
     type: value.type === 'directory' ? 'directory' : value.type === 'file' ? 'file' : 'other',
     owner: typeof value.owner === 'string' ? value.owner : null,
@@ -72,13 +88,13 @@ function sanitizeResource(value) {
 export async function inspectShadowPrerequisites(adapter) {
   const requiredMethods = [
     'currentIdentity', 'combinedProcess', 'readNginx', 'listeners', 'tools',
-    'mysql', 'serviceIdentity', 'mysqlIdentity', 'resources',
+    'mysql', 'serviceIdentity', 'serviceGroupIdentity', 'mysqlIdentity', 'resources',
   ];
   if (!adapter || requiredMethods.some(name => typeof adapter[name] !== 'function')) fail('Incomplete read-only preflight adapter');
 
-  const [current, combined, nginx, listeners, tools, mysql, serviceIdentity, mysqlIdentity, resources] = await Promise.all([
+  const [current, combined, nginx, listeners, tools, mysql, serviceIdentity, serviceGroupIdentity, mysqlIdentity, resources] = await Promise.all([
     adapter.currentIdentity(), adapter.combinedProcess(), adapter.readNginx(), adapter.listeners(), adapter.tools(),
-    adapter.mysql(), adapter.serviceIdentity(), adapter.mysqlIdentity(), adapter.resources(),
+    adapter.mysql(), adapter.serviceIdentity(), adapter.serviceGroupIdentity(), adapter.mysqlIdentity(), adapter.resources(),
   ]);
   const safeListeners = Array.isArray(listeners) ? listeners.map(listener => ({
     host: typeof listener?.host === 'string' ? listener.host : null,
@@ -121,9 +137,12 @@ export async function inspectShadowPrerequisites(adapter) {
       database: typeof mysql?.database === 'string' ? mysql.database : null,
     },
     serviceIdentity: sanitizeIdentity(serviceIdentity),
-    mysqlIdentity: mysqlIdentity?.exists === true
-      ? { exists: true, account: typeof mysqlIdentity.account === 'string' ? mysqlIdentity.account : null }
-      : { exists: false },
+    serviceGroupIdentity: sanitizeGroupIdentity(serviceGroupIdentity),
+    mysqlIdentity: typeof mysqlIdentity?.exists !== 'boolean'
+      ? { inspected: false, exists: false }
+      : mysqlIdentity.exists
+        ? { inspected: true, exists: true, account: typeof mysqlIdentity.account === 'string' ? mysqlIdentity.account : null }
+        : { inspected: true, exists: false },
     resources: Array.isArray(resources) ? resources.map(sanitizeResource) : [],
   });
 }
@@ -150,19 +169,28 @@ export function assertShadowPrerequisites(evidence) {
   }
 
   const service = evidence.serviceIdentity;
-  if (service?.exists && (service.name !== FIXED.serviceAccount || service.group !== FIXED.serviceAccount ||
+  const serviceGroup = evidence.serviceGroupIdentity;
+  if (service?.inspected !== true || serviceGroup?.inspected !== true) fail('Zaruku identity inspection is incomplete');
+  if (service.exists !== serviceGroup.exists) fail('Existing Zaruku identity state is partial');
+  if (service.exists && (service.name !== FIXED.serviceAccount || service.group !== FIXED.serviceAccount ||
       service.shell !== '/usr/sbin/nologin' || service.home !== '/nonexistent' ||
-      service.uid === null || service.gid === null || service.supplementaryGroups.length !== 0)) {
-    fail('Existing Zaruku service identity is foreign or partial');
+      !Number.isSafeInteger(service.uid) || service.uid <= 0 || !Number.isSafeInteger(service.gid) || service.gid <= 0 ||
+      !Array.isArray(service.supplementaryGroups) || service.supplementaryGroups.length !== 0)) {
+    fail('Existing Zaruku service identity is privileged, foreign, or partial');
   }
-  if (evidence.mysqlIdentity?.exists && evidence.mysqlIdentity.account !== FIXED.mysqlAccount) fail('Existing Zaruku MySQL identity is foreign');
+  if (serviceGroup.exists && (serviceGroup.name !== FIXED.serviceAccount || !Number.isSafeInteger(serviceGroup.gid) ||
+      serviceGroup.gid <= 0 || serviceGroup.gid !== service.gid || !Array.isArray(serviceGroup.members) || serviceGroup.members.length !== 0)) {
+    fail('Existing Zaruku service group is privileged, foreign, or partial');
+  }
+  if (evidence.mysqlIdentity?.inspected !== true) fail('Zaruku MySQL identity inspection is incomplete');
+  if (evidence.mysqlIdentity.exists && evidence.mysqlIdentity.account !== FIXED.mysqlAccount) fail('Existing Zaruku MySQL identity is foreign');
 
   if (!Array.isArray(evidence.resources) || evidence.resources.length !== RESOURCE_RULES.size) fail('Zaruku resource inspection is incomplete');
   const byPath = new Map(evidence.resources.map(resource => [resource.path, resource]));
   if (byPath.size !== RESOURCE_RULES.size) fail('Zaruku resource inspection is incomplete');
   for (const [filename, rule] of RESOURCE_RULES) {
     const resource = byPath.get(filename);
-    if (!resource) fail('Zaruku resource inspection is incomplete');
+    if (!resource || resource.inspected !== true) fail('Zaruku resource inspection is incomplete');
     if (resource.exists && (resource.type !== rule.type || resource.owner !== rule.owner || resource.group !== rule.group ||
         resource.mode !== rule.mode || (rule.links !== undefined && resource.links !== rule.links))) {
       fail('Existing Zaruku resource is unsafe or foreign');
@@ -178,41 +206,134 @@ export function assertShadowPrerequisites(evidence) {
   }
 }
 
-function execute(filename, args, options = {}) {
-  try {
-    return execFileSync(filename, args, {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: SAFE_ENV,
-      maxBuffer: 4 * 1024 * 1024,
-    }).trim();
-  } catch {
-    if (options.allowFailure) return null;
-    fail(`Read-only preflight command failed: ${path.basename(filename)}`);
-  }
+function execute(filename, args, options = {}, commandRunner = spawnSync) {
+  const result = commandRunner(filename, args, {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: SAFE_ENV,
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  if (!result.error && result.signal === null && result.status === 0) return { found: true, output: result.stdout.trim() };
+  const confirmedAbsent = options.absentStatus === result.status &&
+    (!options.absentStderr || options.absentStderr.test(result.stderr ?? ''));
+  if (!result.error && result.signal === null && confirmedAbsent) return { found: false, output: '' };
+  fail(`Read-only preflight command failed: ${path.basename(filename)}`);
 }
 
-function locate(name) {
+function locate(name, commandRunner = spawnSync) {
   if (!['mysql', 'pm2', 'python3', 'setpriv'].includes(name)) fail('Unapproved preflight tool lookup');
-  return execute('/bin/sh', ['-c', 'command -v -- "$1"', 'preflight', name], { allowFailure: true });
+  const result = execute('/bin/sh', ['-c', 'command -v -- "$1"', 'preflight', name], { absentStatus: 1 }, commandRunner);
+  return result.found ? result.output : null;
 }
 
-function listNginxFiles(root = '/etc/nginx') {
-  const files = [];
-  function visit(filename) {
-    const stat = fs.lstatSync(filename);
-    if (stat.isSymbolicLink()) {
-      const target = fs.realpathSync(filename);
-      if (fs.statSync(target).isFile()) files.push(target);
-      return;
+function stripNginxComments(source) {
+  let output = '', quote = null, escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (escaped) { output += character; escaped = false; continue; }
+    if (character === '\\' && quote) { output += character; escaped = true; continue; }
+    if ((character === '"' || character === "'") && (!quote || quote === character)) { quote = quote ? null : character; output += character; continue; }
+    if (character === '#' && !quote) {
+      while (index < source.length && source[index] !== '\n') index += 1;
+      output += '\n';
+      continue;
     }
-    if (stat.isFile()) {
-      const relative = path.relative(root, filename);
-      if (relative === 'nginx.conf' || /^(conf\.d|sites-enabled|snippets|modules-enabled)\//.test(relative)) files.push(filename);
-      return;
-    }
-    if (stat.isDirectory()) for (const name of fs.readdirSync(filename).sort()) visit(path.join(filename, name));
+    output += character;
   }
-  visit(root);
-  return [...new Set(files)].sort();
+  return output;
+}
+
+function globRegex(pattern) {
+  let expression = '^';
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === '*') expression += '[^/]*';
+    else if (character === '?') expression += '[^/]';
+    else if (character === '[') {
+      const end = pattern.indexOf(']', index + 1);
+      if (end < 0) fail('Invalid Nginx include pattern');
+      expression += pattern.slice(index, end + 1);
+      index = end;
+    } else expression += character.replace(/[\\^$+?.()|{}]/g, '\\$&');
+  }
+  return new RegExp(`${expression}$`);
+}
+
+function resolveInclude(pattern, io) {
+  if (!/[?*[\]]/.test(pattern)) {
+    try { io.lstat(pattern); return [pattern]; }
+    catch { fail('Unresolved Nginx include'); }
+  }
+  const firstMagic = pattern.search(/[?*[\]]/);
+  const slash = pattern.lastIndexOf(path.sep, firstMagic);
+  const base = slash > 0 ? pattern.slice(0, slash) : path.parse(pattern).root;
+  const matcher = globRegex(pattern);
+  const matches = [];
+  let visited = 0;
+  function walk(directory) {
+    let names;
+    try { names = io.readdir(directory); }
+    catch { fail('Unresolved Nginx include'); }
+    for (const name of names.sort()) {
+      if (++visited > 10000) fail('Nginx include graph is too large');
+      const filename = path.join(directory, name);
+      let stat;
+      try { stat = io.lstat(filename); }
+      catch { fail('Unresolved Nginx include'); }
+      if (stat.isDirectory()) walk(filename);
+      else if (matcher.test(filename)) matches.push(filename);
+    }
+  }
+  walk(base);
+  if (matches.length === 0) fail('Unresolved Nginx include');
+  return matches;
+}
+
+export function readNginxIncludeGraph(entryFile, options = {}) {
+  const prefix = path.resolve(options.prefix ?? path.dirname(entryFile));
+  const io = {
+    lstat: options.lstat ?? (filename => fs.lstatSync(filename)),
+    stat: options.stat ?? (filename => fs.statSync(filename)),
+    realpath: options.realpath ?? (filename => fs.realpathSync(filename)),
+    readdir: options.readdir ?? (filename => fs.readdirSync(filename)),
+    readFile: options.readFile ?? (filename => fs.readFileSync(filename, 'utf8')),
+  };
+  const pending = [path.resolve(entryFile)];
+  const visited = new Set();
+  const records = [];
+  let totalBytes = 0;
+
+  while (pending.length) {
+    const requested = pending.shift();
+    let canonical, stat, source;
+    try {
+      canonical = io.realpath(requested);
+      stat = io.stat(canonical);
+      if (!stat.isFile()) fail('Invalid Nginx include target');
+      if (visited.has(canonical)) continue;
+      source = io.readFile(canonical);
+    } catch (error) {
+      if (/Nginx include/.test(error?.message ?? '')) throw error;
+      fail('Unresolved Nginx include');
+    }
+    if (typeof source !== 'string') fail('Invalid Nginx include contents');
+    visited.add(canonical);
+    totalBytes += Buffer.byteLength(source);
+    if (visited.size > 1000 || totalBytes > 4 * 1024 * 1024) fail('Nginx include graph is too large');
+    records.push({ canonical, source });
+
+    const cleaned = stripNginxComments(source);
+    for (const match of cleaned.matchAll(/\binclude\s+((?:"[^"]*"|'[^']*'|[^;])+);/g)) {
+      let include = match[1].trim();
+      if ((include.startsWith('"') && include.endsWith('"')) || (include.startsWith("'") && include.endsWith("'"))) include = include.slice(1, -1);
+      if (!include || include.includes('$') || include.includes('\0')) fail('Invalid Nginx include path');
+      const absolute = path.isAbsolute(include) ? path.normalize(include) : path.resolve(prefix, include);
+      pending.push(...resolveInclude(absolute, io));
+    }
+  }
+
+  records.sort((left, right) => left.canonical.localeCompare(right.canonical));
+  const digest = createHash('sha256');
+  for (const record of records) digest.update(`${record.canonical}\0${createHash('sha256').update(record.source).digest('hex')}\n`);
+  return { text: records.map(record => record.source).join('\n'), sha256: digest.digest('hex'), fileCount: records.length };
 }
 
 function parsePm2Status(output) {
@@ -244,10 +365,12 @@ function parseListeners(output) {
   return listeners;
 }
 
-function statResource(filename) {
-  const output = execute('/usr/bin/stat', ['--format=%F\t%U\t%G\t%a\t%h', '--', filename], { allowFailure: true });
-  if (output === null) return { path: filename, exists: false };
-  const [rawType, owner, group, rawMode, rawLinks] = output.split('\t');
+function statResource(filename, commandRunner = spawnSync) {
+  const result = execute('/usr/bin/stat', ['--format=%F\t%U\t%G\t%a\t%h', '--', filename], {
+    absentStatus: 1, absentStderr: /No such file or directory/,
+  }, commandRunner);
+  if (!result.found) return { path: filename, exists: false };
+  const [rawType, owner, group, rawMode, rawLinks] = result.output.split('\t');
   return {
     path: filename, exists: true,
     type: rawType === 'directory' ? 'directory' : rawType === 'regular file' ? 'file' : 'other',
@@ -255,14 +378,19 @@ function statResource(filename) {
   };
 }
 
-export function createReadOnlyPreflightAdapter() {
+export function createReadOnlyPreflightAdapter(options = {}) {
+  if (Object.keys(options).some(key => key !== 'commandRunner') ||
+      (options.commandRunner !== undefined && typeof options.commandRunner !== 'function')) {
+    fail('Invalid read-only preflight adapter options');
+  }
+  const commandRunner = options.commandRunner ?? spawnSync;
   let mysqlMetadata;
   const inspectMysql = () => {
     if (mysqlMetadata) return mysqlMetadata;
-    const mysql = locate('mysql');
+    const mysql = locate('mysql', commandRunner);
     if (!mysql) return (mysqlMetadata = { rootSocketAdmin: false, currentUser: null, database: null, accountExists: false });
     const sql = "SELECT CURRENT_USER(); SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='report_bd'; SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User='dashboard_zaruku_reader' AND Host='127.0.0.1';";
-    const lines = execute(mysql, ['--protocol=socket', '--batch', '--skip-column-names', '-e', sql], { allowFailure: true })?.split(/\r?\n/).filter(Boolean) ?? [];
+    const lines = execute(mysql, ['--protocol=socket', '--batch', '--skip-column-names', '-e', sql], {}, commandRunner).output.split(/\r?\n/).filter(Boolean);
     const currentUser = lines[0] ?? null;
     return (mysqlMetadata = {
       rootSocketAdmin: currentUser === 'root@localhost', currentUser,
@@ -273,46 +401,49 @@ export function createReadOnlyPreflightAdapter() {
 
   return Object.freeze({
     currentIdentity() {
-      return { uid: Number(execute('/usr/bin/id', ['-u'])), user: execute('/usr/bin/id', ['-un']) };
+      return {
+        uid: Number(execute('/usr/bin/id', ['-u'], {}, commandRunner).output),
+        user: execute('/usr/bin/id', ['-un'], {}, commandRunner).output,
+      };
     },
     combinedProcess() {
-      const pm2 = locate('pm2');
-      return pm2 ? parsePm2Status(execute(pm2, ['status', FIXED.combinedName, '--no-color'])) : { name: FIXED.combinedName, port: FIXED.combinedPort, status: null, pid: null };
+      const pm2 = locate('pm2', commandRunner);
+      return pm2 ? parsePm2Status(execute(pm2, ['status', FIXED.combinedName, '--no-color'], {}, commandRunner).output) : { name: FIXED.combinedName, port: FIXED.combinedPort, status: null, pid: null };
     },
     readNginx() {
-      const files = listNginxFiles();
-      let text = '';
-      const digest = createHash('sha256');
-      for (const filename of files) {
-        const contents = fs.readFileSync(filename, 'utf8');
-        if (Buffer.byteLength(text) + Buffer.byteLength(contents) > 4 * 1024 * 1024) fail('Read-only Nginx input is oversized');
-        text += `${contents}\n`;
-        const line = execute('/usr/bin/sha256sum', ['--', filename]);
-        digest.update(`${filename}\0${line.split(/\s+/)[0]}\n`);
-      }
-      return { text, sha256: digest.digest('hex') };
+      return readNginxIncludeGraph('/etc/nginx/nginx.conf', { prefix: '/etc/nginx' });
     },
-    listeners() { return parseListeners(execute('/usr/bin/ss', ['-ltnp'])); },
-    tools() { return { setpriv: locate('setpriv'), python3: locate('python3') }; },
+    listeners() { return parseListeners(execute('/usr/bin/ss', ['-ltnp'], {}, commandRunner).output); },
+    tools() { return { setpriv: locate('setpriv', commandRunner), python3: locate('python3', commandRunner) }; },
     mysql() {
       const metadata = inspectMysql();
       return { rootSocketAdmin: metadata.rootSocketAdmin, currentUser: metadata.currentUser, database: metadata.database };
     },
     serviceIdentity() {
-      const passwd = execute('/usr/bin/getent', ['passwd', FIXED.serviceAccount], { allowFailure: true });
-      if (!passwd) return { exists: false };
-      const fields = passwd.split(':');
-      const group = execute('/usr/bin/getent', ['group', fields[3]], { allowFailure: true })?.split(':')[0] ?? null;
-      const groups = execute('/usr/bin/id', ['-Gn', FIXED.serviceAccount], { allowFailure: true })?.split(/\s+/).filter(Boolean) ?? [];
+      const passwd = execute('/usr/bin/getent', ['passwd', FIXED.serviceAccount], { absentStatus: 2 }, commandRunner);
+      if (!passwd.found) return { exists: false };
+      const fields = passwd.output.split(':');
+      if (fields.length !== 7) fail('Read-only preflight returned incomplete passwd metadata');
+      const primaryGroup = execute('/usr/bin/getent', ['group', fields[3]], { absentStatus: 2 }, commandRunner);
+      if (!primaryGroup.found) fail('Read-only preflight returned incomplete group metadata');
+      const group = primaryGroup.output.split(':')[0];
+      const groups = execute('/usr/bin/id', ['-Gn', FIXED.serviceAccount], {}, commandRunner).output.split(/\s+/).filter(Boolean);
       return {
         exists: true, name: fields[0], uid: Number(fields[2]), gid: Number(fields[3]), group,
         home: fields[5], shell: fields[6], supplementaryGroups: groups.filter(name => name !== group),
       };
     },
+    serviceGroupIdentity() {
+      const group = execute('/usr/bin/getent', ['group', FIXED.serviceAccount], { absentStatus: 2 }, commandRunner);
+      if (!group.found) return { exists: false };
+      const fields = group.output.split(':');
+      if (fields.length !== 4 || !/^\d+$/.test(fields[2])) fail('Read-only preflight returned incomplete group metadata');
+      return { exists: true, name: fields[0], gid: Number(fields[2]), members: fields[3] ? fields[3].split(',') : [] };
+    },
     mysqlIdentity() {
       const metadata = inspectMysql();
       return metadata.accountExists ? { exists: true, account: FIXED.mysqlAccount } : { exists: false };
     },
-    resources() { return [...RESOURCE_RULES.keys()].map(statResource); },
+    resources() { return [...RESOURCE_RULES.keys()].map(filename => statResource(filename, commandRunner)); },
   });
 }
