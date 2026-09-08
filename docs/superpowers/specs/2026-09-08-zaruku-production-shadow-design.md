@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-08  
 **Status:** approved for planning  
-**Candidate source:** `ee950f3917d0f8616b6229d4049410a0afb7e380`  
+**Reviewed application baseline:** `ee950f3917d0f8616b6229d4049410a0afb7e380`
 **Public cutover:** explicitly out of scope
 
 ## Objective
@@ -100,9 +100,12 @@ manager session can be compared on both runtimes. This is not a rotation.
 
 ## Release and Start Sequence
 
-The candidate is the exact reviewed commit
-`ee950f3917d0f8616b6229d4049410a0afb7e380`. The deployment gate requires a clean named source branch
-and the reviewed `release/zaruku` authority to contain that commit. The artifact is built, stamped,
+The application baseline is the exact reviewed commit
+`ee950f3917d0f8616b6229d4049410a0afb7e380`. Production-shadow tooling and documentation are added as
+reviewed descendant commits without changing Zaruku's manager-visible behavior. After those changes
+pass the full predeploy gate and independent code review, their exact final HEAD becomes the shadow
+candidate. The deployment gate requires a clean named source branch and the reviewed
+`release/zaruku` authority to contain that final candidate. The artifact is built, stamped,
 transported, and verified with the existing external trusted-manifest policy.
 
 Preparation order is fixed:
@@ -192,4 +195,3 @@ It does not authorize that cutover. `NO-GO` leaves the current public service on
 - extracting Abbott or advertising runtimes;
 - deleting the combined compatibility path;
 - merging branches or creating a Pull Request.
-
