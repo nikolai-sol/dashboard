@@ -42,7 +42,9 @@
 - `scripts/install-zaruku-shadow-auth.test.mjs` — descriptor, mode, link, size, and output-redaction fixtures.
 - `scripts/stage-zaruku-shadow-control.mjs` — transports only the reviewed, hash-attested provisioning control bundle to a SHA-addressed root-owned server directory.
 - `scripts/stage-zaruku-shadow-control.test.mjs` — payload, digest, path, immutability, and no-runtime-mutation fixtures.
-- `deploy/zaruku/linux-fixture.json` — reviewed immutable container-image digest and exact Linux fixture contract.
+- `deploy/zaruku/linux-fixture.Dockerfile` — minimal test-only image derived from the pinned official Node base.
+- `deploy/zaruku/linux-fixture.json` — pinned base digest, Debian snapshot, package versions, build-input hashes, and final local image ID.
+- `scripts/build-zaruku-linux-fixture.sh` — fixed builder and package-manifest attestation for the test-only image.
 - `scripts/run-zaruku-linux-fixtures.sh` — fixed network-disabled Docker runner for the Linux-only tests.
 - `scripts/run-zaruku-linux-fixtures.test.sh` — source tests for digest pinning, mounts, capabilities, and network isolation.
 - `scripts/run-zaruku-production-shadow.mjs` — orchestrates fixed preflight, existing deploy, live parity, and final evidence.
@@ -430,7 +432,9 @@ git commit -m "feat(zaruku): add fixed shadow provisioning boundary"
 **Files:**
 - Create: `scripts/stage-zaruku-shadow-control.mjs`
 - Create: `scripts/stage-zaruku-shadow-control.test.mjs`
+- Create: `deploy/zaruku/linux-fixture.Dockerfile`
 - Create: `deploy/zaruku/linux-fixture.json`
+- Create: `scripts/build-zaruku-linux-fixture.sh`
 - Create: `scripts/run-zaruku-linux-fixtures.sh`
 - Create: `scripts/run-zaruku-linux-fixtures.test.sh`
 - Create: `scripts/run-zaruku-production-shadow.mjs`
@@ -478,10 +482,14 @@ the fixed path `/var/www/.dashboard-zaruku-shadow/control/SOURCE_SHA`, with `SOU
 by the validated 40-character reviewed commit, an existing different inode is rejected,
 and staging cannot touch an app directory, PM2, Nginx, MySQL, a secret file, or a release ref.
 
-The Linux runner tests require an image reference containing `@sha256:`, `--network none`, a
-read-only checkout mount at `/src`, a writable temporary filesystem, only `SYS_PTRACE` as the added
-capability, and removal of the container after the fixture. They reject a mutable tag, privileged
-mode, host networking, a writable source mount, or a host `/var/www` mount.
+The Linux image tests require a base reference containing `@sha256:`, one fixed Debian snapshot,
+exact direct package versions for Python 3, `util-linux`, and `passwd`, a committed full installed
+package manifest hash, a committed Dockerfile hash, and an exact final local image ID beginning with
+`sha256:`. The runtime tests require `--network none`, a read-only checkout mount at `/src`, a
+read-only container root, writable disposable `tmpfs` only where the fixtures need it, only
+`SYS_PTRACE` as the added capability, and automatic container removal. They reject a mutable base
+tag, unpinned repository, current Debian mirrors, package upgrades, privileged mode, host networking,
+a writable source mount, or a host `/var/www` mount.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -508,11 +516,24 @@ install secrets, update `release/zaruku`, invoke PM2, or inspect another runtime
 
 - [ ] **Step 4: Add an immutable Linux-fixture runner**
 
-Resolve the official Node 22 Bookworm Slim image once through Docker, record its full repository
-digest in `deploy/zaruku/linux-fixture.json`, and commit that authority for review. The runner rejects
-an unqualified tag and invokes the exact digest with `--network none`, `--read-only`, a read-only
-checkout mount at `/src`, disposable `tmpfs` mounts, and only the fixture-documented `SYS_PTRACE`
-capability. It runs both `python3 -I -B /src/scripts/stamp-runtime-artifact.test.py` and
+Create a dedicated test-only image from the official Node 22 Bookworm Slim base pinned by full
+repository digest. During the explicit build step only, use one dated Debian snapshot and install
+exact versions of `python3`, `util-linux`, and `passwd` without recommended packages. Do not copy the
+repository, secrets, SSH material, or production data into the image. Record in
+`deploy/zaruku/linux-fixture.json` the base digest, snapshot identifier, requested package versions,
+Dockerfile SHA-256, complete sorted `dpkg-query` manifest SHA-256, and final local Docker image ID.
+
+`scripts/build-zaruku-linux-fixture.sh` accepts no overrides, refuses a dirty authority file or a
+base without `@sha256:`, builds without secrets or host mounts, verifies the installed executable
+paths and complete package-manifest hash, and records the final image ID only through an explicit
+`--lock` action. Normal verification mode is read-only and fails when the local image or any recorded
+input differs. The networked image build is preparation only; it is never part of predeploy or the
+production-shadow orchestrator.
+
+`scripts/run-zaruku-linux-fixtures.sh` first runs builder verification, then invokes only the recorded
+local image ID with `--network none`, `--read-only`, a read-only checkout mount at `/src`, disposable
+`tmpfs` mounts, and only the fixture-documented `SYS_PTRACE` capability. It runs both
+`python3 -I -B /src/scripts/stamp-runtime-artifact.test.py` and
 `node /src/scripts/boot-zaruku-service.linux.test.mjs`; any failure stops the shadow workflow.
 
 - [ ] **Step 5: Implement the fixed orchestration sequence**
@@ -576,7 +597,7 @@ gates remain present. Existing lint warnings may remain, but no new error or war
 - [ ] **Step 8: Commit Task 4**
 
 ```bash
-git add scripts/stage-zaruku-shadow-control.mjs scripts/stage-zaruku-shadow-control.test.mjs deploy/zaruku/linux-fixture.json scripts/run-zaruku-linux-fixtures.sh scripts/run-zaruku-linux-fixtures.test.sh scripts/run-zaruku-production-shadow.mjs scripts/run-zaruku-production-shadow.test.mjs scripts/verify-zaruku-shadow.sh scripts/verify-zaruku-shadow.test.sh package.json package-lock.json OPS.md
+git add scripts/stage-zaruku-shadow-control.mjs scripts/stage-zaruku-shadow-control.test.mjs deploy/zaruku/linux-fixture.Dockerfile deploy/zaruku/linux-fixture.json scripts/build-zaruku-linux-fixture.sh scripts/run-zaruku-linux-fixtures.sh scripts/run-zaruku-linux-fixtures.test.sh scripts/run-zaruku-production-shadow.mjs scripts/run-zaruku-production-shadow.test.mjs scripts/verify-zaruku-shadow.sh scripts/verify-zaruku-shadow.test.sh package.json package-lock.json OPS.md
 git commit -m "feat(zaruku): orchestrate production shadow evidence"
 ```
 
