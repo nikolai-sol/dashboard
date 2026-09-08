@@ -365,7 +365,12 @@ Predeploy runs source tests only; it never builds or runs Docker.
 
 After independent acceptance and explicit release-ref authorization, use
 `node scripts/freeze-zaruku-shadow-release.mjs check`; only an explicitly approved
-creation may use `create-if-absent`. `deploy/zaruku/repository.json` pins the literal
+creation may use `create-if-absent`. OpenSSH ignores user/system SSH config with
+`-F /dev/null`, fixes `git@github.com:22` and its host-key alias, and disables
+proxies, local commands, forwarding and connection sharing. Strict verification
+uses the existing account `~/.ssh/known_hosts`; default account keys or a validated
+owned agent socket provide authentication only. No inherited routing environment
+or known-host/key installation is accepted. `deploy/zaruku/repository.json` pins the literal
 `git@github.com:nikolai-sol/dashboard.git` destination for check/push/readback and
 child checks. Remote operations use a clean ownership-known temporary bare Git
 repository, no checkout config/refs/tags/hooks, disabled system/global config,

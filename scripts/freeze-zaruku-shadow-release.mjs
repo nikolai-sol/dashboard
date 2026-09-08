@@ -58,11 +58,36 @@ async function withRepository(adapter,source,action) {
 }
 
 const checked=result=>{if(result.status!==0||result.signal||result.error)fail();return result;};
-function gitEnvironment(protocol) {
-  return {PATH:'/usr/bin:/bin',HOME:os.homedir(),...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{}),
+// OpenSSH's route must not inherit Host/Match/Include, proxies or connection
+// sharing from either user or system config. Only existing default keys, the
+// owner's known_hosts and a validated local agent remain authentication inputs.
+const SSH_COMMAND = ['/usr/bin/ssh','-F','/dev/null',
+  '-o','HostName=github.com','-o','User=git','-o','Port=22','-o','HostKeyAlias=github.com',
+  '-o','CanonicalizeHostname=no','-o','ProxyCommand=none','-o','ProxyJump=none',
+  '-o','PermitLocalCommand=no','-o','LocalCommand=none','-o','RemoteCommand=none',
+  '-o','ClearAllForwardings=yes','-o','ForwardAgent=no','-o','ForwardX11=no','-o','ForwardX11Trusted=no','-o','Tunnel=no',
+  '-o','ControlMaster=no','-o','ControlPath=none','-o','ControlPersist=no',
+  '-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','GlobalKnownHostsFile=/dev/null',
+  '-o','UserKnownHostsFile=~/.ssh/known_hosts','-o','KnownHostsCommand=none','-o','VerifyHostKeyDNS=no','-o','UpdateHostKeys=no'].join(' ');
+
+export function releaseAuthorityGitEnvironment(protocol) {
+  if(!['ssh','file'].includes(protocol))fail();
+  let home,agent={};
+  try {
+    home=os.userInfo().homedir;
+    const stat=fs.lstatSync(home);
+    if(!path.isAbsolute(home)||fs.realpathSync(home)!==home||!stat.isDirectory()||stat.uid!==process.getuid()||(stat.mode&0o022))fail();
+    if(protocol==='ssh'&&process.env.SSH_AUTH_SOCK) {
+      const socket=process.env.SSH_AUTH_SOCK,stat=fs.lstatSync(socket),parent=fs.lstatSync(path.dirname(socket));
+      if(!path.isAbsolute(socket)||fs.realpathSync(socket)!==socket||!stat.isSocket()||stat.uid!==process.getuid()||!parent.isDirectory()||parent.uid!==process.getuid()||(parent.mode&0o022))fail();
+      agent={SSH_AUTH_SOCK:socket};
+    }
+  } catch {fail();}
+  return Object.freeze({PATH:'/usr/bin:/bin',HOME:home,...agent,
     GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1',GIT_GRAFT_FILE:'/dev/null',GIT_PAGER:'/bin/cat',GIT_TERMINAL_PROMPT:'0',GIT_ALLOW_PROTOCOL:protocol,
-    GIT_SSH_COMMAND:'/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes',GIT_SSH_VARIANT:'ssh'};
+    GIT_SSH_COMMAND:SSH_COMMAND,GIT_SSH_VARIANT:'ssh'});
 }
+const gitEnvironment = releaseAuthorityGitEnvironment;
 function localGit(repo,args,protocol='ssh') {
   return spawnSync('/usr/bin/git',['--no-replace-objects','-C',repo,'-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',...args],{env:gitEnvironment(protocol),encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:30000,maxBuffer:1048576});
 }

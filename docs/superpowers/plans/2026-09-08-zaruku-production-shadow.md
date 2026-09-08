@@ -702,7 +702,13 @@ authority in one ownership-known clean temporary bare Git repository, never the
 `origin` remote name. Only the exact candidate's reachable object closure is
 imported; source refs, tags, hooks and configuration are not copied. Alternate or
 multiple origin URLs, any push URL, and URL/include rewrites reject. System/global
-Git config is disabled; fixed SSH still permits the owner's existing authentication.
+Git config is disabled. OpenSSH uses `-F /dev/null` and pins `github.com`, user
+`git`, port `22` and host-key alias `github.com`; proxies, local commands,
+forwardings and connection sharing are disabled. Strict host-key checking uses
+only the owner's existing `~/.ssh/known_hosts` (no global or command provider,
+DNS trust or key update). Authentication may use default keys under the actual
+account home or a canonical owned agent socket; inherited routing environments
+are never copied. No key or known-host installation is part of this interface.
 
 ```bash
 node scripts/freeze-zaruku-shadow-release.mjs check

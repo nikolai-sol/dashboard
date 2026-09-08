@@ -2,9 +2,65 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { freezeShadowRelease, requireExactShadowRelease, createFixtureReleaseAuthorityAdapter, createReleaseAuthorityAdapter, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
+import { freezeShadowRelease, requireExactShadowRelease, createFixtureReleaseAuthorityAdapter, createReleaseAuthorityAdapter, releaseAuthorityGitEnvironment, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
+
+const expectedSsh = ['/usr/bin/ssh','-F','/dev/null',
+  '-o','HostName=github.com','-o','User=git','-o','Port=22','-o','HostKeyAlias=github.com',
+  '-o','CanonicalizeHostname=no','-o','ProxyCommand=none','-o','ProxyJump=none',
+  '-o','PermitLocalCommand=no','-o','LocalCommand=none','-o','RemoteCommand=none',
+  '-o','ClearAllForwardings=yes','-o','ForwardAgent=no','-o','ForwardX11=no','-o','ForwardX11Trusted=no','-o','Tunnel=no',
+  '-o','ControlMaster=no','-o','ControlPath=none','-o','ControlPersist=no',
+  '-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','GlobalKnownHostsFile=/dev/null',
+  '-o','UserKnownHostsFile=~/.ssh/known_hosts','-o','KnownHostsCommand=none','-o','VerifyHostKeyDNS=no','-o','UpdateHostKeys=no'];
+
+test('release SSH transport pins exact options and strips inherited routing inputs', () => {
+  const inherited={HOME:'/untrusted-home',GIT_SSH:'/untrusted-ssh',GIT_SSH_COMMAND:'ssh -p 2222',GIT_SSH_VARIANT:'plink',GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'core.sshCommand',GIT_CONFIG_VALUE_0:'evil',SSH_ASKPASS:'/untrusted-askpass',SSH_SK_PROVIDER:'/untrusted-provider',LD_PRELOAD:'/untrusted-loader',DYLD_INSERT_LIBRARIES:'/untrusted-loader'};
+  const saved=Object.fromEntries([...Object.keys(inherited),'SSH_AUTH_SOCK'].map(key=>[key,process.env[key]]));
+  try {
+    Object.assign(process.env,inherited);delete process.env.SSH_AUTH_SOCK;
+    const env=releaseAuthorityGitEnvironment('ssh');
+    assert.equal(env.GIT_SSH_COMMAND,expectedSsh.join(' '));
+    assert.equal(env.HOME,os.userInfo().homedir);
+    assert.deepEqual(Object.keys(env).sort(),['PATH','HOME','GIT_CONFIG_NOSYSTEM','GIT_CONFIG_SYSTEM','GIT_CONFIG_GLOBAL','GIT_NO_REPLACE_OBJECTS','GIT_GRAFT_FILE','GIT_PAGER','GIT_TERMINAL_PROMPT','GIT_ALLOW_PROTOCOL','GIT_SSH_COMMAND','GIT_SSH_VARIANT'].sort());
+    assert.equal(env.GIT_ALLOW_PROTOCOL,'ssh');assert.equal(env.GIT_SSH_VARIANT,'ssh');assert.ok(Object.isFrozen(env));
+    for(const value of ['file:ssh','https','ssh -o ProxyCommand=evil',''])assert.throws(()=>releaseAuthorityGitEnvironment(value),/release authority/);
+    for(const [key,value] of [['GIT_SSH_COMMAND','/usr/bin/ssh -F /evil'],['GIT_SSH_VARIANT','plink'],['GIT_ALLOW_PROTOCOL','file'],['HOME','/evil']])assert.throws(()=>{env[key]=value;},TypeError);
+  } finally {for(const [key,value] of Object.entries(saved))if(value===undefined)delete process.env[key];else process.env[key]=value;}
+});
+
+test('no-network OpenSSH config expansion ignores malicious routes and sharing', () => {
+  const directory=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-ssh-config-'))),config=path.join(directory,'config'),marker=path.join(directory,'side-effect');
+  const saved=process.env.SSH_AUTH_SOCK;
+  try {
+    delete process.env.SSH_AUTH_SOCK;
+    fs.writeFileSync(config,`Host *\n HostName attacker.invalid\n User attacker\n Port 2222\n HostKeyAlias attacker.invalid\n ProxyCommand /usr/bin/touch ${marker}\n PermitLocalCommand yes\n LocalCommand /usr/bin/touch ${marker}\n ForwardAgent yes\n LocalForward 127.0.0.1:19876 127.0.0.1:1\n RemoteForward 19877 127.0.0.1:1\n ControlMaster auto\n ControlPath ${directory}/shared\n ControlPersist 600\n StrictHostKeyChecking no\n UserKnownHostsFile /dev/null\n KnownHostsCommand /usr/bin/touch ${marker}\n`,{mode:0o600});
+    const expand=args=>spawnSync('/usr/bin/ssh',['-G','-F',config,...args,'git@github.com'],{env:{PATH:'/usr/bin:/bin',HOME:directory},encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:5000});
+    const baseline=expand([]);assert.equal(baseline.status,0);assert.match(baseline.stdout,/^hostname attacker.invalid$/m);assert.match(baseline.stdout,/^port 2222$/m);
+    const result=expand(releaseAuthorityGitEnvironment('ssh').GIT_SSH_COMMAND.split(' ').slice(1));
+    assert.equal(result.status,0,result.stderr);
+    const options=new Map(result.stdout.trim().split('\n').map(line=>{const at=line.indexOf(' ');return [line.slice(0,at),line.slice(at+1)];}));
+    for(const [key,value] of Object.entries({hostname:'github.com',user:'git',port:'22',hostkeyalias:'github.com',canonicalizehostname:'false',permitlocalcommand:'no',clearallforwardings:'yes',forwardagent:'no',forwardx11:'no',forwardx11trusted:'no',tunnel:'false',controlmaster:'false',controlpersist:'no',batchmode:'yes',stricthostkeychecking:'true',globalknownhostsfile:'/dev/null',verifyhostkeydns:'false',updatehostkeys:'false'}))assert.equal(options.get(key),value,key);
+    assert.equal(options.get('userknownhostsfile'),path.join(os.userInfo().homedir,'.ssh/known_hosts'));
+    for(const key of ['proxycommand','proxyjump','localcommand','remotecommand','localforward','remoteforward','dynamicforward','controlpath','knownhostscommand'])assert.ok(!options.has(key)||options.get(key)==='none',key);
+    assert.equal(fs.existsSync(marker),false,'ssh -G must not execute any command or open a network connection');
+  } finally {if(saved===undefined)delete process.env.SSH_AUTH_SOCK;else process.env.SSH_AUTH_SOCK=saved;fs.rmSync(directory,{recursive:true});}
+});
+
+test('release SSH authentication accepts only a canonical owned socket', async () => {
+  const directory=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-ssh-auth-'))),socket=path.join(directory,'agent'),alias=path.join(directory,'alias'),regular=path.join(directory,'regular');
+  const saved=process.env.SSH_AUTH_SOCK,server=net.createServer();
+  try {
+    await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(socket,resolve);});fs.chmodSync(socket,0o600);
+    process.env.SSH_AUTH_SOCK=socket;assert.equal(releaseAuthorityGitEnvironment('ssh').SSH_AUTH_SOCK,socket);
+    fs.symlinkSync(socket,alias);fs.writeFileSync(regular,'not an agent');
+    for(const value of ['relative',regular,alias,path.join(directory,'missing')]){process.env.SSH_AUTH_SOCK=value;assert.throws(()=>releaseAuthorityGitEnvironment('ssh'),/release authority/);}
+    fs.chmodSync(directory,0o777);process.env.SSH_AUTH_SOCK=socket;assert.throws(()=>releaseAuthorityGitEnvironment('ssh'),/release authority/);fs.chmodSync(directory,0o700);
+    process.env.SSH_AUTH_SOCK='invalid';assert.equal(releaseAuthorityGitEnvironment('file').SSH_AUTH_SOCK,undefined);
+  } finally {if(saved===undefined)delete process.env.SSH_AUTH_SOCK;else process.env.SSH_AUTH_SOCK=saved;await new Promise(resolve=>server.close(resolve));fs.chmodSync(directory,0o700);fs.rmSync(directory,{recursive:true});}
+});
 
 const sha = 'a'.repeat(40), ref = 'refs/heads/release/zaruku';
 function fixture(change = {}) {
