@@ -1091,20 +1091,87 @@ export function createStaticEvaluator(sourceFile) {
       return closure;
     }
 
-    function callAwareSourceBindings(expression, seenCalls = new Set()) {
+    function callAwareSourceBindings(expression, state = {
+      calls: new Set(), bindings: new Set(), depth: 0,
+    }) {
+      if (!expression || !preprocessStep()) return [];
+      if (state.depth > MAX_DEPTH) {
+        preprocessingExceeded = true;
+        return [];
+      }
       const current = unwrapExpression(expression);
       const direct = new Set(sourceBindings(current));
-      if (!ts.isCallExpression(current) || seenCalls.has(current)) return [...direct];
+      const next = overrides => ({ ...state, ...overrides, depth: state.depth + 1 });
+      if (ts.isIdentifier(current)) {
+        const binding = declaration(current, current.text);
+        if (binding && !state.bindings.has(binding) && ts.isVariableDeclaration(binding) &&
+            binding.initializer && (binding.parent.flags & ts.NodeFlags.Const)) {
+          for (const nested of callAwareSourceBindings(binding.initializer, next({
+            bindings: new Set(state.bindings).add(binding),
+          }))) direct.add(nested);
+        }
+        return [...direct];
+      }
+      if (ts.isConditionalExpression(current) ||
+          (ts.isBinaryExpression(current) && [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(current.operatorToken.kind))) {
+        for (const branch of selectedAliasExpressions(current)) {
+          for (const binding of callAwareSourceBindings(branch, next({}))) direct.add(binding);
+        }
+        return [...direct];
+      }
+      if (ts.isElementAccessExpression(current) && current.argumentExpression) {
+        const key = staticKey(current.argumentExpression);
+        if (key === null) return [...direct];
+        for (const container of valueExpressions(current.expression)) {
+          const resolved = unwrapExpression(container);
+          if (ts.isArrayLiteralExpression(resolved)) {
+            const element = resolved.elements[Number(key)];
+            if (element) {
+              for (const binding of callAwareSourceBindings(element, next({}))) direct.add(binding);
+            }
+            continue;
+          }
+          if (!ts.isObjectLiteralExpression(resolved)) continue;
+          const property = resolved.properties.find(item =>
+            (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+             ts.isNumericLiteral(item.name)) && item.name.text === key);
+          const member = property && ts.isPropertyAssignment(property)
+            ? property.initializer
+            : property && ts.isShorthandPropertyAssignment(property) ? property.name : null;
+          if (member) {
+            for (const binding of callAwareSourceBindings(member, next({}))) direct.add(binding);
+          }
+        }
+        return [...direct];
+      }
+      if (ts.isPropertyAccessExpression(current)) {
+        for (const container of valueExpressions(current.expression)) {
+          const resolved = unwrapExpression(container);
+          if (!ts.isObjectLiteralExpression(resolved)) continue;
+          const property = resolved.properties.find(item =>
+            (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
+            item.name.text === current.name.text);
+          const member = property && ts.isPropertyAssignment(property)
+            ? property.initializer
+            : property && ts.isShorthandPropertyAssignment(property) ? property.name : null;
+          if (member) {
+            for (const binding of callAwareSourceBindings(member, next({}))) direct.add(binding);
+          }
+        }
+        return [...direct];
+      }
+      if (!ts.isCallExpression(current) || state.calls.has(current)) return [...direct];
       const fn = localFunction(current);
       if (!fn) return [...direct];
-      const nextCalls = new Set(seenCalls).add(current);
+      const callState = next({ calls: new Set(state.calls).add(current) });
       for (const returned of selectedReturnExpressions(fn, current)) {
-        const returnedSources = sourceBindings(returned);
-        if (returnedSources.length === 0 && ts.isCallExpression(unwrapExpression(returned))) {
-          for (const binding of callAwareSourceBindings(returned, nextCalls)) direct.add(binding);
-          continue;
-        }
-        for (const returnedSource of returnedSources) {
+        for (const returnedSource of callAwareSourceBindings(returned, callState)) {
           const closure = aliasClosure(returnedSource);
           const parameterIndexes = fn.parameters.flatMap((parameter, index) =>
             closure.has(parameter) ? [index] : []);
@@ -1114,7 +1181,7 @@ export function createStaticEvaluator(sourceFile) {
           }
           for (const index of parameterIndexes) {
             for (const parameterValue of parameterExpressions(fn.parameters[index], index, current)) {
-              for (const binding of callAwareSourceBindings(parameterValue, nextCalls)) {
+              for (const binding of callAwareSourceBindings(parameterValue, callState)) {
                 direct.add(binding);
               }
             }
