@@ -57,6 +57,7 @@
 - `scripts/zaruku-shadow-mysql.py`, `.test.py`, and `.linux.test.py` — fixed MySQL CLI bridge with attested binary FD, anonymous sealed credential FD, bounded output and deadline, plus real disposable Linux descriptor tests.
 - `scripts/zaruku-xlsx-semantic.py` and `.test.py` — bounded stdlib ZIP/XML semantics, stdin bytes and digest-only output; no JSZip/esbuild/runtime dependency borrowing.
 - `scripts/zaruku-shadow-evidence.test.mjs` — real disposable-filesystem inode, exclusive publication and immutable permission fixtures.
+- `scripts/zaruku-shadow-evidence-lock.py`, `.test.py`, and `scripts/zaruku-shadow-evidence.linux.test.mjs` — receipt-bound directory-FD flock, bounded inherited writer-lifetime supervision, sanitized CLI and real worker-death/publication-race fixtures.
 - `scripts/zaruku-linux-fixture-policy.mjs` and `.test.mjs` — fixed build/verify/run image policy and negative authority/platform tests.
 - `scripts/runtime-boot-environment.test.mjs` and existing Linux boot fixture — exact environment regression and independently owned `env -i` boundary.
 - `scripts/predeploy-verify.sh` and `package.json` — run all new source-only fixtures; never run production apply actions.
@@ -135,6 +136,7 @@ Create `deploy/zaruku/production-shadow.json` with this complete shape:
   "otherRuntimeShas": "/var/www/.dashboard-zaruku-shadow/other-runtime-shas.tsv",
   "otherRuntimeShaEntries": [{ "name": "combined-dashboard", "path": "/var/www/dashboard/.release-source-sha" }],
   "evidenceRoot": "/var/www/.dashboard-zaruku-shadow/evidence",
+  "verifierTimeout": { "binary": "/usr/bin/timeout", "seconds": 180, "killAfterSeconds": 5, "lockWaitSeconds": 210 },
   "period": { "from": "2026-01-01", "to": "2026-08-31" },
   "httpTimeoutMs": 15000,
   "publicCutover": false
@@ -451,6 +453,7 @@ Approved integration clarifications (Task 4 source/control implementation only):
 - The owned `/usr/bin/env -i` boundary follows `setpriv`. In the pinned amd64 translation runtime, Node receives exactly `UV_USE_IO_URING=0` even after that boundary; native arm64 Node and amd64 Python do not. Official Node/libuv source only reads that variable. Immediately before application require, normalize only that exact key/value, reject any other value, and assert the exact three-key environment. Parent-only/unknown variables still fail.
 - The sealed Linux fixture proves `no_new_privs` and the full capability drop. Live PM2 attestation separately proves exact PID/UID/GID/supplementary groups/cwd/SHA and loopback ownership, rejecting nonzero effective/permitted/inheritable/ambient capabilities. It does not claim a live PM2 `NoNewPrivs` or bounding-capability guarantee and does not redesign PM2.
 - Task 4 review correction: after prerequisite/release-source checks and before deployment, a separate fixed worker action exclusively allocates/fsyncs the evidence directory and returns its exact source-SHA/run-ID/device/inode receipt. The source adapter must retain that receipt before deployment. Parity and final publication require/revalidate it and never allocate or recover an existing directory; a parity error or lost reply cannot erase or replace the stored receipt. Loss of the allocation reply is a pre-deploy refusal. The public 14-step sequence remains unchanged; allocation is an internal guard before `deploy-zaruku`.
+- Task 4 second review correction (approved tool boundary): every evidence writer retains the same receipt-bound directory-FD Linux flock, inherited through a staged fixed Python supervisor, Bash, Node and XLSX helper. A separate inherited pipe makes EOF of all writers—not SSH exit or verifier-leader exit—the completion proof. Preflight captures the exact root-owned regular non-symlink `/usr/bin/timeout` inode/hash with safe ancestry; revalidate immediately before fixed `--kill-after=5s 180s` execution in its own group. The supervisor handles TERM until writer EOF so timeout's KILL deadline also bounds an ignoring descendant. No caller PID, process discovery, reused identity, or recovery signalling is accepted. The worker transfers its lock copy before potentially slow coverage reads. Cleanup/publication acquire the same lock within 210 seconds (transport remains 240), then recheck receipt/path/owner/mode/ancestry and terminal inventory while holding it through hashing, fsync, chmod and atomic decision rename. Finalized/replaced directories reject queued writers. Add the helper to the exact 16-file control inventory; require timeout in the existing immutable image's executable manifest. Fixture runtime adds only disposable `/var/www` tmpfs, never a host mount. Record one full 180s/5s proof; repeatable fixtures assert those production arguments then shorten only their test-local duration to 2s, retaining 5s kill-after and delayed-write checks.
 - Full-gate maintenance approved during Task 4: inject `2026-09-02T12:00:00Z` through the existing optional clock in the one pre-existing Wordstat historical-availability test. Its September 1 fixture otherwise expires against wall-clock time. No runtime code, freshness threshold, or expectation changes.
 
 **Files:**
@@ -548,7 +551,8 @@ repository digest. During the explicit build step only, use one dated Debian sna
 exact versions of `python3`, `util-linux`, and `passwd` without recommended packages. Do not copy the
 repository, secrets, SSH material, or production data into the image. Record in
 `deploy/zaruku/linux-fixture.json` the base digest, snapshot identifier, requested package versions,
-Dockerfile SHA-256, complete sorted `dpkg-query` manifest SHA-256, and final local Docker image ID.
+Dockerfile SHA-256, complete sorted `dpkg-query` manifest SHA-256, final local Docker image ID,
+and the exact required executable list including `/usr/bin/timeout` already present in that image.
 
 `scripts/build-zaruku-linux-fixture.sh` accepts no overrides, refuses a dirty authority file or a
 base without `@sha256:`, builds without secrets or host mounts, verifies the installed executable
@@ -561,7 +565,8 @@ production-shadow orchestrator.
 local image ID with `--network none`, `--read-only`, a read-only checkout mount at `/src`, disposable
 `tmpfs` mounts, and only the fixture-documented `SYS_PTRACE` capability. It runs both
 `python3 -I -B /src/scripts/stamp-runtime-artifact.test.py` and
-`node /src/scripts/boot-zaruku-service.linux.test.mjs`; any failure stops the shadow workflow.
+`node /src/scripts/boot-zaruku-service.linux.test.mjs`, the MySQL descriptor fixture, and
+`node /src/scripts/zaruku-shadow-evidence.linux.test.mjs`; any failure stops the shadow workflow.
 
 - [ ] **Step 5: Implement the fixed orchestration sequence**
 

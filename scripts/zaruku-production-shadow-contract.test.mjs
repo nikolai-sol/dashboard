@@ -38,6 +38,7 @@ test('production shadow authority is loopback-only and cannot authorize cutover'
   assert.ok(Object.isFrozen(authority.period));
   assert.deepEqual(authority.otherRuntimeShaEntries,[{name:'combined-dashboard',path:'/var/www/dashboard/.release-source-sha'}]);
   assert.ok(Object.isFrozen(authority.otherRuntimeShaEntries));
+  assert.deepEqual(authority.verifierTimeout,{binary:'/usr/bin/timeout',seconds:180,killAfterSeconds:5,lockWaitSeconds:210});assert.ok(Object.isFrozen(authority.verifierTimeout));
 });
 
 test('shadow authority rejects every extra key and fixed-value override', () => {
@@ -53,6 +54,7 @@ test('shadow authority rejects every extra key and fixed-value override', () => 
     { ...valid, otherRuntimeShaEntries: [{name:'combined-dashboard',path:'/var/www/dashboard/.env'}] },
     { ...valid, otherRuntimeShaEntries: [{name:'other',path:'/var/www/other/.release-source-sha'}] },
     { ...valid, period: { ...valid.period, to: '2026-09-01' } },
+    ...[{binary:'/tmp/timeout'},{seconds:0},{killAfterSeconds:0},{lockWaitSeconds:241},{pid:1}].map(change=>({...valid,verifierTimeout:{...valid.verifierTimeout,...change}})),
   ]) {
     withJson(invalid, filename => assert.throws(() => loadShadowAuthority(filename), /authority|contract/i));
   }
@@ -263,7 +265,7 @@ test('source-only shadow tests are a dedicated predeploy gate with no apply mode
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const gate=pkg.scripts['test:zaruku-production-shadow'];
   for(const name of ['zaruku-production-shadow-contract','zaruku-production-shadow-preflight','zaruku-shadow-db','zaruku-shadow-host','install-zaruku-shadow-auth','install-zaruku-shadow-inventory','stage-zaruku-shadow-control','run-zaruku-production-shadow','zaruku-production-shadow-worker','zaruku-production-shadow-remote','zaruku-shadow-coverage','zaruku-shadow-evidence','runtime-boot-environment'])assert.ok(gate.includes(`scripts/${name}.test.mjs`));
-  for(const name of ['zaruku-shadow-mysql','zaruku-xlsx-semantic'])assert.ok(gate.includes(`python3 -I -B scripts/${name}.test.py`));
+  for(const name of ['zaruku-shadow-mysql','zaruku-xlsx-semantic','zaruku-shadow-evidence-lock'])assert.ok(gate.includes(`python3 -I -B scripts/${name}.test.py`));
   assert.ok(gate.includes('bash scripts/run-zaruku-linux-fixtures.test.sh'));
   assert.doesNotMatch(gate,/build-zaruku-linux-fixture|run-zaruku-linux-fixtures\.sh|--lock|ssh|pm2|nginx/);
   const predeploy = fs.readFileSync(path.join(root, 'scripts/predeploy-verify.sh'), 'utf8');

@@ -36,8 +36,8 @@ export function createProductionAdapter(options={}) {
   const adapter={
     source,
     loadAuthorities:async()=>({shadow:loadShadowAuthority(path.join(ROOT,'deploy/zaruku/production-shadow.json')),mysql:loadMysqlTableAuthority(path.join(ROOT,'deploy/zaruku/mysql-read-tables.json'))}),
-    async preflight(){const state=await source();sourceSha=state.sha;prepared=await prepareReviewedControl({source,readFile},sourceSha);const result=await call('preflight');context={mysqlIdentity:result.mysqlIdentity,inventoryIdentity:result.inventoryIdentity,inventorySha256:result.inventorySha256};return result;},
-    async linuxBuildHelperFixture(){const output=command('/bin/bash',[path.join(ROOT,'scripts/run-zaruku-linux-fixtures.sh')]);linuxProof=output==='linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed';return {passed:linuxProof};},
+    async preflight(){const state=await source();sourceSha=state.sha;prepared=await prepareReviewedControl({source,readFile},sourceSha);const result=await call('preflight');context={mysqlIdentity:result.mysqlIdentity,timeoutIdentity:result.timeoutIdentity,inventoryIdentity:result.inventoryIdentity,inventorySha256:result.inventorySha256};return result;},
+    async linuxBuildHelperFixture(){const output=command('/bin/bash',[path.join(ROOT,'scripts/run-zaruku-linux-fixtures.sh')]);linuxProof=output==='linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\nlinux-evidence-writer-fixture passed';return {passed:linuxProof};},
     async linuxPrivilegeFixture(){return {passed:linuxProof};},
     async fullPredeploy(){command('npm',['run','predeploy:verify']);return {passed:true};},
     async releaseAuthority(){

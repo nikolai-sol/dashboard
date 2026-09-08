@@ -14,6 +14,8 @@ ISOLATED_URL="$2"
 EVIDENCE_DIR="$3"
 AUTH_FD="${ZARUKU_SHADOW_AUTH_FD:-}"
 COVERAGE_FD="${ZARUKU_SHADOW_COVERAGE_FD:-}"
+LOCK_FD="${ZARUKU_SHADOW_LOCK_FD:-}"
+WRITER_FD="${ZARUKU_SHADOW_WRITER_FD:-}"
 ARTIFACT_ROOT="${ZARUKU_SHADOW_ARTIFACT_ROOT:-}"
 OTHER_SHAS_FILE="${ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE:-}"
 SNAPSHOT="${ZARUKU_SHADOW_CANONICAL_SNAPSHOT:-}"
@@ -23,6 +25,10 @@ HTTP_TIMEOUT_MS="${ZARUKU_SHADOW_HTTP_TIMEOUT_MS:-15000}"
 
 [[ "$AUTH_FD" =~ ^[0-9]+$ && "$AUTH_FD" -ge 3 ]] || fail "ZARUKU_SHADOW_AUTH_FD must name an open descriptor containing auth JSON"
 [[ "$COVERAGE_FD" =~ ^[0-9]+$ && "$COVERAGE_FD" -ge 3 && "$COVERAGE_FD" != "$AUTH_FD" ]] || fail "canonical coverage descriptor is required"
+[[ -z "$LOCK_FD$WRITER_FD" || ( "$LOCK_FD" == 5 && "$WRITER_FD" == 6 && "$AUTH_FD" == 3 && "$COVERAGE_FD" == 4 ) ]] || fail "invalid writer fence descriptors"
+if [[ "$EVIDENCE_DIR" == /var/www/.dashboard-zaruku-shadow/evidence/* ]]; then
+  [[ "$LOCK_FD" == 5 && "$WRITER_FD" == 6 ]] || fail "production evidence requires writer fence"
+fi
 [[ -n "$ARTIFACT_ROOT" ]] || fail "ZARUKU_SHADOW_ARTIFACT_ROOT is required"
 [[ -n "$OTHER_SHAS_FILE" ]] || fail "ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE is required"
 [[ "$SNAPSHOT" =~ ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$ ]] || fail "invalid or missing canonical snapshot label"
@@ -41,7 +47,7 @@ fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 node --input-type=module - \
   "$COMBINED_URL" "$ISOLATED_URL" "$EVIDENCE_DIR" "$AUTH_FD" "$ARTIFACT_ROOT" \
-  "$OTHER_SHAS_FILE" "$SNAPSHOT" "$FROM_DATE" "$TO_DATE" "$HTTP_TIMEOUT_MS" "$COVERAGE_FD" "$SCRIPT_DIR/zaruku-xlsx-semantic.py" <<'NODE'
+  "$OTHER_SHAS_FILE" "$SNAPSHOT" "$FROM_DATE" "$TO_DATE" "$HTTP_TIMEOUT_MS" "$COVERAGE_FD" "$SCRIPT_DIR/zaruku-xlsx-semantic.py" "$LOCK_FD" "$WRITER_FD" <<'NODE'
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -57,7 +63,12 @@ function reportSanitizedFailure() {
 process.on("uncaughtException", reportSanitizedFailure);
 process.on("unhandledRejection", reportSanitizedFailure);
 
-const [combinedArgument, isolatedArgument, evidenceArgument, authFdArgument, artifactArgument, shaListArgument, snapshot, from, to, httpTimeoutArgument, coverageFdArgument, xlsxHelper] = process.argv.slice(2);
+const [combinedArgument, isolatedArgument, evidenceArgument, authFdArgument, artifactArgument, shaListArgument, snapshot, from, to, httpTimeoutArgument, coverageFdArgument, xlsxHelper, lockFdArgument, writerFdArgument] = process.argv.slice(2);
+const writerFence=lockFdArgument==='5'&&writerFdArgument==='6';
+if(writerFence){
+  const pinned=fs.fstatSync(5),directory=fs.lstatSync(evidenceArgument);
+  assert.ok(pinned.isDirectory()&&pinned.dev===directory.dev&&pinned.ino===directory.ino&&(directory.mode&0o777)===0o700&&fs.fstatSync(6).isFIFO());
+}
 const httpTimeoutMs = Number(httpTimeoutArgument);
 const EXPECTED_ROUTES = [
   "/_not-found",
@@ -374,7 +385,7 @@ async function normalizeXlsx(data, label) {
   if (data.length === 0 || data.length > MAX_EXPORT_BYTES || data[0] !== 0x50 || data[1] !== 0x4b) fail(`${label} is outside XLSX package bounds`);
   // Bytes remain in inherited pipes; no body, ZIP member or diagnostic reaches
   // argv, a temporary file, or evidence. The attested helper uses stdlib only.
-  const result = spawnSync('/usr/bin/python3', ['-I', '-B', xlsxHelper], { input: data, env: {}, timeout: 15000, maxBuffer: 256, stdio: ['pipe', 'pipe', 'pipe'] });
+  const result = spawnSync('/usr/bin/python3', ['-I', '-B', xlsxHelper], { input: data, env: {}, timeout: 15000, maxBuffer: 256, stdio: writerFence ? ['pipe', 'pipe', 'pipe', 'ignore', 'ignore', 5, 6] : ['pipe', 'pipe', 'pipe'] });
   if (result.error || result.signal || result.status !== 0 || result.stderr.length) fail(`${label} is not a valid XLSX package`);
   let value; try { value = JSON.parse(result.stdout); } catch { fail('XLSX semantic result failed'); }
   if (Object.keys(value).sort().join(',') !== 'entries,expandedBytes,sha256' || !Number.isSafeInteger(value.entries) || value.entries < 2 || value.entries > 4096 || !Number.isSafeInteger(value.expandedBytes) || value.expandedBytes < 1 || value.expandedBytes > MAX_EXPORT_BYTES || !/^[a-f0-9]{64}$/.test(value.sha256)) fail('XLSX semantic result failed');

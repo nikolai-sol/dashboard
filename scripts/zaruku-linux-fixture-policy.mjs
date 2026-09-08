@@ -10,10 +10,10 @@ const AUTHORITY = path.join(ROOT, 'deploy/zaruku/linux-fixture.json');
 const DOCKERFILE = path.join(ROOT, 'deploy/zaruku/linux-fixture.Dockerfile');
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const fail = () => { throw new Error('Refusing Zaruku Linux fixture authority'); };
-const EXECUTABLES = ['/usr/bin/python3', '/usr/bin/setpriv', '/usr/sbin/useradd', '/usr/sbin/groupadd'];
+const EXECUTABLES = ['/usr/bin/python3', '/usr/bin/setpriv', '/usr/bin/timeout', '/usr/sbin/useradd', '/usr/sbin/groupadd'];
 
 export function validateFixtureAuthority(authority, unlocked = false) {
-  if (!authority || Object.keys(authority).sort().join(',') !== 'base,dockerfileSha256,imageId,packageManifestSha256,packages,platform,snapshot' || !/^docker\.io\/library\/node@sha256:[a-f0-9]{64}$/.test(authority.base) || authority.platform !== 'linux/amd64' || !/^\d{8}T\d{6}Z$/.test(authority.snapshot) || Object.keys(authority.packages ?? {}).sort().join(',') !== 'passwd,python3,util-linux' || Object.values(authority.packages).some(value => typeof value !== 'string' || !/^[0-9][a-zA-Z0-9.:+~_-]*$/.test(value)) || !/^[a-f0-9]{64}$/.test(authority.dockerfileSha256)) fail();
+  if (!authority || Object.keys(authority).sort().join(',') !== 'base,dockerfileSha256,imageId,packageManifestSha256,packages,platform,requiredExecutables,snapshot' || JSON.stringify(authority.requiredExecutables)!==JSON.stringify(EXECUTABLES) || !/^docker\.io\/library\/node@sha256:[a-f0-9]{64}$/.test(authority.base) || authority.platform !== 'linux/amd64' || !/^\d{8}T\d{6}Z$/.test(authority.snapshot) || Object.keys(authority.packages ?? {}).sort().join(',') !== 'passwd,python3,util-linux' || Object.values(authority.packages).some(value => typeof value !== 'string' || !/^[0-9][a-zA-Z0-9.:+~_-]*$/.test(value)) || !/^[a-f0-9]{64}$/.test(authority.dockerfileSha256)) fail();
   if (!(unlocked && authority.imageId === null && authority.packageManifestSha256 === null) && (!/^sha256:[a-f0-9]{64}$/.test(authority.imageId) || !/^[a-f0-9]{64}$/.test(authority.packageManifestSha256))) fail();
   return authority;
 }
@@ -32,8 +32,8 @@ export function fixtureRunArguments(authority, checkout) {
   const code = `const fs=require('node:fs'),cp=require('node:child_process');
 fs.cpSync('/opt/fixture-system/etc','/etc',{recursive:true,preserveTimestamps:true,filter:src=>!['/opt/fixture-system/etc/hosts','/opt/fixture-system/etc/hostname','/opt/fixture-system/etc/resolv.conf'].includes(src)});
 fs.cpSync('/opt/fixture-system/usr-bin','/usr/bin',{recursive:true,preserveTimestamps:true});
-for(const [bin,args,label] of [['/usr/bin/python3',['-I','-B','/src/scripts/stamp-runtime-artifact.test.py'],'linux-build-helper-fixture'],['/usr/local/bin/node',['/src/scripts/boot-zaruku-service.linux.test.mjs'],'linux-privilege-drop-fixture'],['/usr/bin/python3',['-I','-B','/src/scripts/zaruku-shadow-mysql.linux.test.py'],'linux-mysql-descriptor-fixture']]){
- const r=cp.spawnSync(bin,args,{stdio:['ignore','pipe','pipe'],env:{PATH:'/usr/local/bin:/usr/bin:/bin:/usr/sbin',LC_ALL:'C'},timeout:120000});
+for(const [bin,args,label] of [['/usr/bin/python3',['-I','-B','/src/scripts/stamp-runtime-artifact.test.py'],'linux-build-helper-fixture'],['/usr/local/bin/node',['/src/scripts/boot-zaruku-service.linux.test.mjs'],'linux-privilege-drop-fixture'],['/usr/bin/python3',['-I','-B','/src/scripts/zaruku-shadow-mysql.linux.test.py'],'linux-mysql-descriptor-fixture'],['/usr/local/bin/node',['/src/scripts/zaruku-shadow-evidence.linux.test.mjs'],'linux-evidence-writer-fixture']]){
+ const r=cp.spawnSync(bin,args,{stdio:['ignore','pipe','pipe'],env:{PATH:'/usr/local/bin:/usr/bin:/bin:/usr/sbin',LC_ALL:'C'},timeout:225000});
  if(r.status!==0||r.error||r.signal){process.stderr.write(label+' failed\\n');process.exit(1)}process.stdout.write(label+' passed\\n');}
 `;
   return ['run', '--rm', '--pull', 'never', '--platform', authority.platform, '--network', 'none', '--read-only', '--cap-add', 'SYS_PTRACE',
@@ -42,6 +42,7 @@ for(const [bin,args,label] of [['/usr/bin/python3',['-I','-B','/src/scripts/stam
     '--tmpfs', '/etc:rw,nosuid,nodev,mode=0755,size=33554432',
     '--tmpfs', '/usr/bin:rw,nosuid,nodev,exec,mode=0755,size=268435456',
     '--tmpfs', '/var/log:rw,nosuid,nodev,mode=0755,size=8388608',
+    '--tmpfs', '/var/www:rw,nosuid,nodev,mode=0755,size=33554432',
     '--entrypoint', '/usr/local/bin/node', authority.imageId, '-e', code];
 }
 

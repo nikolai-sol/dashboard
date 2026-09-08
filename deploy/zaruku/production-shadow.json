@@ -10,6 +10,7 @@
   "otherRuntimeShas": "/var/www/.dashboard-zaruku-shadow/other-runtime-shas.tsv",
   "otherRuntimeShaEntries": [{ "name": "combined-dashboard", "path": "/var/www/dashboard/.release-source-sha" }],
   "evidenceRoot": "/var/www/.dashboard-zaruku-shadow/evidence",
+  "verifierTimeout": { "binary": "/usr/bin/timeout", "seconds": 180, "killAfterSeconds": 5, "lockWaitSeconds": 210 },
   "period": { "from": "2026-01-01", "to": "2026-08-31" },
   "httpTimeoutMs": 15000,
   "publicCutover": false

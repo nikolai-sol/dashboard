@@ -1,6 +1,7 @@
 {
   "base": "docker.io/library/node@sha256:4d676821dff059fd00d277ee4261ef34ea712317fed0737c03941481b5760c96",
   "platform": "linux/amd64",
+  "requiredExecutables": ["/usr/bin/python3", "/usr/bin/setpriv", "/usr/bin/timeout", "/usr/sbin/useradd", "/usr/sbin/groupadd"],
   "snapshot": "20260825T000000Z",
   "packages": {
     "python3": "3.11.2-1+b1",

@@ -47,6 +47,18 @@ export function attestMysqlBinary() {
   return {dev:file.identity.dev,ino:file.identity.ino,sha256:file.sha256};
 }
 
+export function attestTimeoutBinary(io=fs) {
+  const file=readProtected(AUTHORITY.verifierTimeout.binary,undefined,100*1024*1024,io);
+  if(!(file.identity.mode&0o111))refuse();
+  return {dev:file.identity.dev,ino:file.identity.ino,sha256:file.sha256};
+}
+
+export function verifierCommand(request,io=fs) {
+  if(!same(attestTimeoutBinary(io),request.context.timeoutIdentity))refuse('verifier');
+  const {binary,seconds,killAfterSeconds}=AUTHORITY.verifierTimeout;
+  return {bin:binary,args:[`--kill-after=${killAfterSeconds}s`,`${seconds}s`,'/usr/bin/python3','-I','-B',path.join(import.meta.dirname,'zaruku-shadow-evidence-lock.py'),'verify']};
+}
+
 export function attestStagedControl() {
   const match=/^\/var\/www\/\.dashboard-zaruku-shadow\/control\/([a-f0-9]{40})$/.exec(ROOT);
   if(process.platform!=='linux'||process.getuid()!==0||process.geteuid()!==0||!match)refuse();
@@ -171,7 +183,7 @@ function runtimePid(name) {
 
 function contextCheck(request) {
   const inventory=inspectFixedInventory();
-  if(!same(inventory.inventoryIdentity,request.context.inventoryIdentity)||inventory.inventorySha256!==request.context.inventorySha256||!same(attestMysqlBinary(),request.context.mysqlIdentity))refuse();
+  if(!same(inventory.inventoryIdentity,request.context.inventoryIdentity)||inventory.inventorySha256!==request.context.inventorySha256||!same(attestMysqlBinary(),request.context.mysqlIdentity)||!same(attestTimeoutBinary(),request.context.timeoutIdentity))refuse();
   return inventory;
 }
 
@@ -209,39 +221,64 @@ export function requireEvidenceDirectory(request,io=fs) {
 }
 
 const EVIDENCE_FILES=['artifact-attestation.json','canonical-comparison.json','endpoint-parity.json','runtime-shas.after.tsv','runtime-shas.before.tsv','summary.json','zaruku-routes.txt'];
-export function terminateVerifier(child,kill=process.kill) {
-  if(!Number.isSafeInteger(child.pid)||child.pid<=0)return;
-  try{kill(-child.pid,'SIGKILL');}catch(error){if(error.code!=='ESRCH')refuse('verifier cleanup');}
+const lockReceipt=request=>({sourceSha:request.sourceSha,runId:request.runId,evidenceIdentity:request.context.evidenceIdentity});
+
+function lockDescriptor(fd,request) {
+  const result=spawnSync('/usr/bin/python3',['-I','-B',path.join(import.meta.dirname,'zaruku-shadow-evidence-lock.py'),'acquire'],{input:JSON.stringify(lockReceipt(request)),env:{},stdio:['pipe','pipe','pipe','ignore','ignore',fd],timeout:215000,maxBuffer:1024});
+  if(result.status!==0||result.error||result.signal||result.stderr?.length||result.stdout?.toString()!=='locked\n')refuse('evidence fence');
+}
+
+export function openEvidenceLock(request,io=fs,locker=lockDescriptor) {
+  const directory=requireEvidenceDirectory(request,io);
+  const fd=io.openSync(directory,io.constants.O_RDONLY|io.constants.O_DIRECTORY|io.constants.O_NOFOLLOW);
+  try {
+    const stat=io.fstatSync(fd);
+    if(!stat.isDirectory()||stat.uid!==0||stat.gid!==0||(stat.mode&0o777)!==0o700||String(stat.dev)!==request.context.evidenceIdentity.dev||String(stat.ino)!==request.context.evidenceIdentity.ino)refuse('evidence');
+    locker(fd,request);
+    // A queued writer may wake after publication or path replacement. Recheck
+    // the pinned inode AND the unfinalized mode while the lock is held.
+    requireEvidenceDirectory(request,io);
+    return {directory,fd};
+  } catch(error){io.closeSync(fd);throw error;}
 }
 
 async function pairedParity(request) {
-  const directory=requireEvidenceDirectory(request);
+  const {directory,fd:lock}=openEvidenceLock(request);
+  let ownsLock=true,authFd,auth;
+  try {
   contextCheck(request);
-  const auth=readProtected(AUTHORITY.authDescriptor,0o600);validateAuthDescriptor(auth.bytes);
+  auth=readProtected(AUTHORITY.authDescriptor,0o600);validateAuthDescriptor(auth.bytes);
   if(fs.readdirSync(directory).length)refuse('evidence');
-  const fd=fs.openSync(AUTHORITY.authDescriptor,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
-  if(!same(snapshot(fs.fstatSync(fd)),auth.identity)){fs.closeSync(fd);refuse();}
+  const fd=authFd=fs.openSync(AUTHORITY.authDescriptor,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+  if(!same(snapshot(fs.fstatSync(fd)),auth.identity))refuse();
   const secret=readZarukuSecrets(),{admin,reader}=createMysqlAdapters(request.context.mysqlIdentity,secret.ZARUKU_DB_PASSWORD);
   let observations=0,invalid=false,stream='';
-  const child=spawn('/bin/bash',[path.join(import.meta.dirname,'verify-zaruku-shadow.sh'),AUTHORITY.combinedUrl,AUTHORITY.isolatedUrl,directory],{detached:true,env:{PATH:'/usr/bin:/bin',ZARUKU_SHADOW_AUTH_FD:'3',ZARUKU_SHADOW_COVERAGE_FD:'4',ZARUKU_SHADOW_ARTIFACT_ROOT:'/var/www/dashboard-zaruku',ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE:AUTHORITY.otherRuntimeShas,ZARUKU_SHADOW_CANONICAL_SNAPSHOT:request.sourceSha,ZARUKU_SHADOW_FROM:AUTHORITY.period.from,ZARUKU_SHADOW_TO:AUTHORITY.period.to,ZARUKU_SHADOW_HTTP_TIMEOUT_MS:String(AUTHORITY.httpTimeoutMs)},stdio:['ignore','pipe','pipe',fd,'pipe']});
-  fs.closeSync(fd);auth.bytes.fill(0);
+  const invocation=verifierCommand(request); // Last synchronous check before exec; no PATH lookup.
+  const child=spawn(invocation.bin,invocation.args,{detached:true,env:{PATH:'/usr/bin:/bin',ZARUKU_SHADOW_AUTH_FD:'3',ZARUKU_SHADOW_COVERAGE_FD:'4',ZARUKU_SHADOW_LOCK_FD:'5',ZARUKU_SHADOW_WRITER_FD:'6',ZARUKU_SHADOW_ARTIFACT_ROOT:'/var/www/dashboard-zaruku',ZARUKU_SHADOW_OTHER_RUNTIME_SHAS_FILE:AUTHORITY.otherRuntimeShas,ZARUKU_SHADOW_CANONICAL_SNAPSHOT:request.sourceSha,ZARUKU_SHADOW_FROM:AUTHORITY.period.from,ZARUKU_SHADOW_TO:AUTHORITY.period.to,ZARUKU_SHADOW_HTTP_TIMEOUT_MS:String(AUTHORITY.httpTimeoutMs)},stdio:['pipe','pipe','pipe',fd,'pipe',lock]});
+  child.stdin.on('error',()=>{invalid=true;});child.stdin.end(JSON.stringify(lockReceipt(request)));
+  fs.closeSync(fd);authFd=undefined;auth.bytes.fill(0);
+  // Transfer, do not retain an extra worker-owned lock copy during DB reads:
+  // the independently bounded supervisor and its writers now own the fence.
+  fs.closeSync(lock);ownsLock=false;
   // Child stdout/stderr are never forwarded: even tool diagnostics are private.
-  let outputBytes=0;for(const pipe of [child.stdout,child.stderr])pipe.on('data',chunk=>{outputBytes+=chunk.length;if(outputBytes>65536){invalid=true;terminateVerifier(child);}});
+  const abortProtocol=()=>{invalid=true;child.stdio[4].destroy();};
+  let outputBytes=0;for(const pipe of [child.stdout,child.stderr])pipe.on('data',chunk=>{outputBytes+=chunk.length;if(outputBytes>65536)abortProtocol();});
   let pending=Promise.resolve();
-  child.stdio[4].on('error',()=>{invalid=true;terminateVerifier(child);});
+  child.stdio[4].on('error',abortProtocol);
   child.stdio[4].on('data',chunk=>{
     stream+=chunk.toString();
-    if(stream.length>64){invalid=true;terminateVerifier(child);return;}
+    if(stream.length>64){abortProtocol();return;}
     while(stream.includes('\n')){
       const index=stream.indexOf('\n'),line=stream.slice(0,index);stream=stream.slice(index+1);
-      if(line!=='observe'||++observations>2){invalid=true;terminateVerifier(child);return;}
-      pending=pending.then(async()=>{const token=await observeCanonicalCoverage(admin,reader);if(!child.stdio[4].destroyed)child.stdio[4].write(JSON.stringify(token)+'\n');}).catch(()=>{invalid=true;terminateVerifier(child);});
+      if(line!=='observe'||++observations>2){abortProtocol();return;}
+      pending=pending.then(async()=>{const token=await observeCanonicalCoverage(admin,reader);if(!child.stdio[4].destroyed)child.stdio[4].write(JSON.stringify(token)+'\n');}).catch(abortProtocol);
     }
   });
-  const timer=setTimeout(()=>{invalid=true;terminateVerifier(child);},180000);
   let status;
   try{status=await new Promise(resolve=>{child.once('error',()=>{invalid=true;resolve(null);});child.once('close',resolve);});await pending;}
-  finally{clearTimeout(timer);child.stdio[4].destroy();terminateVerifier(child);}
+  finally{child.stdio[4].destroy();}
+  const finalLock=openEvidenceLock(request);
+  try {
   contextCheck(request);
   let comparison={pairedReadAttempts:1,coverageAdvancedDuringFirstPair:false,stableCanonicalComparison:false};
   const filename=path.join(directory,'canonical-comparison.json');
@@ -251,23 +288,38 @@ async function pairedParity(request) {
     else invalid=true;
   }
   return {passed:!invalid&&status===0&&comparison.stableCanonicalComparison,...comparison};
+  } finally {fs.closeSync(finalLock.fd);}
+  } finally {if(authFd!==undefined)fs.closeSync(authFd);auth?.bytes.fill(0);if(ownsLock)fs.closeSync(lock);}
 }
 
-export function publishDecision(request,io=fs) {
+export function publishDecision(request,io=fs,locker=lockDescriptor) {
   const value=sanitizeDecision(request.decision,request.sourceSha);
-  const directory=requireEvidenceDirectory(request,io),before=snapshot(io.lstatSync(directory));
+  const {directory,fd:lock}=openEvidenceLock(request,io,locker);
+  try {
+  const before=snapshot(io.lstatSync(directory));
   const files=io.readdirSync(directory);
   if(files.some(name=>!EVIDENCE_FILES.includes(name)))refuse('evidence');
   if(value.decision==='GO'&&EVIDENCE_FILES.some(name=>!files.includes(name)))refuse('evidence');
   const records=[];
   for(const name of files){const file=readProtected(path.join(directory,name),0o600,65536,io);records.push({name,sha256:file.sha256});}
-  const fd=io.openSync(path.join(directory,'decision.json'),io.constants.O_WRONLY|io.constants.O_CREAT|io.constants.O_EXCL|io.constants.O_NOFOLLOW,0o400);
+  const pending=path.join(directory,'.decision.pending.json');
+  const fd=io.openSync(pending,io.constants.O_WRONLY|io.constants.O_CREAT|io.constants.O_EXCL|io.constants.O_NOFOLLOW,0o400);
   try{io.writeFileSync(fd,JSON.stringify({...value,evidenceFiles:records})+'\n');io.fchmodSync(fd,0o400);io.fsyncSync(fd);}finally{io.closeSync(fd);}
   for(const name of files){const fd=io.openSync(path.join(directory,name),io.constants.O_RDONLY|io.constants.O_NOFOLLOW);try{io.fchmodSync(fd,0o400);io.fsyncSync(fd);}finally{io.closeSync(fd);}}
+  requireEvidenceDirectory(request,io);
   const after=snapshot(io.lstatSync(directory));if(before.dev!==after.dev||before.ino!==after.ino)refuse('evidence');
+  io.renameSync(pending,path.join(directory,'decision.json'));
   const dir=io.openSync(directory,io.constants.O_RDONLY|io.constants.O_DIRECTORY|io.constants.O_NOFOLLOW);try{io.fchmodSync(dir,0o500);io.fsyncSync(dir);}finally{io.closeSync(dir);}
   const parent=io.openSync(AUTHORITY.evidenceRoot,io.constants.O_RDONLY|io.constants.O_DIRECTORY|io.constants.O_NOFOLLOW);try{io.fsyncSync(parent);}finally{io.closeSync(parent);}
   return {path:directory,immutable:true};
+  } finally {io.closeSync(lock);}
+}
+
+export function cleanupEvidence(request,io=fs,locker=lockDescriptor) {
+  if(!request.context.evidenceIdentity){const directory=path.join(AUTHORITY.evidenceRoot,`${request.sourceSha}-${request.runId}`);if(io.lstatSync(directory,{throwIfNoEntry:false}))refuse('evidence');return {passed:true};}
+  const {directory,fd}=openEvidenceLock(request,io,locker);
+  try{if(io.readdirSync(directory).some(name=>!EVIDENCE_FILES.includes(name)))refuse('evidence');return {passed:true};}
+  finally{io.closeSync(fd);}
 }
 
 function createWorkerAdapter() {
@@ -278,7 +330,7 @@ function createWorkerAdapter() {
   };
   return {
     async preflight(){
-      const mysqlIdentity=attestMysqlBinary(),{admin}=createMysqlAdapters(mysqlIdentity,null),preflight={...createReadOnlyPreflightAdapter()};
+      const timeoutIdentity=attestTimeoutBinary(),mysqlIdentity=attestMysqlBinary(),{admin}=createMysqlAdapters(mysqlIdentity,null),preflight={...createReadOnlyPreflightAdapter()};
       const identity=await admin.query('SELECT CURRENT_USER() AS currentUser');
       if(!same(identity,[{currentUser:'root@localhost'}]))refuse();
       const accounts=await admin.query("SELECT User AS user, Host AS host FROM mysql.user WHERE User = 'dashboard_zaruku_reader'");
@@ -287,7 +339,7 @@ function createWorkerAdapter() {
       preflight.mysql=()=>({rootSocketAdmin:true,currentUser:'root@localhost',database:'report_bd'});
       preflight.mysqlIdentity=()=>({exists:accounts.length===1,account:accounts.length===1?accounts[0].user+'@'+accounts[0].host:null});
       assertShadowPrerequisites(await inspectShadowPrerequisites(preflight));
-      return {...baseline(),mysqlIdentity};
+      return {...baseline(),mysqlIdentity,timeoutIdentity};
     },
     async hostBoundary(request){contextCheck(request);const result=await inspectHostBoundary(createHostAdapter());return {passed:result.state==='compliant'};},
     async dbBoundary(request){contextCheck(request);const secret=readZarukuSecrets(),{admin,reader}=createMysqlAdapters(request.context.mysqlIdentity,secret.ZARUKU_DB_PASSWORD);const result=await verifyReaderBoundary(admin,reader);return {passed:true,tableSelectCount:result.tableSelectCount};},
@@ -297,7 +349,7 @@ function createWorkerAdapter() {
     attest(request){contextCheck(request);const record=inspectActiveRuntime();if(!record)refuse();const pid=runtimePid('dashboard-zaruku'),host=createHostAdapter(),account=host.serviceIdentity();return attestLiveProcess({processes:[{name:'dashboard-zaruku',pid}],account,status:fs.readFileSync(`/proc/${pid}/status`,'utf8'),cwd:fs.realpathSync(`/proc/${pid}/cwd`),listeners:createReadOnlyPreflightAdapter().listeners(),sourceSha:record.sourceSha},request.sourceSha);},
     parity:pairedParity,
     recheck(request){contextCheck(request);return baseline();},
-    cleanup(request){const directory=path.join(AUTHORITY.evidenceRoot,`${request.sourceSha}-${request.runId}`);if(fs.existsSync(directory)){safeEvidenceDirectory(request);if(fs.readdirSync(directory).some(name=>!EVIDENCE_FILES.includes(name)))refuse();}return {passed:true};},
+    cleanup:cleanupEvidence,
     stop(){command('/usr/bin/env',['-i','PATH=/usr/local/bin:/usr/bin:/bin','HOME=/root','PM2_HOME=/root/.pm2','pm2','stop','dashboard-zaruku']);const listeners=createReadOnlyPreflightAdapter().listeners();return {passed:!listeners.some(row=>row.port===3002)};},
     writeDecision:publishDecision,
   };

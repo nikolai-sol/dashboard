@@ -11,6 +11,7 @@ test('fixture image locks every build input and final image identity', () => {
   const authority = load(); validateFixtureAuthority(authority);
   assert.match(authority.base, /^docker\.io\/library\/node@sha256:[a-f0-9]{64}$/);
   assert.equal(authority.platform, 'linux/amd64');
+  assert.deepEqual(authority.requiredExecutables,['/usr/bin/python3','/usr/bin/setpriv','/usr/bin/timeout','/usr/sbin/useradd','/usr/sbin/groupadd']);
   assert.match(authority.snapshot, /^\d{8}T\d{6}Z$/);
   assert.deepEqual(Object.keys(authority.packages).sort(), ['passwd', 'python3', 'util-linux']);
   assert.match(authority.dockerfileSha256, /^[a-f0-9]{64}$/);
@@ -40,20 +41,28 @@ test('runtime arguments are fixed to immutable isolated disposable fixture execu
   assert.match(args.join(' '), /stamp-runtime-artifact\.test\.py/);
   assert.match(args.join(' '), /boot-zaruku-service\.linux\.test\.mjs/);
   assert.match(args.join(' '), /zaruku-shadow-mysql\.linux\.test\.py/);
+  assert.match(args.join(' '), /zaruku-shadow-evidence\.linux\.test\.mjs/);
+  assert.ok(args.includes('/var/www:rw,nosuid,nodev,mode=0755,size=33554432'));
 });
 
 test('verification rejects a changed Dockerfile, package set or local image ID', async () => {
   const authority = load();
   for (const field of ['dockerfileSha256', 'packageManifestSha256', 'imageId']) {
-    const adapter = { inspect: async () => ({ ...authority, [field]: field === 'imageId' ? 'sha256:' + 'f'.repeat(64) : 'f'.repeat(64), executables: ['/usr/bin/python3', '/usr/bin/setpriv', '/usr/sbin/useradd', '/usr/sbin/groupadd'] }) };
+    const adapter = { inspect: async () => ({ ...authority, [field]: field === 'imageId' ? 'sha256:' + 'f'.repeat(64) : 'f'.repeat(64), executables: authority.requiredExecutables }) };
     await assert.rejects(() => verifyFixtureImage(adapter, authority), /fixture/i);
   }
 });
 
 test('inspected image platform is independently verified, including missing platform',async()=>{
-  const authority=load(),observed={...authority,executables:['/usr/bin/python3','/usr/bin/setpriv','/usr/sbin/useradd','/usr/sbin/groupadd']};
+  const authority=load(),observed={...authority,executables:authority.requiredExecutables};
   assert.equal((await verifyFixtureImage({inspect:async()=>observed},authority)).passed,true);
   for(const platform of [undefined,'linux/arm64'])await assert.rejects(()=>verifyFixtureImage({inspect:async()=>({...observed,platform})},authority));
+});
+
+test('fixed timeout is required in both reviewed fixture authority and observed image',async()=>{
+  const authority=load();
+  for(const requiredExecutables of [undefined,authority.requiredExecutables.filter(name=>!name.endsWith('/timeout')),[...authority.requiredExecutables,'/tmp/timeout']])assert.throws(()=>validateFixtureAuthority({...authority,requiredExecutables}));
+  for(const executables of [[],authority.requiredExecutables.filter(name=>!name.endsWith('/timeout'))])await assert.rejects(()=>verifyFixtureImage({inspect:async()=>({...authority,executables})},authority));
 });
 
 test('Dockerfile has a fixed snapshot and exact direct packages with no repository copy', () => {

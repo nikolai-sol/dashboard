@@ -8,8 +8,8 @@ function fixture(allocationTransform=value=>value){
   const adapter=createProductionAdapter({source:()=>({sha,branch:'codex/reviewed',clean:true}),readFile:name=>({bytes:Buffer.from(name),mode:0o644,regular:true,singleLink:true,safeAncestors:true}),commandRunner:(bin,args)=>{
     calls.push({bin,args});
     if(args.includes('ls-remote'))return {status:0,signal:null,stdout:sha+'\trefs/heads/release/zaruku\n',stderr:''};
-    return {status:0,signal:null,stdout:args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\n':'',stderr:''};
-  },remoteRunner:async(action,request,prepared)=>{remote.push({action,request,prepared});if(action==='allocateEvidence')return allocationTransform({passed:true,sourceSha:request.sourceSha,runId:request.runId,evidenceIdentity:{dev:'5',ino:'6'}});return {passed:true,mysqlIdentity:{dev:'1',ino:'2',sha256:digest},inventoryIdentity:{dev:'3',ino:'4'},inventorySha256:digest,evidenceIdentity:{dev:'99',ino:'99'}};}});
+    return {status:0,signal:null,stdout:args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\nlinux-evidence-writer-fixture passed\n':'',stderr:''};
+  },remoteRunner:async(action,request,prepared)=>{remote.push({action,request,prepared});if(action==='allocateEvidence')return allocationTransform({passed:true,sourceSha:request.sourceSha,runId:request.runId,evidenceIdentity:{dev:'5',ino:'6'}});return {passed:true,mysqlIdentity:{dev:'1',ino:'2',sha256:digest},timeoutIdentity:{dev:'7',ino:'8',sha256:digest},inventoryIdentity:{dev:'3',ino:'4'},inventorySha256:digest,evidenceIdentity:{dev:'99',ino:'99'}};}});
   return {adapter,calls,remote};
 }
 
@@ -26,6 +26,7 @@ test('allocation receipt is strictly bound to the fixed run and cannot be replac
   const f=fixture();await f.adapter.preflight();assert.equal(typeof f.adapter.allocateEvidence,'function');
   await f.adapter.allocateEvidence();await f.adapter.parity();await f.adapter.cleanup();
   assert.deepEqual(f.remote.at(-1).request.context.evidenceIdentity,{dev:'5',ino:'6'});
+  assert.deepEqual(f.remote.at(-1).request.context.timeoutIdentity,{dev:'7',ino:'8',sha256:digest});
   await assert.rejects(()=>f.adapter.allocateEvidence());
   assert.equal(f.remote.filter(row=>row.action==='allocateEvidence').length,1);
   for(const transform of [value=>({...value,sourceSha:'c'.repeat(40)}),value=>({...value,runId:'00000000-0000-4000-8000-000000000000'}),value=>({...value,passed:false}),value=>({...value,body:'PRIVATE_SENTINEL'}),value=>({...value,evidenceIdentity:{dev:'5',ino:'PRIVATE_SENTINEL'}}),value=>({...value,evidenceIdentity:{dev:'5',ino:'6',path:'/tmp'}}),value=>({...value,evidenceIdentity:{dev:5,ino:'6'}}),value=>({...value,evidenceIdentity:{dev:'5',ino:6}})]){

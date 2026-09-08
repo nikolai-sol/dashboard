@@ -345,10 +345,12 @@ snapshot and exact Python/util-linux/passwd versions, with no recommends. No rep
 data enters the image. Normal verification cannot build/pull or alter the lock. Runtime uses only
 the recorded local image ID with `--platform linux/amd64 --network none --read-only`, read-only
 source, disposable tmpfs, `--rm` and only `SYS_PTRACE` added. Build/privilege and real memfd/process
-fixtures must all pass. Predeploy runs source tests only; it never builds or runs Docker.
+fixtures and the real receipt-bound evidence-writer lifecycle fixture must all pass. The image
+manifest explicitly requires `/usr/bin/timeout`; its pinned image/package hashes are unchanged.
+Predeploy runs source tests only; it never builds or runs Docker.
 
 After separately reviewed production authorization, `npm run shadow:zaruku:stage-control` stages
-only the fixed 15-file manifest-covered bundle under
+only the fixed 16-file manifest-covered bundle under
 `/var/www/.dashboard-zaruku-shadow/control/<reviewed-40hex-SHA>`. It accepts no path/host/file-list
 override and cannot provision accounts, secrets, DB grants, release refs, application files, PM2
 or Nginx. Existing bundles must match bytes and pinned inodes exactly.
@@ -389,6 +391,19 @@ therefore still permits sanitized immutable `NO-GO` publication. Missing or repl
 identity fails closed; a lost allocation response aborts before deployment. Task 5 must additionally
 freeze and verify exact equality of remote `refs/heads/release/zaruku` to the reviewed candidate;
 an ancestry-only check does not establish that freeze.
+
+Evidence writers, cleanup and publication share a Linux `flock` on the exact receipt-bound directory
+FD. Cleanup/publication wait at most 210 seconds, recheck inode/owner/ancestry/mode and terminal
+inventory under the lock, and publication retains it through hashing, fsync, chmod and atomic
+`decision.json` rename. A finalized directory cannot accept another writer. SSH exit is not writer
+completion: the staged Python supervisor retains the lock and waits for EOF of a separate inherited
+writer-lifetime pipe passed through Bash, Node and the XLSX helper. Preflight pins the root-owned,
+non-symlink `/usr/bin/timeout` inode/hash, rechecked immediately before fixed
+`--kill-after=5s 180s` execution in its own process group. The supervisor survives TERM until all
+writers exit so timeout can kill an ignoring descendant after five seconds. No caller PID, process
+search, or recovery kill is accepted. The transport bound remains 240 seconds. The Linux regression
+asserts these exact production arguments, then uses only a test-local 2s/5s deadline to keep repeated
+fixtures short; a full 180s/5s disposable proof is recorded in the Task 4 report.
 
 ## Deploy
 

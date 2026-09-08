@@ -6,7 +6,7 @@ export const SHADOW_CONTROL_FILES=Object.freeze([
   'deploy/zaruku/mysql-read-tables.json','deploy/zaruku/production-shadow.json','deploy/zaruku/release.json',
   'scripts/install-zaruku-shadow-auth.mjs','scripts/install-zaruku-shadow-inventory.mjs','scripts/runtime-release-remote.mjs','scripts/verify-zaruku-shadow.sh',
   'scripts/zaruku-production-shadow-authority.mjs','scripts/zaruku-production-shadow-preflight.mjs','scripts/zaruku-production-shadow-worker.mjs',
-  'scripts/zaruku-shadow-coverage.mjs','scripts/zaruku-shadow-db.mjs','scripts/zaruku-shadow-host.mjs','scripts/zaruku-shadow-mysql.py','scripts/zaruku-xlsx-semantic.py',
+  'scripts/zaruku-shadow-coverage.mjs','scripts/zaruku-shadow-db.mjs','scripts/zaruku-shadow-evidence-lock.py','scripts/zaruku-shadow-host.mjs','scripts/zaruku-shadow-mysql.py','scripts/zaruku-xlsx-semantic.py',
 ]);
 
 const SHADOW_AUTHORITY = Object.freeze({
@@ -17,6 +17,7 @@ const SHADOW_AUTHORITY = Object.freeze({
   otherRuntimeShas: '/var/www/.dashboard-zaruku-shadow/other-runtime-shas.tsv',
   otherRuntimeShaEntries: Object.freeze([Object.freeze({name:'combined-dashboard',path:'/var/www/dashboard/.release-source-sha'})]),
   evidenceRoot: '/var/www/.dashboard-zaruku-shadow/evidence',
+  verifierTimeout: Object.freeze({binary:'/usr/bin/timeout',seconds:180,killAfterSeconds:5,lockWaitSeconds:210}),
   period: Object.freeze({ from: '2026-01-01', to: '2026-08-31' }), httpTimeoutMs: 15000, publicCutover: false,
 });
 const fail = label => { throw new Error(`Invalid ${label} authority`); };

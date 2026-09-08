@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { runShadowWorker, validateInventory, attestLiveProcess, createMysqlAdapters, bindReadOnlySql, sanitizeDecision, terminateVerifier } from './zaruku-production-shadow-worker.mjs';
+import { runShadowWorker, validateInventory, attestLiveProcess, createMysqlAdapters, bindReadOnlySql, sanitizeDecision } from './zaruku-production-shadow-worker.mjs';
 
 const sha='a'.repeat(40), runId='00000000-0000-4000-8000-000000000000';
 const authority=JSON.parse(fs.readFileSync(path.join(import.meta.dirname,'../deploy/zaruku/production-shadow.json')));
@@ -53,15 +53,16 @@ test('attested verifier uses built-ins and inherited auth/XLSX bytes without cre
   const verifier=fs.readFileSync(path.join(import.meta.dirname,'verify-zaruku-shadow.sh'),'utf8');
   assert.doesNotMatch(verifier,/from "(?!node:)[^"]+"|AUTH_FILE|auth descriptor copy|TMP_DIR/);
   assert.match(verifier,/spawnSync\('\/usr\/bin\/python3'/);
+  assert.match(verifier,/writerFence \? \['pipe', 'pipe', 'pipe', 'ignore', 'ignore', 5, 6\]/);
+  assert.match(verifier,/production evidence requires writer fence/);
 });
 
-test('verifier timeout cleanup targets only its isolated process group, including descendants',()=>{
-  const calls=[];
-  terminateVerifier({pid:123},(...args)=>calls.push(args));
-  assert.deepEqual(calls,[[-123,'SIGKILL']]);
-  terminateVerifier({pid:undefined},()=>assert.fail('unstarted child has no process group'));
-  terminateVerifier({pid:123},()=>{const error=new Error();error.code='ESRCH';throw error;});
+test('verifier uses independently bounded inherited fencing without caller PID or recovery killing',()=>{
   const source=fs.readFileSync(path.join(import.meta.dirname,'zaruku-production-shadow-worker.mjs'),'utf8');
+  const helper=fs.readFileSync(path.join(import.meta.dirname,'zaruku-shadow-evidence-lock.py'),'utf8');
   assert.match(source,/detached:true/);
-  assert.doesNotMatch(source,/child\.kill\(/);
+  assert.doesNotMatch(source,/child\.kill\(|process\.kill\(|terminateVerifier|kill\(-/);
+  assert.doesNotMatch(helper,/os\.kill|killpg|start_new_session|shell=True/);
+  assert.match(helper,/pass_fds=\(3, 4, 5, 6\)/);
+  assert.match(helper,/while os\.read\(reader, 65536\)/);
 });

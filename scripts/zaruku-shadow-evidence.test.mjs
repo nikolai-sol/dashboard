@@ -15,16 +15,17 @@ function fixture(t){
   const io=new Proxy(fs,{get(target,key){
     if(key==='lstatSync')return(name,...args)=>{const stat=fs.lstatSync(resolve(name),...args);return stat&&Object.assign(stat,{uid:0,gid:0});};
     if(key==='fstatSync')return(fd,...args)=>Object.assign(fs.fstatSync(fd,...args),{uid:0,gid:0});
+    if(key==='renameSync')return(from,to)=>fs.renameSync(resolve(from),resolve(to));
     if(['openSync','mkdirSync','readdirSync'].includes(key))return(name,...args)=>fs[key](resolve(name),...args);
     return target[key];
   }});
   const request={sourceSha:sha,runId,context:{},decision:{decision:'NO-GO',publicCutover:false,sourceSha:sha,steps:[],checks:{},parity:{pairedReadAttempts:1,coverageAdvancedDuringFirstPair:false,stableCanonicalComparison:false},failure:'same-snapshot parity'}};
-  return {root,resolve,io,request};
+  return {root,resolve,io,request,locker:()=>{}};
 }
 test('decision is exclusively created root-owned, fsynced and immutable with no private values',t=>{
   const f=fixture(t);assert.equal(typeof worker.allocateEvidence,'function');
   const receipt=worker.allocateEvidence(f.request,f.io);f.request.context.evidenceIdentity=receipt.evidenceIdentity;
-  const result=publishDecision(f.request,f.io);assert.equal(result.path,destination);assert.equal(result.immutable,true);
+  const result=publishDecision(f.request,f.io,f.locker);assert.equal(result.path,destination);assert.equal(result.immutable,true);
   assert.equal(fs.statSync(f.resolve(destination)).mode&0o777,0o500);
   assert.equal(fs.statSync(f.resolve(destination+'/decision.json')).mode&0o777,0o400);
   assert.equal(JSON.parse(fs.readFileSync(f.resolve(destination+'/decision.json'))).decision,'NO-GO');
@@ -68,7 +69,7 @@ for(const fault of ['credential-read','final-context-recheck','lost-parity-respo
     readFile:name=>({bytes:Buffer.from(name),mode:0o644,regular:true,singleLink:true,safeAncestors:true}),
     commandRunner:(bin,args)=>{
       if(args.some(arg=>arg.endsWith('deploy-zaruku.sh')))calls.push('deploy');
-      return {status:0,signal:null,stderr:'',stdout:args.includes('ls-remote')?sha+'\trefs/heads/release/zaruku\n':args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\n':''};
+      return {status:0,signal:null,stderr:'',stdout:args.includes('ls-remote')?sha+'\trefs/heads/release/zaruku\n':args.some(arg=>arg.endsWith('run-zaruku-linux-fixtures.sh'))?'linux-build-helper-fixture passed\nlinux-privilege-drop-fixture passed\nlinux-mysql-descriptor-fixture passed\nlinux-evidence-writer-fixture passed\n':''};
     },
     remoteRunner:async(action,request)=>{
       calls.push(action);requests.push({action,request:structuredClone(request)});
@@ -90,7 +91,7 @@ for(const fault of ['credential-read','final-context-recheck','lost-parity-respo
       if(action==='recheck')return baseline;
       if(action==='cleanup'){if(allocated)worker.requireEvidenceDirectory(request,f.io);return {passed:true};}
       if(action==='stop'){stopped.push('dashboard-zaruku');return {passed:true};}
-      if(action==='writeDecision'){publishedPath=directory;return publishDecision(request,f.io);}
+      if(action==='writeDecision'){publishedPath=directory;return publishDecision(request,f.io,f.locker);}
       return {passed:true};
     },
   });
@@ -112,5 +113,39 @@ test('existing unpinned directory, replaced inode and unexpected files cannot be
     if(fault==='replacement')f.request.context.evidenceIdentity.ino='0';
     if(fault==='unexpected')fs.writeFileSync(f.resolve(destination+'/PRIVATE_BODY'), 'PRIVATE_SENTINEL',{mode:0o600});
     assert.throws(()=>publishDecision(f.request,f.io));assert.ok(!fs.existsSync(f.resolve(destination+'/decision.json')));
+  }
+});
+
+test('cleanup and publisher acquire the pinned lock before inventory and reject replacement after waiting',t=>{
+  for(const operation of [publishDecision,worker.cleanupEvidence])for(const replaced of [false,true]){
+    const f=fixture(t);f.request.context.evidenceIdentity=worker.allocateEvidence(f.request,f.io).evidenceIdentity;
+    let locked=false;
+    const io=new Proxy(f.io,{get(target,key){if(key==='readdirSync')return(...args)=>{assert.equal(locked,true,'inventory read before writer fence');return target[key](...args);};return target[key];}});
+    const locker=(fd,request)=>{
+      assert.deepEqual({dev:String(fs.fstatSync(fd).dev),ino:String(fs.fstatSync(fd).ino)},request.context.evidenceIdentity);locked=true;
+      if(replaced){fs.renameSync(f.resolve(destination),f.resolve(destination+'-retained'));fs.mkdirSync(f.resolve(destination),{mode:0o700});}
+    };
+    if(replaced)assert.throws(()=>operation(f.request,io,locker));else assert.ok(operation(f.request,io,locker));
+    assert.equal(locked,true);
+    if(replaced)assert.ok(!fs.existsSync(f.resolve(destination+'/decision.json')));
+  }
+});
+
+test('timeout binary authority rejects missing, linked, writable or replaced tools before launch',t=>{
+  assert.equal(typeof worker.attestTimeoutBinary,'function');assert.equal(typeof worker.verifierCommand,'function');
+  for(const fault of ['good','missing','symlink','mode','ancestor','replaced','hardlink','owner','nonexec']){
+    const f=fixture(t),filename=f.resolve('/usr/bin/timeout');fs.mkdirSync(path.dirname(filename),{recursive:true,mode:0o755});
+    fs.writeFileSync(filename,'fixture-timeout',{mode:0o755});
+    const pin=worker.attestTimeoutBinary(f.io);f.request.context.timeoutIdentity=pin;
+    if(fault==='missing')fs.unlinkSync(filename);
+    if(fault==='symlink'){fs.renameSync(filename,filename+'-retained');fs.symlinkSync(filename+'-retained',filename);}
+    if(fault==='mode')fs.chmodSync(filename,0o777);
+    if(fault==='ancestor')fs.chmodSync(path.dirname(filename),0o777);
+    if(fault==='replaced')fs.writeFileSync(filename,'foreign-timeout');
+    if(fault==='hardlink')fs.linkSync(filename,filename+'-linked');
+    if(fault==='nonexec')fs.chmodSync(filename,0o644);
+    const io=fault==='owner'?new Proxy(f.io,{get(target,key){if(key==='fstatSync')return(...args)=>Object.assign(target[key](...args),{uid:123});return target[key];}}):f.io;
+    if(fault==='good'){const command=worker.verifierCommand(f.request,f.io);assert.equal(command.bin,'/usr/bin/timeout');assert.deepEqual(command.args.slice(0,5),['--kill-after=5s','180s','/usr/bin/python3','-I','-B']);}
+    else assert.throws(()=>worker.verifierCommand(f.request,io));
   }
 });
