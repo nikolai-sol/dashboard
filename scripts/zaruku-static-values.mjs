@@ -1092,7 +1092,7 @@ export function createStaticEvaluator(sourceFile) {
     }
 
     function callAwareSourceBindings(expression, state = {
-      calls: new Set(), bindings: new Set(), fn: null, call: null, depth: 0,
+      calls: new Set(), bindings: new Set(), frames: [], depth: 0,
     }) {
       if (!expression || !preprocessStep()) return [];
       if (state.depth > MAX_DEPTH) {
@@ -1100,8 +1100,16 @@ export function createStaticEvaluator(sourceFile) {
         return [];
       }
       const current = unwrapExpression(expression);
-      const direct = new Set(sourceBindings(current));
+      const direct = new Set(ts.isIdentifier(current) ? sourceBindings(current) : []);
       const next = overrides => ({ ...state, ...overrides, depth: state.depth + 1 });
+      function contextualPrimitive(value) {
+        for (let index = state.frames.length - 1; index >= 0; index -= 1) {
+          const frame = state.frames[index];
+          const result = concretePrimitive(frame.fn, frame.call, value);
+          if (result.known) return result;
+        }
+        return staticPrimitiveValue(value);
+      }
       if (ts.isIdentifier(current)) {
         const binding = declaration(current, current.text);
         if (binding && !state.bindings.has(binding) && ts.isVariableDeclaration(binding) &&
@@ -1113,9 +1121,7 @@ export function createStaticEvaluator(sourceFile) {
         return [...direct];
       }
       if (ts.isConditionalExpression(current)) {
-        const condition = state.fn && state.call
-          ? concretePrimitive(state.fn, state.call, current.condition)
-          : staticPrimitiveValue(current.condition);
+        const condition = contextualPrimitive(current.condition);
         const branches = condition.known
           ? [condition.value ? current.whenTrue : current.whenFalse]
           : [current.whenTrue, current.whenFalse];
@@ -1129,9 +1135,7 @@ export function createStaticEvaluator(sourceFile) {
         ts.SyntaxKind.BarBarToken,
         ts.SyntaxKind.QuestionQuestionToken,
       ].includes(current.operatorToken.kind)) {
-        const left = state.fn && state.call
-          ? concretePrimitive(state.fn, state.call, current.left)
-          : staticPrimitiveValue(current.left);
+        const left = contextualPrimitive(current.left);
         let branches;
         if (!left.known) {
           branches = [current.left, current.right];
@@ -1196,8 +1200,7 @@ export function createStaticEvaluator(sourceFile) {
       if (!fn) return [...direct];
       const callState = next({
         calls: new Set(state.calls).add(current),
-        fn,
-        call: current,
+        frames: [...state.frames, { fn, call: current }],
       });
       for (const returned of selectedReturnExpressions(fn, current)) {
         for (const returnedSource of callAwareSourceBindings(returned, callState)) {

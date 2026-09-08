@@ -340,6 +340,7 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; function getQueries(){return queries;} function choose(){return {value:getQueries()}.value;} function identity(value=choose()){return value;} const alias=identity(); alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; function getQueries(){return queries;} function choose(){return true?getQueries():[];} function append(value=choose()){value.push(runtimeSql());} append(); export const sql=queries.join("");',
     'declare function runtimeSql():string; declare const flag:boolean; const queries:string[]=[]; const ui:string[]=[]; function getQueries(){return queries;} function choose(value:boolean){return value?getQueries():ui;} function identity(value=choose(flag)){return value;} const alias=identity(); alias.push(runtimeSql()); export const sql=queries.join("");',
+    'declare function runtimeSql():string; declare const flag:boolean; const queries:string[]=[]; const ui:string[]=[]; function pass(value:string[]){return value;} function choose(value:boolean){return pass(value?queries:ui);} function identity(value=choose(flag)){return value;} const alias=identity(); alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; const queries:string[]=[]; const alias=flag?queries:[]; alias.push("SELECT * FROM report_bd_private.canonical_fact_metrika_visits"); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; const alias=true?queries:ui; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare const flag:boolean; declare function runtimeSql():string; const queries:string[]=[]; const alias=flag?queries:[]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -554,6 +555,24 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
       const ui:string[]=[];
       function getSafe(){return safe;}
       function choose(flag:boolean){return ${choice};}
+      function identity(value=choose(false)){return value;}
+      const alias=identity();
+      alias.push("label");
+      export const sql=safe.join("");
+    `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+  }
+
+  for (const argument of [
+    'flag?safe:ui',
+    'flag&&safe||ui',
+    '[flag?safe:ui][0]',
+    '{value:flag?safe:ui}.value',
+  ]) {
+    assert.deepEqual(extractStaticSql(`
+      const safe=["SELECT * FROM dashboards"];
+      const ui:string[]=[];
+      function pass(value:string[]){return value;}
+      function choose(flag:boolean){return pass(${argument});}
       function identity(value=choose(false)){return value;}
       const alias=identity();
       alias.push("label");
