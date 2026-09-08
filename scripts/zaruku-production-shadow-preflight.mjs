@@ -247,22 +247,18 @@ function globRegex(pattern) {
     const character = pattern[index];
     if (character === '*') expression += '[^/]*';
     else if (character === '?') expression += '[^/]';
-    else if (character === '[') {
-      const end = pattern.indexOf(']', index + 1);
-      if (end < 0) fail('Invalid Nginx include pattern');
-      expression += pattern.slice(index, end + 1);
-      index = end;
-    } else expression += character.replace(/[\\^$+?.()|{}]/g, '\\$&');
+    else expression += character.replace(/[\\^$+?.()|{}]/g, '\\$&');
   }
   return new RegExp(`${expression}$`);
 }
 
 function resolveInclude(pattern, io) {
-  if (!/[?*[\]]/.test(pattern)) {
+  if (pattern.includes('[') || pattern.includes(']')) fail('Unsupported Nginx include bracket pattern');
+  if (!/[?*]/.test(pattern)) {
     try { io.lstat(pattern); return [pattern]; }
     catch { fail('Unresolved Nginx include'); }
   }
-  const firstMagic = pattern.search(/[?*[\]]/);
+  const firstMagic = pattern.search(/[?*]/);
   const slash = pattern.lastIndexOf(path.sep, firstMagic);
   const base = slash > 0 ? pattern.slice(0, slash) : path.parse(pattern).root;
   const matcher = globRegex(pattern);

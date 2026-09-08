@@ -201,6 +201,21 @@ test('Nginx inspection fails closed when an active include cannot be resolved', 
   }
 });
 
+test('Nginx inspection rejects POSIX negated bracket globs before they can omit a port-3002 route', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-nginx-bracket-'));
+  try {
+    const routes = path.join(directory, 'routes');
+    fs.mkdirSync(routes);
+    fs.writeFileSync(path.join(routes, 'a.conf'), 'proxy_pass http://127.0.0.1:3001;\n');
+    fs.writeFileSync(path.join(routes, 'b.conf'), 'proxy_pass http://127.0.0.1:3002;\n');
+    const entry = path.join(directory, 'nginx.conf');
+    fs.writeFileSync(entry, 'http { include routes/[!a]*.conf; }\n');
+    assert.throws(() => readNginxIncludeGraph(entry, { prefix: directory }), /unsupported|bracket|include|Nginx/i);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
 test('Nginx glob traversal inspects a symlinked directory beside an ordinary matching directory', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-nginx-symlink-'));
   try {
