@@ -309,7 +309,7 @@ test('SQL owner scanner refuses grouped tables without hiding owners in nested q
 test('SQL owner scan resolves static mapped subqueries but never permits dynamic or private mapped owners', () => {
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-sql-map-')),filename=path.join(directory,'apps/zaruku/entry.ts');
   fs.mkdirSync(path.dirname(filename),{recursive:true});
-  const scan=body=>{fs.writeFileSync(filename,`declare const reports: unknown[]; function query() { return ${body}; } const blocks=reports.map(report=>\`(\${query()})\`); export const sql=\`SELECT * FROM (\${blocks.join(" UNION ALL ")}) q\`;`);return scanZarukuRuntimeMysqlTables(directory);};
+  const scan=body=>{fs.writeFileSync(filename,`const reports=[0,1]; function query() { return ${body}; } const blocks=reports.map(report=>\`(\${query()})\`); export const sql=\`SELECT * FROM (\${blocks.join(" UNION ALL ")}) q\`;`);return scanZarukuRuntimeMysqlTables(directory);};
   try {
     assert.deepEqual(scan('"SELECT * FROM dashboards"'),['dashboards']);
     assert.throws(()=>scan('"SELECT * FROM report_bd_private.canonical_fact_metrika_visits"'),/SQL|schema|authority/i);
@@ -318,6 +318,58 @@ test('SQL owner scan resolves static mapped subqueries but never permits dynamic
     assert.deepEqual(scanZarukuRuntimeMysqlTables(directory),['dashboards']);
     fs.writeFileSync(filename,'declare const reports: unknown[]; export const sql=reports.map(()=>"SELECT * FROM dashboards").join(" UNION SELECT * FROM report_bd_private.canonical_fact_metrika_visits UNION ");');
     assert.throws(()=>scanZarukuRuntimeMysqlTables(directory),/SQL|schema|authority/i);
+  } finally {fs.rmSync(directory,{recursive:true});}
+});
+
+test('SQL owner scan rejects mixed mapped alternatives and dynamic cross-boundary fragments', () => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-sql-map-boundary-')),filename=path.join(directory,'apps/zaruku/entry.ts');
+  fs.mkdirSync(path.dirname(filename),{recursive:true});
+  try {
+    for(const source of [
+      'const items=[0,1]; export const sql=items.map((item,index)=>index===0 ? "SELECT * FR" : "OM report_bd_private.canonical_fact_metrika_visits").join("");',
+      'const items=[0,1]; export const sql=items.map((item,index)=>{if(index===0)return "SELECT * FR";return "OM report_bd_private.canonical_fact_metrika_visits";}).join("");',
+      'const items=[0,1]; export const sql=items.map((item,index)=>index===0 ? "SELECT * FROM report_" : "bd_private.canonical_fact_metrika_visits").join("");',
+      'declare const items: unknown[]; export const sql=items.map((item,index)=>index===0 ? "SELECT * FR" : "OM report_bd_private.canonical_fact_metrika_visits").join("");',
+      'declare const items: unknown[]; export const sql=items.map((item,index)=>{if(index===0)return "SELECT * FR";return "OM report_bd_private.canonical_fact_metrika_visits";}).join("");',
+      'declare const items: unknown[]; export const sql=items.map((item,index)=>index===0 ? "SELECT * FROM report_" : "bd_private.canonical_fact_metrika_visits").join("");',
+      'declare const items: unknown[]; export const sql="SELECT * FR"+items.map(()=>runtimeFragment()).join("");',
+      'declare const items: unknown[]; export const sql=items.map(()=>"SELECT * FR"+runtimeFragment()).join("");',
+      'declare const items: unknown[]; export const sql=items.map(()=>"SELECT * FROM dashboards").join(runtimeSeparator());',
+      'declare const items: unknown[]; export const sql=items.map((item,index)=>index===0 ? "SELECT 1 /*" : "*/ FROM report_bd_private.canonical_fact_metrika_visits").join("");',
+    ]) {
+      fs.writeFileSync(filename,source);
+      assert.throws(()=>scanZarukuRuntimeMysqlTables(directory),/SQL|schema|composition|authority/i,source);
+    }
+  } finally {fs.rmSync(directory,{recursive:true});}
+});
+
+test('SQL mapped composition is scoped, bounded and permits only exact unknown-length placeholders', () => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-sql-map-scope-')),filename=path.join(directory,'apps/zaruku/entry.ts');
+  fs.mkdirSync(path.dirname(filename),{recursive:true});
+  const scan=source=>{fs.writeFileSync(filename,source);return scanZarukuRuntimeMysqlTables(directory);};
+  try {
+    assert.deepEqual(scan('const rows=[{table:"dashboards"},{table:"dashboard_sources"}]; export const sql=rows.map(row=>`SELECT * FROM ${row.table}`).join(" UNION ALL ");'),['dashboard_sources','dashboards']);
+    assert.throws(()=>scan('const rows=[{table:"dashboards"},{table:"report_bd_private.canonical_fact_metrika_visits"}]; export const sql=rows.map(row=>`SELECT * FROM ${row.table}`).join(" UNION ALL ");'),/SQL|schema|authority/i);
+    assert.throws(()=>scan('const rows=[0]; const part="FROM dashboards"; export const sql=rows.map(()=>{const part="FROM report_bd_private.canonical_fact_metrika_visits";return `SELECT * ${part}`;}).join(" UNION ALL ");'),/SQL|schema|authority/i);
+    assert.throws(()=>scan('const rows=[0,1,2]; export const sql=rows.map((row,index)=>index===0 ? "SELECT * " : index===1 ? "FR" : "OM report_bd_private.canonical_fact_metrika_visits").join("");'),/SQL|schema|authority/i);
+    assert.deepEqual(scan('declare const flag: boolean; const rows=[0,1]; function query() {const selection=flag ? "id" : "*";return `SELECT ${selection} FROM dashboards`;} export const sql=rows.map(()=>query()).join(" UNION ALL ");'),['dashboards']);
+    assert.throws(()=>scan('declare const flag: boolean; const rows=[0,1]; export const sql=rows.map((row,index)=>flag ? (index===0 ? "SELECT * FR" : "OM report_bd_private.canonical_fact_metrika_visits") : "SELECT * FROM dashboards").join("");'),/SQL|schema|authority/i);
+    assert.deepEqual(scan('declare const values: unknown[]; function placeholders(values: unknown[]) {return values.map(()=>"?").join(", ");} export const sql=`SELECT * FROM dashboards WHERE id IN (${placeholders(values)})`;'),['dashboards']);
+    for(const source of [
+      'declare const values: unknown[]; export const sql=`SELECT * FROM dashboards WHERE id IN (${values.map(value=>value).join(", ")})`;',
+      'declare const values: unknown[]; export const sql=`SELECT * FROM dashboards WHERE id IN (${values.map(value=>value ? "?" : "?").join(", ")})`;',
+      'declare const values: unknown[]; export const sql=`SELECT * FROM dashboards WHERE id IN (${values.map(()=>runtimeFragment()).join(", ")})`;',
+      'declare const values: unknown[]; export const sql=`SELECT * FROM dashboards WHERE id IN (${values.map(()=>`?`).join(", ")})`;',
+      'declare const values: unknown[]; export const sql=`SELECT * FROM dashboards WHERE id IN (${values.map(async()=>"?").join(", ")})`;',
+      'declare const values: unknown[]; export const sql=`SELECT * FROM dashboards WHERE id IN (${values.map(()=>"?").join(",")})`;',
+      'declare const values: unknown[]; export const sql=`SELECT * FROM dashboards WHERE id IN (${values.map(()=>{sideEffect();return "?";}).join(", ")})`;',
+      'const rows=[0,1]; export const sql=rows.map(()=>"SELECT * FROM dashboards").join(" UNION SELECT * FROM report_bd_private.canonical_fact_metrika_visits UNION ");',
+      'let rows=[0]; export const sql=rows.map(()=>"SELECT * FROM dashboards").join(" UNION ALL ");',
+      'const rows='+JSON.stringify(Array.from({length:65},(_,index)=>index))+'; export const sql=rows.map(()=>"SELECT * FROM dashboards").join(" UNION ALL ");',
+      'declare const flags: Record<string,boolean>; const rows=[0]; export const sql=rows.map(()=>'+Array.from({length:7},(_,index)=>`(flags.f${index} ? "SELECT 1 " : "SELECT 2 ")`).join('+')+').join(" UNION ALL ");',
+    ])assert.throws(()=>scan(source),/SQL|composition|authority/i,source);
+    assert.deepEqual(scanZarukuRuntimeMysqlTables(root),loadMysqlTableAuthority(mysqlAuthorityPath).tables);
+    assert.equal(loadMysqlTableAuthority(mysqlAuthorityPath).tables.length,35);
   } finally {fs.rmSync(directory,{recursive:true});}
 });
 

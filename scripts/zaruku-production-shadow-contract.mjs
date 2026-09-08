@@ -86,6 +86,7 @@ function resolveRuntimeImport(rootDirectory, importer, specifier) {
 }
 
 const DYNAMIC_SQL = '__ZARUKU_DYNAMIC_SQL__';
+const UNSAFE_SQL = '__ZARUKU_UNSAFE_SQL_COMPOSITION__';
 
 function unwrapExpression(expression) {
   let current = expression;
@@ -132,6 +133,161 @@ function collectStaticSqlExpressions(source, filename) {
     return returns;
   }
 
+  // Joined map members are evaluated in order over a concrete array, never as
+  // independent callback alternatives. Captured unknown scalar conditions fork
+  // the entire evaluation, so a shared condition remains shared across members.
+  // The only unknown-cardinality language is the exact parameter-only grammar.
+  function composedJoin(expression) {
+    const CAP = 64;
+    class Unsupported extends Error {}
+    class Choice extends Error { constructor(key) { super(); this.key=key; } }
+    const unsupported=()=>{throw new Unsupported();};
+    const unknown=key=>({unknown:key});
+    const isUnknown=value=>value&&typeof value==='object'&&Object.hasOwn(value,'unknown');
+    const primitive=value=>{if(isUnknown(value)||!['string','number','boolean'].includes(typeof value))unsupported();return value;};
+    function declaration(node,name) {
+      for(let scope=node.parent;scope;scope=scope.parent) {
+        if(ts.isFunctionLike(scope))for(const parameter of scope.parameters)if(ts.isIdentifier(parameter.name)&&parameter.name.text===name)return parameter;
+        if(ts.isBlock(scope)||ts.isSourceFile(scope))for(const statement of scope.statements) {
+          if(ts.isFunctionDeclaration(statement)&&statement.name?.text===name)return statement;
+          if(ts.isVariableStatement(statement))for(const item of statement.declarationList.declarations)if(ts.isIdentifier(item.name)&&item.name.text===name)return item;
+        }
+      }
+      return null;
+    }
+    const inside=(node,fn)=>{for(let parent=node.parent;parent;parent=parent.parent)if(parent===fn)return true;return false;};
+    function run(decisions) {
+      const active=new Set(),visiting=new Set();
+      function condition(value) {
+        if(!isUnknown(value))return Boolean(primitive(value));
+        if(!decisions.has(value.unknown))throw new Choice(value.unknown);
+        return decisions.get(value.unknown);
+      }
+      function invoke(fn,args,frame,depth) {
+        if(active.has(fn)||!fn.body||fn.asteriskToken||fn.modifiers?.some(modifier=>modifier.kind===ts.SyntaxKind.AsyncKeyword)||fn.parameters.some(parameter=>!ts.isIdentifier(parameter.name)||parameter.dotDotDotToken))unsupported();
+        const local=new Map(frame);
+        fn.parameters.forEach((parameter,index)=>local.set(parameter,args[index]??unknown(`parameter:${parameter.pos}`)));
+        active.add(fn);
+        try {
+          if(!ts.isBlock(fn.body))return value(fn.body,local,depth+1);
+          function statements(block) {
+            for(const statement of block.statements) {
+              if(ts.isVariableStatement(statement)&&(statement.declarationList.flags&ts.NodeFlags.Const)) {
+                for(const item of statement.declarationList.declarations) {
+                  if(!ts.isIdentifier(item.name)||!item.initializer)unsupported();
+                  local.set(item,value(item.initializer,local,depth+1));
+                }
+              } else if(ts.isReturnStatement(statement)&&statement.expression)return {returned:value(statement.expression,local,depth+1)};
+              else if(ts.isIfStatement(statement)) {
+                const branch=condition(value(statement.expression,local,depth+1))?statement.thenStatement:statement.elseStatement;
+                if(!branch)continue;
+                const result=ts.isBlock(branch)?statements(branch):ts.isReturnStatement(branch)&&branch.expression?{returned:value(branch.expression,local,depth+1)}:unsupported();
+                if(result)return result;
+              } else unsupported();
+            }
+          }
+          const result=statements(fn.body);if(!result)unsupported();return result.returned;
+        } finally {active.delete(fn);}
+      }
+      function value(expression,frame=new Map(),depth=0) {
+        if(depth>128)unsupported();
+        const node=unwrapExpression(expression);
+        if(ts.isStringLiteral(node)||ts.isNoSubstitutionTemplateLiteral(node))return node.text;
+        if(ts.isNumericLiteral(node))return Number(node.text);
+        if(node.kind===ts.SyntaxKind.TrueKeyword)return true;
+        if(node.kind===ts.SyntaxKind.FalseKeyword)return false;
+        if(ts.isIdentifier(node)) {
+          const binding=declaration(node,node.text);
+          if(!binding)return unknown(`unbound:${node.text}`);
+          if(frame.has(binding))return frame.get(binding);
+          if(!binding.initializer)return unknown(`binding:${binding.pos}`);
+          if(ts.isVariableDeclaration(binding)&&!(binding.parent.flags&ts.NodeFlags.Const))return unknown(`mutable:${binding.pos}`);
+          if(visiting.has(binding))unsupported();visiting.add(binding);
+          try {return value(binding.initializer,frame,depth+1);}
+          catch(error) {
+            if(!(error instanceof Unsupported)||[...active].some(fn=>inside(binding,fn)))throw error;
+            return unknown(`captured:${binding.pos}`);
+          } finally {visiting.delete(binding);}
+        }
+        if(ts.isArrayLiteralExpression(node)) {
+          if(node.elements.length>CAP||node.elements.some(ts.isSpreadElement))unsupported();
+          return node.elements.map(item=>value(item,frame,depth+1));
+        }
+        if(ts.isObjectLiteralExpression(node)) {
+          const object=new Map();
+          for(const property of node.properties) {
+            if(!ts.isPropertyAssignment(property)||!(ts.isIdentifier(property.name)||ts.isStringLiteral(property.name)))unsupported();
+            object.set(property.name.text,value(property.initializer,frame,depth+1));
+          }
+          return object;
+        }
+        if(ts.isPropertyAccessExpression(node)) {
+          const object=value(node.expression,frame,depth+1);
+          if(isUnknown(object))return unknown(`${object.unknown}.${node.name.text}`);
+          if(Array.isArray(object)&&node.name.text==='length')return object.length;
+          if(!(object instanceof Map)||!object.has(node.name.text))unsupported();return object.get(node.name.text);
+        }
+        if(ts.isTemplateExpression(node)) {
+          let text=node.head.text;
+          for(const span of node.templateSpans)text+=String(primitive(value(span.expression,frame,depth+1)))+span.literal.text;
+          return text;
+        }
+        if(ts.isConditionalExpression(node))return value(condition(value(node.condition,frame,depth+1))?node.whenTrue:node.whenFalse,frame,depth+1);
+        if(ts.isBinaryExpression(node)) {
+          const left=value(node.left,frame,depth+1),right=value(node.right,frame,depth+1),operator=node.operatorToken.kind;
+          const operators=new Map([
+            [ts.SyntaxKind.PlusToken,(a,b)=>a+b],[ts.SyntaxKind.MinusToken,(a,b)=>a-b],
+            [ts.SyntaxKind.EqualsEqualsEqualsToken,(a,b)=>a===b],[ts.SyntaxKind.ExclamationEqualsEqualsToken,(a,b)=>a!==b],
+            [ts.SyntaxKind.LessThanToken,(a,b)=>a<b],[ts.SyntaxKind.GreaterThanToken,(a,b)=>a>b],
+            [ts.SyntaxKind.AmpersandAmpersandToken,(a,b)=>a&&b],[ts.SyntaxKind.BarBarToken,(a,b)=>a||b],
+          ]);
+          if(!operators.has(operator))unsupported();
+          if(isUnknown(left)||isUnknown(right))return unknown(JSON.stringify([operator,left,right]));
+          return operators.get(operator)(primitive(left),primitive(right));
+        }
+        if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)) {
+          const fn=declaration(node.expression,node.expression.text);
+          if(!fn||!ts.isFunctionDeclaration(fn))unsupported();
+          return invoke(fn,node.arguments.map(argument=>value(argument,frame,depth+1)),frame,depth+1);
+        }
+        if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)) {
+          const method=node.expression.name.text;
+          if(method==='join') {
+            if(node.arguments.length!==1||!ts.isStringLiteral(node.arguments[0]))unsupported();
+            let receiver=unwrapExpression(node.expression.expression);
+            if(ts.isCallExpression(receiver)&&ts.isPropertyAccessExpression(receiver.expression)&&receiver.expression.name.text==='map'&&receiver.arguments.length===1) {
+              const fn=receiver.arguments[0];
+              if(ts.isArrowFunction(fn)&&!fn.modifiers?.some(modifier=>modifier.kind===ts.SyntaxKind.AsyncKeyword)&&fn.parameters.length===0&&ts.isStringLiteral(fn.body)&&fn.body.text==='?'&&node.arguments[0].text===', ')return '?';
+            }
+            const members=value(receiver,frame,depth+1);
+            if(!Array.isArray(members)||members.length>CAP)unsupported();
+            return members.map(member=>String(primitive(member))).join(node.arguments[0].text);
+          }
+          if(method==='map'&&node.arguments.length===1&&(ts.isArrowFunction(node.arguments[0])||ts.isFunctionExpression(node.arguments[0]))) {
+            const members=value(node.expression.expression,frame,depth+1);
+            if(!Array.isArray(members)||members.length>CAP)unsupported();
+            return members.map((member,index)=>invoke(node.arguments[0],[member,index],frame,depth+1));
+          }
+        }
+        unsupported();
+      }
+      return String(primitive(value(expression)));
+    }
+    const pending=[new Map()],results=[];
+    try {
+      while(pending.length) {
+        const decisions=pending.pop();
+        try {const result=run(decisions);if(result.length>524288)unsupported();results.push(result);}
+        catch(error) {
+          if(!(error instanceof Choice))throw error;
+          if(pending.length+results.length+2>CAP||decisions.size>=6)unsupported();
+          pending.push(new Map(decisions).set(error.key,false),new Map(decisions).set(error.key,true));
+        }
+      }
+      return results;
+    } catch(error) {if(!(error instanceof Unsupported))throw error;return [UNSAFE_SQL];}
+  }
+
   function evaluate(expression, resolving = new Set()) {
     const node = unwrapExpression(expression);
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return [node.text];
@@ -176,53 +332,33 @@ function collectStaticSqlExpressions(source, filename) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       if (node.expression.name.text === 'map' && node.arguments.length === 1 &&
           (ts.isArrowFunction(node.arguments[0]) || ts.isFunctionExpression(node.arguments[0]))) {
-        // Cardinality does not affect the owner set. Inspect every static callback
-        // alternative; unknown callback/table composition remains a dynamic marker.
-        return functionReturns(node.arguments[0]).flatMap(value => evaluate(value, resolving) ?? [DYNAMIC_SQL]);
+        return null; // A map is an array, not a SQL string; join owns its scope.
       }
-      if (node.expression.name.text === 'join' && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
-        let receiver = unwrapExpression(node.expression.expression), next = new Set(resolving);
-        while (ts.isIdentifier(receiver) && bindings.has(receiver.text)) {
-          const key = `binding:${receiver.text}`;
-          if (next.has(key)) return null;
-          next.add(key); receiver = unwrapExpression(bindings.get(receiver.text));
-        }
-        if (ts.isArrayLiteralExpression(receiver)) {
-          let alternatives = [''];
-          for (const [index, item] of receiver.elements.entries()) {
-            const values = evaluate(item, next) ?? [DYNAMIC_SQL];
-            alternatives = alternatives.flatMap(prefix => values.map(value => prefix + (index ? node.arguments[0].text : '') + value));
-          }
-          return alternatives;
-        }
-        if (ts.isCallExpression(receiver) && ts.isPropertyAccessExpression(receiver.expression) && receiver.expression.name.text === 'map') {
-          // Two symbolic members also expose SQL in the join separator. Never
-          // discard a delimiter merely because actual array cardinality is unknown.
-          return (evaluate(receiver, next) ?? [DYNAMIC_SQL]).map(value => value + node.arguments[0].text + value);
-        }
-      }
+      if (node.expression.name.text === 'join') return composedJoin(node);
     }
     return null;
   }
 
   const statements = new Set();
-  function add(expression) {
+  function add(expression, sqlSink = false) {
     for (const text of evaluate(expression) ?? []) {
+      if(text.includes(UNSAFE_SQL)&&(sqlSink||/\b(?:SELECT|WITH|FROM|JOIN)\b/i.test(text)))fail('Zaruku runtime unsupported SQL composition');
       if (/\b(?:SELECT|WITH|FROM|JOIN)\b/i.test(text)) statements.add(text);
     }
   }
   function collectCandidates(node) {
-    if (ts.isVariableDeclaration(node) && node.initializer) add(node.initializer);
+    if (ts.isVariableDeclaration(node) && node.initializer) add(node.initializer,ts.isIdentifier(node.name)&&/sql$/i.test(node.name.text));
     if (ts.isPropertyAssignment(node) &&
         ((ts.isIdentifier(node.name) && node.name.text === 'sql') ||
          (ts.isStringLiteral(node.name) && node.name.text === 'sql'))) {
-      add(node.initializer);
+      add(node.initializer,true);
     }
     if (ts.isReturnStatement(node) && node.expression) add(node.expression);
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
         ['execute', 'query'].includes(node.expression.name.text) && node.arguments[0]) {
-      add(node.arguments[0]);
+      add(node.arguments[0],true);
     }
+    if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='map')return;
     ts.forEachChild(node, collectCandidates);
   }
   collectCandidates(sourceFile);

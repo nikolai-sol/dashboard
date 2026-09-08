@@ -22,6 +22,14 @@ libraries, whose own direct invocation refuses before non-core dependencies.
 Every child-deploy check requires exact live remote SHA equality. Independent acceptance,
 real release-ref creation, and all Task 6–7 production actions remain pending.
 
+SQL map/join ownership is computed over each concrete static array element with
+scoped callback parameters and locals. Complete joined candidates, including
+separators and captured scalar choices, pass the same owner parser; the source
+gate caps arrays/candidates at 64 and rejects unsupported or dynamic composition.
+Only exact branch-free `map(() => "?").join(", ")` permits unknown cardinality as
+a non-owner parameter placeholder. Runtime Metrika/SEO SQL and the exact 35-table
+authority are unchanged.
+
 ## Global Constraints
 
 - Public URLs remain unchanged and continue to resolve through `127.0.0.1:3001` for the entire plan.
