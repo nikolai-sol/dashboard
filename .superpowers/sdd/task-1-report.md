@@ -161,3 +161,64 @@ Result: exit 0 with no lint errors/warnings and no whitespace errors.
 - All new command-runner fixtures use read-only commands and validate only metadata/status behavior.
 - No production operation or later-task database/host provisioning behavior was added.
 - Concerns: none remaining for the three reported Important findings.
+
+## Symlinked Nginx glob remediation — 2026-09-08
+
+Implementation commit: `1ac5fe2` (`fix(zaruku): inspect symlinked nginx routes`)
+
+### Change
+
+- Nginx glob traversal now resolves the canonical target and metadata for every symlink encountered below a glob base.
+- A symlink to a directory is traversed through its logical path, so remaining glob segments match the same paths Nginx activates.
+- Canonical directory ancestry is tracked for cycle detection. Cycles, broken/uninspectable symlinks, non-file symlink targets, and failed target metadata reads fail closed.
+- Added the exact mixed fixture: `routes/ordinary/combined.conf` supplies port 3001 while `routes/linked` points to a separate directory whose `shadow.conf` supplies port 3002; the active directive is `include routes/*/*.conf;`.
+- Added a separate symlink-cycle fixture to prove traversal terminates by rejecting the graph.
+
+### RED evidence
+
+Command:
+
+```text
+node --test scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 1; 11 passed and 1 failed. The exact mixed ordinary-directory/symlinked-directory regression failed at `false !== true` because the port-3002 route behind the matched directory symlink was omitted.
+
+### GREEN evidence
+
+Review-specific suite:
+
+```text
+node --test scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 0; 13 passed, 0 failed, including the mixed-directory regression and symlink-cycle rejection.
+
+Full focused shadow suite:
+
+```text
+node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 0; 17 passed, 0 failed.
+
+Source-deploy integration suite:
+
+```text
+npm run test:deploy-source
+```
+
+Result: exit 0. Deploy source guards, deploy lock/integration fixtures, release-source metadata fixtures, and the predeploy command contract all passed.
+
+Static verification:
+
+```text
+npm exec -- eslint scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
+git diff --check
+```
+
+Result: exit 0 with no lint errors/warnings and no whitespace errors.
+
+### Concerns
+
+None remaining for the symlinked-directory glob finding. No production operation or later-task behavior was performed.
