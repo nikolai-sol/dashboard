@@ -89,3 +89,75 @@ Result: exit 0 with no lint errors or warnings and no whitespace errors.
 ## Concerns
 
 None for Task 1. The real production adapter was not executed against production because this task explicitly permits source-only, read-only fixture verification and forbids production access/actions. Task 2 still owns the exact physical-table allowlist and database grant verification.
+
+## Review-finding remediation — 2026-09-08
+
+Implementation commit: `a0053a5` (`fix(zaruku): harden shadow preflight inspection`)
+
+### Changes
+
+- Rejects UID or GID `0` for the dedicated service identity and validates the independently queried `dashboard-zaruku` group, including exact name, positive GID, user/group GID agreement, and absence of foreign members or supplementary groups.
+- Adds explicit `inspected` evidence state so malformed/unknown identity, group, MySQL-account, and resource metadata cannot normalize to confirmed absence.
+- Replaces catch-all nullable command results with exit-status-aware results. Only documented not-found statuses count as absence; `stat` additionally requires the fixed `No such file or directory` diagnostic. Permission, backend, signal, spawn, supplementary-group, and unexpected command failures fail closed with sanitized errors.
+- Resolves the active Nginx include graph from `/etc/nginx/nginx.conf`, including relative, absolute, and glob paths outside previously hard-coded directories. Unresolved, variable, invalid, oversized, or over-large graphs fail closed. The evidence still exposes only route-reference booleans and a graph digest.
+
+### New RED evidence
+
+Identity and incomplete-inspection regressions were added first and run with:
+
+```text
+node --test scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 1; 6 passed and 2 failed. The two expected failures were `Missing expected exception` for root-equivalent UID/GID and for unknown/incomplete inspection state.
+
+The Nginx include-graph regression was then added before its implementation and run with the same command.
+
+Result: exit 1 with `SyntaxError: ... does not provide an export named 'readNginxIncludeGraph'`.
+
+The real-adapter command-result regression was added before command-runner injection and run with the same command.
+
+Result: exit 1; 10 passed and 1 failed. The expected failure occurred because the adapter did not yet support the injected runner and failed in the host `getent` path instead of using the fixture's confirmed-absence result.
+
+### New GREEN evidence
+
+Review-specific suite:
+
+```text
+node --test scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 0; 11 passed, 0 failed.
+
+Full focused shadow suite:
+
+```text
+node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
+```
+
+Result: exit 0; 15 passed, 0 failed.
+
+Source-deploy integration suite:
+
+```text
+npm run test:deploy-source
+```
+
+Result: exit 0. Deploy source guards, deploy lock/integration fixtures, release-source metadata fixtures, and the predeploy command contract all passed.
+
+Static verification:
+
+```text
+npm exec -- eslint scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
+git diff --check
+```
+
+Result: exit 0 with no lint errors/warnings and no whitespace errors.
+
+### Review self-check and concerns
+
+- The Nginx fixture places a port-3002 `proxy_pass` in `custom-routing/*.conf`, a relative glob outside the former fixed-prefix scan; the graph resolver finds it and the assertion rejects it.
+- Confirmed absence and failed inspection now have distinct code paths in both the real adapter and sanitized evidence.
+- All new command-runner fixtures use read-only commands and validate only metadata/status behavior.
+- No production operation or later-task database/host provisioning behavior was added.
+- Concerns: none remaining for the three reported Important findings.
