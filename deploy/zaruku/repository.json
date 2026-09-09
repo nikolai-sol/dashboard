@@ -1,6 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "url": "git@github.com:nikolai-sol/dashboard.git",
   "ref": "refs/heads/release/zaruku",
-  "base": "ee950f3917d0f8616b6229d4049410a0afb7e380"
+  "base": "ee950f3917d0f8616b6229d4049410a0afb7e380",
+  "approvedPredecessor": "c3da2b96d3416711f6f06adc541e83b3a3b945f3"
 }

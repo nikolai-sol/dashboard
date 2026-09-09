@@ -9,7 +9,7 @@ import { reviewedSource, rejectShadowOverrides } from './stage-zaruku-shadow-con
 const ROOT = path.resolve(import.meta.dirname, '..');
 const REF = 'refs/heads/release/zaruku';
 const BASE = 'ee950f3917d0f8616b6229d4049410a0afb7e380';
-export const REPOSITORY_AUTHORITY = Object.freeze({version:1,url:'git@github.com:nikolai-sol/dashboard.git',ref:REF,base:BASE});
+export const REPOSITORY_AUTHORITY = Object.freeze({version:2,url:'git@github.com:nikolai-sol/dashboard.git',ref:REF,base:BASE,approvedPredecessor:'c3da2b96d3416711f6f06adc541e83b3a3b945f3'});
 const fail = () => { throw new Error('Zaruku exact release authority refused'); };
 
 function validSource(source, expected) {
@@ -49,6 +49,28 @@ export async function freezeShadowRelease(adapter, createIfAbsent = false) {
     }
     if (await inspect(isolated) !== before.sha || !isDeepStrictEqual(await adapter.source(), before)) fail();
     return { sourceSha: before.sha, ref: REF, created };
+  });
+}
+
+export async function advanceApprovedSuccessor(adapter) {
+  const before = validSource(await adapter.source());
+  const predecessorSha = REPOSITORY_AUTHORITY.approvedPredecessor;
+  if (before.sha === predecessorSha) fail();
+  return withRepository(adapter, before, async isolated => {
+    await isolated.verifyBase(before.sha);
+    try { await isolated.verifyAncestor(predecessorSha, before.sha); } catch { fail(); }
+    if (await inspect(isolated) !== predecessorSha ||
+        !isDeepStrictEqual(await adapter.source(), before)) fail();
+    const result = await isolated.command([
+      'push', '--no-verify', '--no-follow-tags', '--recurse-submodules=no',
+      '--atomic', `--force-with-lease=${REF}:${predecessorSha}`, '--',
+      isolated.destination ?? REPOSITORY_AUTHORITY.url,
+      `${before.sha}:${REF}`,
+    ]);
+    if (result.status !== 0 || result.signal || result.error) fail();
+    if (await inspect(isolated) !== before.sha ||
+        !isDeepStrictEqual(await adapter.source(), before)) fail();
+    return {ref:REF, predecessorSha, successorSha:before.sha, advanced:true};
   });
 }
 
@@ -138,7 +160,10 @@ function isolatedAdapter(repo,destination,source,base,protocol) {
         assertSourceDestination(repo,destination,protocol);
         return execute(args);
       };
-      return {destination,command,verifyBase:sha=>{checked(command(['merge-base','--is-ancestor',base,sha]));},close};
+      return {destination,command,
+        verifyBase:sha=>{checked(command(['merge-base','--is-ancestor',base,sha]));},
+        verifyAncestor:(ancestor,descendant)=>{checked(command(['merge-base','--is-ancestor',ancestor,descendant]));},
+        close};
     } catch {close();fail();}
   }};
 }
@@ -164,7 +189,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   try {
     const args = process.argv.slice(2);
     assertReleaseAuthorityInvocation([]);
-    if (args.length !== 1 || !['check','create-if-absent'].includes(args[0])) fail();
-    process.stdout.write(JSON.stringify(await freezeShadowRelease(createReleaseAuthorityAdapter(), args[0] === 'create-if-absent')) + '\n');
+    if (args.length !== 1 || !['check','create-if-absent','advance-approved-successor'].includes(args[0])) fail();
+    const result = args[0] === 'advance-approved-successor'
+      ? await advanceApprovedSuccessor(createReleaseAuthorityAdapter())
+      : await freezeShadowRelease(createReleaseAuthorityAdapter(), args[0] === 'create-if-absent');
+    process.stdout.write(JSON.stringify(result) + '\n');
   } catch { process.stderr.write('Zaruku exact release authority refused\n'); process.exitCode = 1; }
 }
