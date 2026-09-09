@@ -333,20 +333,22 @@ function parseCombined(bytes) {
   const seen = new Set();
   for (const line of text.split('\n')) {
     if (!line.trim() || line.trimStart().startsWith('#')) continue;
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match || seen.has(match[1])) fail();
-    seen.add(match[1]);
+    const separator = line.indexOf('=');
+    if (separator < 1) fail();
+    const key = line.slice(0, separator);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || seen.has(key)) fail();
+    seen.add(key);
     // Other dashboards' legacy values are not runtime inputs. Validate their
     // assignment identity, but never interpret or copy their value syntax.
-    if (!allowed.has(match[1])) continue;
-    let value = match[2];
+    if (!allowed.has(key)) continue;
+    let value = line.slice(separator + 1);
     if (value.startsWith("'") || value.startsWith('"')) {
       const quote = value[0];
       if (value.length < 2 || !value.endsWith(quote) || value.slice(1, -1).includes(quote)) fail();
       value = value.slice(1, -1);
     } else if (/[\s'"#]/.test(value)) fail();
-    if (/[$`\\]/.test(value)) fail();
-    values[match[1]] = value;
+    if (!value || /[$`\\]/.test(value)) fail();
+    values[key] = value;
   }
   if (!values.DASHBOARD_AUTH_SECRET) fail();
   return values;

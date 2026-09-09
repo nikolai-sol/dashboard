@@ -317,6 +317,52 @@ test('both legacy consumers ignore unrelated value syntax and extract only exact
   }
 });
 
+for (const consumer of ['prepare', 'install']) {
+  for (const empty of ['', "''", '""']) test(`${consumer} rejects present empty optional target ${JSON.stringify(empty)}`, async () => {
+    const f = legacySourceFixture(); let fd, bytes;
+    try {
+      await applyHostBoundary(f.adapter);
+      f.write(source, `DASHBOARD_AUTH_SECRET='${privateValue}'\nPUPPETEER_EXECUTABLE_PATH=${empty}\n`);
+      f.write('/db-password', privateValue); fd = fs.openSync(f.resolve('/db-password'), 'r');
+      await assert.rejects(async () => {
+        if (consumer === 'prepare') bytes = runtimeSecretBytes(f.adapter, 'a'.repeat(96));
+        else await installRuntimeSecrets(f.adapter, fd);
+      }, error => !String(error.stack).includes(privateValue));
+      assert.equal(fs.existsSync(f.resolve(destination)), false);
+      assert.equal(f.descriptors.size, 0);
+    } finally { bytes?.fill(0); if (fd !== undefined) fs.closeSync(fd); f.close(); }
+  });
+
+  test(`${consumer} never captures or slices an unknown final assignment RHS`, async () => {
+    const f = legacySourceFixture(); let fd, bytes;
+    const unknown = 'UNRELATED=synthetic-foreign-marker=extra=value # $ignored \\tail';
+    const exec = RegExp.prototype.exec, slice = String.prototype.slice;
+    let captured = false, sliced = false;
+    try {
+      await applyHostBoundary(f.adapter);
+      f.write(source, `DASHBOARD_AUTH_SECRET='${privateValue}'\n${unknown}`);
+      f.write('/db-password', privateValue); fd = fs.openSync(f.resolve('/db-password'), 'r');
+      RegExp.prototype.exec = function (input) {
+        const result = Reflect.apply(exec, this, [input]);
+        if (result && (input === unknown || result.some(value => typeof value === 'string' && value.includes('synthetic-foreign-marker')))) captured = true;
+        return result;
+      };
+      String.prototype.slice = function (start, ...rest) {
+        if (String(this) === unknown && start > unknown.indexOf('=')) sliced = true;
+        return Reflect.apply(slice, this, [start, ...rest]);
+      };
+      try {
+        if (consumer === 'prepare') bytes = runtimeSecretBytes(f.adapter, 'a'.repeat(96));
+        else { await installRuntimeSecrets(f.adapter, fd); bytes = fs.readFileSync(f.resolve(destination)); }
+      } finally { RegExp.prototype.exec = exec; String.prototype.slice = slice; }
+      assert.equal(captured, false, 'unknown RHS must never enter a successful regex match/capture');
+      assert.equal(sliced, false, 'unknown RHS must never be sliced');
+      assert.equal(bytes.includes(Buffer.from('synthetic-foreign-marker')), false);
+      assert.equal(f.descriptors.size, 0);
+    } finally { RegExp.prototype.exec = exec; String.prototype.slice = slice; bytes?.fill(0); if (fd !== undefined) fs.closeSync(fd); f.close(); }
+  });
+}
+
 test('selective extraction keeps target values, all assignment keys and duplicates fail closed without leakage', async () => {
   const valid = `DASHBOARD_AUTH_SECRET='${privateValue}'\n`;
   const attacks = [
