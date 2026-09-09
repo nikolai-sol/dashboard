@@ -912,6 +912,44 @@ export function createStaticEvaluator(sourceFile) {
         : { known: false };
     }
 
+    function selectedExpressionsInFrames(expression, frames, depth = 0) {
+      if (!expression || !preprocessStep() || depth > MAX_DEPTH) {
+        if (depth > MAX_DEPTH) preprocessingExceeded = true;
+        return [];
+      }
+      const current = unwrapExpression(expression);
+      if (ts.isConditionalExpression(current)) {
+        const condition = primitiveValueInFrames(current.condition, frames);
+        const branches = condition.known
+          ? [condition.value ? current.whenTrue : current.whenFalse]
+          : [current.whenTrue, current.whenFalse];
+        return branches.flatMap(branch =>
+          selectedExpressionsInFrames(branch, frames, depth + 1));
+      }
+      if (ts.isBinaryExpression(current) && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)) {
+        const left = primitiveValueInFrames(current.left, frames);
+        if (!left.known) {
+          return [current.left, current.right].flatMap(branch =>
+            selectedExpressionsInFrames(branch, frames, depth + 1));
+        }
+        let selected;
+        if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+          selected = left.value ? current.right : current.left;
+        } else if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+          selected = left.value ? current.left : current.right;
+        } else {
+          selected = left.value !== null && left.value !== undefined
+            ? current.left : current.right;
+        }
+        return selectedExpressionsInFrames(selected, frames, depth + 1);
+      }
+      return [current];
+    }
+
     function staticKey(expression, seen = new Set()) {
       if (!preprocessStep() || seen.size > MAX_DEPTH) return null;
       const current = unwrapExpression(expression);
@@ -2399,7 +2437,9 @@ export function createStaticEvaluator(sourceFile) {
                   );
                   const valueFrames = parameterDefault || bindingDefault
                     ? calleeFrames : active;
-                  for (const value of [projectedValue]) {
+                  for (const value of selectedExpressionsInFrames(
+                    projectedValue, valueFrames,
+                  )) {
                     for (const source of detailedReferences(value, caller)) {
                       if (addReference(caller, source)) changed = true;
                     }
@@ -2484,7 +2524,42 @@ export function createStaticEvaluator(sourceFile) {
       }
     }
 
+    const callGraph = new Map();
     for (const { fn, call } of pendingCalls) {
+      const caller = enclosingLocalFunction(call);
+      if (!caller) continue;
+      const callees = callGraph.get(caller) ?? new Set();
+      callees.add(fn);
+      callGraph.set(caller, callees);
+    }
+
+    function functionCanReach(start, target) {
+      const pending = [{ fn: start, depth: 0 }];
+      const seen = new Set();
+      while (pending.length > 0) {
+        if (!preprocessStep()) return true;
+        const current = pending.pop();
+        if (current.fn === target) return true;
+        if (seen.has(current.fn)) continue;
+        seen.add(current.fn);
+        if (current.depth >= MAX_DEPTH) {
+          preprocessingExceeded = true;
+          return true;
+        }
+        for (const callee of callGraph.get(current.fn) ?? []) {
+          pending.push({ fn: callee, depth: current.depth + 1 });
+        }
+      }
+      return false;
+    }
+
+    function isCyclicCall(fn, call) {
+      const caller = enclosingLocalFunction(call);
+      return Boolean(caller) && functionCanReach(fn, caller);
+    }
+
+    for (const { fn, call } of pendingCalls) {
+      if (isCyclicCall(fn, call)) continue;
       fn.parameters.forEach((parameter, index) => {
         const parameterValues = parameterExpressions(parameter, index, call);
         for (const expression of parameterValues) {

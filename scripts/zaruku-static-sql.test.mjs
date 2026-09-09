@@ -513,6 +513,39 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
 
   assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function live([flag,current=flag?safe:ui]:[boolean,string[]?]){
+      current.push("label");
+      if(flag)live([false]);
+    }
+    live([true,ui]);
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function live({flag,current=flag?safe:ui}:{flag:boolean,current?:string[]}){
+      current.push("label");
+      if(flag)live({flag:false});
+    }
+    live({flag:true,current:ui});
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function live(flag:boolean,a:string[],b:string[],current=flag?a:b){
+      current.push("label");
+      if(flag)live(false,a,b);
+    }
+    live(true,safe,ui,ui);
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
     declare function runtimeSql():string;
     const safe=["SELECT * FROM dashboards"];
     const ui:string[]=[];
