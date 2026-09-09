@@ -40,9 +40,9 @@ chmod +x "$FAKE_BIN/npm"
 cat > "$FAKE_BIN/node" <<'SH'
 #!/bin/bash
 if [[ "$*" == "--import tsx --test packages/runtime-contract/src/index.test.ts" || \
-      "$*" == "--import tsx --test apps/zaruku/src/**/*.test.ts" || \
+      "$*" == "scripts/run-node-tests.mjs apps/zaruku/src" || \
       "$*" == "--test scripts/runtime-artifact-policy.test.mjs" ]]; then
-  if [[ "$*" == '--import tsx --test apps/zaruku/src/**/*.test.ts' && ! -f "$FRESH_BUILD_FIXTURE/server/middleware-manifest.json" ]]; then
+  if [[ "$*" == 'scripts/run-node-tests.mjs apps/zaruku/src' && ! -f "$FRESH_BUILD_FIXTURE/server/middleware-manifest.json" ]]; then
     echo 'Isolated tests ran before the fresh build emitted middleware-manifest.json' >&2
     exit 74
   fi
@@ -71,7 +71,7 @@ node --import tsx --test packages/runtime-contract/src/index.test.ts
 run test:deploy-source
 run test:zaruku-production-shadow
 run test:release-runtime
-node --import tsx --test apps/zaruku/src/**/*.test.ts
+node scripts/run-node-tests.mjs apps/zaruku/src
 node --test scripts/runtime-artifact-policy.test.mjs
 --workspace apps/zaruku run verify:artifact
 --workspace apps/zaruku run verify:boot
@@ -122,7 +122,7 @@ if ((deploy.match(/npm run predeploy:verify/g) || []).length !== 1) {
 
 const required = [
   "npm test",
-  "node --import tsx --test 'apps/zaruku/src/**/*.test.ts'",
+  "node scripts/run-node-tests.mjs apps/zaruku/src",
   "node --import tsx --test packages/runtime-contract/src/index.test.ts",
   "npm run test:deploy-source",
   "npm run test:zaruku-production-shadow",
@@ -162,7 +162,7 @@ if (isolatedBuild < 0 || deployFixtures <= isolatedBuild) {
 }
 const releaseGate = verify.indexOf("npm run test:release-runtime");
 for (const command of [
-  "node --import tsx --test 'apps/zaruku/src/**/*.test.ts'",
+  "node scripts/run-node-tests.mjs apps/zaruku/src",
   "node --test scripts/runtime-artifact-policy.test.mjs",
   "npm --workspace apps/zaruku run verify:artifact",
   "npm --workspace apps/zaruku run verify:boot",

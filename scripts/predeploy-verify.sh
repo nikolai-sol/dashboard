@@ -6,7 +6,7 @@ node --import tsx --test packages/runtime-contract/src/index.test.ts
 npm run test:deploy-source
 npm run test:zaruku-production-shadow
 npm run test:release-runtime
-node --import tsx --test 'apps/zaruku/src/**/*.test.ts'
+node scripts/run-node-tests.mjs apps/zaruku/src
 node --test scripts/runtime-artifact-policy.test.mjs
 npm --workspace apps/zaruku run verify:artifact
 npm --workspace apps/zaruku run verify:boot

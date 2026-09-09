@@ -23,3 +23,15 @@ test("package uses the cross-platform recursive node test runner", () => {
   const manifest = JSON.parse(readFileSync("package.json", "utf8"));
   assert.equal(manifest.scripts["test:node"], "node scripts/run-node-tests.mjs");
 });
+
+test("node test runner scopes discovery to an explicitly requested application root", () => {
+  const result = spawnSync(process.execPath, ["scripts/run-node-tests.mjs", "--list", "apps/zaruku/src"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const files = JSON.parse(result.stdout) as string[];
+  assert.ok(files.includes("apps/zaruku/src/app/api/dashboard/zaruku/route.test.ts"));
+  assert.ok(files.length > 0);
+  assert.ok(files.every((file) => file.startsWith("apps/zaruku/src/") && /\.test\.tsx?$/.test(file)));
+});
