@@ -827,12 +827,16 @@ export function createStaticEvaluator(sourceFile) {
         if (!binding || seen.has(binding)) return { known: false };
         for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex -= 1) {
           const frame = frames[frameIndex];
-          const parameterIndex = frame.fn.parameters.indexOf(binding);
-          if (parameterIndex < 0) continue;
-          const values = parameterExpressions(
-            binding, parameterIndex, frame.call,
+          const reference = parameterReference(frame.fn, binding);
+          if (!reference) continue;
+          const roots = parameterExpressions(
+            reference.parameter, reference.index, frame.call,
             value => undefinedStateInFrames(value, frames.slice(0, frameIndex)),
           );
+          const values = reference.path.length > 0
+            ? roots.flatMap(value => expressionsAtBindingProjection(
+              value, reference, frames.slice(0, frameIndex),
+            )) : roots;
           if (values.length !== 1) return { known: false };
           return primitiveValueInFrames(
             values[0], frames.slice(0, frameIndex), new Set(seen).add(binding), depth + 1,
@@ -2319,18 +2323,39 @@ export function createStaticEvaluator(sourceFile) {
       }
       function detailedReferences(expression, owner) {
         const references = new Map();
-        function inspect(current) {
+        function add(reference, suffix = []) {
+          const projected = { ...reference, path: [...reference.path, ...suffix] };
+          references.set(referenceKey(projected), projected);
+        }
+        function inspect(current, suffix = [], seen = new Set()) {
           if (!current || !preprocessStep()) return;
-          if (current !== expression && ts.isFunctionLike(current)) return;
-          if (ts.isIdentifier(current)) {
-            const binding = declaration(current, current.text);
-            const reference = binding ? parameterReference(owner, binding) : null;
-            if (reference) {
-              references.set(referenceKey(reference), reference);
+          const value = unwrapExpression(current);
+          if (ts.isPropertyAccessExpression(value)) {
+            inspect(value.expression, [value.name.text, ...suffix], seen);
+            return;
+          }
+          if (ts.isElementAccessExpression(value) && value.argumentExpression) {
+            const key = staticKey(value.argumentExpression);
+            if (key !== null) {
+              inspect(value.expression, [key, ...suffix], seen);
               return;
             }
           }
-          ts.forEachChild(current, inspect);
+          if (current !== expression && ts.isFunctionLike(current)) return;
+          if (ts.isIdentifier(value)) {
+            const binding = declaration(value, value.text);
+            const reference = binding ? parameterReference(owner, binding) : null;
+            if (reference) {
+              add(reference, suffix);
+              return;
+            }
+            if (binding && !seen.has(binding) && ts.isVariableDeclaration(binding) &&
+                binding.initializer && inside(binding, owner)) {
+              inspect(binding.initializer, suffix, new Set(seen).add(binding));
+              return;
+            }
+          }
+          ts.forEachChild(value, child => inspect(child, suffix, seen));
         }
         inspect(expression);
         return [...references.values()];
@@ -2356,10 +2381,8 @@ export function createStaticEvaluator(sourceFile) {
         return references;
       }
       const initial = new Map();
-      const root = rootBinding(receiver);
-      for (const binding of aliasClosure(root)) {
-        const reference = parameterReference(fn, binding);
-        if (reference) initial.set(referenceKey(reference), reference);
+      for (const reference of detailedReferences(receiver, fn)) {
+        initial.set(referenceKey(reference), reference);
       }
       if (initial.size === 0) return initial;
       tainted.set(fn, initial);

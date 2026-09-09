@@ -389,6 +389,7 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} [[ui]].map(([current,next=queries])=>live(true,current,next)); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; function enter([{next}={next:queries}]:Array<{next:string[]}|undefined>){next.push(runtimeSql());} enter([]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live([flag,current,next]:[boolean,string[],string[]]){current.push(runtimeSql());if(flag)live([false,next,current]);} live([true,ui,queries]); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,box:string[][]){box[0].push(runtimeSql());if(flag)live(false,[box[1],box[0]]);} live(true,[ui,queries]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} function inner([current,next=ui]:Array<string[]|undefined>){live(true,current,next);} function outer(pair:Array<string[]|undefined>){inner(pair);} outer([ui,queries]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const box=[queries]; const copy=box; const alias=copy[0]; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const box=[[queries]]; const alias=box[0][0]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -505,6 +506,18 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
       if(flag)live(false,next,current);
     }
     live(false,ui,safe);
+    export const sql=safe.join("");
+  `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  assert.deepEqual(extractStaticSql(`
+    declare function runtimeSql():string;
+    const safe=["SELECT * FROM dashboards"];
+    const ui:string[]=[];
+    function live([flag,current,next]:[boolean,string[],string[]]){
+      current.push(runtimeSql());
+      if(flag)live([false,next,current]);
+    }
+    live([false,ui,safe]);
     export const sql=safe.join("");
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
 
