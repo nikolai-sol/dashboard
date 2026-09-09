@@ -2095,13 +2095,16 @@ export function createStaticEvaluator(sourceFile) {
     }
 
     function invocationContexts(fn, seen = new Set()) {
-      if (!fn) return { frames: [], unresolved: false, reachable: false };
-      if (seen.has(fn)) return { frames: [], unresolved: false, reachable: false };
-      if (!preprocessStep()) return { frames: [], unresolved: true, reachable: false };
+      if (!fn) return { frames: [], unresolved: false, reachable: false, cycle: false };
+      if (seen.has(fn)) return { frames: [], unresolved: false, reachable: false, cycle: true };
+      if (!preprocessStep()) {
+        return { frames: [], unresolved: true, reachable: false, cycle: false };
+      }
       const nextSeen = new Set(seen).add(fn);
       const frames = [];
       let unresolved = false;
       let reachable = false;
+      let cycle = false;
       for (const { call } of pendingCalls.filter(candidate => candidate.fn === fn)) {
         const parentFn = enclosingLocalFunction(call);
         if (!parentFn) {
@@ -2113,6 +2116,7 @@ export function createStaticEvaluator(sourceFile) {
             frames.push([...parentFrames, { fn, call }]));
           reachable ||= parent.reachable;
           unresolved ||= parent.unresolved;
+          cycle ||= parent.cycle;
         }
       }
       for (const { callbacks, receiver, call: mapCall } of pendingMapCalls) {
@@ -2120,8 +2124,9 @@ export function createStaticEvaluator(sourceFile) {
         const parentFn = enclosingLocalFunction(mapCall);
         const parent = parentFn
           ? invocationContexts(parentFn, nextSeen)
-          : { frames: [[]], unresolved: false, reachable: true };
+          : { frames: [[]], unresolved: false, reachable: true, cycle: false };
         unresolved ||= parent.unresolved;
+        cycle ||= parent.cycle;
         for (const parentFrames of parent.frames) {
           for (const container of valueExpressionsInFrames(receiver, parentFrames)) {
             const resolved = unwrapExpression(container);
@@ -2145,14 +2150,15 @@ export function createStaticEvaluator(sourceFile) {
           }
         }
       }
-      return { frames, unresolved, reachable };
+      unresolved ||= reachable && cycle;
+      return { frames, unresolved, reachable, cycle };
     }
 
     for (const { receiver, evidence } of mutationReceivers) {
       const owner = enclosingLocalFunction(receiver);
       const invocations = owner
         ? invocationContexts(owner)
-        : { frames: [[]], unresolved: false, reachable: true };
+        : { frames: [[]], unresolved: false, reachable: true, cycle: false };
       const contexts = invocations.frames.map(frames => ({
           calls: new Set(), bindings: new Set(), frames, depth: 0,
         }));
