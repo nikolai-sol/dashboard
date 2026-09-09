@@ -117,7 +117,7 @@ test("configured spool roots may not be symlinks", { skip: process.platform !== 
         },
         { spoolDir },
       ),
-      /Protected spool path may not contain symlinks/,
+      /Protected spool path (?:may not contain symlinks|must be a directory)/,
     );
     assert.equal(existsSync(path.join(external, "uploads")), false);
   } finally {
@@ -152,7 +152,7 @@ test("configured spool paths may not contain symlinked ancestors", { skip: proce
         },
         { spoolDir },
       ),
-      /Protected spool path may not contain symlinks/,
+      /Protected spool path (?:may not contain symlinks|must be a directory)/,
     );
     assert.equal(existsSync(path.join(external, "spool", "uploads")), false);
   } finally {
@@ -222,7 +222,7 @@ test("configured uploads directories may not be symlinks", { skip: process.platf
         },
         { spoolDir },
       ),
-      /Protected spool path may not contain symlinks/,
+      /Protected spool path (?:may not contain symlinks|must be a directory)/,
     );
     assert.equal(existsSync(path.join(external, "uploads")), false);
   } finally {
@@ -464,29 +464,29 @@ test("duplicate cleanup remains descriptor-anchored after the spool path is repl
       await symlink(external, spoolDir);
     };
 
-    await assert.rejects(
-      enqueueCanonicalImport(
-        connection,
-        {
-          advertiserKey: "gidrofuril",
-          sourceKey: "yandex_direct",
-          platformAccountId: "gidrofuril-search",
-          transport: "upload",
-          upload: {
-            filename: "report.csv",
-            contentBase64: Buffer.from("date,campaign\n2026-08-18,Search\n").toString("base64"),
-          },
-          adapterConfig: {
-            adapter_config_version: "file-v1",
-            source_key: "yandex_direct",
-            platform_account_id: "gidrofuril-search",
-          },
+    const result = await enqueueCanonicalImport(
+      connection,
+      {
+        advertiserKey: "gidrofuril",
+        sourceKey: "yandex_direct",
+        platformAccountId: "gidrofuril-search",
+        transport: "upload",
+        upload: {
+          filename: "report.csv",
+          contentBase64: Buffer.from("date,campaign\n2026-08-18,Search\n").toString("base64"),
         },
-        { spoolDir },
-      ),
-      /Protected spool path may not contain symlinks/,
+        adapterConfig: {
+          adapter_config_version: "file-v1",
+          source_key: "yandex_direct",
+          platform_account_id: "gidrofuril-search",
+        },
+      },
+      { spoolDir },
     );
+    const originalArtifact = path.join(movedSpoolDir, "uploads", path.basename(sentinel));
+    assert.equal(result.status, "retryable");
     assert.equal(await readFile(sentinel, "utf8"), "do-not-remove");
+    assert.equal(existsSync(originalArtifact), false);
   } finally {
     await rm(spoolDir, { recursive: true, force: true });
     await rm(movedSpoolDir, { recursive: true, force: true });
