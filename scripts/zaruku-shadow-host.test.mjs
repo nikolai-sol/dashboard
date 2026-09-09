@@ -294,6 +294,63 @@ function legacySourceFixture() {
   return f;
 }
 
+test('both legacy consumers ignore unrelated value syntax and extract only exact runtime input keys', async () => {
+  for (const consumer of ['prepare', 'install']) {
+    const f = legacySourceFixture(); let fd, bytes;
+    try {
+      await applyHostBoundary(f.adapter);
+      f.write(source, [
+        'METRIKA_RETURNED_FILTERS=fixture filter > 0 # unrelated comment',
+        'UNRELATED="unclosed $expression \\path # ignored value',
+        `DASHBOARD_AUTH_SECRET='${privateValue}'`,
+        'PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium"',
+        '',
+      ].join('\n'));
+      f.write('/db-password', privateValue); fd = fs.openSync(f.resolve('/db-password'), 'r');
+      if (consumer === 'prepare') bytes = runtimeSecretBytes(f.adapter, 'a'.repeat(96));
+      else { await installRuntimeSecrets(f.adapter, fd); bytes = fs.readFileSync(f.resolve(destination)); }
+      assert.ok(bytes.includes(Buffer.from(`DASHBOARD_AUTH_SECRET='${privateValue}'\n`)));
+      assert.ok(bytes.includes(Buffer.from("PUPPETEER_EXECUTABLE_PATH='/usr/bin/chromium'\n")));
+      assert.doesNotMatch(bytes.toString(), /METRIKA_RETURNED_FILTERS|UNRELATED|fixture filter|unclosed|expression/);
+      assert.equal(f.descriptors.size, 0);
+    } finally { bytes?.fill(0); if (fd !== undefined) fs.closeSync(fd); f.close(); }
+  }
+});
+
+test('selective extraction keeps target values, all assignment keys and duplicates fail closed without leakage', async () => {
+  const valid = `DASHBOARD_AUTH_SECRET='${privateValue}'\n`;
+  const attacks = [
+    'METRIKA_RETURNED_FILTERS=unrelated whitespace # ignored\n',
+    'DASHBOARD_AUTH_SECRET=\n', "DASHBOARD_AUTH_SECRET=''\n",
+    `export DASHBOARD_AUTH_SECRET=${privateValue}\n`,
+    ` DASHBOARD_AUTH_SECRET=${privateValue}\n`,
+    `DASHBOARD_AUTH_SECRET =${privateValue}\n`,
+    `DASHBOARD_AUTH_SECRET+=${privateValue}\n`,
+    `env DASHBOARD_AUTH_SECRET=${privateValue}\n`,
+    valid + 'NOT-A-KEY=value\n', valid + 'BROKEN\n',
+    valid + valid, valid + 'OTHER=one\nOTHER=two\n',
+    valid + 'PUPPETEER_EXECUTABLE_PATH=/one\nPUPPETEER_EXECUTABLE_PATH=/two\n',
+    ...['has space', 'value # comment', '$OTHER', 'path\\tail', '`command`', '"unclosed', "'embedded'quote'"].flatMap(value => [
+      `DASHBOARD_AUTH_SECRET=${value}\n`, valid + `PUPPETEER_EXECUTABLE_PATH=${value}\n`,
+    ]),
+    ...['\0', '\t', '\r', '\u007f', '\ufeff'].map(control => valid + `OTHER=ignored${control}value\n`),
+    Buffer.from([0xc3, 0x28]),
+  ];
+  for (const consumer of ['prepare', 'install']) for (const input of attacks) {
+    const f = legacySourceFixture(); let fd, bytes;
+    try {
+      await applyHostBoundary(f.adapter); f.write(source, input);
+      f.write('/db-password', privateValue); fd = fs.openSync(f.resolve('/db-password'), 'r');
+      await assert.rejects(async () => {
+        if (consumer === 'prepare') bytes = runtimeSecretBytes(f.adapter, 'a'.repeat(96));
+        else await installRuntimeSecrets(f.adapter, fd);
+      }, error => !String(error.stack).includes(privateValue));
+      assert.equal(fs.existsSync(f.resolve(destination)), false);
+      assert.equal(f.descriptors.size, 0);
+    } finally { bytes?.fill(0); if (fd !== undefined) fs.closeSync(fd); f.close(); }
+  }
+});
+
 test('runtime secret preparation accepts only the exact legacy source pins without publication', () => {
   const f = legacySourceFixture(); let bytes;
   try {

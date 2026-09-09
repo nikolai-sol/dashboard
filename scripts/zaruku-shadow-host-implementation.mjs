@@ -329,10 +329,16 @@ function parseCombined(bytes) {
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   if (/[\u0000-\u0009\u000b-\u001f\u007f\ufeff]/.test(text)) fail();
   const values = Object.create(null);
+  const allowed = new Set(['DASHBOARD_AUTH_SECRET', 'PUPPETEER_EXECUTABLE_PATH']);
+  const seen = new Set();
   for (const line of text.split('\n')) {
     if (!line.trim() || line.trimStart().startsWith('#')) continue;
     const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match || Object.hasOwn(values, match[1])) fail();
+    if (!match || seen.has(match[1])) fail();
+    seen.add(match[1]);
+    // Other dashboards' legacy values are not runtime inputs. Validate their
+    // assignment identity, but never interpret or copy their value syntax.
+    if (!allowed.has(match[1])) continue;
     let value = match[2];
     if (value.startsWith("'") || value.startsWith('"')) {
       const quote = value[0];
@@ -342,6 +348,7 @@ function parseCombined(bytes) {
     if (/[$`\\]/.test(value)) fail();
     values[match[1]] = value;
   }
+  if (!values.DASHBOARD_AUTH_SECRET) fail();
   return values;
 }
 
