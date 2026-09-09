@@ -2383,22 +2383,33 @@ export function createStaticEvaluator(sourceFile) {
           for (const reference of calleeTaint.values()) {
             const activeFrames = frames.length > 0 ? frames : [[]];
             for (const active of activeFrames) {
+              const calleeFrames = [...active, { fn: callee, call }];
               const roots = parameterExpressions(
                 reference.parameter, reference.index, call,
                 expression => undefinedStateInFrames(expression, active),
               );
-              const projected = reference.path.length > 0
-                ? roots.flatMap(root =>
-                  expressionsAtBindingProjection(root, reference, active)) : roots;
-              for (const value of projected) {
-                for (const source of detailedReferences(value, caller)) {
-                  if (addReference(caller, source)) changed = true;
-                }
-                const context = {
-                  calls: new Set(), bindings: new Set(), frames: active, depth: 0,
-                };
-                for (const binding of callAwareSourceBindings(value, context)) {
-                  if (!parameterReference(caller, binding)) terminalBindings.add(binding);
+              for (const root of roots) {
+                const parameterDefault = reference.parameter.initializer === root;
+                const rootFrames = parameterDefault ? calleeFrames : active;
+                const projected = reference.path.length > 0
+                  ? expressionsAtBindingProjection(root, reference, rootFrames) : [root];
+                for (const projectedValue of projected) {
+                  const bindingDefault = reference.defaults.some(
+                    fallback => fallback.initializer === projectedValue,
+                  );
+                  const valueFrames = parameterDefault || bindingDefault
+                    ? calleeFrames : active;
+                  for (const value of [projectedValue]) {
+                    for (const source of detailedReferences(value, caller)) {
+                      if (addReference(caller, source)) changed = true;
+                    }
+                    const context = {
+                      calls: new Set(), bindings: new Set(), frames: valueFrames, depth: 0,
+                    };
+                    for (const binding of callAwareSourceBindings(value, context)) {
+                      if (!parameterReference(caller, binding)) terminalBindings.add(binding);
+                    }
+                  }
                 }
               }
             }
@@ -2425,13 +2436,11 @@ export function createStaticEvaluator(sourceFile) {
         markMutated(rootBinding(receiver), evidence);
       }
       if (invocations.unresolved && invocations.cycle) {
-        const recursiveTaint = recursiveTaintedParameters(
-          owner, receiver, invocations.frames,
-        );
-        for (const binding of recursiveTaint.terminalBindings) {
-          markMutated(binding, evidence);
-        }
         for (const frames of invocations.frames) {
+          const recursiveTaint = recursiveTaintedParameters(owner, receiver, [frames]);
+          for (const binding of recursiveTaint.terminalBindings) {
+            markMutated(binding, evidence);
+          }
           frames.forEach((frame, frameIndex) => {
             if (frame.fn !== owner) return;
             for (const reference of recursiveTaint.references.values()) {
