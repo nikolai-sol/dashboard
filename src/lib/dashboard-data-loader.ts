@@ -1165,14 +1165,7 @@ async function applyAggregateReachOverrides(
   dateTo: string,
   overrideMap: Map<string, number>,
 ) {
-  const overrideCampaignIds = Array.from(
-    new Set(
-      Array.from(overrideMap.keys())
-        .filter((key) => key.startsWith(`${sourceKey}:`))
-        .map((key) => key.split(":")[1])
-        .filter(Boolean),
-    ),
-  );
+  const overrideCampaignIds = campaignIdsWithFrequencyOverrides(sourceKey, overrideMap);
   if (!overrideCampaignIds.length || !aggregate) {
     return aggregate;
   }
@@ -1196,6 +1189,26 @@ async function applyAggregateReachOverrides(
     ...aggregate,
     total_reach: nextReach,
   };
+}
+
+export function campaignIdsWithFrequencyOverrides(
+  sourceKey: string,
+  overrideMap: Map<string, number>,
+): string[] {
+  const prefix = `${sourceKey}:`;
+  return Array.from(
+    new Set(
+      Array.from(overrideMap.keys())
+        .filter((key) => key.startsWith(prefix))
+        .map((key) => {
+          const monthSeparator = key.lastIndexOf(":");
+          return monthSeparator > prefix.length
+            ? key.slice(prefix.length, monthSeparator)
+            : "";
+        })
+        .filter(Boolean),
+    ),
+  );
 }
 
 function sumManualChannels(
