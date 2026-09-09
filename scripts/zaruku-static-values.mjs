@@ -238,25 +238,20 @@ export function createStaticEvaluator(sourceFile) {
         ['assign', 'defineProperties', 'defineProperty', 'setPrototypeOf'].includes(
           node.expression.name.text,
         ) && node.arguments[0]) {
-      markMutated(rootBinding(node.arguments[0]), node.arguments.slice(1));
       mutationReceivers.push({ receiver: node.arguments[0], evidence: node.arguments.slice(1) });
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
         mutationMethods.has(node.expression.name.text)) {
-      markMutated(rootBinding(node.expression.expression), node.arguments);
       mutationReceivers.push({ receiver: node.expression.expression, evidence: node.arguments });
     } else if (ts.isBinaryExpression(node) && assignmentOperators.has(node.operatorToken.kind)) {
       if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
           ts.isPropertyAccessExpression(unwrapExpression(node.left)) ||
           ts.isElementAccessExpression(unwrapExpression(node.left))) {
-        markMutated(rootBinding(node.left), node.right);
         mutationReceivers.push({ receiver: node.left, evidence: node.right });
       }
     } else if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
         [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator)) {
-      markMutated(rootBinding(node.operand), node.operand);
       mutationReceivers.push({ receiver: node.operand, evidence: node.operand });
     } else if (ts.isDeleteExpression(node)) {
-      markMutated(rootBinding(node.expression), node.expression);
       mutationReceivers.push({ receiver: node.expression, evidence: node.expression });
     }
     ts.forEachChild(node, collectDirectMutations);
@@ -739,6 +734,43 @@ export function createStaticEvaluator(sourceFile) {
       };
     }
 
+    function parameterUndefinedStateInFrames(parameter, frames, seen = new Set()) {
+      if (!preprocessStep() || seen.has(parameter)) {
+        return { mayBeUndefined: true, mayBeDefined: true };
+      }
+      let frameIndex = -1;
+      for (let index = frames.length - 1; index >= 0; index -= 1) {
+        if (frames[index].fn.parameters.includes(parameter)) {
+          frameIndex = index;
+          break;
+        }
+      }
+      if (frameIndex < 0) return contextualParameterUndefinedState(parameter, seen);
+      const frame = frames[frameIndex];
+      const outerFrames = frames.slice(0, frameIndex);
+      const parameterStates = new Map();
+      const nextSeen = new Set(seen).add(parameter);
+      for (let index = 0; index < frame.fn.parameters.length; index += 1) {
+        const candidate = frame.fn.parameters[index];
+        const runtime = parameterRuntime(candidate, index, frame.call, expression =>
+          undefinedState(expression, {
+            bindings: new Set(), calls: new Set(), parameters: parameterStates, depth: 0,
+            resolveParameter: nested =>
+              parameterUndefinedStateInFrames(nested, outerFrames, nextSeen),
+          }));
+        parameterStates.set(candidate, runtime.state);
+      }
+      return parameterStates.get(parameter) ??
+        { mayBeUndefined: true, mayBeDefined: true };
+    }
+
+    function undefinedStateInFrames(expression, frames) {
+      return undefinedState(expression, {
+        bindings: new Set(), calls: new Set(), parameters: new Map(), depth: 0,
+        resolveParameter: parameter => parameterUndefinedStateInFrames(parameter, frames),
+      });
+    }
+
     function staticKey(expression, seen = new Set()) {
       if (!preprocessStep() || seen.size > MAX_DEPTH) return null;
       const current = unwrapExpression(expression);
@@ -1205,7 +1237,10 @@ export function createStaticEvaluator(sourceFile) {
             const frame = frames[index];
             const parameterIndex = frame.fn.parameters.indexOf(binding);
             if (parameterIndex < 0) continue;
-            const expressions = parameterExpressions(binding, parameterIndex, frame.call);
+            const expressions = parameterExpressions(
+              binding, parameterIndex, frame.call,
+              expression => undefinedStateInFrames(expression, frames.slice(0, index)),
+            );
             if (expressions.length !== 1) return { known: false };
             return contextualPrimitive(
               expressions[0], new Set(seen).add(binding), depth + 1, frames,
@@ -1283,11 +1318,38 @@ export function createStaticEvaluator(sourceFile) {
       }
       if (ts.isIdentifier(current)) {
         const binding = declaration(current, current.text);
+        if (binding && !state.bindings.has(binding)) {
+          for (let index = state.frames.length - 1; index >= 0; index -= 1) {
+            const frame = state.frames[index];
+            const parameterIndex = frame.fn.parameters.indexOf(binding);
+            if (parameterIndex < 0) continue;
+            let resolvedParameter = false;
+            for (const expression of parameterExpressions(
+              binding, parameterIndex, frame.call,
+              value => undefinedStateInFrames(value, state.frames.slice(0, index)),
+            )) {
+              for (const nested of callAwareSourceBindings(expression, next({
+                bindings: new Set(state.bindings).add(binding),
+                frames: state.frames.slice(0, index),
+              }))) {
+                direct.add(nested);
+                resolvedParameter = true;
+              }
+            }
+            if (resolvedParameter) direct.delete(binding);
+            return [...direct];
+          }
+        }
         if (binding && !state.bindings.has(binding) && ts.isVariableDeclaration(binding) &&
             binding.initializer && (binding.parent.flags & ts.NodeFlags.Const)) {
+          let resolvedInitializer = false;
           for (const nested of callAwareSourceBindings(binding.initializer, next({
             bindings: new Set(state.bindings).add(binding),
-          }))) direct.add(nested);
+          }))) {
+            direct.add(nested);
+            resolvedInitializer = true;
+          }
+          if (resolvedInitializer) direct.delete(binding);
         }
         return [...direct];
       }
@@ -1386,7 +1448,10 @@ export function createStaticEvaluator(sourceFile) {
             continue;
           }
           for (const index of parameterIndexes) {
-            for (const parameterValue of parameterExpressions(fn.parameters[index], index, current)) {
+            for (const parameterValue of parameterExpressions(
+              fn.parameters[index], index, current,
+              expression => undefinedStateInFrames(expression, state.frames),
+            )) {
               for (const binding of callAwareSourceBindings(parameterValue, callState)) {
                 direct.add(binding);
               }
@@ -1432,7 +1497,10 @@ export function createStaticEvaluator(sourceFile) {
             const frame = frames[index];
             const parameterIndex = frame.fn.parameters.indexOf(binding);
             if (parameterIndex < 0) continue;
-            const expressions = parameterExpressions(binding, parameterIndex, frame.call);
+            const expressions = parameterExpressions(
+              binding, parameterIndex, frame.call,
+              expression => undefinedStateInFrames(expression, frames.slice(0, index)),
+            );
             if (expressions.length !== 1) return { known: false };
             return primitiveFromFrames(
               expressions[0], frames, new Set(seen).add(binding), depth + 1,
@@ -1803,8 +1871,29 @@ export function createStaticEvaluator(sourceFile) {
       return [...bindings];
     }
 
+    function enclosingLocalFunction(expression) {
+      let current = expression.parent;
+      while (current) {
+        if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current) ||
+            ts.isArrowFunction(current) || ts.isMethodDeclaration(current)) return current;
+        current = current.parent;
+      }
+      return null;
+    }
+
     for (const { receiver, evidence } of mutationReceivers) {
-      for (const binding of callAwareSourceBindings(receiver)) markMutated(binding, evidence);
+      const owner = enclosingLocalFunction(receiver);
+      const ownerCalls = owner ? pendingCalls.filter(candidate => candidate.fn === owner) : [];
+      const contexts = ownerCalls.length > 0
+        ? ownerCalls.map(({ call }) => ({
+          calls: new Set(), bindings: new Set(), frames: [{ fn: owner, call }], depth: 0,
+        }))
+        : [undefined];
+      for (const context of contexts) {
+        for (const binding of callAwareSourceBindings(receiver, context)) {
+          markMutated(binding, evidence);
+        }
+      }
     }
 
     for (const { target, fn, call } of pendingReturnLinks) {
