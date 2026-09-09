@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { gzipSync } from 'node:zlib';
+import { brotliCompressSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { assertReleaseAuthorityInvocation, createReleaseAuthorityAdapter, requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
@@ -13,8 +13,8 @@ export function provisionArguments(action, prepared) {
   if (!ACTIONS.includes(action) || !/^[a-f0-9]{64}$/.test(prepared.digest)) fail();
   // Only public reviewed control bytes enter argv. stdin remains exclusively the
   // auth input; the complete closure (including dispatcher) is checked before it.
-  const compressed = gzipSync(prepared.bytes).toString('base64');
-  const code = `const CONTROL_FILES=${JSON.stringify(CONTROL_FILES)};const inspect=(${receiveControlPayload.toString()});try{const z=await import('node:zlib');const c=await inspect(z.gunzipSync(Buffer.from('${compressed}','base64'),{maxOutputLength:2097152}),'${prepared.digest}',undefined,true);const m=await import('file://'+c.destination.path+'/scripts/zaruku-shadow-dispatch.mjs');process.stdout.write(JSON.stringify(await m.dispatchStaged('${action}'))+'\\n');}catch{process.stderr.write('Zaruku fixed provisioning refused\\n');process.exitCode=1;}`;
+  const compressed = brotliCompressSync(prepared.bytes).toString('base64');
+  const code = `const CONTROL_FILES=${JSON.stringify(CONTROL_FILES)};const inspect=(${receiveControlPayload.toString()});try{const z=await import('node:zlib');const c=await inspect(z.brotliDecompressSync(Buffer.from('${compressed}','base64'),{maxOutputLength:2097152}),'${prepared.digest}',undefined,true);const m=await import('file://'+c.destination.path+'/scripts/zaruku-shadow-dispatch.mjs');process.stdout.write(JSON.stringify(await m.dispatchStaged('${action}'))+'\\n');}catch{process.stderr.write('Zaruku fixed provisioning refused\\n');process.exitCode=1;}`;
   const command = `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`;
   if (Buffer.byteLength(command) > 120000) fail();
   return ['-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',...(action==='auth-install'?['-tt']:[]),'--','beget',command];
