@@ -284,6 +284,37 @@ test('Nginx glob traversal fails closed on a symlinked directory cycle', () => {
   }
 });
 
+test('read-only commands pin the root PM2 context without inheriting hostile environment values', async () => {
+  const hostile = { HOME: '/hostile-home', PM2_HOME: '/hostile-pm2', PATH: '/hostile-path', LC_ALL: 'hostile-locale', NODE_OPTIONS: '--require /hostile-hook', EXTRA_PREFLIGHT_VALUE: 'PRIVATE_SENTINEL' };
+  const saved = Object.fromEntries(Object.keys(hostile).map(key => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, hostile);
+    // Evaluate the module with hostile values already present, not just at call time.
+    const { createReadOnlyPreflightAdapter: createAdapter } = await import('./zaruku-production-shadow-preflight.mjs?fixed-pm2-context-regression');
+    const commands = [];
+    const adapter = createAdapter({ commandRunner(filename, args, options) {
+      assert.deepEqual(options.env, { PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C', HOME: '/root', PM2_HOME: '/root/.pm2' });
+      assert.equal(Object.isFrozen(options.env), true);
+      commands.push([filename, args]);
+      const stdout = filename === '/bin/sh' ? '/usr/local/bin/pm2\n'
+        : filename === '/usr/local/bin/pm2' ? '│ name │ status │ pid │\n│ dashboard-next │ online │ 123 │\n'
+        : args[0] === '-u' ? '0\n' : 'root\n';
+      return { status: 0, stdout, stderr: '', signal: null };
+    } });
+    assert.deepEqual(adapter.combinedProcess(), { name: 'dashboard-next', port: 3001, status: 'online', pid: 123 });
+    assert.deepEqual(adapter.currentIdentity(), { uid: 0, user: 'root' });
+    assert.deepEqual(commands, [
+      ['/bin/sh', ['-c', 'command -v -- "$1"', 'preflight', 'pm2']],
+      ['/usr/local/bin/pm2', ['status', 'dashboard-next', '--no-color']],
+      ['/usr/bin/id', ['-u']], ['/usr/bin/id', ['-un']],
+    ]);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+});
+
 test('real adapter distinguishes confirmed absence from stat, getent, group, and supplementary-group command failure', () => {
   const result = (status, stdout = '', stderr = '') => ({ status, stdout, stderr, signal: null });
   const absent = createReadOnlyPreflightAdapter({

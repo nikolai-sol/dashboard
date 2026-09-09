@@ -24,7 +24,7 @@ const RESOURCE_RULES = Object.freeze(new Map([
   ['/var/www/.dashboard-zaruku-shadow/evidence', { type: 'directory', owner: 'root', group: 'root', mode: '0700' }],
 ]));
 
-const SAFE_ENV = Object.freeze({ PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C' });
+const SAFE_ENV = Object.freeze({ PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C', HOME: '/root', PM2_HOME: '/root/.pm2' });
 const fail = message => { throw new Error(message); };
 
 function deepFreeze(value) {
