@@ -2111,7 +2111,12 @@ export function createStaticEvaluator(sourceFile) {
             continue;
           }
           for (const member of members) {
-            const state = undefinedStateInFrames(member, outerFrames);
+            const primitive = primitiveValueInFrames(member, outerFrames);
+            const state = primitive.known
+              ? primitive.value === undefined
+                ? { mayBeUndefined: true, mayBeDefined: false }
+                : { mayBeUndefined: false, mayBeDefined: true }
+              : undefinedStateInFrames(member, outerFrames);
             if (state.mayBeDefined) next.push(member);
             if (state.mayBeUndefined && fallback) next.push(fallback);
           }
@@ -2312,7 +2317,7 @@ export function createStaticEvaluator(sourceFile) {
     function recursiveTaintedParameters(fn, receiver, frames) {
       const tainted = new Map();
       const referenceKey = reference =>
-        `${reference.index}:${reference.path.map(String).join('.')}`;
+        JSON.stringify([reference.index, reference.path]);
       function addReference(owner, reference) {
         const references = tainted.get(owner) ?? new Map();
         const key = referenceKey(reference);
@@ -2360,10 +2365,11 @@ export function createStaticEvaluator(sourceFile) {
         inspect(expression);
         return [...references.values()];
       }
-      function transferredReferences(argument, calleeReference, caller) {
+      function transferredReferences(argument, calleeReference, caller, activeFrames) {
         const references = [];
         const projected = calleeReference.path.length > 0
-          ? expressionsAtStaticMemberPath(argument, calleeReference.path, []) : [argument];
+          ? activeFrames.flatMap(frame =>
+            expressionsAtBindingProjection(argument, calleeReference, frame)) : [argument];
         if (projected.length > 0) {
           projected.forEach(value => references.push(...detailedReferences(value, caller)));
         } else {
@@ -2374,9 +2380,6 @@ export function createStaticEvaluator(sourceFile) {
               defaults: [...reference.defaults, ...calleeReference.defaults],
             });
           }
-        }
-        for (const fallback of calleeReference.defaults) {
-          references.push(...detailedReferences(fallback.initializer, caller));
         }
         return references;
       }
@@ -2397,7 +2400,9 @@ export function createStaticEvaluator(sourceFile) {
           for (const reference of calleeTaint.values()) {
             const argument = call.arguments[reference.index];
             if (!argument) continue;
-            for (const source of transferredReferences(argument, reference, caller)) {
+            for (const source of transferredReferences(
+              argument, reference, caller, frames,
+            )) {
               if (addReference(caller, source)) changed = true;
             }
           }
