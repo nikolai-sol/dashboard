@@ -707,7 +707,9 @@ Expected: exit `0`, clean worktree, no new warnings, and a clean re-review.
 
 Only after independent acceptance and explicit release-ref authorization, use the
 fixed interface from the clean reviewed named checkout. It verifies the fixed base,
-exact source, and one exact remote ref; ancestor/descendant/unrelated refs all fail.
+exact source, and one exact remote ref. For `check` and `create-if-absent`, ancestor,
+descendant, and unrelated refs all fail; the only exception is the separately
+approved exact successor command below.
 `deploy/zaruku/repository.json` pins the destination to
 `git@github.com:nikolai-sol/dashboard.git`. Check, push and readback use this literal
 authority in one ownership-known clean temporary bare Git repository, never the
@@ -741,13 +743,17 @@ atomic lease, and requires exact readback. It cannot delete the ref, accept an
 argv/environment SHA, retry against a changed ref, or run successfully twice.
 No other ordinary or forced update is allowed.
 
-It uses `--atomic --force-with-lease=refs/heads/release/zaruku:`, no hooks/follow-tags/
-submodule recursion, one explicit refspec and exact readback from that same literal
-destination. Child deployment checks use this identical clean-bare authority and
-the exact inherited SHA binding, without fetching through checkout remote config.
-A different ref appearing after observation cannot be updated. No ordinary push,
-force update, or ancestry-only acceptance is allowed. These commands were not run
-against the real origin during Task 5 implementation.
+`create-if-absent` uses `--atomic --force-with-lease=refs/heads/release/zaruku:`,
+no hooks/follow-tags/submodule recursion, one explicit refspec and exact readback
+from that same literal destination. Successor publication instead leases against
+the full committed `approvedPredecessor` with
+`--force-with-lease=refs/heads/release/zaruku:<approvedPredecessor>`. Child deployment
+checks use this identical clean-bare authority and the exact inherited SHA binding,
+without fetching through checkout remote config. A different ref appearing after
+observation cannot be updated. `advance-approved-successor` is the sole exception
+to the general update prohibition; no ordinary push, other forced update, or
+ancestry-only acceptance is allowed. These commands were not run against the real
+origin during Task 5 implementation.
 
 ---
 

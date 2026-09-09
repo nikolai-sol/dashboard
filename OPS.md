@@ -374,11 +374,11 @@ or known-host/key installation is accepted. `deploy/zaruku/repository.json` pins
 `git@github.com:nikolai-sol/dashboard.git` destination for check/push/readback and
 child checks. Remote operations use a clean ownership-known temporary bare Git
 repository, no checkout config/refs/tags/hooks, disabled system/global config,
-one explicit refspec, no follow-tags/hooks/submodule recursion, and an atomic
-expected-absent lease. Alternate/multiple URLs, pushurl and rewrite/include config
-reject; the real CLI accepts no destination override. Only candidate-reachable
-objects are imported; source config/refs remain unchanged. No unknown/different
-existing ref can be overwritten.
+one explicit refspec, and no follow-tags/hooks/submodule recursion. Only
+`create-if-absent` uses an atomic expected-absent lease. Alternate/multiple URLs,
+pushurl and rewrite/include config reject; the real CLI accepts no destination
+override. Only candidate-reachable objects are imported; source config/refs remain
+unchanged. No unknown/different existing ref can be overwritten.
 
 The separately approved recovery command `advance-approved-successor` may run
 only while the remote ref equals the full `approvedPredecessor` recorded in
