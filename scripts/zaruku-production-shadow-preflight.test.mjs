@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -190,12 +191,41 @@ test('Nginx inspection follows the complete active include graph and finds an ot
   }
 });
 
-test('Nginx inspection fails closed when an active include cannot be resolved', () => {
+test('Nginx inspection reads and hashes the graph when wildcard includes match no files', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-nginx-empty-glob-'));
+  try {
+    fs.mkdirSync(path.join(directory, 'optional'));
+    const entry = path.join(directory, 'nginx.conf');
+    const route = path.join(directory, 'active.conf');
+    const sources = new Map([
+      [entry, 'http { include optional/*.conf; include optional/?.conf; include active.conf; }\n'],
+      [route, 'location / { proxy_pass http://127.0.0.1:3001; }\n'],
+    ]);
+    for (const [filename, source] of sources) fs.writeFileSync(filename, source);
+
+    const graph = readNginxIncludeGraph(entry, { prefix: directory });
+    const records = [...sources].map(([filename, source]) => [fs.realpathSync(filename), source])
+      .sort(([left], [right]) => left.localeCompare(right));
+    const digest = createHash('sha256');
+    for (const [filename, source] of records) {
+      digest.update(`${filename}\0${createHash('sha256').update(source).digest('hex')}\n`);
+    }
+    assert.equal(graph.fileCount, 2);
+    assert.equal(graph.text, records.map(([, source]) => source).join('\n'));
+    assert.equal(graph.sha256, digest.digest('hex'));
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+});
+
+test('Nginx inspection fails closed for a missing literal include or wildcard base directory', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zaruku-nginx-missing-'));
   try {
     const entry = path.join(directory, 'nginx.conf');
-    fs.writeFileSync(entry, 'http { include missing/*.conf; }\n');
-    assert.throws(() => readNginxIncludeGraph(entry, { prefix: directory }), /include|Nginx/i);
+    for (const include of ['missing.conf', 'missing/*.conf']) {
+      fs.writeFileSync(entry, `http { include ${include}; }\n`);
+      assert.throws(() => readNginxIncludeGraph(entry, { prefix: directory }), /include|Nginx/i);
+    }
   } finally {
     fs.rmSync(directory, { recursive: true });
   }

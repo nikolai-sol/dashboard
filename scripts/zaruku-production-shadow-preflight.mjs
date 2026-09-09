@@ -296,7 +296,6 @@ function resolveInclude(pattern, io) {
     }
   }
   walk(base);
-  if (matches.length === 0) fail('Unresolved Nginx include');
   return matches;
 }
 
