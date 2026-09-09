@@ -912,7 +912,9 @@ export function createStaticEvaluator(sourceFile) {
         : { known: false };
     }
 
-    function selectedExpressionsInFrames(expression, frames, depth = 0) {
+    function selectedExpressionsInFrames(
+      expression, frames, seenCalls = new Set(), depth = 0,
+    ) {
       if (!expression || !preprocessStep() || depth > MAX_DEPTH) {
         if (depth > MAX_DEPTH) preprocessingExceeded = true;
         return [];
@@ -924,7 +926,7 @@ export function createStaticEvaluator(sourceFile) {
           ? [condition.value ? current.whenTrue : current.whenFalse]
           : [current.whenTrue, current.whenFalse];
         return branches.flatMap(branch =>
-          selectedExpressionsInFrames(branch, frames, depth + 1));
+          selectedExpressionsInFrames(branch, frames, seenCalls, depth + 1));
       }
       if (ts.isBinaryExpression(current) && [
         ts.SyntaxKind.AmpersandAmpersandToken,
@@ -934,7 +936,7 @@ export function createStaticEvaluator(sourceFile) {
         const left = primitiveValueInFrames(current.left, frames);
         if (!left.known) {
           return [current.left, current.right].flatMap(branch =>
-            selectedExpressionsInFrames(branch, frames, depth + 1));
+            selectedExpressionsInFrames(branch, frames, seenCalls, depth + 1));
         }
         let selected;
         if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
@@ -945,7 +947,20 @@ export function createStaticEvaluator(sourceFile) {
           selected = left.value !== null && left.value !== undefined
             ? current.left : current.right;
         }
-        return selectedExpressionsInFrames(selected, frames, depth + 1);
+        return selectedExpressionsInFrames(selected, frames, seenCalls, depth + 1);
+      }
+      if (ts.isCallExpression(current)) {
+        if (seenCalls.has(current)) return [current];
+        const callee = localFunction(current);
+        if (!callee?.body) return [current];
+        const callFrames = [...frames, { fn: callee, call: current }];
+        const nextSeen = new Set(seenCalls).add(current);
+        return selectedReturnExpressions(callee, current, condition => {
+          const result = primitiveValueInFrames(condition, callFrames);
+          return result.known ? Boolean(result.value) : null;
+        }).flatMap(returned => selectedExpressionsInFrames(
+          returned, callFrames, nextSeen, depth + 1,
+        ));
       }
       return [current];
     }
