@@ -116,7 +116,8 @@ export function createStaticEvaluator(sourceFile) {
     for (let scope = node.parent; scope; scope = scope.parent) {
       if (ts.isFunctionLike(scope)) {
         for (const parameter of scope.parameters) {
-          if (ts.isIdentifier(parameter.name) && parameter.name.text === name) return parameter;
+          const binding = bindingInPattern(parameter, name);
+          if (binding) return binding;
         }
       }
       if (ts.isBlock(scope) || ts.isSourceFile(scope)) {
@@ -173,6 +174,38 @@ export function createStaticEvaluator(sourceFile) {
     if (ts.isIdentifier(node)) return declaration(node, node.text);
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       return rootBinding(node.expression);
+    }
+    return null;
+  }
+
+  function bindingPathInPattern(pattern, target, path = []) {
+    if (!ts.isArrayBindingPattern(pattern) && !ts.isObjectBindingPattern(pattern)) return null;
+    for (let index = 0; index < pattern.elements.length; index += 1) {
+      const element = pattern.elements[index];
+      if (!ts.isBindingElement(element)) continue;
+      const keyNode = ts.isArrayBindingPattern(pattern)
+        ? null : element.propertyName ?? element.name;
+      const key = ts.isArrayBindingPattern(pattern)
+        ? String(index)
+        : (ts.isIdentifier(keyNode) || ts.isStringLiteral(keyNode) || ts.isNumericLiteral(keyNode))
+          ? keyNode.text : null;
+      if (key === null) continue;
+      const nextPath = [...path, key];
+      if (element === target || element.name === target) return nextPath;
+      const nested = bindingPathInPattern(element.name, target, nextPath);
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  function parameterReference(fn, binding) {
+    for (let index = 0; index < fn.parameters.length; index += 1) {
+      const parameter = fn.parameters[index];
+      if (parameter === binding || parameter.name === binding) {
+        return { parameter, index, path: [] };
+      }
+      const path = bindingPathInPattern(parameter.name, binding);
+      if (path) return { parameter, index, path };
     }
     return null;
   }
@@ -1418,19 +1451,26 @@ export function createStaticEvaluator(sourceFile) {
         if (binding && !state.bindings.has(binding)) {
           for (let index = state.frames.length - 1; index >= 0; index -= 1) {
             const frame = state.frames[index];
-            const parameterIndex = frame.fn.parameters.indexOf(binding);
-            if (parameterIndex < 0) continue;
+            const reference = parameterReference(frame.fn, binding);
+            if (!reference) continue;
             let resolvedParameter = false;
             for (const expression of parameterExpressions(
-              binding, parameterIndex, frame.call,
+              reference.parameter, reference.index, frame.call,
               value => undefinedStateInFrames(value, state.frames.slice(0, index)),
             )) {
-              for (const nested of callAwareSourceBindings(expression, next({
-                bindings: new Set(state.bindings).add(binding),
-                frames: state.frames.slice(0, index),
-              }))) {
-                direct.add(nested);
-                resolvedParameter = true;
+              if (reference.path.length === 0) {
+                for (const nested of callAwareSourceBindings(expression, next({
+                  bindings: new Set(state.bindings).add(binding),
+                  frames: state.frames.slice(0, index),
+                }))) {
+                  direct.add(nested);
+                  resolvedParameter = true;
+                }
+              } else {
+                for (const nested of bindingsAtMemberPath(expression, reference.path)) {
+                  direct.add(nested);
+                  resolvedParameter = true;
+                }
               }
             }
             if (resolvedParameter) direct.delete(binding);
@@ -2158,6 +2198,78 @@ export function createStaticEvaluator(sourceFile) {
       return { frames, unresolved, reachable, cycle };
     }
 
+    function parameterReferencesInExpression(expression, fn, seen = new Set()) {
+      const references = new Set();
+      function inspect(current) {
+        if (!current || !preprocessStep()) return;
+        if (current !== expression && ts.isFunctionLike(current)) return;
+        if (ts.isIdentifier(current)) {
+          const binding = declaration(current, current.text);
+          const reference = binding ? parameterReference(fn, binding) : null;
+          if (reference) {
+            references.add(reference.parameter);
+            return;
+          }
+          if (binding && !seen.has(binding) && ts.isVariableDeclaration(binding) &&
+              binding.initializer && inside(binding, fn)) {
+            seen.add(binding);
+            inspect(binding.initializer);
+          }
+        }
+        ts.forEachChild(current, inspect);
+      }
+      inspect(expression);
+      return references;
+    }
+
+    function callPotentiallyReachable(call, caller, frames) {
+      if (frames.length === 0) return true;
+      return frames.some(activeFrames => {
+        for (let current = call; current && current !== caller; current = current.parent) {
+          const parent = current.parent;
+          if (!parent || !ts.isIfStatement(parent)) continue;
+          const decision = primitiveValueInFrames(parent.expression, activeFrames);
+          if (!decision.known) continue;
+          const selected = decision.value ? parent.thenStatement : parent.elseStatement;
+          if (!selected || !inside(call, selected)) return false;
+        }
+        return true;
+      });
+    }
+
+    function recursiveTaintedParameters(fn, receiver, frames) {
+      const tainted = new Map();
+      const initial = new Set();
+      const root = rootBinding(receiver);
+      for (const binding of aliasClosure(root)) {
+        const reference = parameterReference(fn, binding);
+        if (reference) initial.add(reference.parameter);
+      }
+      if (initial.size === 0) return initial;
+      tainted.set(fn, initial);
+      let changed = true;
+      while (changed && preprocessStep()) {
+        changed = false;
+        for (const { fn: callee, call } of pendingCalls) {
+          const calleeTaint = tainted.get(callee);
+          if (!calleeTaint) continue;
+          const caller = enclosingLocalFunction(call);
+          if (!caller || !callPotentiallyReachable(call, caller, frames)) continue;
+          const callerTaint = tainted.get(caller) ?? new Set();
+          callee.parameters.forEach((parameter, index) => {
+            if (!calleeTaint.has(parameter) || !call.arguments[index]) return;
+            for (const source of parameterReferencesInExpression(call.arguments[index], caller)) {
+              if (callerTaint.has(source)) continue;
+              callerTaint.add(source);
+              changed = true;
+            }
+          });
+          if (callerTaint.size > 0) tainted.set(caller, callerTaint);
+        }
+      }
+      return tainted.get(fn) ?? initial;
+    }
+
     for (const { receiver, evidence } of mutationReceivers) {
       const owner = enclosingLocalFunction(receiver);
       const invocations = owner
@@ -2175,9 +2287,16 @@ export function createStaticEvaluator(sourceFile) {
         markMutated(rootBinding(receiver), evidence);
       }
       if (invocations.unresolved && invocations.cycle) {
+        const taintedParameters = recursiveTaintedParameters(
+          owner, receiver, invocations.frames,
+        );
         for (const frames of invocations.frames) {
           frames.forEach((frame, frameIndex) => {
-            for (const argument of frame.call.arguments) {
+            if (frame.fn !== owner) return;
+            frame.fn.parameters.forEach((parameter, parameterIndex) => {
+              if (!taintedParameters.has(parameter)) return;
+              const argument = frame.call.arguments[parameterIndex];
+              if (!argument) return;
               const context = {
                 calls: new Set(), bindings: new Set(),
                 frames: frames.slice(0, frameIndex), depth: 0,
@@ -2185,7 +2304,7 @@ export function createStaticEvaluator(sourceFile) {
               for (const binding of callAwareSourceBindings(argument, context)) {
                 markMutated(binding, evidence);
               }
-            }
+            });
           });
         }
       }
