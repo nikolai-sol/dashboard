@@ -192,10 +192,19 @@ export function createStaticEvaluator(sourceFile) {
       if (key === null) continue;
       const nextPath = [...path, key];
       if (element === target || element.name === target) {
-        return { path: nextPath, initializer: element.initializer ?? null };
+        return {
+          path: nextPath,
+          defaults: element.initializer
+            ? [{ depth: nextPath.length, initializer: element.initializer }] : [],
+        };
       }
       const nested = bindingPathInPattern(element.name, target, nextPath);
-      if (nested) return nested;
+      if (nested) {
+        if (element.initializer) {
+          nested.defaults.unshift({ depth: nextPath.length, initializer: element.initializer });
+        }
+        return nested;
+      }
     }
     return null;
   }
@@ -204,7 +213,7 @@ export function createStaticEvaluator(sourceFile) {
     for (let index = 0; index < fn.parameters.length; index += 1) {
       const parameter = fn.parameters[index];
       if (parameter === binding || parameter.name === binding) {
-        return { parameter, index, path: [], initializer: null };
+        return { parameter, index, path: [], defaults: [] };
       }
       const projection = bindingPathInPattern(parameter.name, binding);
       if (projection) return { parameter, index, ...projection };
@@ -1469,20 +1478,11 @@ export function createStaticEvaluator(sourceFile) {
                   resolvedParameter = true;
                 }
               } else {
-                const projected = expressionsAtStaticMemberPath(expression, reference.path);
-                const states = projected.map(value =>
-                  undefinedStateInFrames(value, state.frames.slice(0, index)));
-                const mayBeDefined = states.some(value => value.mayBeDefined);
-                const mayBeUndefined = projected.length === 0 ||
-                  states.some(value => value.mayBeUndefined);
-                if (mayBeDefined) {
-                  for (const nested of bindingsAtMemberPath(expression, reference.path)) {
-                    direct.add(nested);
-                    resolvedParameter = true;
-                  }
-                }
-                if (mayBeUndefined && reference.initializer) {
-                  for (const nested of callAwareSourceBindings(reference.initializer, next({
+                const projected = expressionsAtBindingProjection(
+                  expression, reference, state.frames.slice(0, index),
+                );
+                for (const projectedValue of projected) {
+                  for (const nested of callAwareSourceBindings(projectedValue, next({
                     bindings: new Set(state.bindings).add(binding),
                   }))) {
                     direct.add(nested);
@@ -2065,7 +2065,7 @@ export function createStaticEvaluator(sourceFile) {
       return [...bindings];
     }
 
-    function expressionsAtStaticMemberPath(expression, path, depth = 0) {
+    function expressionsAtStaticMemberPath(expression, path, frames, depth = 0) {
       if (!preprocessStep() || depth > MAX_DEPTH) {
         if (depth > MAX_DEPTH) preprocessingExceeded = true;
         return [];
@@ -2073,7 +2073,7 @@ export function createStaticEvaluator(sourceFile) {
       if (path.length === 0) return [expression];
       const [key, ...rest] = path;
       const expressions = [];
-      for (const container of valueExpressions(expression)) {
+      for (const container of valueExpressionsInFrames(expression, frames)) {
         const resolved = unwrapExpression(container);
         let member = null;
         if (ts.isArrayLiteralExpression(resolved)) {
@@ -2088,10 +2088,33 @@ export function createStaticEvaluator(sourceFile) {
             : property && ts.isShorthandPropertyAssignment(property) ? property.name : null;
         }
         if (member) {
-          expressions.push(...expressionsAtStaticMemberPath(member, rest, depth + 1));
+          expressions.push(...expressionsAtStaticMemberPath(member, rest, frames, depth + 1));
         }
       }
       return expressions;
+    }
+
+    function expressionsAtBindingProjection(expression, reference, outerFrames) {
+      let variants = [expression];
+      for (let depth = 1; depth <= reference.path.length; depth += 1) {
+        const key = reference.path[depth - 1];
+        const fallback = reference.defaults.find(item => item.depth === depth)?.initializer ?? null;
+        const next = [];
+        for (const variant of variants) {
+          const members = expressionsAtStaticMemberPath(variant, [key], outerFrames);
+          if (members.length === 0) {
+            if (fallback) next.push(fallback);
+            continue;
+          }
+          for (const member of members) {
+            const state = undefinedStateInFrames(member, outerFrames);
+            if (state.mayBeDefined) next.push(member);
+            if (state.mayBeUndefined && fallback) next.push(fallback);
+          }
+        }
+        variants = next;
+      }
+      return variants;
     }
 
     function enclosingLocalFunction(expression) {
@@ -2279,6 +2302,28 @@ export function createStaticEvaluator(sourceFile) {
           if (!decision.known) continue;
           const selected = decision.value ? parent.thenStatement : parent.elseStatement;
           if (!selected || !inside(call, selected)) return false;
+        }
+        for (let current = call; current && current !== caller; current = current.parent) {
+          const parent = current.parent;
+          if (parent && ts.isConditionalExpression(parent)) {
+            const decision = primitiveValueInFrames(parent.condition, activeFrames);
+            if (!decision.known) continue;
+            const selected = decision.value ? parent.whenTrue : parent.whenFalse;
+            if (!inside(call, selected) && call !== selected) return false;
+          }
+          if (parent && ts.isBinaryExpression(parent) && current === parent.right && [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(parent.operatorToken.kind)) {
+            const left = primitiveValueInFrames(parent.left, activeFrames);
+            if (!left.known) continue;
+            if (parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+                !left.value) return false;
+            if (parent.operatorToken.kind === ts.SyntaxKind.BarBarToken && left.value) return false;
+            if (parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+                left.value !== null && left.value !== undefined) return false;
+          }
         }
         return true;
       });

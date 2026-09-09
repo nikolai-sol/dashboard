@@ -387,6 +387,8 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} [[ui,queries]].map(pair=>live(true,pair[0],pair[1])); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} [[ui,queries]].map(([current,next])=>live(true,current,next)); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} [[ui]].map(([current,next=queries])=>live(true,current,next)); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; function enter([{next}={next:queries}]:Array<{next:string[]}|undefined>){next.push(runtimeSql());} enter([]); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} function inner([current,next=ui]:Array<string[]|undefined>){live(true,current,next);} function outer(pair:Array<string[]|undefined>){inner(pair);} outer([ui,queries]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const box=[queries]; const copy=box; const alias=copy[0]; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const box=[[queries]]; const alias=box[0][0]; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const key=0; const box=[queries]; const alias=box[key]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -475,6 +477,23 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     mutate(safe,ui);
     export const sql=safe.join("");
   `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+
+  for (const guardedCall of [
+    'flag&&live(false,next,current)',
+    'flag?live(false,next,current):0',
+  ]) {
+    assert.deepEqual(extractStaticSql(`
+      declare function runtimeSql():string;
+      const safe=["SELECT * FROM dashboards"];
+      const ui:string[]=[];
+      function live(flag:boolean,current:string[],next:string[]){
+        current.push(runtimeSql());
+        ${guardedCall};
+      }
+      live(false,ui,safe);
+      export const sql=safe.join("");
+    `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
+  }
 
   assert.deepEqual(extractStaticSql(`
     declare function runtimeSql():string;
