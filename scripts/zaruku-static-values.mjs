@@ -588,6 +588,9 @@ export function createStaticEvaluator(sourceFile) {
           return { mayBeUndefined: true, mayBeDefined: true };
         }
         if (state.parameters.has(binding)) return state.parameters.get(binding);
+        if (ts.isParameter(binding) && state.resolveParameter) {
+          return state.resolveParameter(binding);
+        }
         if (ts.isVariableDeclaration(binding) && binding.initializer &&
             (binding.parent.flags & ts.NodeFlags.Const)) {
           return undefinedState(binding.initializer, next({
@@ -676,14 +679,64 @@ export function createStaticEvaluator(sourceFile) {
       return undefinedState(expression).mayBeUndefined;
     }
 
-    function parameterExpressions(parameter, index, call) {
+    function parameterRuntime(parameter, index, call, resolveUndefined = expression =>
+      undefinedState(expression, {
+        bindings: new Set(), calls: new Set(), parameters: new Map(), depth: 0,
+        resolveParameter: contextualParameterUndefinedState,
+      })) {
       const argument = call.arguments[index];
-      if (!argument) return parameter.initializer ? [parameter.initializer] : [];
-      if (!parameter.initializer) return [argument];
-      const state = undefinedState(argument);
-      if (state.mayBeUndefined && !state.mayBeDefined) return [parameter.initializer];
-      if (state.mayBeUndefined) return [argument, parameter.initializer];
-      return [argument];
+      const argumentState = argument
+        ? resolveUndefined(argument)
+        : { mayBeUndefined: true, mayBeDefined: false };
+      if (!parameter.initializer) {
+        return { expressions: argument ? [argument] : [], state: argumentState };
+      }
+      const initializerState = resolveUndefined(parameter.initializer);
+      const state = {
+        mayBeUndefined: argumentState.mayBeUndefined && initializerState.mayBeUndefined,
+        mayBeDefined: argumentState.mayBeDefined ||
+          (argumentState.mayBeUndefined && initializerState.mayBeDefined),
+      };
+      if (!argument || (argumentState.mayBeUndefined && !argumentState.mayBeDefined)) {
+        return { expressions: [parameter.initializer], state };
+      }
+      if (argumentState.mayBeUndefined) {
+        return { expressions: [argument, parameter.initializer], state };
+      }
+      return { expressions: [argument], state };
+    }
+
+    function parameterExpressions(parameter, index, call, resolveUndefined) {
+      return parameterRuntime(parameter, index, call, resolveUndefined).expressions;
+    }
+
+    function contextualParameterUndefinedState(parameter, seen = new Set()) {
+      if (!preprocessStep() || seen.has(parameter)) {
+        return { mayBeUndefined: true, mayBeDefined: true };
+      }
+      const fn = parameter.parent;
+      if (!fn?.parameters) return { mayBeUndefined: true, mayBeDefined: true };
+      const calls = pendingCalls.filter(candidate => candidate.fn === fn);
+      if (calls.length === 0) return { mayBeUndefined: true, mayBeDefined: true };
+      const variants = [];
+      const nextSeen = new Set(seen).add(parameter);
+      for (const { call } of calls) {
+        const parameterStates = new Map();
+        for (let index = 0; index < fn.parameters.length; index += 1) {
+          const candidate = fn.parameters[index];
+          const runtime = parameterRuntime(candidate, index, call, expression =>
+            undefinedState(expression, {
+              bindings: new Set(), calls: new Set(), parameters: parameterStates, depth: 0,
+              resolveParameter: nested => contextualParameterUndefinedState(nested, nextSeen),
+            }));
+          parameterStates.set(candidate, runtime.state);
+        }
+        variants.push(parameterStates.get(parameter));
+      }
+      return {
+        mayBeUndefined: variants.some(item => item?.mayBeUndefined),
+        mayBeDefined: variants.some(item => item?.mayBeDefined),
+      };
     }
 
     function staticKey(expression, seen = new Set()) {
@@ -1574,35 +1627,12 @@ export function createStaticEvaluator(sourceFile) {
         const parameterValues = new Map(state.parameterValues);
         const parameterStates = new Map(state.parameterStates);
         callee.parameters.forEach((calleeParameter, index) => {
-          const argument = invocation.arguments[index];
-          const argumentState = argument
-            ? provenanceUndefinedState(argument, state)
-            : { mayBeUndefined: true, mayBeDefined: false };
-          let runtimeState = argumentState;
-          if (calleeParameter.initializer) {
-            const initializerState = provenanceUndefinedState(calleeParameter.initializer, {
+          const runtime = parameterRuntime(calleeParameter, index, invocation, expression =>
+            provenanceUndefinedState(expression, {
               ...state, parameterValues, parameterStates,
-            });
-            runtimeState = {
-              mayBeUndefined: argumentState.mayBeUndefined && initializerState.mayBeUndefined,
-              mayBeDefined: argumentState.mayBeDefined ||
-                (argumentState.mayBeUndefined && initializerState.mayBeDefined),
-            };
-          }
-          let runtimeValues;
-          if (!argument) {
-            runtimeValues = calleeParameter.initializer ? [calleeParameter.initializer] : [];
-          } else if (!calleeParameter.initializer) {
-            runtimeValues = [argument];
-          } else if (argumentState.mayBeUndefined && !argumentState.mayBeDefined) {
-            runtimeValues = [calleeParameter.initializer];
-          } else if (argumentState.mayBeUndefined) {
-            runtimeValues = [argument, calleeParameter.initializer];
-          } else {
-            runtimeValues = [argument];
-          }
-          parameterValues.set(calleeParameter, runtimeValues);
-          parameterStates.set(calleeParameter, runtimeState);
+            }));
+          parameterValues.set(calleeParameter, runtime.expressions);
+          parameterStates.set(calleeParameter, runtime.state);
         });
         return { parameterValues, parameterStates };
       }
