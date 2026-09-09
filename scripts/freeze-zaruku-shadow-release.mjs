@@ -87,6 +87,17 @@ export function releaseAuthorityGitEnvironment(protocol) {
     GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1',GIT_GRAFT_FILE:'/dev/null',GIT_PAGER:'/bin/cat',GIT_TERMINAL_PROMPT:'0',GIT_ALLOW_PROTOCOL:protocol,
     GIT_SSH_COMMAND:SSH_COMMAND,GIT_SSH_VARIANT:'ssh'});
 }
+
+export function assertReleaseAuthorityInvocation(args = []) {
+  const invocationEnvironment = { ...process.env };
+  if (Object.hasOwn(invocationEnvironment, 'SSH_AUTH_SOCK')) {
+    const approved = releaseAuthorityGitEnvironment('ssh').SSH_AUTH_SOCK;
+    if (approved !== invocationEnvironment.SSH_AUTH_SOCK) fail();
+    delete invocationEnvironment.SSH_AUTH_SOCK;
+  }
+  rejectShadowOverrides(args, invocationEnvironment);
+}
+
 const gitEnvironment = releaseAuthorityGitEnvironment;
 function localGit(repo,args,protocol='ssh') {
   return spawnSync('/usr/bin/git',['--no-replace-objects','-C',repo,'-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null',...args],{env:gitEnvironment(protocol),encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:30000,maxBuffer:1048576});
@@ -152,7 +163,7 @@ export function createFixtureReleaseAuthorityAdapter(directory) {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const args = process.argv.slice(2);
-    rejectShadowOverrides([]);
+    assertReleaseAuthorityInvocation([]);
     if (args.length !== 1 || !['check','create-if-absent'].includes(args[0])) fail();
     process.stdout.write(JSON.stringify(await freezeShadowRelease(createReleaseAuthorityAdapter(), args[0] === 'create-if-absent')) + '\n');
   } catch { process.stderr.write('Zaruku exact release authority refused\n'); process.exitCode = 1; }

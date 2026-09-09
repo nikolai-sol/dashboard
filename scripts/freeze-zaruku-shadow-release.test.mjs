@@ -5,7 +5,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { freezeShadowRelease, requireExactShadowRelease, createFixtureReleaseAuthorityAdapter, createReleaseAuthorityAdapter, releaseAuthorityGitEnvironment, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
+import { freezeShadowRelease, requireExactShadowRelease, createFixtureReleaseAuthorityAdapter, createReleaseAuthorityAdapter, releaseAuthorityGitEnvironment, assertReleaseAuthorityInvocation, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
 
 const expectedSsh = ['/usr/bin/ssh','-F','/dev/null',
   '-o','HostName=github.com','-o','User=git','-o','Port=22','-o','HostKeyAlias=github.com',
@@ -60,6 +60,23 @@ test('release SSH authentication accepts only a canonical owned socket', async (
     fs.chmodSync(directory,0o777);process.env.SSH_AUTH_SOCK=socket;assert.throws(()=>releaseAuthorityGitEnvironment('ssh'),/release authority/);fs.chmodSync(directory,0o700);
     process.env.SSH_AUTH_SOCK='invalid';assert.equal(releaseAuthorityGitEnvironment('file').SSH_AUTH_SOCK,undefined);
   } finally {if(saved===undefined)delete process.env.SSH_AUTH_SOCK;else process.env.SSH_AUTH_SOCK=saved;await new Promise(resolve=>server.close(resolve));fs.chmodSync(directory,0o700);fs.rmSync(directory,{recursive:true});}
+});
+
+test('release CLI permits only the agent socket accepted by the SSH authority', async () => {
+  const directory=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-ssh-cli-'))),socket=path.join(directory,'agent'),alias=path.join(directory,'alias');
+  const saved={SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK,SSH_ASKPASS:process.env.SSH_ASKPASS},server=net.createServer();
+  try {
+    await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(socket,resolve);});fs.chmodSync(socket,0o600);
+    process.env.SSH_AUTH_SOCK=socket;delete process.env.SSH_ASKPASS;
+    assert.doesNotThrow(()=>assertReleaseAuthorityInvocation([]));
+    fs.symlinkSync(socket,alias);process.env.SSH_AUTH_SOCK=alias;
+    assert.throws(()=>assertReleaseAuthorityInvocation([]),/release authority/);
+    process.env.SSH_AUTH_SOCK=socket;process.env.SSH_ASKPASS='/untrusted-askpass';
+    assert.throws(()=>assertReleaseAuthorityInvocation([]),/control operation/);
+  } finally {
+    for(const [key,value] of Object.entries(saved))if(value===undefined)delete process.env[key];else process.env[key]=value;
+    await new Promise(resolve=>server.close(resolve));fs.rmSync(directory,{recursive:true});
+  }
 });
 
 const sha = 'a'.repeat(40), ref = 'refs/heads/release/zaruku';
