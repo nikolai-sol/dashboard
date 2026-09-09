@@ -7,6 +7,12 @@ import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 import { advanceApprovedSuccessor, freezeShadowRelease, requireExactShadowRelease, createFixtureReleaseAuthorityAdapter, createReleaseAuthorityAdapter, releaseAuthorityGitEnvironment, assertReleaseAuthorityInvocation, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
 
+test('release authority pins the approved predecessor and matches the committed repository policy', () => {
+  assert.equal(REPOSITORY_AUTHORITY.approvedPredecessor, '61cea4213cb7d1705895c4d79035b6ca72b4324b');
+  const policy = JSON.parse(fs.readFileSync(new URL('../deploy/zaruku/repository.json', import.meta.url), 'utf8'));
+  assert.deepEqual(policy, REPOSITORY_AUTHORITY);
+});
+
 const expectedSsh = ['/usr/bin/ssh','-F','/dev/null',
   '-o','HostName=github.com','-o','User=git','-o','Port=22','-o','HostKeyAlias=github.com',
   '-o','CanonicalizeHostname=no','-o','ProxyCommand=none','-o','ProxyJump=none',
