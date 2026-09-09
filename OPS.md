@@ -379,6 +379,15 @@ expected-absent lease. Alternate/multiple URLs, pushurl and rewrite/include conf
 reject; the real CLI accepts no destination override. Only candidate-reachable
 objects are imported; source config/refs remain unchanged. No unknown/different
 existing ref can be overwritten.
+
+The separately approved recovery command `advance-approved-successor` may run
+only while the remote ref equals the full `approvedPredecessor` recorded in
+`deploy/zaruku/repository.json`. It proves that predecessor is a strict ancestor
+of the clean reviewed candidate, publishes one explicit refspec under an exact
+atomic lease, and requires exact readback. It cannot delete the ref, accept an
+argv/environment SHA, retry against a changed ref, or run successfully twice.
+No other ordinary or forced update is allowed.
+
 Before each provisioning or child-deploy action the live ref must still equal HEAD.
 
 After separately reviewed production authorization, `npm run shadow:zaruku:stage-control` stages

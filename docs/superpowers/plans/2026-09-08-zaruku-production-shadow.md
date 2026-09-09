@@ -733,6 +733,14 @@ the sole creation interface is:
 node scripts/freeze-zaruku-shadow-release.mjs create-if-absent
 ```
 
+The separately approved recovery command `advance-approved-successor` may run
+only while the remote ref equals the full `approvedPredecessor` recorded in
+`deploy/zaruku/repository.json`. It proves that predecessor is a strict ancestor
+of the clean reviewed candidate, publishes one explicit refspec under an exact
+atomic lease, and requires exact readback. It cannot delete the ref, accept an
+argv/environment SHA, retry against a changed ref, or run successfully twice.
+No other ordinary or forced update is allowed.
+
 It uses `--atomic --force-with-lease=refs/heads/release/zaruku:`, no hooks/follow-tags/
 submodule recursion, one explicit refspec and exact readback from that same literal
 destination. Child deployment checks use this identical clean-bare authority and
