@@ -94,7 +94,7 @@ run_bootstrap() {
 run_bootstrap "$BASE_SHA" build-identity-20260904 > "$TMP_DIR/success.log"
 grep -Fqx "$BASE_SHA" "$REMOTE_APP/.release-source-sha" \
   || fail "bootstrap did not write the supplied verified full SHA"
-mode="$(stat -f '%Lp' "$REMOTE_APP/.release-source-sha" 2>/dev/null || stat -c '%a' "$REMOTE_APP/.release-source-sha")"
+mode="$(stat -c '%a' "$REMOTE_APP/.release-source-sha" 2>/dev/null || stat -f '%Lp' "$REMOTE_APP/.release-source-sha")"
 [[ "$mode" == 600 ]] || fail "bootstrap metadata permissions are $mode instead of 600"
 [[ ! -e "$LOCK_DIR" ]] || fail "successful bootstrap did not release the shared dashboard lock"
 grep -Fq "source_sha=$BASE_SHA" "$TMP_DIR/success.log" \
