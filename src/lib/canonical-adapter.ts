@@ -266,9 +266,11 @@ function authorityFactScope(sourceKey: string): 'campaign' | 'delivery_entity' {
 }
 
 function advertisingFactTable(sourceKey: string): string {
-  if (sourceKey !== 'between') {
+  if (sourceKey !== 'between' && sourceKey !== 'yandex_direct') {
     return 'canonical_fact_ads_daily';
   }
+
+  const versionedSourceKey = sourceKey;
 
   return `(
     SELECT
@@ -276,7 +278,7 @@ function advertisingFactTable(sourceKey: string): string {
       spend, impressions, clicks, views, conversions, reach,
       video_views_25, video_views_50, video_views_75, video_views_100
     FROM canonical_advertising_facts_current
-    WHERE source_key = 'between'
+    WHERE source_key = '${versionedSourceKey}'
     UNION ALL
     SELECT
       legacy.source_key, legacy.platform_account_id, legacy.platform_campaign_id,
@@ -288,12 +290,12 @@ function advertisingFactTable(sourceKey: string): string {
     LEFT JOIN (
       SELECT source_key, platform_account_id, MIN(report_date) AS first_covered_date
       FROM canonical_ad_coverage_daily
-      WHERE source_key = 'between'
+      WHERE source_key = '${versionedSourceKey}'
       GROUP BY source_key, platform_account_id
     ) coverage_start
       ON coverage_start.source_key = legacy.source_key
      AND coverage_start.platform_account_id = legacy.platform_account_id
-    WHERE legacy.source_key = 'between'
+    WHERE legacy.source_key = '${versionedSourceKey}'
       AND (
         coverage_start.first_covered_date IS NULL
         OR legacy.report_date < coverage_start.first_covered_date
