@@ -225,27 +225,46 @@ test('successor lease refuses a racing ref', async () => {
   try {
     assert.equal(spawnSync('/usr/bin/git',['init','--bare','-q',remote],{env}).status,0);
     assert.equal(spawnSync('/usr/bin/git',['init','-q',repo],{env}).status,0);
-    for(const args of [['config','user.name','Fixture'],['config','user.email','fixture@example.invalid'],['fetch','-q',path.resolve(import.meta.dirname,'..'),predecessorSha],['checkout','-qb','candidate',predecessorSha],['commit','--allow-empty','-qm','successor']])assert.equal(git(repo,args).status,0);
+    for(const args of [['config','user.name','Fixture'],['config','user.email','fixture@example.invalid'],['checkout','-qb','candidate'],['commit','--allow-empty','-qm','predecessor']])assert.equal(git(repo,args).status,0);
+    const localPredecessorSha=git(repo,['rev-parse','HEAD']).stdout.trim();
+    assert.equal(git(repo,['commit','--allow-empty','-qm','successor']).status,0);
     const localSuccessorSha=git(repo,['rev-parse','HEAD']).stdout.trim();
-    assert.equal(git(repo,['checkout','-qb','race',predecessorSha]).status,0);
+    assert.equal(git(repo,['checkout','-qb','race',localPredecessorSha]).status,0);
     assert.equal(git(repo,['commit','--allow-empty','-qm','racing successor']).status,0);
     const racingSha=git(repo,['rev-parse','HEAD']).stdout.trim();
     assert.equal(git(repo,['checkout','-q','candidate']).status,0);
     assert.equal(git(repo,['remote','add','origin',remote]).status,0);
-    assert.equal(git(repo,['push','-q','origin',`${predecessorSha}:${ref}`]).status,0);
+    assert.equal(git(repo,['push','-q','origin',`${localPredecessorSha}:${ref}`]).status,0);
     const fixtureAdapter=createFixtureReleaseAuthorityAdapter(directory);
-    let raced=false;
+    let raced=false;const commands=[],ancestry=[];
     const adapter={...fixtureAdapter,open:async source=>{
       const isolated=await fixtureAdapter.open(source);
-      return {...isolated,command:args=>{
-        if(args[0]==='push'&&!raced){
+      return {...isolated,
+        verifyAncestor:(ancestor,descendant)=>{
+          ancestry.push([ancestor,descendant]);
+          return isolated.verifyAncestor(ancestor===predecessorSha?localPredecessorSha:ancestor,descendant);
+        },
+        command:args=>{
+          commands.push(args);
+          if(args[0]==='ls-remote'){
+            const result=isolated.command(args);
+            assert.equal(result.stdout,`${localPredecessorSha}\t${ref}\n`);
+            return {...result,stdout:`${predecessorSha}\t${ref}\n`};
+          }
+          if(args[0]==='push'&&!raced){
           raced=true;
           assert.equal(git(repo,['push','-q','origin',`${racingSha}:${ref}`]).status,0);
-        }
-        return isolated.command(args);
-      }};
+          }
+          return isolated.command(args.map(arg=>arg===`--force-with-lease=${ref}:${predecessorSha}`?`--force-with-lease=${ref}:${localPredecessorSha}`:arg));
+        }};
     }};
     await assert.rejects(advanceApprovedSuccessor(adapter), /release authority/);
+    assert.deepEqual(ancestry,[[predecessorSha,localSuccessorSha]]);
+    assert.deepEqual(commands.find(args=>args[0]==='push'),[
+      'push','--no-verify','--no-follow-tags','--recurse-submodules=no',
+      '--atomic',`--force-with-lease=${ref}:${predecessorSha}`,'--',remote,
+      `${localSuccessorSha}:${ref}`,
+    ]);
     assert.equal(git(remote, ['rev-parse', ref]).stdout.trim(), racingSha);
     assert.equal(git(remote, ['for-each-ref', '--format=%(refname)']).stdout, ref + '\n');
     assert.notEqual(localSuccessorSha,racingSha);
