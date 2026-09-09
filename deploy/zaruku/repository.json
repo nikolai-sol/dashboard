@@ -3,5 +3,5 @@
   "url": "git@github.com:nikolai-sol/dashboard.git",
   "ref": "refs/heads/release/zaruku",
   "base": "ee950f3917d0f8616b6229d4049410a0afb7e380",
-  "approvedPredecessor": "00e5b33a22d567f6f17a6966a2a1f8d6a8b849da"
+  "approvedPredecessor": "713f393205a9cb6f6af49095c4e4d219a0e3e91f"
 }
