@@ -2268,30 +2268,6 @@ export function createStaticEvaluator(sourceFile) {
       return { frames, unresolved, reachable, cycle };
     }
 
-    function parameterReferencesInExpression(expression, fn, seen = new Set()) {
-      const references = new Set();
-      function inspect(current) {
-        if (!current || !preprocessStep()) return;
-        if (current !== expression && ts.isFunctionLike(current)) return;
-        if (ts.isIdentifier(current)) {
-          const binding = declaration(current, current.text);
-          const reference = binding ? parameterReference(fn, binding) : null;
-          if (reference) {
-            references.add(reference.parameter);
-            return;
-          }
-          if (binding && !seen.has(binding) && ts.isVariableDeclaration(binding) &&
-              binding.initializer && inside(binding, fn)) {
-            seen.add(binding);
-            inspect(binding.initializer);
-          }
-        }
-        ts.forEachChild(current, inspect);
-      }
-      inspect(expression);
-      return references;
-    }
-
     function callPotentiallyReachable(call, caller, frames) {
       if (frames.length === 0) return true;
       return frames.some(activeFrames => {
@@ -2331,11 +2307,59 @@ export function createStaticEvaluator(sourceFile) {
 
     function recursiveTaintedParameters(fn, receiver, frames) {
       const tainted = new Map();
-      const initial = new Set();
+      const referenceKey = reference =>
+        `${reference.index}:${reference.path.map(String).join('.')}`;
+      function addReference(owner, reference) {
+        const references = tainted.get(owner) ?? new Map();
+        const key = referenceKey(reference);
+        if (references.has(key)) return false;
+        references.set(key, reference);
+        tainted.set(owner, references);
+        return true;
+      }
+      function detailedReferences(expression, owner) {
+        const references = new Map();
+        function inspect(current) {
+          if (!current || !preprocessStep()) return;
+          if (current !== expression && ts.isFunctionLike(current)) return;
+          if (ts.isIdentifier(current)) {
+            const binding = declaration(current, current.text);
+            const reference = binding ? parameterReference(owner, binding) : null;
+            if (reference) {
+              references.set(referenceKey(reference), reference);
+              return;
+            }
+          }
+          ts.forEachChild(current, inspect);
+        }
+        inspect(expression);
+        return [...references.values()];
+      }
+      function transferredReferences(argument, calleeReference, caller) {
+        const references = [];
+        const projected = calleeReference.path.length > 0
+          ? expressionsAtStaticMemberPath(argument, calleeReference.path, []) : [argument];
+        if (projected.length > 0) {
+          projected.forEach(value => references.push(...detailedReferences(value, caller)));
+        } else {
+          for (const reference of detailedReferences(argument, caller)) {
+            references.push({
+              ...reference,
+              path: [...reference.path, ...calleeReference.path],
+              defaults: [...reference.defaults, ...calleeReference.defaults],
+            });
+          }
+        }
+        for (const fallback of calleeReference.defaults) {
+          references.push(...detailedReferences(fallback.initializer, caller));
+        }
+        return references;
+      }
+      const initial = new Map();
       const root = rootBinding(receiver);
       for (const binding of aliasClosure(root)) {
         const reference = parameterReference(fn, binding);
-        if (reference) initial.add(reference.parameter);
+        if (reference) initial.set(referenceKey(reference), reference);
       }
       if (initial.size === 0) return initial;
       tainted.set(fn, initial);
@@ -2347,16 +2371,13 @@ export function createStaticEvaluator(sourceFile) {
           if (!calleeTaint) continue;
           const caller = enclosingLocalFunction(call);
           if (!caller || !callPotentiallyReachable(call, caller, frames)) continue;
-          const callerTaint = tainted.get(caller) ?? new Set();
-          callee.parameters.forEach((parameter, index) => {
-            if (!calleeTaint.has(parameter) || !call.arguments[index]) return;
-            for (const source of parameterReferencesInExpression(call.arguments[index], caller)) {
-              if (callerTaint.has(source)) continue;
-              callerTaint.add(source);
-              changed = true;
+          for (const reference of calleeTaint.values()) {
+            const argument = call.arguments[reference.index];
+            if (!argument) continue;
+            for (const source of transferredReferences(argument, reference, caller)) {
+              if (addReference(caller, source)) changed = true;
             }
-          });
-          if (callerTaint.size > 0) tainted.set(caller, callerTaint);
+          }
         }
       }
       return tainted.get(fn) ?? initial;
@@ -2385,18 +2406,23 @@ export function createStaticEvaluator(sourceFile) {
         for (const frames of invocations.frames) {
           frames.forEach((frame, frameIndex) => {
             if (frame.fn !== owner) return;
-            frame.fn.parameters.forEach((parameter, parameterIndex) => {
-              if (!taintedParameters.has(parameter)) return;
-              const argument = frame.call.arguments[parameterIndex];
+            for (const reference of taintedParameters.values()) {
+              const argument = frame.call.arguments[reference.index];
               if (!argument) return;
               const context = {
                 calls: new Set(), bindings: new Set(),
                 frames: frames.slice(0, frameIndex), depth: 0,
               };
-              for (const binding of callAwareSourceBindings(argument, context)) {
-                markMutated(binding, evidence);
+              const projected = reference.path.length > 0
+                ? expressionsAtBindingProjection(
+                  argument, reference, context.frames,
+                ) : [argument];
+              for (const value of projected) {
+                for (const binding of callAwareSourceBindings(value, context)) {
+                  markMutated(binding, evidence);
+                }
               }
-            });
+            }
           });
         }
       }
