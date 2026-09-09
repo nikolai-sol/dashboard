@@ -771,6 +771,82 @@ export function createStaticEvaluator(sourceFile) {
       });
     }
 
+    function primitiveValueInFrames(expression, frames, seen = new Set(), depth = 0) {
+      if (!expression || !preprocessStep() || depth > MAX_DEPTH) {
+        if (depth > MAX_DEPTH) preprocessingExceeded = true;
+        return { known: false };
+      }
+      const current = unwrapExpression(expression);
+      if (ts.isIdentifier(current)) {
+        const binding = declaration(current, current.text);
+        if (!binding && current.text === 'undefined') return { known: true, value: undefined };
+        if (!binding || seen.has(binding)) return { known: false };
+        for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex -= 1) {
+          const frame = frames[frameIndex];
+          const parameterIndex = frame.fn.parameters.indexOf(binding);
+          if (parameterIndex < 0) continue;
+          const values = parameterExpressions(
+            binding, parameterIndex, frame.call,
+            value => undefinedStateInFrames(value, frames.slice(0, frameIndex)),
+          );
+          if (values.length !== 1) return { known: false };
+          return primitiveValueInFrames(
+            values[0], frames.slice(0, frameIndex), new Set(seen).add(binding), depth + 1,
+          );
+        }
+        if (ts.isVariableDeclaration(binding) && binding.initializer &&
+            (binding.parent.flags & ts.NodeFlags.Const)) {
+          return primitiveValueInFrames(
+            binding.initializer, frames, new Set(seen).add(binding), depth + 1,
+          );
+        }
+        return { known: false };
+      }
+      if (ts.isPrefixUnaryExpression(current)) {
+        const operand = primitiveValueInFrames(current.operand, frames, seen, depth + 1);
+        if (!operand.known) return operand;
+        if (current.operator === ts.SyntaxKind.ExclamationToken) {
+          return { known: true, value: !operand.value };
+        }
+        if (current.operator === ts.SyntaxKind.MinusToken && typeof operand.value === 'number') {
+          return { known: true, value: -operand.value };
+        }
+        return { known: false };
+      }
+      if (!ts.isBinaryExpression(current)) return staticPrimitiveValue(current);
+      const left = primitiveValueInFrames(current.left, frames, seen, depth + 1);
+      if (!left.known) return { known: false };
+      if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && !left.value) {
+        return left;
+      }
+      if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken && left.value) return left;
+      if (current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken &&
+          left.value !== null && left.value !== undefined) return left;
+      const right = primitiveValueInFrames(current.right, frames, seen, depth + 1);
+      if (!right.known) return { known: false };
+      if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+          current.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+          current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return right;
+      if (left.truthinessOnly || right.truthinessOnly) return { known: false };
+      const operations = new Map([
+        [ts.SyntaxKind.PlusToken, (a, b) => a + b],
+        [ts.SyntaxKind.MinusToken, (a, b) => a - b],
+        [ts.SyntaxKind.AsteriskToken, (a, b) => a * b],
+        [ts.SyntaxKind.SlashToken, (a, b) => a / b],
+        [ts.SyntaxKind.EqualsEqualsEqualsToken, (a, b) => a === b],
+        [ts.SyntaxKind.ExclamationEqualsEqualsToken, (a, b) => a !== b],
+        [ts.SyntaxKind.EqualsEqualsToken, (a, b) => a == b],
+        [ts.SyntaxKind.ExclamationEqualsToken, (a, b) => a != b],
+        [ts.SyntaxKind.LessThanToken, (a, b) => a < b],
+        [ts.SyntaxKind.LessThanEqualsToken, (a, b) => a <= b],
+        [ts.SyntaxKind.GreaterThanToken, (a, b) => a > b],
+        [ts.SyntaxKind.GreaterThanEqualsToken, (a, b) => a >= b],
+      ]);
+      return operations.has(current.operatorToken.kind)
+        ? { known: true, value: operations.get(current.operatorToken.kind)(left.value, right.value) }
+        : { known: false };
+    }
+
     function staticKey(expression, seen = new Set()) {
       if (!preprocessStep() || seen.size > MAX_DEPTH) return null;
       const current = unwrapExpression(expression);
@@ -1958,7 +2034,7 @@ export function createStaticEvaluator(sourceFile) {
         return [current];
       }
       if (ts.isConditionalExpression(current)) {
-        const condition = staticPrimitiveValue(current.condition);
+        const condition = primitiveValueInFrames(current.condition, frames);
         const branches = condition.known
           ? [condition.value ? current.whenTrue : current.whenFalse]
           : [current.whenTrue, current.whenFalse];
@@ -1969,7 +2045,7 @@ export function createStaticEvaluator(sourceFile) {
         ts.SyntaxKind.BarBarToken,
         ts.SyntaxKind.QuestionQuestionToken,
       ].includes(current.operatorToken.kind)) {
-        const left = staticPrimitiveValue(current.left);
+        const left = primitiveValueInFrames(current.left, frames);
         if (!left.known) {
           return [current.left, current.right].flatMap(branch =>
             valueExpressionsInFrames(branch, frames, next({})));
@@ -1988,9 +2064,12 @@ export function createStaticEvaluator(sourceFile) {
       if (ts.isCallExpression(current)) {
         if (state.calls.has(current)) return [];
         const callee = localFunction(current);
-        if (!callee) return [current];
+        if (!callee?.body) return [current];
         const callFrames = [...frames, { fn: callee, call: current }];
-        return selectedReturnExpressions(callee, current).flatMap(returned =>
+        return selectedReturnExpressions(callee, current, condition => {
+          const result = primitiveValueInFrames(condition, callFrames);
+          return result.known ? Boolean(result.value) : null;
+        }).flatMap(returned =>
           valueExpressionsInFrames(returned, callFrames, next({
             calls: new Set(state.calls).add(current),
           })));
@@ -1999,59 +2078,73 @@ export function createStaticEvaluator(sourceFile) {
     }
 
     function invocationContexts(fn, seen = new Set()) {
-      if (!fn || seen.has(fn) || !preprocessStep()) return [];
+      if (!fn || seen.has(fn) || !preprocessStep()) {
+        return { frames: [], unresolved: Boolean(fn), reachable: false };
+      }
       const nextSeen = new Set(seen).add(fn);
-      const contexts = [];
+      const frames = [];
+      let unresolved = false;
+      let reachable = false;
       for (const { call } of pendingCalls.filter(candidate => candidate.fn === fn)) {
         const parentFn = enclosingLocalFunction(call);
-        const parentContexts = parentFn ? invocationContexts(parentFn, nextSeen) : [];
-        if (parentContexts.length === 0) {
-          contexts.push([{ fn, call }]);
+        if (!parentFn) {
+          frames.push([{ fn, call }]);
+          reachable = true;
         } else {
-          parentContexts.forEach(frames => contexts.push([...frames, { fn, call }]));
+          const parent = invocationContexts(parentFn, nextSeen);
+          parent.frames.forEach(parentFrames =>
+            frames.push([...parentFrames, { fn, call }]));
+          reachable ||= parent.reachable;
+          unresolved ||= parent.unresolved;
         }
       }
       for (const { callbacks, receiver, call: mapCall } of pendingMapCalls) {
         if (!callbacks.includes(fn)) continue;
         const parentFn = enclosingLocalFunction(mapCall);
-        const parentContexts = parentFn ? invocationContexts(parentFn, nextSeen) : [[]];
-        for (const parentFrames of parentContexts) {
+        const parent = parentFn
+          ? invocationContexts(parentFn, nextSeen)
+          : { frames: [[]], unresolved: false, reachable: true };
+        unresolved ||= parent.unresolved;
+        for (const parentFrames of parent.frames) {
           for (const container of valueExpressionsInFrames(receiver, parentFrames)) {
             const resolved = unwrapExpression(container);
-            if (!ts.isArrayLiteralExpression(resolved)) continue;
+            if (!ts.isArrayLiteralExpression(resolved)) {
+              unresolved = true;
+              continue;
+            }
             if (resolved.elements.length > MAX_ARRAY_ITEMS) {
               preprocessingExceeded = true;
+              unresolved = true;
               continue;
             }
             resolved.elements.forEach((element, index) => {
               if (ts.isOmittedExpression(element)) return;
-              contexts.push([...parentFrames, {
+              frames.push([...parentFrames, {
                 fn,
                 call: { arguments: [element, ts.factory.createNumericLiteral(index)] },
               }]);
+              reachable = true;
             });
           }
         }
       }
-      return contexts;
+      return { frames, unresolved, reachable };
     }
 
     for (const { receiver, evidence } of mutationReceivers) {
       const owner = enclosingLocalFunction(receiver);
-      const invocationFrames = invocationContexts(owner);
-      const contexts = invocationFrames.length > 0
-        ? invocationFrames.map(frames => ({
+      const invocations = owner
+        ? invocationContexts(owner)
+        : { frames: [[]], unresolved: false, reachable: true };
+      const contexts = invocations.frames.map(frames => ({
           calls: new Set(), bindings: new Set(), frames, depth: 0,
-        }))
-        : [undefined];
-      let resolved = false;
+        }));
       for (const context of contexts) {
         for (const binding of callAwareSourceBindings(receiver, context)) {
           markMutated(binding, evidence);
-          resolved = true;
         }
       }
-      if (!resolved && contexts.length === 1 && contexts[0] === undefined) {
+      if (invocations.unresolved) {
         markMutated(rootBinding(receiver), evidence);
       }
     }
