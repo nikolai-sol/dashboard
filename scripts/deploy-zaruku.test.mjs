@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
-import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/index.ts';
+import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const sha = 'a'.repeat(40), previousSha = 'b'.repeat(40);

@@ -86,10 +86,16 @@ test('every staged byte is manifested and root-owned immutable under exact revie
 test('replaced existing file inode fails even when byte-identical', async t => {
   const f = fixture(t); await stageReviewedShadowControl(f.adapter, sha);
   const filename = path.join(f.root, destination, CONTROL_FILES[0]);
-  fs.chmodSync(path.dirname(filename), 0o700);
-  const bytes = fs.readFileSync(filename); fs.unlinkSync(filename); fs.writeFileSync(filename, bytes, { mode: 0o400 });
-  fs.chmodSync(path.dirname(filename), 0o500);
-  await assert.rejects(() => stageReviewedShadowControl(f.adapter, sha), /control/i);
+  const original = fs.openSync(filename, 'r');
+  try {
+    fs.chmodSync(path.dirname(filename), 0o700);
+    const bytes = fs.readFileSync(filename); fs.unlinkSync(filename); fs.writeFileSync(filename, bytes, { mode: 0o400 });
+    fs.chmodSync(path.dirname(filename), 0o500);
+    assert.notEqual(fs.fstatSync(original).ino, fs.statSync(filename).ino);
+    await assert.rejects(() => stageReviewedShadowControl(f.adapter, sha), /control/i);
+  } finally {
+    fs.closeSync(original);
+  }
 });
 
 test('staged predecessor rejects replaced directory inodes with unchanged child files', async t => {
@@ -152,7 +158,7 @@ test('stager cannot invoke runtime, secret, SQL, proxy or release-ref operations
 test('pure runtime authority loads without TS or any node_modules dependency', () => {
   const script = fs.readFileSync(path.join(import.meta.dirname, 'zaruku-production-shadow-authority.mjs'), 'utf8');
   assert.doesNotMatch(script, /from ['"](?:typescript|.*\.ts)['"]/);
-  for (const name of ['zaruku-shadow-host.mjs', 'zaruku-shadow-db.mjs', 'zaruku-shadow-dispatch.mjs']) assert.doesNotMatch(fs.readFileSync(path.join(import.meta.dirname, name), 'utf8'), /from ['"](?:typescript|.*\.ts)['"]/);
+  for (const name of ['zaruku-production-shadow-contract.mjs', 'zaruku-shadow-host.mjs', 'zaruku-shadow-db.mjs', 'zaruku-shadow-dispatch.mjs']) assert.doesNotMatch(fs.readFileSync(path.join(import.meta.dirname, name), 'utf8'), /from ['"](?:typescript|.*\.ts)['"]/);
 });
 
 test('production control staging requires fresh exact frozen authority before transfer',async t=>{

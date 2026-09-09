@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/index.ts';
+import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs';
 import { loadShadowAuthority as loadRuntimeShadowAuthority, readJsonObject } from './zaruku-production-shadow-authority.mjs';
 import { extractStaticSql } from './zaruku-static-sql.mjs';
 export { loadMysqlTableAuthority } from './zaruku-production-shadow-authority.mjs';

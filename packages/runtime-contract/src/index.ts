@@ -2,13 +2,7 @@ export type DashboardRuntimeScope = "combined" | "advertising" | "zaruku" | "abb
 export type DashboardFamily = Exclude<DashboardRuntimeScope, "combined">;
 export type DashboardIdentity = { clientId: string; dashboardType: string };
 
-export const RUNTIME_MANIFESTS = {
-  zaruku: {
-    scope: "zaruku", releaseBranch: "release/zaruku", appName: "dashboard-zaruku", port: 3002,
-    appDir: "/var/www/dashboard-zaruku", lockDir: "/var/www/.dashboard-zaruku-deploy.lock",
-    assetPrefix: "/_next-zaruku",
-  },
-} as const;
+export { RUNTIME_MANIFESTS } from "./manifest.mjs";
 
 export function resolveDashboardFamily(identity: DashboardIdentity): DashboardFamily {
   const clientId = identity.clientId.trim().toLowerCase();

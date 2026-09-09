@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/index.ts';
+import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs';
 import { assertRuntimeArtifact, verifyRuntimeArtifactBoot } from './runtime-artifact-policy.mjs';
 import { readPinned, safeRelative } from './runtime-release-remote.mjs';
 import { CONTROL_FILES, prepareReviewedControl, readControlSource, receiveControlPayload, reviewedSource } from './stage-zaruku-shadow-control.mjs';
