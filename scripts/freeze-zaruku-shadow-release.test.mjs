@@ -217,7 +217,7 @@ test('actual Git expected-absent lease refuses a ref that appears after observat
   } finally { fs.rmSync(directory,{recursive:true}); }
 });
 
-test('successor lease refuses a racing ref', async () => {
+function successorFixture(race) {
   const directory=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'zaruku-freeze-')));
   const remote=path.join(directory,'authority.git'),repo=path.join(directory,'candidate');
   const env={PATH:'/usr/bin:/bin',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null',GIT_ALLOW_PROTOCOL:'file'};
@@ -228,7 +228,7 @@ test('successor lease refuses a racing ref', async () => {
     for(const args of [['config','user.name','Fixture'],['config','user.email','fixture@example.invalid'],['checkout','-qb','candidate'],['commit','--allow-empty','-qm','predecessor']])assert.equal(git(repo,args).status,0);
     const localPredecessorSha=git(repo,['rev-parse','HEAD']).stdout.trim();
     assert.equal(git(repo,['commit','--allow-empty','-qm','successor']).status,0);
-    const localSuccessorSha=git(repo,['rev-parse','HEAD']).stdout.trim();
+    const successorSha=git(repo,['rev-parse','HEAD']).stdout.trim();
     assert.equal(git(repo,['checkout','-qb','race',localPredecessorSha]).status,0);
     assert.equal(git(repo,['commit','--allow-empty','-qm','racing successor']).status,0);
     const racingSha=git(repo,['rev-parse','HEAD']).stdout.trim();
@@ -236,7 +236,7 @@ test('successor lease refuses a racing ref', async () => {
     assert.equal(git(repo,['remote','add','origin',remote]).status,0);
     assert.equal(git(repo,['push','-q','origin',`${localPredecessorSha}:${ref}`]).status,0);
     const fixtureAdapter=createFixtureReleaseAuthorityAdapter(directory);
-    let raced=false;const commands=[],ancestry=[];
+    const commands=[],ancestry=[],translatedPush=[];let raced=false;
     const adapter={...fixtureAdapter,open:async source=>{
       const isolated=await fixtureAdapter.open(source);
       return {...isolated,
@@ -248,27 +248,68 @@ test('successor lease refuses a racing ref', async () => {
           commands.push(args);
           if(args[0]==='ls-remote'){
             const result=isolated.command(args);
-            assert.equal(result.stdout,`${localPredecessorSha}\t${ref}\n`);
-            return {...result,stdout:`${predecessorSha}\t${ref}\n`};
+            return result.stdout===`${localPredecessorSha}\t${ref}\n`
+              ? {...result,stdout:`${predecessorSha}\t${ref}\n`}
+              : result;
           }
-          if(args[0]==='push'&&!raced){
-          raced=true;
-          assert.equal(git(repo,['push','-q','origin',`${racingSha}:${ref}`]).status,0);
+          if(args[0]==='push'){
+            if(race&&!raced){
+              raced=true;
+              assert.equal(git(repo,['push','-q','origin',`${racingSha}:${ref}`]).status,0);
+            }
+            const translated=args.map(arg=>arg===`--force-with-lease=${ref}:${predecessorSha}`?`--force-with-lease=${ref}:${localPredecessorSha}`:arg);
+            translatedPush.push(...translated);
+            return isolated.command(translated);
           }
-          return isolated.command(args.map(arg=>arg===`--force-with-lease=${ref}:${predecessorSha}`?`--force-with-lease=${ref}:${localPredecessorSha}`:arg));
+          return isolated.command(args);
         }};
     }};
-    await assert.rejects(advanceApprovedSuccessor(adapter), /release authority/);
-    assert.deepEqual(ancestry,[[predecessorSha,localSuccessorSha]]);
-    assert.deepEqual(commands.find(args=>args[0]==='push'),[
+    return {adapter,ancestry,commands,directory,git,localPredecessorSha,remote,racingSha,successorSha,translatedPush,close:()=>fs.rmSync(directory,{recursive:true})};
+  } catch(error) {fs.rmSync(directory,{recursive:true});throw error;}
+}
+
+test('successor seam publishes an unraced ref', async () => {
+  const fixture=successorFixture(false);
+  try {
+    assert.deepEqual(await advanceApprovedSuccessor(fixture.adapter),{
+      ref,predecessorSha,successorSha:fixture.successorSha,advanced:true,
+    });
+    assert.deepEqual(fixture.ancestry,[[predecessorSha,fixture.successorSha]]);
+    assert.deepEqual(fixture.commands.find(args=>args[0]==='push'),[
       'push','--no-verify','--no-follow-tags','--recurse-submodules=no',
-      '--atomic',`--force-with-lease=${ref}:${predecessorSha}`,'--',remote,
-      `${localSuccessorSha}:${ref}`,
+      '--atomic',`--force-with-lease=${ref}:${predecessorSha}`,'--',fixture.remote,
+      `${fixture.successorSha}:${ref}`,
     ]);
-    assert.equal(git(remote, ['rev-parse', ref]).stdout.trim(), racingSha);
-    assert.equal(git(remote, ['for-each-ref', '--format=%(refname)']).stdout, ref + '\n');
-    assert.notEqual(localSuccessorSha,racingSha);
-  } finally {fs.rmSync(directory,{recursive:true});}
+    assert.deepEqual(fixture.translatedPush,[
+      'push','--no-verify','--no-follow-tags','--recurse-submodules=no',
+      '--atomic',`--force-with-lease=${ref}:${fixture.localPredecessorSha}`,'--',fixture.remote,
+      `${fixture.successorSha}:${ref}`,
+    ]);
+    assert.equal(fixture.commands.filter(args=>args[0]==='ls-remote').length,2);
+    assert.equal(fixture.git(fixture.remote,['rev-parse',ref]).stdout.trim(),fixture.successorSha);
+    assert.equal(fixture.git(fixture.remote,['for-each-ref','--format=%(refname)']).stdout,ref+'\n');
+  } finally {fixture.close();}
+});
+
+test('successor lease refuses a racing ref', async () => {
+  const fixture=successorFixture(true);
+  try {
+    await assert.rejects(advanceApprovedSuccessor(fixture.adapter), /release authority/);
+    assert.deepEqual(fixture.ancestry,[[predecessorSha,fixture.successorSha]]);
+    assert.deepEqual(fixture.commands.find(args=>args[0]==='push'),[
+      'push','--no-verify','--no-follow-tags','--recurse-submodules=no',
+      '--atomic',`--force-with-lease=${ref}:${predecessorSha}`,'--',fixture.remote,
+      `${fixture.successorSha}:${ref}`,
+    ]);
+    assert.deepEqual(fixture.translatedPush,[
+      'push','--no-verify','--no-follow-tags','--recurse-submodules=no',
+      '--atomic',`--force-with-lease=${ref}:${fixture.localPredecessorSha}`,'--',fixture.remote,
+      `${fixture.successorSha}:${ref}`,
+    ]);
+    assert.equal(fixture.git(fixture.remote,['rev-parse',ref]).stdout.trim(),fixture.racingSha);
+    assert.equal(fixture.git(fixture.remote,['for-each-ref','--format=%(refname)']).stdout,ref+'\n');
+    assert.notEqual(fixture.successorSha,fixture.racingSha);
+  } finally {fixture.close();}
 });
 
 test('actual freeze binds one explicit destination despite pushurl and never follows annotated tags', async () => {
