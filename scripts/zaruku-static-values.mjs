@@ -802,6 +802,23 @@ export function createStaticEvaluator(sourceFile) {
         }
         return { known: false };
       }
+      if (ts.isTemplateExpression(current)) {
+        const parts = [current.head.text];
+        for (const span of current.templateSpans) {
+          const value = primitiveValueInFrames(span.expression, frames, seen, depth + 1);
+          if (!value.known || value.truthinessOnly) return { known: false };
+          parts.push(String(value.value), span.literal.text);
+        }
+        try {
+          return { known: true, value: concatenateTexts(parts, current) };
+        } catch (error) {
+          if (error instanceof StaticFailure && error.reason === 'ANALYSIS_LIMIT') {
+            preprocessingExceeded = true;
+            return { known: false };
+          }
+          throw error;
+        }
+      }
       if (ts.isPrefixUnaryExpression(current)) {
         const operand = primitiveValueInFrames(current.operand, frames, seen, depth + 1);
         if (!operand.known) return operand;
@@ -2078,9 +2095,9 @@ export function createStaticEvaluator(sourceFile) {
     }
 
     function invocationContexts(fn, seen = new Set()) {
-      if (!fn || seen.has(fn) || !preprocessStep()) {
-        return { frames: [], unresolved: Boolean(fn), reachable: false };
-      }
+      if (!fn) return { frames: [], unresolved: false, reachable: false };
+      if (seen.has(fn)) return { frames: [], unresolved: false, reachable: false };
+      if (!preprocessStep()) return { frames: [], unresolved: true, reachable: false };
       const nextSeen = new Set(seen).add(fn);
       const frames = [];
       let unresolved = false;
