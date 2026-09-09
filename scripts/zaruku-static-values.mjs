@@ -191,7 +191,9 @@ export function createStaticEvaluator(sourceFile) {
           ? keyNode.text : null;
       if (key === null) continue;
       const nextPath = [...path, key];
-      if (element === target || element.name === target) return nextPath;
+      if (element === target || element.name === target) {
+        return { path: nextPath, initializer: element.initializer ?? null };
+      }
       const nested = bindingPathInPattern(element.name, target, nextPath);
       if (nested) return nested;
     }
@@ -202,10 +204,10 @@ export function createStaticEvaluator(sourceFile) {
     for (let index = 0; index < fn.parameters.length; index += 1) {
       const parameter = fn.parameters[index];
       if (parameter === binding || parameter.name === binding) {
-        return { parameter, index, path: [] };
+        return { parameter, index, path: [], initializer: null };
       }
-      const path = bindingPathInPattern(parameter.name, binding);
-      if (path) return { parameter, index, path };
+      const projection = bindingPathInPattern(parameter.name, binding);
+      if (projection) return { parameter, index, ...projection };
     }
     return null;
   }
@@ -1467,9 +1469,25 @@ export function createStaticEvaluator(sourceFile) {
                   resolvedParameter = true;
                 }
               } else {
-                for (const nested of bindingsAtMemberPath(expression, reference.path)) {
-                  direct.add(nested);
-                  resolvedParameter = true;
+                const projected = expressionsAtStaticMemberPath(expression, reference.path);
+                const states = projected.map(value =>
+                  undefinedStateInFrames(value, state.frames.slice(0, index)));
+                const mayBeDefined = states.some(value => value.mayBeDefined);
+                const mayBeUndefined = projected.length === 0 ||
+                  states.some(value => value.mayBeUndefined);
+                if (mayBeDefined) {
+                  for (const nested of bindingsAtMemberPath(expression, reference.path)) {
+                    direct.add(nested);
+                    resolvedParameter = true;
+                  }
+                }
+                if (mayBeUndefined && reference.initializer) {
+                  for (const nested of callAwareSourceBindings(reference.initializer, next({
+                    bindings: new Set(state.bindings).add(binding),
+                  }))) {
+                    direct.add(nested);
+                    resolvedParameter = true;
+                  }
                 }
               }
             }
@@ -2047,6 +2065,35 @@ export function createStaticEvaluator(sourceFile) {
       return [...bindings];
     }
 
+    function expressionsAtStaticMemberPath(expression, path, depth = 0) {
+      if (!preprocessStep() || depth > MAX_DEPTH) {
+        if (depth > MAX_DEPTH) preprocessingExceeded = true;
+        return [];
+      }
+      if (path.length === 0) return [expression];
+      const [key, ...rest] = path;
+      const expressions = [];
+      for (const container of valueExpressions(expression)) {
+        const resolved = unwrapExpression(container);
+        let member = null;
+        if (ts.isArrayLiteralExpression(resolved)) {
+          member = resolved.elements[Number(key)] ?? null;
+        } else if (ts.isObjectLiteralExpression(resolved)) {
+          const property = resolved.properties.find(item =>
+            (ts.isPropertyAssignment(item) || ts.isShorthandPropertyAssignment(item)) &&
+            (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ||
+             ts.isNumericLiteral(item.name)) && item.name.text === key);
+          member = property && ts.isPropertyAssignment(property)
+            ? property.initializer
+            : property && ts.isShorthandPropertyAssignment(property) ? property.name : null;
+        }
+        if (member) {
+          expressions.push(...expressionsAtStaticMemberPath(member, rest, depth + 1));
+        }
+      }
+      return expressions;
+    }
+
     function enclosingLocalFunction(expression) {
       let current = expression.parent;
       while (current) {
@@ -2283,7 +2330,7 @@ export function createStaticEvaluator(sourceFile) {
           markMutated(binding, evidence);
         }
       }
-      if (invocations.unresolved) {
+      if (invocations.unresolved && !invocations.cycle) {
         markMutated(rootBinding(receiver), evidence);
       }
       if (invocations.unresolved && invocations.cycle) {
