@@ -2,8 +2,8 @@ import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { createReleaseAuthorityAdapter, requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
-import { CONTROL_FILES, prepareReviewedControl, readControlSource, receiveControlPayload, rejectShadowOverrides } from './stage-zaruku-shadow-control.mjs';
+import { assertReleaseAuthorityInvocation, createReleaseAuthorityAdapter, requireExactShadowRelease } from './freeze-zaruku-shadow-release.mjs';
+import { CONTROL_FILES, prepareReviewedControl, readControlSource, receiveControlPayload } from './stage-zaruku-shadow-control.mjs';
 
 const ACTIONS = ['host-check','host-apply','host-rollback','db-provision','auth-install','inventory-check','inventory-install'];
 const fail = () => { throw new Error('Zaruku fixed provisioning refused'); };
@@ -31,7 +31,7 @@ export async function provisionShadow(action, adapter) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
-    rejectShadowOverrides([]);
+    assertReleaseAuthorityInvocation([]);
     if (process.argv.length !== 3) fail();
     const adapter = {...createReleaseAuthorityAdapter(),readFile:readControlSource,dispatch(args,action) {
       const result=spawnSync('/usr/bin/ssh',args,{env:{PATH:'/usr/bin:/bin'},stdio:[action==='auth-install'?'inherit':'ignore','pipe','pipe'],timeout:120000,maxBuffer:65536,encoding:'utf8'});

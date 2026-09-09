@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { pathToFileURL } from 'node:url';
+import { assertReleaseAuthorityInvocation } from './freeze-zaruku-shadow-release.mjs';
 import { loadShadowAuthority, loadMysqlTableAuthority } from './zaruku-production-shadow-contract.mjs';
-import { rejectShadowOverrides } from './stage-zaruku-shadow-control.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 export const PRODUCTION_STEPS = Object.freeze([
@@ -95,7 +95,7 @@ export async function runProductionShadow(adapter) {
 
 export async function productionShadowMain(args = process.argv.slice(2)) {
   try {
-    rejectShadowOverrides(args);
+    assertReleaseAuthorityInvocation(args);
     const { createProductionAdapter } = await import('./zaruku-production-shadow-remote.mjs');
     const result = await runProductionShadow(createProductionAdapter());
     process.stdout.write(JSON.stringify(result) + '\n');

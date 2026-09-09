@@ -190,8 +190,10 @@ export async function stageFrozenShadowControl(adapter) {
 
 async function stageMain() {
   try {
-    rejectShadowOverrides(process.argv.slice(2));
-    const {createReleaseAuthorityAdapter}=await import('./freeze-zaruku-shadow-release.mjs');
+    const {
+      assertReleaseAuthorityInvocation, createReleaseAuthorityAdapter,
+    }=await import('./freeze-zaruku-shadow-release.mjs');
+    assertReleaseAuthorityInvocation(process.argv.slice(2));
     const adapter = {...createReleaseAuthorityAdapter(),readFile: readControlSource, transfer: controlTransport };
     process.stdout.write(JSON.stringify(await stageFrozenShadowControl(adapter)) + '\n');
   } catch { process.stderr.write('Refusing Zaruku reviewed control operation\n'); process.exitCode = 1; }

@@ -79,6 +79,13 @@ test('release CLI permits only the agent socket accepted by the SSH authority', 
   }
 });
 
+test('every release-bound production CLI uses the validated agent boundary', () => {
+  for(const name of ['stage-zaruku-shadow-control.mjs','provision-zaruku-shadow.mjs','run-zaruku-production-shadow.mjs']) {
+    const source=fs.readFileSync(path.join(import.meta.dirname,name),'utf8');
+    assert.match(source,/assertReleaseAuthorityInvocation\(/,name);
+  }
+});
+
 const sha = 'a'.repeat(40), ref = 'refs/heads/release/zaruku';
 function fixture(change = {}) {
   const commands = [];
