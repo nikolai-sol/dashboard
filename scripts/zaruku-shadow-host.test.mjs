@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { applyHostBoundary, inspectHostBoundary, rollbackNewHostBoundary, installRuntimeSecrets, createHostAdapter } from './zaruku-shadow-host-implementation.mjs';
+import { applyHostBoundary, inspectHostBoundary, rollbackNewHostBoundary, installRuntimeSecrets, runtimeSecretBytes, publishAnonymousRuntimeSecret, createHostAdapter } from './zaruku-shadow-host-implementation.mjs';
 import { installShadowAuth } from './zaruku-shadow-auth-implementation.mjs';
 import { prepareReviewedControl, receiveControlPayload, readControlSource } from './stage-zaruku-shadow-control.mjs';
 
@@ -286,8 +286,181 @@ test('rollback uses only persisted creation authority and refuses foreign conten
   }
 });
 
-test('secret installation reads only fixed source and inherited FD and publishes strict allowlisted 0600 bytes', async () => {
+function legacySourceFixture() {
   const f = fixture();
+  f.overrides.set('/var/www/www-root', { uid: 1010, gid: 1001, mode: 0o40501 });
+  f.overrides.set('/var/www/www-root/data', { uid: 1010, gid: 1010, mode: 0o40755 });
+  f.write(source, `DASHBOARD_AUTH_SECRET='${privateValue}'\nMETRIKA_TOKEN=excluded\n`);
+  return f;
+}
+
+test('runtime secret preparation accepts only the exact legacy source pins without publication', () => {
+  const f = legacySourceFixture(); let bytes;
+  try {
+    const opened = [];
+    f.adapter.fs = new Proxy(f.io, { get(target, key) {
+      if (key === 'openSync') return (name, flags, ...args) => { opened.push({ name, flags }); return target.openSync(name, flags, ...args); };
+      return target[key];
+    } });
+    bytes = runtimeSecretBytes(f.adapter, 'a'.repeat(96));
+    assert.match(bytes.toString(), /DASHBOARD_AUTH_SECRET=/);
+    assert.doesNotMatch(bytes.toString(), /METRIKA_TOKEN|excluded/);
+    assert.equal(fs.existsSync(f.resolve(destination)), false);
+    assert.deepEqual(opened.map(row => row.name), ['/', '/var', '/var/www', '/var/www/www-root', '/var/www/www-root/data', source]);
+    for (const row of opened) {
+      assert.ok(row.flags & fs.constants.O_NOFOLLOW);
+      assert.equal(row.flags & (fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_RDWR), 0);
+    }
+    assert.equal(f.descriptors.size, 0);
+  } finally { bytes?.fill(0); f.close(); }
+});
+
+test('legacy source rejects every ancestor uid gid mode or symlink substitution', () => {
+  for (const name of ['/', '/var', '/var/www', '/var/www/www-root', '/var/www/www-root/data']) {
+    for (const fault of ['uid', 'gid', 'mode', 'symlink']) {
+      const f = legacySourceFixture();
+      try {
+        if (fault === 'symlink') {
+          f.overrides.set(name, { ...f.overrides.get(name), isDirectory: () => false, isSymbolicLink: () => true });
+        } else {
+          const pin = f.overrides.get(name) ?? { uid: 0, gid: 0, mode: 0o40755 };
+          f.overrides.set(name, { ...pin, [fault]: fault === 'mode' ? pin.mode | 0o020 : pin[fault] + 1 });
+        }
+        assert.throws(() => runtimeSecretBytes(f.adapter, 'a'.repeat(96)));
+        assert.equal(f.descriptors.size, 0);
+      } finally { f.close(); }
+    }
+  }
+  for (const name of ['/var/www/www-root', '/var/www/www-root/data']) {
+    const f = legacySourceFixture();
+    try {
+      f.overrides.set(name, { ...f.overrides.get(name), mode: 0o40700 });
+      assert.throws(() => runtimeSecretBytes(f.adapter, 'a'.repeat(96)));
+      assert.equal(f.descriptors.size, 0);
+    } finally { f.close(); }
+  }
+});
+
+test('legacy source rejects path-FD mismatch and ancestor changes during the read', () => {
+  for (const name of ['/', '/var', '/var/www', '/var/www/www-root', '/var/www/www-root/data']) {
+    for (const fault of ['open-inode', 'read-uid', 'read-gid', 'read-mode', 'read-inode']) {
+      const f = legacySourceFixture(); let injected = false;
+      try {
+        f.adapter.fs = new Proxy(f.io, { get(target, key) {
+          if (key === 'fstatSync' && fault === 'open-inode') return (fd, ...args) => {
+            const stat = target.fstatSync(fd, ...args);
+            if (f.descriptors.get(fd) === name) { injected = true; stat.ino += 1; }
+            return stat;
+          };
+          if (key === 'readSync' && fault.startsWith('read-')) return (fd, ...args) => {
+            const count = target.readSync(fd, ...args);
+            if (!injected && count && f.descriptors.get(fd) === source) {
+              injected = true;
+              const stat = target.lstatSync(name), field = fault.slice(5);
+              f.overrides.set(name, { ...f.overrides.get(name), [field === 'inode' ? 'ino' : field]: field === 'mode' ? stat.mode | 0o020 : stat[field === 'inode' ? 'ino' : field] + 1 });
+            }
+            return count;
+          };
+          return target[key];
+        } });
+        assert.throws(() => runtimeSecretBytes(f.adapter, 'a'.repeat(96)));
+        assert.equal(injected, true, `${name}: ${fault} must reach the race`);
+        assert.equal(f.descriptors.size, 0);
+      } finally { f.close(); }
+    }
+  }
+});
+
+test('legacy source rejects unsafe files and source replacement during reading', () => {
+  for (const fault of ['uid', 'gid', 'mode', 'links', 'symlink', 'oversized', 'open-inode', 'read-replace', 'read-content']) {
+    const f = legacySourceFixture(); let injected = false;
+    try {
+      if (fault === 'uid' || fault === 'gid') f.overrides.set(source, { [fault]: 1010 });
+      if (fault === 'mode') fs.chmodSync(f.resolve(source), 0o644);
+      if (fault === 'links') fs.linkSync(f.resolve(source), f.resolve(source + '.alias'));
+      if (fault === 'symlink') { fs.renameSync(f.resolve(source), f.resolve(source + '.saved')); fs.symlinkSync(f.resolve(source + '.saved'), f.resolve(source)); }
+      if (fault === 'oversized') f.write(source, 'x'.repeat(65537));
+      if (fault === 'open-inode' || fault.startsWith('read-')) f.adapter.fs = new Proxy(f.io, { get(target, key) {
+        if (key === 'fstatSync' && fault === 'open-inode') return (fd, ...args) => {
+          const stat = target.fstatSync(fd, ...args); if (f.descriptors.get(fd) === source) { stat.ino += 1; injected = true; } return stat;
+        };
+        if (key === 'readSync' && fault.startsWith('read-')) return (fd, ...args) => {
+          const count = target.readSync(fd, ...args);
+          if (!injected && count && f.descriptors.get(fd) === source) {
+            injected = true;
+            if (fault === 'read-replace') { fs.renameSync(f.resolve(source), f.resolve(source + '.saved')); f.write(source, `DASHBOARD_AUTH_SECRET='replacement'\n`); }
+            else fs.appendFileSync(f.resolve(source), '# changed\n');
+          }
+          return count;
+        };
+        return target[key];
+      } });
+      assert.throws(() => runtimeSecretBytes(f.adapter, 'a'.repeat(96)));
+      if (fault.includes('inode') || fault.startsWith('read-')) assert.equal(injected, true);
+      assert.equal(f.descriptors.size, 0);
+    } finally { f.close(); }
+  }
+});
+
+test('legacy source policy never permits nonroot SECRET or JOURNAL mutation ancestors', async () => {
+  const f = legacySourceFixture(); let bytes;
+  try {
+    await applyHostBoundary(f.adapter);
+    bytes = runtimeSecretBytes(f.adapter, 'a'.repeat(96));
+    f.overrides.set('/var/www/.dashboard-zaruku-secrets', { uid: 1010, gid: 1010 });
+    assert.throws(() => publishAnonymousRuntimeSecret(f.adapter, bytes, () => assert.fail('must not publish'), () => assert.fail('must not allocate')));
+    f.overrides.set('/var/www', { uid: 1010, gid: 1001 });
+    await assert.rejects(applyHostBoundary(f.adapter));
+    assert.equal(f.descriptors.size, 0);
+  } finally { bytes?.fill(0); f.close(); }
+});
+
+test('both source consumers wipe the decoded source buffer on success and parse error', async () => {
+  for (const consumer of ['prepare', 'install']) for (const malformed of [false, true]) {
+    const f = legacySourceFixture(), OriginalDecoder = globalThis.TextDecoder;
+    let sourceBuffer, fd, bytes;
+    try {
+      await applyHostBoundary(f.adapter);
+      if (malformed) f.write(source, `DASHBOARD_AUTH_SECRET=${privateValue}\nBROKEN\n`);
+      f.write('/db-password', privateValue); fd = fs.openSync(f.resolve('/db-password'), 'r');
+      globalThis.TextDecoder = class extends OriginalDecoder {
+        decode(input, options) { sourceBuffer ??= input; return super.decode(input, options); }
+      };
+      const invoke = async () => { if (consumer === 'prepare') bytes = runtimeSecretBytes(f.adapter, 'a'.repeat(96)); else await installRuntimeSecrets(f.adapter, fd); };
+      if (malformed) await assert.rejects(invoke); else await invoke();
+      assert.ok(Buffer.isBuffer(sourceBuffer));
+      assert.ok(sourceBuffer.every(byte => byte === 0));
+      assert.equal(f.descriptors.size, 0);
+    } finally { globalThis.TextDecoder = OriginalDecoder; bytes?.fill(0); if (fd !== undefined) fs.closeSync(fd); f.close(); }
+  }
+});
+
+test('legacy source wipes partially read bytes if reading or final identity verification fails', () => {
+  for (const fault of ['read-error', 'changed']) {
+    const f = legacySourceFixture(), buffers = [];
+    try {
+      f.adapter.fs = new Proxy(f.io, { get(target, key) {
+        if (key !== 'readSync') return target[key];
+        return (fd, buffer, ...args) => {
+          const count = target.readSync(fd, buffer, ...args);
+          if (count && f.descriptors.get(fd) === source) {
+            buffers.push(buffer);
+            if (fault === 'read-error') throw new Error('fixture read failure');
+            f.overrides.set(source, { uid: 1010 });
+          }
+          return count;
+        };
+      } });
+      assert.throws(() => runtimeSecretBytes(f.adapter, 'a'.repeat(96)));
+      assert.ok(buffers.length);
+      assert.ok(buffers.every(buffer => buffer.every(byte => byte === 0)));
+      assert.equal(f.descriptors.size, 0);
+    } finally { f.close(); }
+  }
+});
+
+test('secret installation reads only fixed source and inherited FD and publishes strict allowlisted 0600 bytes', async () => {
+  const f = legacySourceFixture();
   let fd;
   try {
     await applyHostBoundary(f.adapter);
@@ -311,7 +484,7 @@ test('secret installation reads only fixed source and inherited FD and publishes
 
 test('secret installation rejects unsafe source, destinations, syntax and FD values without leaking', async () => {
   for (const attack of ['symlink', 'hardlink', 'ancestry', 'owner', 'duplicate', 'utf8', 'oversized', 'changed', 'destination-link', 'destination-mode', 'password', 'interpolation', 'export', 'inline-comment']) {
-    const f = fixture();
+    const f = legacySourceFixture();
     let fd;
     try {
       await applyHostBoundary(f.adapter);
@@ -320,7 +493,7 @@ test('secret installation rejects unsafe source, destinations, syntax and FD val
       fd = fs.openSync(f.resolve('/db-password'), 'r');
       if (attack === 'symlink') { fs.renameSync(f.resolve(source), f.resolve(`${source}.real`)); fs.symlinkSync(f.resolve(`${source}.real`), f.resolve(source)); }
       if (attack === 'hardlink') fs.linkSync(f.resolve(source), f.resolve(`${source}.alias`));
-      if (attack === 'ancestry') fs.chmodSync(f.resolve('/var/www/www-root'), 0o777);
+      if (attack === 'ancestry') { fs.chmodSync(f.resolve('/var/www/www-root'), 0o777); f.overrides.set('/var/www/www-root', { uid: 1010, gid: 1001, mode: 0o40777 }); }
       if (attack === 'owner') f.overrides.set(source, { uid: 1000 });
       if (attack === 'duplicate') f.write(source, `DASHBOARD_AUTH_SECRET=${privateValue}\nOTHER=x\nOTHER=y\n`);
       if (attack === 'utf8') f.write(source, Buffer.from([0xc3, 0x28]));
@@ -376,7 +549,7 @@ test('auth publication creates a single-link private file, rejects unsafe ancest
 });
 
 test('atomic secret replacement preserves the old inode and fsyncs the new file before publishing', async () => {
-  const f = fixture(); let fd, oldFd;
+  const f = legacySourceFixture(); let fd, oldFd;
   try {
     await applyHostBoundary(f.adapter);
     f.write(source, `DASHBOARD_AUTH_SECRET=${privateValue}\n`);

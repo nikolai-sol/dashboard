@@ -97,6 +97,65 @@ function stablePrivateRead(adapter, filename, limit = 65536) {
   });
 }
 
+// The fixed legacy SOURCE alone has these reviewed non-root ancestors. This
+// read-only policy must never be used by withParent or any publication path.
+function readLegacySource(adapter) {
+  const io = adapter.fs, handles = [];
+  const legacy = new Map([
+    ['/var/www/www-root', { uid: 1010, gid: 1001, mode: 0o501 }],
+    ['/var/www/www-root/data', { uid: 1010, gid: 1010, mode: 0o755 }],
+  ]);
+  const ancestor = (stat, name) => {
+    const pin = legacy.get(name);
+    if (!pin) return directory(stat);
+    const value = metadata(stat);
+    if (!value || value.type !== 'directory' || value.uid !== pin.uid || value.gid !== pin.gid || value.mode !== pin.mode) fail();
+    return value;
+  };
+  const fileIdentity = stat => ({ ...privateFile(stat), size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs });
+  let fd, bytes;
+  try {
+    let current = '/';
+    for (const part of ['', 'var', 'www', 'www-root', 'data']) {
+      if (part) current = path.posix.join(current, part);
+      const addressed = handles.length ? adapter.anchoredPath(handles.at(-1).fd, part) : '/';
+      const before = ancestor(io.lstatSync(addressed), current);
+      const opened = io.openSync(addressed, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+      handles.push({ fd: opened, current, before });
+      if (!same(ancestor(io.fstatSync(opened), current), before)) fail();
+    }
+    const verify = () => {
+      for (const handle of handles) {
+        if (!same(ancestor(io.lstatSync(handle.current), handle.current), handle.before) || !same(ancestor(io.fstatSync(handle.fd), handle.current), handle.before)) fail();
+      }
+    };
+    verify();
+    const addressed = adapter.anchoredPath(handles.at(-1).fd, path.posix.basename(SOURCE));
+    const before = fileIdentity(io.lstatSync(addressed));
+    if (before.size > 65536) fail();
+    fd = io.openSync(addressed, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    if (!same(fileIdentity(io.fstatSync(fd)), before)) fail();
+    verify();
+    // One owned buffer, including a growth sentinel, can be wiped even when a
+    // read throws after filling it. Do not retain readBounded's chunk copies.
+    bytes = Buffer.alloc(before.size + 1);
+    let size = 0;
+    while (size < bytes.length) {
+      const count = io.readSync(fd, bytes, size, bytes.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    if (!same(fileIdentity(io.fstatSync(fd)), before) || !same(fileIdentity(io.lstatSync(addressed)), before) || size !== before.size) fail();
+    verify();
+    return bytes.subarray(0, size);
+  } catch {
+    bytes?.fill(0); fail();
+  } finally {
+    if (fd !== undefined) io.closeSync(fd);
+    for (const handle of handles.reverse()) io.closeSync(handle.fd);
+  }
+}
+
 function publishPrivate(adapter, filename, bytes, { exclusive = false, emptyOnly = false } = {}) {
   return withParent(adapter, filename, (addressed, parentFd, verify) => {
     const io = adapter.fs;
@@ -287,10 +346,12 @@ function parseCombined(bytes) {
 }
 
 export async function installRuntimeSecrets(adapter, databasePasswordFd) {
+  let source;
   try {
     root(adapter);
     if (!Number.isSafeInteger(databasePasswordFd) || databasePasswordFd < 3) fail();
-    const combined = parseCombined(stablePrivateRead(adapter, SOURCE));
+    source = readLegacySource(adapter);
+    const combined = parseCombined(source);
     const passwordBytes = readBounded(adapter.fs, databasePasswordFd, 4096);
     const password = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(passwordBytes);
     const input = {
@@ -306,12 +367,13 @@ export async function installRuntimeSecrets(adapter, databasePasswordFd) {
     renderEnvironment(parseZarukuSecrets(installed));
     return { installed: true, path: SECRET, mode: '0600', singleLink: true, keys: Object.keys(input) };
   } catch { throw new Error('Failed to install Zaruku runtime secrets'); }
+  finally { source?.fill(0); }
 }
 
 export function runtimeSecretBytes(adapter,password) {
   root(adapter);
   if(typeof password!=='string'||!/^[a-f0-9]{96}$/.test(password))fail();
-  const source=stablePrivateRead(adapter,SOURCE);
+  const source=readLegacySource(adapter);
   try {
     const combined=parseCombined(source);
     return serializeZarukuSecrets({ZARUKU_DB_HOST:'127.0.0.1',ZARUKU_DB_PORT:'3306',ZARUKU_DB_USER:'dashboard_zaruku_reader',ZARUKU_DB_PASSWORD:password,ZARUKU_DB_NAME:'report_bd',DASHBOARD_AUTH_SECRET:combined.DASHBOARD_AUTH_SECRET,NEXT_PUBLIC_BASE_URL:'https://dashboards.adreports.ru',...(combined.PUPPETEER_EXECUTABLE_PATH?{PUPPETEER_EXECUTABLE_PATH:combined.PUPPETEER_EXECUTABLE_PATH}:{})});

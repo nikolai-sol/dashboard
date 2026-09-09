@@ -154,6 +154,8 @@ test('actual anonymous runtime-secret publication has no temporary pathname and 
   assert.equal(fs.existsSync('/var/www/www-root'),false);
   fs.mkdirSync('/var/www/www-root/data',{recursive:true,mode:0o755});
   fs.writeFileSync(source,`DASHBOARD_AUTH_SECRET='${randomBytes(32).toString('hex')}'\n`,{mode:0o600});
+  fs.chownSync('/var/www/www-root',1010,1001);fs.chmodSync('/var/www/www-root',0o501);
+  fs.chownSync('/var/www/www-root/data',1010,1010);fs.chmodSync('/var/www/www-root/data',0o755);
   const bytes=stagedHost.runtimeSecretBytes(host,randomBytes(48).toString('hex'));
   let allocated;
   const publish=(fd,parent)=>{
@@ -224,6 +226,8 @@ test('staged joint coordinator uses persistent fenced admin, sealed reader trans
   fs.copyFileSync('/src/scripts/zaruku-shadow-mysql-protocol.fixture.py','/usr/bin/mysql');fs.chmodSync('/usr/bin/mysql',0o755);
   fs.mkdirSync('/var/www/www-root/data',{recursive:true,mode:0o755});
   const shared=randomBytes(32).toString('hex');fs.writeFileSync('/var/www/www-root/data/.production.env',`DASHBOARD_AUTH_SECRET='${shared}'\n`,{mode:0o600});
+  fs.chownSync('/var/www/www-root',1010,1001);fs.chmodSync('/var/www/www-root',0o501);
+  fs.chownSync('/var/www/www-root/data',1010,1010);fs.chmodSync('/var/www/www-root/data',0o755);
   try {
     const result=spawnSync(process.execPath,[`${staged}/scripts/zaruku-shadow-dispatch.mjs`,'db-provision'],{env:{},encoding:'utf8',timeout:60000});
     assert.equal(result.status,0,result.stderr+' '+fs.readFileSync('/var/www/.dashboard-zaruku-shadow/db-provision.json','utf8')+' '+fs.readFileSync('/tmp/zaruku-protocol-events','utf8'));assert.equal(JSON.parse(result.stdout).tableSelectCount,35);
