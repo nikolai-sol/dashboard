@@ -950,9 +950,9 @@ export function createStaticEvaluator(sourceFile) {
         return selectedExpressionsInFrames(selected, frames, seenCalls, depth + 1);
       }
       if (ts.isCallExpression(current)) {
-        if (seenCalls.has(current)) return [current];
+        if (seenCalls.has(current)) return [{ expression: current, frames }];
         const callee = localFunction(current);
-        if (!callee?.body) return [current];
+        if (!callee?.body) return [{ expression: current, frames }];
         const callFrames = [...frames, { fn: callee, call: current }];
         const nextSeen = new Set(seenCalls).add(current);
         return selectedReturnExpressions(callee, current, condition => {
@@ -962,7 +962,7 @@ export function createStaticEvaluator(sourceFile) {
           returned, callFrames, nextSeen, depth + 1,
         ));
       }
-      return [current];
+      return [{ expression: current, frames }];
     }
 
     function staticKey(expression, seen = new Set()) {
@@ -2452,14 +2452,15 @@ export function createStaticEvaluator(sourceFile) {
                   );
                   const valueFrames = parameterDefault || bindingDefault
                     ? calleeFrames : active;
-                  for (const value of selectedExpressionsInFrames(
+                  for (const selected of selectedExpressionsInFrames(
                     projectedValue, valueFrames,
                   )) {
+                    const { expression: value, frames: selectedFrames } = selected;
                     for (const source of detailedReferences(value, caller)) {
                       if (addReference(caller, source)) changed = true;
                     }
                     const context = {
-                      calls: new Set(), bindings: new Set(), frames: valueFrames, depth: 0,
+                      calls: new Set(), bindings: new Set(), frames: selectedFrames, depth: 0,
                     };
                     for (const binding of callAwareSourceBindings(value, context)) {
                       if (!parameterReference(caller, binding)) terminalBindings.add(binding);
