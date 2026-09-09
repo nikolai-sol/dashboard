@@ -384,6 +384,7 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
     'declare function runtimeSql():string; const queries:string[]=[]; const ui=["x"]; function mutate(mode:string,a:string[][][],b:string[][][]){(`${mode}`==="private"?a:b).map(box=>{box[0].push(runtimeSql());return 0;});} mutate("private",[[queries]],[[ui]]); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; function mutate(){mutate();queries.push(runtimeSql());} mutate(); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} live(true,ui,queries); export const sql=queries.join("");',
+    'declare function runtimeSql():string; const queries:string[]=[]; const ui:string[]=[]; function live(flag:boolean,current:string[],next:string[]){current.push(runtimeSql());if(flag)live(false,next,current);} [[ui,queries]].map(pair=>live(true,pair[0],pair[1])); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const box=[queries]; const copy=box; const alias=copy[0]; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const box=[[queries]]; const alias=box[0][0]; alias.push(runtimeSql()); export const sql=queries.join("");',
     'declare function runtimeSql():string; const queries:string[]=[]; const key=0; const box=[queries]; const alias=box[key]; alias.push(runtimeSql()); export const sql=queries.join("");',
@@ -867,6 +868,18 @@ test('SQL extraction refuses unknown members, recursion, async maps and mutable 
       export const sql=safe.join("");
     `, 'fixture.ts').statements, ['SELECT * FROM dashboards']);
   }
+
+  const longCycle = Array.from({ length: 2_000 }, (_, index) =>
+    `function f${index}(){f${(index + 1) % 2_000}();${index === 0
+      ? 'safe.push(runtimeSql());' : ''}}`).join('\n');
+  assert.throws(() => extractStaticSql(`
+    declare function runtimeSql():string;
+    const safe=["SELECT * FROM dashboards"];
+    ${longCycle}
+    f0();
+    export const sql=safe.join("");
+  `, 'fixture.ts'), error =>
+    !(error instanceof RangeError) && /ANALYSIS_LIMIT|UNRESOLVED_SQL/.test(error.message));
 });
 
 test('SQL extraction exposes keyword, schema, comment and separator boundary attacks', () => {

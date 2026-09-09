@@ -2094,9 +2094,13 @@ export function createStaticEvaluator(sourceFile) {
       return [current];
     }
 
-    function invocationContexts(fn, seen = new Set()) {
+    function invocationContexts(fn, seen = new Set(), depth = 0) {
       if (!fn) return { frames: [], unresolved: false, reachable: false, cycle: false };
       if (seen.has(fn)) return { frames: [], unresolved: false, reachable: false, cycle: true };
+      if (depth > MAX_DEPTH) {
+        preprocessingExceeded = true;
+        return { frames: [], unresolved: true, reachable: false, cycle: false };
+      }
       if (!preprocessStep()) {
         return { frames: [], unresolved: true, reachable: false, cycle: false };
       }
@@ -2111,7 +2115,7 @@ export function createStaticEvaluator(sourceFile) {
           frames.push([{ fn, call }]);
           reachable = true;
         } else {
-          const parent = invocationContexts(parentFn, nextSeen);
+          const parent = invocationContexts(parentFn, nextSeen, depth + 1);
           parent.frames.forEach(parentFrames =>
             frames.push([...parentFrames, { fn, call }]));
           reachable ||= parent.reachable;
@@ -2123,7 +2127,7 @@ export function createStaticEvaluator(sourceFile) {
         if (!callbacks.includes(fn)) continue;
         const parentFn = enclosingLocalFunction(mapCall);
         const parent = parentFn
-          ? invocationContexts(parentFn, nextSeen)
+          ? invocationContexts(parentFn, nextSeen, depth + 1)
           : { frames: [[]], unresolved: false, reachable: true, cycle: false };
         unresolved ||= parent.unresolved;
         cycle ||= parent.cycle;
@@ -2169,6 +2173,21 @@ export function createStaticEvaluator(sourceFile) {
       }
       if (invocations.unresolved) {
         markMutated(rootBinding(receiver), evidence);
+      }
+      if (invocations.unresolved && invocations.cycle) {
+        for (const frames of invocations.frames) {
+          frames.forEach((frame, frameIndex) => {
+            for (const argument of frame.call.arguments) {
+              const context = {
+                calls: new Set(), bindings: new Set(),
+                frames: frames.slice(0, frameIndex), depth: 0,
+              };
+              for (const binding of callAwareSourceBindings(argument, context)) {
+                markMutated(binding, evidence);
+              }
+            }
+          });
+        }
       }
     }
 
