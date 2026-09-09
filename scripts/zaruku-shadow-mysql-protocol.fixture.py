@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import re
+import stat
 import sys
 
 if not pathlib.Path('/.dockerenv').exists() or os.getuid() != 0 or not pathlib.Path('/src/deploy/zaruku/mysql-read-tables.json').exists():
@@ -14,7 +15,8 @@ assert not any('password' in arg.lower() for arg in sys.argv)
 assert set(os.environ) <= {'LC_CTYPE'}
 defaults = [arg for arg in sys.argv[1:] if arg.startswith('--defaults-file=')]
 assert len(defaults) == 1 and sys.argv[1] == defaults[0]
-reader = re.fullmatch(r'--defaults-file=/proc/self/fd/[0-9]+', sys.argv[1]) is not None
+assert re.fullmatch(r'--defaults-file=/proc/self/fd/[0-9]+', sys.argv[1])
+reader = '--protocol=socket' not in sys.argv and '--user=root' not in sys.argv
 if reader:
     filename = next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('--defaults-file='))
     assert filename.startswith('/proc/self/fd/') and 'memfd:zaruku-mysql-defaults' in os.readlink(filename)
@@ -24,7 +26,10 @@ if reader:
     assert re.search(rb'password="[a-f0-9]{96}"\n',os.read(fd,4096))
     os.close(fd)
 else:
-    assert sys.argv[1:4] == ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root']
+    assert sys.argv[2:4] == ['--protocol=socket', '--user=root']
+    info = os.fstat(int(sys.argv[1].rsplit('/', 1)[1]))
+    assert stat.S_ISREG(info.st_mode) and info.st_uid == info.st_gid == 0 and info.st_nlink == 1 and stat.S_IMODE(info.st_mode) in (0o400, 0o600)
+    assert not os.path.lexists('/root/.mylogin.cnf')
 tables=json.loads(pathlib.Path('/src/deploy/zaruku/mysql-read-tables.json').read_text())['tables']
 account="'dashboard_zaruku_reader'@'127.0.0.1'"
 connection='43' if reader else '42';created=False;grants=[];locked=False

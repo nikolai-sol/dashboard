@@ -326,36 +326,82 @@ test('real adapter distinguishes confirmed absence from stat, getent, group, and
   assert.throws(() => groupsFailure.serviceIdentity(), /command failed|inspection/i);
 });
 
-test('preflight admin channel checks fixed private metadata before explicit defaults-first socket/root argv', () => {
-  for (const mode of ['400', '600']) {
-    const calls = [];
-    const adapter = createReadOnlyPreflightAdapter({ commandRunner(filename, args) {
-      calls.push([filename, args]);
-      const stdout = filename === '/usr/bin/stat' ? `regular file\t0\t0\t${mode}\t1`
-        : filename === '/bin/sh' ? '/usr/bin/mysql' : 'root@localhost\nreport_bd\n';
-      return { status: 0, stdout, stderr: '', signal: null };
+function adminFsFixture() {
+  const info = (directory, mode, ino) => ({ dev: 1, ino, uid: 0, gid: 0, mode, nlink: 1, size: 10, mtimeMs: 1, ctimeMs: 1,
+    isDirectory: () => directory, isFile: () => !directory, isSymbolicLink: () => false });
+  const state = { parent: info(true, 0o40700, 10), file: info(false, 0o100400, 11), login: null, opened: [], closed: [] };
+  const absent = () => { throw Object.assign(new Error('absent'), { code: 'ENOENT' }); };
+  state.io = {
+    openSync(filename, flags) {
+      assert.ok(flags & fs.constants.O_NOFOLLOW);
+      if (filename === '/root') { assert.ok(flags & fs.constants.O_DIRECTORY); state.opened.push(40); return 40; }
+      assert.equal(filename, '/proc/self/fd/40/.my.cnf');
+      if (state.absentFile) return absent();
+      state.opened.push(41); return 41;
+    },
+    fstatSync(fd) { return fd === 40 ? state.parent : state.file; },
+    lstatSync(filename) {
+      if (filename === '/root') return state.parent;
+      assert.equal(filename, '/proc/self/fd/40/.mylogin.cnf');
+      if (state.login === null) return absent();
+      if (state.login instanceof Error) throw state.login;
+      return state.login;
+    },
+    closeSync(fd) { state.closed.push(fd); },
+  };
+  return state;
+}
+
+test('preflight pins admin FD, inherits it as fd 3, and closes it without reopening the pathname', () => {
+  for (const mode of [0o400, 0o600]) {
+    const state = adminFsFixture(); state.file.mode = 0o100000 | mode;
+    const adapter = createReadOnlyPreflightAdapter({ adminFs: state.io, commandRunner(filename, args, options) {
+      if (filename === '/usr/bin/mysql') {
+        assert.deepEqual(args.slice(0, 3), ['--defaults-file=/proc/self/fd/3', '--protocol=socket', '--user=root']);
+        assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe', 41]);
+        // A pathname replacement after opening must never be used by the child.
+        state.io.openSync = () => { throw new Error('pathname reopened'); };
+        return { status: 0, stdout: 'root@localhost\nreport_bd\n', stderr: '', signal: null };
+      }
+      return { status: 0, stdout: '/usr/bin/mysql', stderr: '', signal: null };
     } });
     assert.equal(adapter.mysql().rootSocketAdmin, true);
-    const metadata = calls.findIndex(([filename]) => filename === '/usr/bin/stat');
-    const query = calls.findIndex(([filename]) => filename === '/usr/bin/mysql');
-    assert.ok(metadata >= 0 && metadata < query);
-    assert.deepEqual(calls[metadata][1], ['--format=%F\t%u\t%g\t%a\t%h', '--', '/root/.my.cnf']);
-    assert.deepEqual(calls[query][1].slice(0, 3), ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root']);
+    assert.deepEqual(state.closed, [41, 40]);
   }
 });
 
-test('preflight admin channel refuses absent or unsafe defaults metadata before invoking MySQL', () => {
-  for (const metadata of [null, 'symbolic link\t0\t0\t600\t1', 'regular file\t1\t0\t600\t1',
-    'regular file\t0\t1\t600\t1', 'regular file\t0\t0\t600\t2',
-    ...['000', '444', '640', '700', '4600'].map(mode => `regular file\t0\t0\t${mode}\t1`)]) {
-    let mysqlCalled = false;
-    const adapter = createReadOnlyPreflightAdapter({ commandRunner(filename) {
-      if (filename === '/usr/bin/mysql') mysqlCalled = true;
-      return { status: filename === '/usr/bin/stat' && metadata === null ? 1 : 0,
-        stdout: filename === '/usr/bin/stat' ? metadata ?? '' : filename === '/bin/sh' ? '/usr/bin/mysql' : 'root@localhost\nreport_bd\n',
-        stderr: '', signal: null };
+test('preflight rejects unsafe parents, files and login-path existence or inspection failures before MySQL', () => {
+  const mutations = [s => { s.absentFile = true; }, s => { s.parent.isDirectory = () => false; },
+    s => { s.parent.isSymbolicLink = () => true; },
+    ...['uid', 'gid'].flatMap(key => [s => { s.parent[key] = 1; }, s => { s.file[key] = 1; }]),
+    s => { s.parent.mode = 0o40755; }, s => { s.file.isFile = () => false; }, s => { s.file.nlink = 2; },
+    ...[0, 0o444, 0o640, 0o700, 0o4600].map(mode => s => { s.file.mode = 0o100000 | mode; }),
+    s => { s.login = {}; }, s => { s.login = { isSymbolicLink: () => true }; },
+    s => { s.login = Object.assign(new Error('PRIVATE_SENTINEL'), { code: 'EACCES' }); }];
+  for (const mutate of mutations) {
+    const state = adminFsFixture(); mutate(state); let called = false;
+    const adapter = createReadOnlyPreflightAdapter({ adminFs: state.io, commandRunner(filename) {
+      if (filename === '/usr/bin/mysql') called = true;
+      return { status: 0, stdout: '/usr/bin/mysql', stderr: '', signal: null };
     } });
-    assert.throws(() => adapter.mysql(), /preflight|defaults/i);
-    assert.equal(mysqlCalled, false);
+    assert.throws(() => adapter.mysql(), /admin defaults/);
+    assert.equal(called, false);
+    assert.deepEqual(state.closed, state.opened.toReversed());
+  }
+});
+
+test('preflight rejects descriptor mutation and closes both FDs after query failure', () => {
+  for (const change of ['identity', 'metadata', 'parent', 'login', 'query']) {
+    const state = adminFsFixture();
+    const adapter = createReadOnlyPreflightAdapter({ adminFs: state.io, commandRunner(filename) {
+      if (filename !== '/usr/bin/mysql') return { status: 0, stdout: '/usr/bin/mysql', stderr: '', signal: null };
+      if (change === 'identity') state.file.ino++;
+      if (change === 'metadata') state.file.ctimeMs++;
+      if (change === 'parent') state.parent.mode = 0o40755;
+      if (change === 'login') state.login = {};
+      return { status: change === 'query' ? 1 : 0, stdout: 'root@localhost\nreport_bd\n', stderr: '', signal: null };
+    } });
+    assert.throws(() => adapter.mysql(), /admin defaults|preflight command failed/);
+    assert.deepEqual(state.closed, [41, 40]);
   }
 });

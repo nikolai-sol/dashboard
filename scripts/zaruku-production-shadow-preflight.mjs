@@ -208,7 +208,7 @@ export function assertShadowPrerequisites(evidence) {
 
 function execute(filename, args, options = {}, commandRunner = spawnSync) {
   const result = commandRunner(filename, args, {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: SAFE_ENV,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe', ...(options.adminFd === undefined ? [] : [options.adminFd])], env: SAFE_ENV,
     maxBuffer: 4 * 1024 * 1024,
   });
   if (!result.error && result.signal === null && result.status === 0) return { found: true, output: result.stdout.trim() };
@@ -390,8 +390,44 @@ function statResource(filename, commandRunner = spawnSync) {
   };
 }
 
+function withAdminDefaults(io, action) {
+  let parent, credential;
+  const identity = info => JSON.stringify([info.dev, info.ino, info.uid, info.gid, info.mode, info.nlink, info.size, info.mtimeMs, info.ctimeMs]);
+  const parentIdentity = info => JSON.stringify([info.dev, info.ino, info.uid, info.gid, info.mode]);
+  try {
+    parent = io.openSync('/root', fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    const root = io.fstatSync(parent);
+    if (!root.isDirectory() || root.uid !== 0 || root.gid !== 0 || (root.mode & 0o7777) !== 0o700) fail('Unsafe MySQL admin defaults parent');
+    const rootPin = parentIdentity(root);
+    const checkParent = () => {
+      const current = io.lstatSync('/root');
+      if (current.isSymbolicLink() || parentIdentity(current) !== rootPin || parentIdentity(io.fstatSync(parent)) !== rootPin) fail('Unsafe MySQL admin defaults parent');
+      // MySQL 8 can load .mylogin.cnf even with --defaults-file. Only ENOENT is safe.
+      try { io.lstatSync(`/proc/self/fd/${parent}/.mylogin.cnf`); }
+      catch (error) { if (error?.code === 'ENOENT') return; throw error; }
+      fail('Unsafe MySQL admin defaults login channel');
+    };
+    checkParent();
+    credential = io.openSync(`/proc/self/fd/${parent}/.my.cnf`, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    const info = io.fstatSync(credential);
+    if (!info.isFile() || info.uid !== 0 || info.gid !== 0 || info.nlink !== 1 || ![0o400, 0o600].includes(info.mode & 0o7777)) fail('Unsafe MySQL admin defaults metadata');
+    const pin = identity(info);
+    const verify = () => { checkParent(); if (identity(io.fstatSync(credential)) !== pin) fail('Unsafe MySQL admin defaults identity'); };
+    verify();
+    const result = action(credential);
+    verify();
+    return result;
+  } catch (error) {
+    if (/^Read-only preflight command failed: [a-z0-9]+$/.test(error?.message ?? '')) throw error;
+    fail('Unsafe MySQL admin defaults');
+  } finally {
+    try { if (credential !== undefined) io.closeSync(credential); }
+    finally { if (parent !== undefined) io.closeSync(parent); }
+  }
+}
+
 export function createReadOnlyPreflightAdapter(options = {}) {
-  if (Object.keys(options).some(key => key !== 'commandRunner') ||
+  if (Object.keys(options).some(key => !['commandRunner', 'adminFs'].includes(key)) ||
       (options.commandRunner !== undefined && typeof options.commandRunner !== 'function')) {
     fail('Invalid read-only preflight adapter options');
   }
@@ -401,10 +437,8 @@ export function createReadOnlyPreflightAdapter(options = {}) {
     if (mysqlMetadata) return mysqlMetadata;
     const mysql = locate('mysql', commandRunner);
     if (!mysql) return (mysqlMetadata = { rootSocketAdmin: false, currentUser: null, database: null, accountExists: false });
-    const defaultsMetadata = execute('/usr/bin/stat', ['--format=%F\t%u\t%g\t%a\t%h', '--', '/root/.my.cnf'], {}, commandRunner).output;
-    if (!/^regular (?:empty )?file\t0\t0\t(?:400|600)\t1$/.test(defaultsMetadata)) fail('Unsafe MySQL admin defaults metadata');
     const sql = "SELECT CURRENT_USER(); SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='report_bd'; SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User='dashboard_zaruku_reader' AND Host='127.0.0.1';";
-    const lines = execute(mysql, ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root', '--batch', '--skip-column-names', '-e', sql], {}, commandRunner).output.split(/\r?\n/).filter(Boolean);
+    const lines = withAdminDefaults(options.adminFs ?? fs, fd => execute(mysql, ['--defaults-file=/proc/self/fd/3', '--protocol=socket', '--user=root', '--batch', '--skip-column-names', '-e', sql], { adminFd: fd }, commandRunner)).output.split(/\r?\n/).filter(Boolean);
     const currentUser = lines[0] ?? null;
     return (mysqlMetadata = {
       rootSocketAdmin: currentUser === 'root@localhost', currentUser,

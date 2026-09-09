@@ -11,6 +11,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { bootRuntimeAsService } from './runtime-release-remote.mjs';
 import { prepareReviewedControl, receiveControlPayload, readControlSource } from './stage-zaruku-shadow-control.mjs';
+import { createReadOnlyPreflightAdapter } from './zaruku-production-shadow-preflight.mjs';
 
 if (process.platform !== 'linux' || process.getuid() !== 0 || !fs.existsSync('/.dockerenv')) throw new Error('This behavioral fixture requires a disposable Linux root container');
 const base = fs.mkdtempSync('/tmp/zaruku-privilege-');
@@ -41,6 +42,36 @@ fs.writeFileSync(${JSON.stringify(proof)}, JSON.stringify({uid:process.getuid(),
 http.createServer((req,res) => {res.setHeader('content-type','application/json');res.end(JSON.stringify({ok:true,scope:'zaruku'}));}).listen(+process.env.PORT, process.env.HOSTNAME);
 `;
 fs.writeFileSync(path.join(artifact, 'apps/zaruku/server.js'), server, { mode: 0o644 });
+
+test('preflight inherits the pinned regular admin descriptor and never the replacement pathname', () => {
+  assert.equal(fs.existsSync('/root/.mylogin.cnf'), false);
+  for (const swap of [false, true]) {
+    const filename = '/root/.my.cnf', moved = '/root/.my.cnf-fixture-moved';
+    assert.equal(fs.existsSync(filename), false);
+    assert.equal(fs.existsSync(moved), false);
+    fs.writeFileSync(filename, '[client]\n# Disposable dummy only.\n', { flag: 'wx', mode: 0o400 });
+    const expected = fs.statSync(filename), opened = [];
+    let childPassed = false;
+    const adapter = createReadOnlyPreflightAdapter({ adminFs: { ...fs, openSync(...args) { const fd = fs.openSync(...args); opened.push(fd); return fd; } }, commandRunner(bin, args, options) {
+      if (bin !== '/usr/bin/mysql') return { status: 0, stdout: '/usr/bin/mysql', stderr: '', signal: null };
+      assert.deepEqual(args.slice(0, 3), ['--defaults-file=/proc/self/fd/3', '--protocol=socket', '--user=root']);
+      if (swap) { fs.renameSync(filename, moved); fs.writeFileSync(filename, '', { flag: 'wx', mode: 0o400 }); }
+      const result = spawnSync('/usr/local/bin/node', ['-e', `const fs=require('node:fs'),assert=require('node:assert/strict');const s=fs.fstatSync(3);assert.equal(s.ino,${expected.ino});assert.equal(s.dev,${expected.dev});assert(s.isFile());assert.equal(s.mode&0o7777,0o400);process.stdout.write('root@localhost\\nreport_bd\\n');`], options);
+      childPassed = result.status === 0;
+      return result;
+    } });
+    try {
+      if (swap) assert.throws(() => adapter.mysql(), /admin defaults/);
+      else assert.equal(adapter.mysql().rootSocketAdmin, true);
+      assert.equal(childPassed, true);
+      assert.equal(opened.length, 2);
+      for (const fd of opened) assert.throws(() => fs.fstatSync(fd), { code: 'EBADF' });
+    } finally {
+      fs.unlinkSync(filename);
+      if (swap) fs.unlinkSync(moved);
+    }
+  }
+});
 
 test('direct mutation CLIs reject before auth input or host inspection even inside the staged bundle', () => {
   const staged = `/var/www/.dashboard-zaruku-shadow/control/${stagedSha}`;

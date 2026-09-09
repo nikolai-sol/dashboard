@@ -18,8 +18,9 @@ class Descriptors(unittest.TestCase):
         link = '/root/.my.cnf-fixture-link'
         self.assertFalse(os.path.lexists(filename))
         self.assertFalse(os.path.lexists(link))
+        self.assertFalse(os.path.lexists('/root/.mylogin.cnf'))
         system = mod.System()
-        with self.assertRaises(FileNotFoundError): system.admin_defaults()
+        with self.assertRaises(ValueError): system.admin_defaults()
         os.symlink('/root/absent-fixture-target', filename)
         try:
             with self.assertRaises(ValueError): system.admin_defaults()
@@ -30,7 +31,12 @@ class Descriptors(unittest.TestCase):
         try:
             for mode in [0o400, 0o600]:
                 os.chmod(filename, mode)
-                self.assertEqual(system.admin_defaults(), ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root'])
+                profile = system.admin_defaults()
+                try:
+                    self.assertEqual(profile['argv'], ['--defaults-file=/proc/self/fd/'+str(profile['fd']), '--protocol=socket', '--user=root'])
+                    system.verify_admin_defaults(profile)
+                finally:
+                    os.close(profile['fd']); os.close(profile['parent'])
             for mode in [0, 0o444, 0o640, 0o700, 0o4600]:
                 os.chmod(filename, mode)
                 with self.assertRaises(ValueError): system.admin_defaults()
@@ -42,6 +48,24 @@ class Descriptors(unittest.TestCase):
             os.link(filename, link)
             with self.assertRaises(ValueError): system.admin_defaults()
             os.unlink(link)
+            os.chmod('/root', 0o755)
+            try:
+                with self.assertRaises(ValueError): system.admin_defaults()
+            finally: os.chmod('/root', 0o700)
+            profile = system.admin_defaults()
+            try:
+                original = os.fstat(profile['fd'])
+                os.rename(filename, link)
+                replacement = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+                os.close(replacement)
+                self.assertEqual(os.fstat(profile['fd']).st_ino, original.st_ino)
+                self.assertNotEqual(os.stat(filename).st_ino, original.st_ino)
+                argv = ['/usr/bin/python3', '-I', '-c', 'import os,sys;assert os.fstat(int(sys.argv[1])).st_ino == int(sys.argv[2])', str(profile['fd']), str(original.st_ino)]
+                self.assertEqual(system.run(argv, '/usr/bin/python3', b'', (profile['fd'],)), (0, b'', b''))
+                with self.assertRaises(ValueError): system.verify_admin_defaults(profile)
+            finally:
+                os.close(profile['fd']); os.close(profile['parent'])
+            with self.assertRaises(OSError): os.fstat(profile['fd'])
         finally:
             if os.path.lexists(link): os.unlink(link)
             os.unlink(filename)

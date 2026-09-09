@@ -63,6 +63,7 @@ class Session:
     def __init__(self, system, mode, password):
         self.system = system; self.fds = []; self.child = None; self.connection = None; self.buffer = b''; self.mode = mode
         self.locked = False; self.owned = False; self.absent = False
+        self.admin = None
         tables = json.loads(pathlib.Path(__file__).parent.parent.joinpath('deploy/zaruku/mysql-read-tables.json').read_text())['tables']
         convert = lambda value: "CONVERT(X'"+value.encode().hex()+"' USING utf8mb4)"
         account = "'dashboard_zaruku_reader'@'127.0.0.1'"; lock = convert('reportingdash:zaruku-reader-boundary:v1')
@@ -89,15 +90,20 @@ class Session:
                 if not isinstance(password, str) or not re.fullmatch('[a-f0-9]{96}', password): raise ValueError()
                 defaults = system.memfd(('[client]\nuser=dashboard_zaruku_reader\nhost=127.0.0.1\nport=3306\nprotocol=TCP\ndatabase=report_bd\npassword="'+password+'"\n').encode())
                 self.fds.append(defaults); argv.append('--defaults-file=/proc/self/fd/'+str(defaults))
-            elif mode == 'admin' and password is None: argv += system.admin_defaults()
+            elif mode == 'admin' and password is None:
+                self.admin = system.admin_defaults()
+                self.fds.extend([self.admin['parent'], self.admin['fd']])
+                argv += self.admin['argv']
             else: raise ValueError()
             argv += ['--batch','--raw','--unbuffered','--force','--skip-reconnect','--binary-mode','--skip-auto-rehash','--connect-timeout=3','--default-character-set=utf8mb4']
-            self.child = subprocess.Popen(argv, executable='/proc/self/fd/'+str(binary), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env={}, pass_fds=tuple(self.fds), close_fds=True)
+            if self.admin: system.verify_admin_defaults(self.admin)
+            self.child = subprocess.Popen(argv, executable='/proc/self/fd/'+str(binary), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env={}, pass_fds=tuple(fd for fd in self.fds if not self.admin or fd != self.admin['parent']), close_fds=True)
             self.query('SELECT CONNECTION_ID() AS connectionId')
         except Exception:
             self.close(); raise
 
     def query(self, sql):
+        if self.admin: self.system.verify_admin_defaults(self.admin)
         if not isinstance(sql,str) or len(sql)>64000 or any(c in sql for c in [';', '\n', '\r', '\0', '\\']): raise ValueError()
         create = self.mode == 'admin' and re.fullmatch(r"CREATE USER 'dashboard_zaruku_reader'@'127\.0\.0\.1' IDENTIFIED BY '[a-f0-9]{96}'",sql)
         if sql not in self.allowed and not create:raise ValueError()
@@ -117,6 +123,7 @@ class Session:
                 if not data: raise ValueError()
                 self.buffer += data
                 if len(self.buffer)>65536: raise ValueError()
+        if self.admin: self.system.verify_admin_defaults(self.admin)
         prefix=self.buffer[:offset]; rest=self.buffer[offset+len(marker):]; connection,tail=rest.split(b'\n',1); self.buffer=tail
         if tail or not re.fullmatch(rb'[1-9][0-9]*',connection): raise ValueError()
         connection=connection.decode()
@@ -148,12 +155,13 @@ class Session:
         return {'rows':rows}
 
     def close(self):
-        if self.child:
-            if self.child.poll() is None:self.child.kill()
-            self.child.wait()
-            self.child.stdin.close();self.child.stdout.close()
-        for fd in self.fds:self.system.close(fd)
-        self.fds=[]
+        try:
+            if self.child:
+                if self.child.poll() is None:self.child.kill()
+                self.child.wait()
+                self.child.stdin.close();self.child.stdout.close()
+        finally:
+            while self.fds: self.system.close(self.fds.pop())
 
 def publish_secret():
     filename='/var/www/.dashboard-zaruku-secrets'

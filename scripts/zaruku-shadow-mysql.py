@@ -15,11 +15,41 @@ MAX_OUTPUT = 65536
 PROBE = 'UPDATE `report_bd`.`canonical_fact_site_analytics_daily` SET `visits` = `visits` WHERE 1 = 0'
 
 class System:
+    @staticmethod
+    def admin_identity(info):
+        return (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode, info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    def verify_admin_defaults(self, profile):
+        parent = os.fstat(profile['parent'])
+        current = os.stat('/root', follow_symlinks=False)
+        root_identity = lambda s: (s.st_dev, s.st_ino, s.st_uid, s.st_gid, s.st_mode)
+        if root_identity(parent) != profile['parentIdentity'] or root_identity(current) != profile['parentIdentity']: raise ValueError()
+        # MySQL 8 reads .mylogin.cnf even with --defaults-file; do not permit that channel.
+        try: os.stat('.mylogin.cnf', dir_fd=profile['parent'], follow_symlinks=False)
+        except FileNotFoundError as error:
+            if error.errno != 2: raise ValueError() from None
+        else: raise ValueError()
+        if profile.get('fd') is not None and self.admin_identity(os.fstat(profile['fd'])) != profile['identity']: raise ValueError()
+
     def admin_defaults(self):
-        info = os.lstat('/root/.my.cnf')
-        if not stat.S_ISREG(info.st_mode) or info.st_uid or info.st_gid or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) not in (0o400, 0o600):
-            raise ValueError()
-        return ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root']
+        parent = os.open('/root', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fd = None
+        try:
+            root = os.fstat(parent)
+            if not stat.S_ISDIR(root.st_mode) or root.st_uid or root.st_gid or stat.S_IMODE(root.st_mode) != 0o700: raise ValueError()
+            profile = {'parent': parent, 'parentIdentity': (root.st_dev, root.st_ino, root.st_uid, root.st_gid, root.st_mode)}
+            self.verify_admin_defaults(profile)
+            fd = os.open('.my.cnf', os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=parent)
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid or info.st_gid or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) not in (0o400, 0o600): raise ValueError()
+            profile.update(fd=fd, identity=self.admin_identity(info), argv=['--defaults-file=/proc/self/fd/'+str(fd), '--protocol=socket', '--user=root'])
+            self.verify_admin_defaults(profile)
+            return profile
+        except Exception:
+            try:
+                if fd is not None: os.close(fd)
+            finally: os.close(parent)
+            raise ValueError() from None
 
     def binary(self):
         for path in ['/', '/usr', '/usr/bin']:
@@ -95,6 +125,7 @@ class System:
 def execute(request, system=None):
     system = system or System()
     descriptors = []
+    admin = None
     try:
         if set(request) != {'mode','password','sql','toolIdentity'} or request['mode'] not in ('admin','reader'):
             raise ValueError()
@@ -117,10 +148,14 @@ def execute(request, system=None):
             descriptors.append(defaults)
             argv.append('--defaults-file=/proc/self/fd/'+str(defaults))
         else:
-            argv.extend(system.admin_defaults())
+            admin = system.admin_defaults()
+            descriptors.extend([admin['parent'], admin['fd']])
+            argv.extend(admin['argv'])
         argv.extend(['--batch','--raw','--connect-timeout=3','--default-character-set=utf8mb4','--skip-auto-rehash','--binary-mode'])
         query = ('START TRANSACTION;\n'+sql+';\nROLLBACK;\n') if sql == PROBE else sql+';\n'
-        status, stdout, stderr = system.run(argv, '/proc/self/fd/'+str(binary), query.encode('utf-8'), tuple(descriptors))
+        if admin: system.verify_admin_defaults(admin)
+        status, stdout, stderr = system.run(argv, '/proc/self/fd/'+str(binary), query.encode('utf-8'), tuple(fd for fd in descriptors if not admin or fd != admin['parent']))
+        if admin: system.verify_admin_defaults(admin)
         if len(stdout)+len(stderr)>MAX_OUTPUT: raise ValueError()
         if status:
             denial = re.match(rb'^ERROR (1044|1045|1142)\b',stderr)
