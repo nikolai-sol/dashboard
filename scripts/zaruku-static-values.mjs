@@ -1385,6 +1385,34 @@ export function createStaticEvaluator(sourceFile) {
         }
         return [...direct];
       }
+      function framedMemberBindings(value) {
+        const bindings = new Set();
+        for (let frameIndex = state.frames.length - 1; frameIndex >= 0; frameIndex -= 1) {
+          const frame = state.frames[frameIndex];
+          frame.fn.parameters.forEach((parameter, parameterIndex) => {
+            const paths = memberPathsFromParameter(value, parameter, frame.fn, frame.call);
+            for (const path of paths) {
+              for (const expression of parameterExpressions(
+                parameter, parameterIndex, frame.call,
+                candidate => undefinedStateInFrames(
+                  candidate, state.frames.slice(0, frameIndex),
+                ),
+              )) {
+                if (path.length === 0) {
+                  for (const binding of callAwareSourceBindings(expression, next({
+                    frames: state.frames.slice(0, frameIndex),
+                  }))) bindings.add(binding);
+                } else {
+                  for (const binding of bindingsAtMemberPath(expression, path)) {
+                    bindings.add(binding);
+                  }
+                }
+              }
+            }
+          });
+        }
+        return bindings;
+      }
       if (ts.isElementAccessExpression(current) && current.argumentExpression) {
         const key = staticKey(current.argumentExpression);
         if (key === null) return [...direct];
@@ -1409,6 +1437,7 @@ export function createStaticEvaluator(sourceFile) {
             for (const binding of callAwareSourceBindings(member, next({}))) direct.add(binding);
           }
         }
+        for (const binding of framedMemberBindings(current)) direct.add(binding);
         return [...direct];
       }
       if (ts.isPropertyAccessExpression(current)) {
@@ -1426,6 +1455,7 @@ export function createStaticEvaluator(sourceFile) {
             for (const binding of callAwareSourceBindings(member, next({}))) direct.add(binding);
           }
         }
+        for (const binding of framedMemberBindings(current)) direct.add(binding);
         return [...direct];
       }
       if (!ts.isCallExpression(current) || state.calls.has(current)) return [...direct];
@@ -1881,12 +1911,39 @@ export function createStaticEvaluator(sourceFile) {
       return null;
     }
 
+    function invocationContexts(fn, seen = new Set()) {
+      if (!fn || seen.has(fn) || !preprocessStep()) return [];
+      const nextSeen = new Set(seen).add(fn);
+      const contexts = [];
+      for (const { call } of pendingCalls.filter(candidate => candidate.fn === fn)) {
+        const parentFn = enclosingLocalFunction(call);
+        const parentContexts = parentFn ? invocationContexts(parentFn, nextSeen) : [];
+        if (parentContexts.length === 0) {
+          contexts.push([{ fn, call }]);
+        } else {
+          parentContexts.forEach(frames => contexts.push([...frames, { fn, call }]));
+        }
+      }
+      for (const { callbacks, receiver } of pendingMapCalls) {
+        if (!callbacks.includes(fn)) continue;
+        for (const container of valueExpressions(receiver)) {
+          const resolved = unwrapExpression(container);
+          if (!ts.isArrayLiteralExpression(resolved)) continue;
+          for (const element of resolved.elements) {
+            if (ts.isOmittedExpression(element)) continue;
+            contexts.push([{ fn, call: { arguments: [element] } }]);
+          }
+        }
+      }
+      return contexts;
+    }
+
     for (const { receiver, evidence } of mutationReceivers) {
       const owner = enclosingLocalFunction(receiver);
-      const ownerCalls = owner ? pendingCalls.filter(candidate => candidate.fn === owner) : [];
-      const contexts = ownerCalls.length > 0
-        ? ownerCalls.map(({ call }) => ({
-          calls: new Set(), bindings: new Set(), frames: [{ fn: owner, call }], depth: 0,
+      const invocationFrames = invocationContexts(owner);
+      const contexts = invocationFrames.length > 0
+        ? invocationFrames.map(frames => ({
+          calls: new Set(), bindings: new Set(), frames, depth: 0,
         }))
         : [undefined];
       for (const context of contexts) {
