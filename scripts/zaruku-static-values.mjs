@@ -1139,6 +1139,9 @@ export function createStaticEvaluator(sourceFile) {
       if (ts.isArrayLiteralExpression(current)) {
         return current.elements.flatMap(element => containedBindings(element, seen));
       }
+      if (ts.isCallExpression(current)) {
+        return current.arguments.flatMap(argument => containedBindings(argument, seen));
+      }
       if (ts.isConditionalExpression(current)) {
         return [
           ...containedBindings(current.whenTrue, seen),
@@ -1172,6 +1175,7 @@ export function createStaticEvaluator(sourceFile) {
           pendingMapCalls.push({
             callbacks: functionExpressions(current.arguments[0]),
             receiver: current.expression.expression,
+            call: current,
           });
         }
       }
@@ -1414,8 +1418,14 @@ export function createStaticEvaluator(sourceFile) {
         return bindings;
       }
       if (ts.isElementAccessExpression(current) && current.argumentExpression) {
-        const key = staticKey(current.argumentExpression);
-        if (key === null) return [...direct];
+        const primitiveKey = contextualPrimitive(current.argumentExpression);
+        const key = primitiveKey.known &&
+          (typeof primitiveKey.value === 'string' || typeof primitiveKey.value === 'number')
+          ? String(primitiveKey.value) : staticKey(current.argumentExpression);
+        if (key === null) {
+          for (const binding of framedMemberBindings(current)) direct.add(binding);
+          return [...direct];
+        }
         for (const container of valueExpressions(current.expression)) {
           const resolved = unwrapExpression(container);
           if (ts.isArrayLiteralExpression(resolved)) {
@@ -1748,7 +1758,10 @@ export function createStaticEvaluator(sourceFile) {
             resolvedPath.unshift(current.name.text);
           } else {
             if (!current.argumentExpression) return [];
-            const key = staticKey(current.argumentExpression);
+            const primitiveKey = primitiveFromFrames(current.argumentExpression, state.frames);
+            const key = primitiveKey.known &&
+              (typeof primitiveKey.value === 'string' || typeof primitiveKey.value === 'number')
+              ? String(primitiveKey.value) : staticKey(current.argumentExpression);
             if (key === null) return [];
             resolvedPath.unshift(key);
           }
@@ -1911,6 +1924,80 @@ export function createStaticEvaluator(sourceFile) {
       return null;
     }
 
+    function valueExpressionsInFrames(expression, frames, state = {
+      bindings: new Set(), calls: new Set(), depth: 0,
+    }) {
+      if (!expression || !preprocessStep() || state.depth > MAX_DEPTH) {
+        if (state.depth > MAX_DEPTH) preprocessingExceeded = true;
+        return [];
+      }
+      const current = unwrapExpression(expression);
+      const next = overrides => ({ ...state, ...overrides, depth: state.depth + 1 });
+      if (ts.isIdentifier(current)) {
+        const binding = declaration(current, current.text);
+        if (!binding || state.bindings.has(binding)) return [current];
+        for (let frameIndex = frames.length - 1; frameIndex >= 0; frameIndex -= 1) {
+          const frame = frames[frameIndex];
+          const parameterIndex = frame.fn.parameters.indexOf(binding);
+          if (parameterIndex < 0) continue;
+          return parameterExpressions(
+            binding, parameterIndex, frame.call,
+            value => undefinedStateInFrames(value, frames.slice(0, frameIndex)),
+          ).flatMap(value => valueExpressionsInFrames(
+            value, frames.slice(0, frameIndex), next({
+              bindings: new Set(state.bindings).add(binding),
+            }),
+          ));
+        }
+        if (ts.isVariableDeclaration(binding) && binding.initializer &&
+            (binding.parent.flags & ts.NodeFlags.Const)) {
+          return valueExpressionsInFrames(binding.initializer, frames, next({
+            bindings: new Set(state.bindings).add(binding),
+          }));
+        }
+        return [current];
+      }
+      if (ts.isConditionalExpression(current)) {
+        const condition = staticPrimitiveValue(current.condition);
+        const branches = condition.known
+          ? [condition.value ? current.whenTrue : current.whenFalse]
+          : [current.whenTrue, current.whenFalse];
+        return branches.flatMap(branch => valueExpressionsInFrames(branch, frames, next({})));
+      }
+      if (ts.isBinaryExpression(current) && [
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.QuestionQuestionToken,
+      ].includes(current.operatorToken.kind)) {
+        const left = staticPrimitiveValue(current.left);
+        if (!left.known) {
+          return [current.left, current.right].flatMap(branch =>
+            valueExpressionsInFrames(branch, frames, next({})));
+        }
+        let selected;
+        if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+          selected = left.value ? current.right : current.left;
+        } else if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+          selected = left.value ? current.left : current.right;
+        } else {
+          selected = left.value !== null && left.value !== undefined
+            ? current.left : current.right;
+        }
+        return valueExpressionsInFrames(selected, frames, next({}));
+      }
+      if (ts.isCallExpression(current)) {
+        if (state.calls.has(current)) return [];
+        const callee = localFunction(current);
+        if (!callee) return [current];
+        const callFrames = [...frames, { fn: callee, call: current }];
+        return selectedReturnExpressions(callee, current).flatMap(returned =>
+          valueExpressionsInFrames(returned, callFrames, next({
+            calls: new Set(state.calls).add(current),
+          })));
+      }
+      return [current];
+    }
+
     function invocationContexts(fn, seen = new Set()) {
       if (!fn || seen.has(fn) || !preprocessStep()) return [];
       const nextSeen = new Set(seen).add(fn);
@@ -1924,14 +2011,25 @@ export function createStaticEvaluator(sourceFile) {
           parentContexts.forEach(frames => contexts.push([...frames, { fn, call }]));
         }
       }
-      for (const { callbacks, receiver } of pendingMapCalls) {
+      for (const { callbacks, receiver, call: mapCall } of pendingMapCalls) {
         if (!callbacks.includes(fn)) continue;
-        for (const container of valueExpressions(receiver)) {
-          const resolved = unwrapExpression(container);
-          if (!ts.isArrayLiteralExpression(resolved)) continue;
-          for (const element of resolved.elements) {
-            if (ts.isOmittedExpression(element)) continue;
-            contexts.push([{ fn, call: { arguments: [element] } }]);
+        const parentFn = enclosingLocalFunction(mapCall);
+        const parentContexts = parentFn ? invocationContexts(parentFn, nextSeen) : [[]];
+        for (const parentFrames of parentContexts) {
+          for (const container of valueExpressionsInFrames(receiver, parentFrames)) {
+            const resolved = unwrapExpression(container);
+            if (!ts.isArrayLiteralExpression(resolved)) continue;
+            if (resolved.elements.length > MAX_ARRAY_ITEMS) {
+              preprocessingExceeded = true;
+              continue;
+            }
+            resolved.elements.forEach((element, index) => {
+              if (ts.isOmittedExpression(element)) return;
+              contexts.push([...parentFrames, {
+                fn,
+                call: { arguments: [element, ts.factory.createNumericLiteral(index)] },
+              }]);
+            });
           }
         }
       }
@@ -1946,10 +2044,15 @@ export function createStaticEvaluator(sourceFile) {
           calls: new Set(), bindings: new Set(), frames, depth: 0,
         }))
         : [undefined];
+      let resolved = false;
       for (const context of contexts) {
         for (const binding of callAwareSourceBindings(receiver, context)) {
           markMutated(binding, evidence);
+          resolved = true;
         }
+      }
+      if (!resolved && contexts.length === 1 && contexts[0] === undefined) {
+        markMutated(rootBinding(receiver), evidence);
       }
     }
 
