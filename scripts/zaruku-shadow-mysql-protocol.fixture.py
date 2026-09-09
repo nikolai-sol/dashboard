@@ -12,7 +12,9 @@ if not pathlib.Path('/.dockerenv').exists() or os.getuid() != 0 or not pathlib.P
 assert '--skip-reconnect' in sys.argv and '--unbuffered' in sys.argv and '--force' in sys.argv
 assert not any('password' in arg.lower() for arg in sys.argv)
 assert set(os.environ) <= {'LC_CTYPE'}
-reader = any(arg.startswith('--defaults-file=') for arg in sys.argv)
+defaults = [arg for arg in sys.argv[1:] if arg.startswith('--defaults-file=')]
+assert len(defaults) == 1 and sys.argv[1] == defaults[0]
+reader = re.fullmatch(r'--defaults-file=/proc/self/fd/[0-9]+', sys.argv[1]) is not None
 if reader:
     filename = next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('--defaults-file='))
     assert filename.startswith('/proc/self/fd/') and 'memfd:zaruku-mysql-defaults' in os.readlink(filename)
@@ -21,6 +23,8 @@ if reader:
     assert fcntl.fcntl(fd,fcntl.F_GET_SEALS) == fcntl.F_SEAL_WRITE|fcntl.F_SEAL_GROW|fcntl.F_SEAL_SHRINK|fcntl.F_SEAL_SEAL
     assert re.search(rb'password="[a-f0-9]{96}"\n',os.read(fd,4096))
     os.close(fd)
+else:
+    assert sys.argv[1:4] == ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root']
 tables=json.loads(pathlib.Path('/src/deploy/zaruku/mysql-read-tables.json').read_text())['tables']
 account="'dashboard_zaruku_reader'@'127.0.0.1'"
 connection='43' if reader else '42';created=False;grants=[];locked=False

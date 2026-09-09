@@ -13,6 +13,39 @@ spec=importlib.util.spec_from_file_location('mysql_helper',pathlib.Path(__file__
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 
 class Descriptors(unittest.TestCase):
+    def test_admin_defaults_reject_unsafe_real_metadata_without_reading_profile(self):
+        filename = '/root/.my.cnf'
+        link = '/root/.my.cnf-fixture-link'
+        self.assertFalse(os.path.lexists(filename))
+        self.assertFalse(os.path.lexists(link))
+        system = mod.System()
+        with self.assertRaises(FileNotFoundError): system.admin_defaults()
+        os.symlink('/root/absent-fixture-target', filename)
+        try:
+            with self.assertRaises(ValueError): system.admin_defaults()
+        finally: os.unlink(filename)
+        fd = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+        try: os.write(fd, b'[client]\n# Disposable dummy; no credential.\n')
+        finally: os.close(fd)
+        try:
+            for mode in [0o400, 0o600]:
+                os.chmod(filename, mode)
+                self.assertEqual(system.admin_defaults(), ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root'])
+            for mode in [0, 0o444, 0o640, 0o700, 0o4600]:
+                os.chmod(filename, mode)
+                with self.assertRaises(ValueError): system.admin_defaults()
+            os.chmod(filename, 0o600)
+            for uid, gid in [(1, 0), (0, 1)]:
+                os.chown(filename, uid, gid)
+                with self.assertRaises(ValueError): system.admin_defaults()
+            os.chown(filename, 0, 0)
+            os.link(filename, link)
+            with self.assertRaises(ValueError): system.admin_defaults()
+            os.unlink(link)
+        finally:
+            if os.path.lexists(link): os.unlink(link)
+            os.unlink(filename)
+
     def test_real_memfd_is_private_sealed_and_has_no_disk_path(self):
         system=mod.System();fd=system.memfd(b'PRIVATE_DESCRIPTOR_SENTINEL')
         try:

@@ -325,3 +325,37 @@ test('real adapter distinguishes confirmed absence from stat, getent, group, and
   });
   assert.throws(() => groupsFailure.serviceIdentity(), /command failed|inspection/i);
 });
+
+test('preflight admin channel checks fixed private metadata before explicit defaults-first socket/root argv', () => {
+  for (const mode of ['400', '600']) {
+    const calls = [];
+    const adapter = createReadOnlyPreflightAdapter({ commandRunner(filename, args) {
+      calls.push([filename, args]);
+      const stdout = filename === '/usr/bin/stat' ? `regular file\t0\t0\t${mode}\t1`
+        : filename === '/bin/sh' ? '/usr/bin/mysql' : 'root@localhost\nreport_bd\n';
+      return { status: 0, stdout, stderr: '', signal: null };
+    } });
+    assert.equal(adapter.mysql().rootSocketAdmin, true);
+    const metadata = calls.findIndex(([filename]) => filename === '/usr/bin/stat');
+    const query = calls.findIndex(([filename]) => filename === '/usr/bin/mysql');
+    assert.ok(metadata >= 0 && metadata < query);
+    assert.deepEqual(calls[metadata][1], ['--format=%F\t%u\t%g\t%a\t%h', '--', '/root/.my.cnf']);
+    assert.deepEqual(calls[query][1].slice(0, 3), ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root']);
+  }
+});
+
+test('preflight admin channel refuses absent or unsafe defaults metadata before invoking MySQL', () => {
+  for (const metadata of [null, 'symbolic link\t0\t0\t600\t1', 'regular file\t1\t0\t600\t1',
+    'regular file\t0\t1\t600\t1', 'regular file\t0\t0\t600\t2',
+    ...['000', '444', '640', '700', '4600'].map(mode => `regular file\t0\t0\t${mode}\t1`)]) {
+    let mysqlCalled = false;
+    const adapter = createReadOnlyPreflightAdapter({ commandRunner(filename) {
+      if (filename === '/usr/bin/mysql') mysqlCalled = true;
+      return { status: filename === '/usr/bin/stat' && metadata === null ? 1 : 0,
+        stdout: filename === '/usr/bin/stat' ? metadata ?? '' : filename === '/bin/sh' ? '/usr/bin/mysql' : 'root@localhost\nreport_bd\n',
+        stderr: '', signal: null };
+    } });
+    assert.throws(() => adapter.mysql(), /preflight|defaults/i);
+    assert.equal(mysqlCalled, false);
+  }
+});

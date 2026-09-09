@@ -89,7 +89,7 @@ class Session:
                 if not isinstance(password, str) or not re.fullmatch('[a-f0-9]{96}', password): raise ValueError()
                 defaults = system.memfd(('[client]\nuser=dashboard_zaruku_reader\nhost=127.0.0.1\nport=3306\nprotocol=TCP\ndatabase=report_bd\npassword="'+password+'"\n').encode())
                 self.fds.append(defaults); argv.append('--defaults-file=/proc/self/fd/'+str(defaults))
-            elif mode == 'admin' and password is None: argv += ['--no-defaults','--protocol=socket','--user=root']
+            elif mode == 'admin' and password is None: argv += system.admin_defaults()
             else: raise ValueError()
             argv += ['--batch','--raw','--unbuffered','--force','--skip-reconnect','--binary-mode','--skip-auto-rehash','--connect-timeout=3','--default-character-set=utf8mb4']
             self.child = subprocess.Popen(argv, executable='/proc/self/fd/'+str(binary), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env={}, pass_fds=tuple(self.fds), close_fds=True)

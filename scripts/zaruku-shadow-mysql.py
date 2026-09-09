@@ -15,6 +15,12 @@ MAX_OUTPUT = 65536
 PROBE = 'UPDATE `report_bd`.`canonical_fact_site_analytics_daily` SET `visits` = `visits` WHERE 1 = 0'
 
 class System:
+    def admin_defaults(self):
+        info = os.lstat('/root/.my.cnf')
+        if not stat.S_ISREG(info.st_mode) or info.st_uid or info.st_gid or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) not in (0o400, 0o600):
+            raise ValueError()
+        return ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root']
+
     def binary(self):
         for path in ['/', '/usr', '/usr/bin']:
             info = os.lstat(path)
@@ -111,7 +117,7 @@ def execute(request, system=None):
             descriptors.append(defaults)
             argv.append('--defaults-file=/proc/self/fd/'+str(defaults))
         else:
-            argv.extend(['--no-defaults','--protocol=socket','--user=root'])
+            argv.extend(system.admin_defaults())
         argv.extend(['--batch','--raw','--connect-timeout=3','--default-character-set=utf8mb4','--skip-auto-rehash','--binary-mode'])
         query = ('START TRANSACTION;\n'+sql+';\nROLLBACK;\n') if sql == PROBE else sql+';\n'
         status, stdout, stderr = system.run(argv, '/proc/self/fd/'+str(binary), query.encode('utf-8'), tuple(descriptors))

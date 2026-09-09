@@ -3,9 +3,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { validateFixtureAuthority, fixtureRunArguments, verifyFixtureImage } from './zaruku-linux-fixture-policy.mjs';
+import * as fixturePolicy from './zaruku-linux-fixture-policy.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const load = () => JSON.parse(fs.readFileSync(path.join(root, 'deploy/zaruku/linux-fixture.json')));
+
+test('private fixture root rejects absent, host-backed or unsafe mounts and metadata', () => {
+  const metadata = { directory: true, uid: 0, gid: 0, mode: 0o700 };
+  const mount = '1 0 0:1 / /root rw,nosuid,nodev,noexec - tmpfs tmpfs rw,mode=700\n';
+  assert.doesNotThrow(() => fixturePolicy.validatePrivateFixtureRoot(metadata, mount));
+  for (const value of ['', mount + mount, mount.replace('tmpfs tmpfs', 'ext4 /dev/root'),
+    ...['nosuid,', 'nodev,', ',noexec'].map(flag => mount.replace(flag, ''))]) {
+    assert.throws(() => fixturePolicy.validatePrivateFixtureRoot(metadata, value), /fixture root/);
+  }
+  for (const changes of [{ directory: false }, { uid: 1 }, { gid: 1 }, { mode: 0o755 }]) {
+    assert.throws(() => fixturePolicy.validatePrivateFixtureRoot({ ...metadata, ...changes }, mount), /fixture root/);
+  }
+});
 
 test('fixture image locks every build input and final image identity', () => {
   const authority = load(); validateFixtureAuthority(authority);
@@ -43,6 +57,9 @@ test('runtime arguments are fixed to immutable isolated disposable fixture execu
   assert.match(args.join(' '), /zaruku-shadow-mysql\.linux\.test\.py/);
   assert.match(args.join(' '), /zaruku-shadow-evidence\.linux\.test\.mjs/);
   assert.ok(args.includes('/var/www:rw,nosuid,nodev,mode=0755,size=33554432'));
+  assert.ok(args.includes('/root:rw,nosuid,nodev,noexec,mode=0700,size=1048576'));
+  assert.equal(args.filter(value => value.startsWith('/root:')).length, 1);
+  assert.doesNotMatch(args.join(' '), /(?:src|dst)=\/root(?:,|\s|$)/);
 });
 
 test('verification rejects a changed Dockerfile, package set or local image ID', async () => {

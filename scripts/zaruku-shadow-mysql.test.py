@@ -1,13 +1,21 @@
 import importlib.util
+import io
+import os
 import pathlib
+import stat
+import types
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location('mysql_helper', pathlib.Path(__file__).with_name('zaruku-shadow-mysql.py'))
 MOD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MOD)
+SESSION_SPEC = importlib.util.spec_from_file_location('mysql_session', pathlib.Path(__file__).with_name('zaruku-shadow-mysql-session.py'))
+SESSION = importlib.util.module_from_spec(SESSION_SPEC)
+SESSION_SPEC.loader.exec_module(SESSION)
 IDENTITY = {'dev': '1', 'ino': '2', 'sha256': 'a' * 64}
 
-class System:
+class System(MOD.System):
     def __init__(self):
         self.calls, self.closed, self.defaults = [], [], None
         self.identity = IDENTITY.copy()
@@ -27,6 +35,45 @@ def request():
     return {'mode':'reader', 'password':'PRIVATE_PASSWORD_SENTINEL', 'sql':'SELECT CURRENT_USER() AS currentUser', 'toolIdentity':IDENTITY}
 
 class MysqlBoundary(unittest.TestCase):
+    def test_both_admin_clients_require_private_metadata_and_defaults_first(self):
+        for mode in [0o400, 0o600]:
+            info = os.stat_result((stat.S_IFREG | mode, 1, 1, 1, 0, 0, 0, 0, 0, 0))
+            with mock.patch.object(MOD.os, 'lstat', return_value=info) as inspected:
+                with self.subTest(mode=mode, client='read-only'):
+                    system = System()
+                    MOD.execute({**request(), 'mode': 'admin', 'password': None}, system)
+                    self.assertEqual(system.calls[0][0][1:4], ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root'])
+                    self.assertIsNone(system.defaults)
+                    inspected.assert_called_with('/root/.my.cnf')
+                with self.subTest(mode=mode, client='session'):
+                    child = types.SimpleNamespace(poll=lambda: 0, wait=lambda: 0, stdin=io.BytesIO(), stdout=io.BytesIO())
+                    with mock.patch.object(SESSION.subprocess, 'Popen', return_value=child) as popen, mock.patch.object(SESSION.Session, 'query'):
+                        connection = SESSION.Session(System(), 'admin', None)
+                        try:
+                            self.assertEqual(popen.call_args.args[0][1:4], ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root'])
+                            self.assertEqual(popen.call_args.kwargs['env'], {})
+                        finally:
+                            connection.close()
+
+    def test_both_admin_clients_reject_unsafe_defaults_before_query_or_child(self):
+        values = [None, (stat.S_IFLNK | 0o600, 1, 0, 0), (stat.S_IFDIR | 0o600, 1, 0, 0),
+                  (stat.S_IFREG | 0o600, 1, 1, 0), (stat.S_IFREG | 0o600, 1, 0, 1),
+                  (stat.S_IFREG | 0o600, 2, 0, 0)]
+        values += [(stat.S_IFREG | mode, 1, 0, 0) for mode in [0, 0o444, 0o640, 0o700, 0o4600]]
+        for value in values:
+            kwargs = {'side_effect': FileNotFoundError()} if value is None else {'return_value': os.stat_result((value[0], 1, 1, value[1], value[2], value[3], 0, 0, 0, 0))}
+            with mock.patch.object(MOD.os, 'lstat', **kwargs):
+                with self.subTest(value=value, client='read-only'):
+                    system = System()
+                    with self.assertRaisesRegex(ValueError, '^Zaruku MySQL check failed$'):
+                        MOD.execute({**request(), 'mode': 'admin', 'password': None}, system)
+                    self.assertEqual(system.calls, [])
+                    self.assertIsNone(system.defaults)
+                with self.subTest(value=value, client='session'), mock.patch.object(SESSION.subprocess, 'Popen') as popen, mock.patch.object(SESSION.Session, 'query'):
+                    with self.assertRaises((ValueError, FileNotFoundError)):
+                        SESSION.Session(System(), 'admin', None)
+                    popen.assert_not_called()
+
     def test_credentials_use_only_sealed_defaults_descriptor_and_sql_pipe(self):
         system = System()
         result = MOD.execute(request(), system)

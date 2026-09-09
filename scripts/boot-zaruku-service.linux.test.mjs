@@ -188,6 +188,8 @@ test('missing or impersonating setpriv fails before application execution', asyn
 test('staged joint coordinator uses persistent fenced admin, sealed reader transport and anonymous secret publication', async () => {
   const staged=`/var/www/.dashboard-zaruku-shadow/control/${stagedSha}`;
   assert.equal(fs.existsSync('/usr/bin/mysql'),false);assert.equal(fs.existsSync('/var/www/www-root'),false);
+  assert.equal(fs.existsSync('/root/.my.cnf'),false);
+  fs.writeFileSync('/root/.my.cnf','[client]\n# Disposable dummy; no credential.\n',{mode:0o400,flag:'wx'});
   fs.copyFileSync('/src/scripts/zaruku-shadow-mysql-protocol.fixture.py','/usr/bin/mysql');fs.chmodSync('/usr/bin/mysql',0o755);
   fs.mkdirSync('/var/www/www-root/data',{recursive:true,mode:0o755});
   const shared=randomBytes(32).toString('hex');fs.writeFileSync('/var/www/www-root/data/.production.env',`DASHBOARD_AUTH_SECRET='${shared}'\n`,{mode:0o600});
@@ -213,6 +215,7 @@ test('staged joint coordinator uses persistent fenced admin, sealed reader trans
     }
     fs.unlinkSync('/tmp/zaruku-protocol-events');
   } finally {
+    fs.unlinkSync('/root/.my.cnf');
     fs.unlinkSync('/usr/bin/mysql');fs.unlinkSync('/var/www/www-root/data/.production.env');fs.rmdirSync('/var/www/www-root/data');fs.rmdirSync('/var/www/www-root');
   }
 });

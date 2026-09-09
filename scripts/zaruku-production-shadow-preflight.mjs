@@ -401,8 +401,10 @@ export function createReadOnlyPreflightAdapter(options = {}) {
     if (mysqlMetadata) return mysqlMetadata;
     const mysql = locate('mysql', commandRunner);
     if (!mysql) return (mysqlMetadata = { rootSocketAdmin: false, currentUser: null, database: null, accountExists: false });
+    const defaultsMetadata = execute('/usr/bin/stat', ['--format=%F\t%u\t%g\t%a\t%h', '--', '/root/.my.cnf'], {}, commandRunner).output;
+    if (!/^regular (?:empty )?file\t0\t0\t(?:400|600)\t1$/.test(defaultsMetadata)) fail('Unsafe MySQL admin defaults metadata');
     const sql = "SELECT CURRENT_USER(); SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='report_bd'; SELECT CONCAT(User,'@',Host) FROM mysql.user WHERE User='dashboard_zaruku_reader' AND Host='127.0.0.1';";
-    const lines = execute(mysql, ['--protocol=socket', '--batch', '--skip-column-names', '-e', sql], {}, commandRunner).output.split(/\r?\n/).filter(Boolean);
+    const lines = execute(mysql, ['--defaults-file=/root/.my.cnf', '--protocol=socket', '--user=root', '--batch', '--skip-column-names', '-e', sql], {}, commandRunner).output.split(/\r?\n/).filter(Boolean);
     const currentUser = lines[0] ?? null;
     return (mysqlMetadata = {
       rootSocketAdmin: currentUser === 'root@localhost', currentUser,

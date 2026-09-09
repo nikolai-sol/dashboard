@@ -26,10 +26,22 @@ export async function verifyFixtureImage(adapter, authority) {
   return { passed: true, imageId: authority.imageId, packageManifestSha256: authority.packageManifestSha256 };
 }
 
+export function validatePrivateFixtureRoot(metadata, mountInfo) {
+  const mounts = mountInfo.split('\n').map(line => line.split(' ')).filter(fields => fields[4] === '/root');
+  const mount = mounts[0], options = mount?.[5]?.split(',') ?? [];
+  if (!metadata.directory || metadata.uid !== 0 || metadata.gid !== 0 || metadata.mode !== 0o700 ||
+      mounts.length !== 1 || mount[mount.indexOf('-') + 1] !== 'tmpfs' ||
+      !['rw', 'nosuid', 'nodev', 'noexec'].every(option => options.includes(option))) {
+    throw new Error('Refusing Zaruku Linux fixture root');
+  }
+}
+
 export function fixtureRunArguments(authority, checkout) {
   validateFixtureAuthority(authority);
   if (!path.isAbsolute(checkout) || /[,\n\r\0]/.test(checkout) || checkout === '/var/www' || checkout.startsWith('/var/www/')) fail();
   const code = `const fs=require('node:fs'),cp=require('node:child_process');
+const privateRoot=fs.lstatSync('/root');
+(${validatePrivateFixtureRoot.toString()})({directory:privateRoot.isDirectory(),uid:privateRoot.uid,gid:privateRoot.gid,mode:privateRoot.mode&0o7777},fs.readFileSync('/proc/self/mountinfo','utf8'));
 fs.cpSync('/opt/fixture-system/etc','/etc',{recursive:true,preserveTimestamps:true,filter:src=>!['/opt/fixture-system/etc/hosts','/opt/fixture-system/etc/hostname','/opt/fixture-system/etc/resolv.conf'].includes(src)});
 fs.cpSync('/opt/fixture-system/usr-bin','/usr/bin',{recursive:true,preserveTimestamps:true});
 for(const [bin,args,label] of [['/usr/bin/python3',['-I','-B','/src/scripts/stamp-runtime-artifact.test.py'],'linux-build-helper-fixture'],['/usr/local/bin/node',['/src/scripts/boot-zaruku-service.linux.test.mjs'],'linux-privilege-drop-fixture'],['/usr/bin/python3',['-I','-B','/src/scripts/zaruku-shadow-mysql.linux.test.py'],'linux-mysql-descriptor-fixture'],['/usr/local/bin/node',['/src/scripts/zaruku-shadow-evidence.linux.test.mjs'],'linux-evidence-writer-fixture']]){
@@ -39,6 +51,7 @@ for(const [bin,args,label] of [['/usr/bin/python3',['-I','-B','/src/scripts/stam
   return ['run', '--rm', '--pull', 'never', '--platform', authority.platform, '--network', 'none', '--read-only', '--cap-add', 'SYS_PTRACE',
     '--mount', `type=bind,src=${checkout},dst=/src,readonly`,
     '--tmpfs', '/tmp:rw,nosuid,nodev,mode=1777,size=268435456',
+    '--tmpfs', '/root:rw,nosuid,nodev,noexec,mode=0700,size=1048576',
     '--tmpfs', '/etc:rw,nosuid,nodev,mode=0755,size=33554432',
     '--tmpfs', '/usr/bin:rw,nosuid,nodev,exec,mode=0755,size=268435456',
     '--tmpfs', '/var/log:rw,nosuid,nodev,mode=0755,size=8388608',
