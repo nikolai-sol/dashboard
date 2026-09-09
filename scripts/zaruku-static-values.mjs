@@ -2365,29 +2365,12 @@ export function createStaticEvaluator(sourceFile) {
         inspect(expression);
         return [...references.values()];
       }
-      function transferredReferences(argument, calleeReference, caller, activeFrames) {
-        const references = [];
-        const projected = calleeReference.path.length > 0
-          ? activeFrames.flatMap(frame =>
-            expressionsAtBindingProjection(argument, calleeReference, frame)) : [argument];
-        if (projected.length > 0) {
-          projected.forEach(value => references.push(...detailedReferences(value, caller)));
-        } else {
-          for (const reference of detailedReferences(argument, caller)) {
-            references.push({
-              ...reference,
-              path: [...reference.path, ...calleeReference.path],
-              defaults: [...reference.defaults, ...calleeReference.defaults],
-            });
-          }
-        }
-        return references;
-      }
+      const terminalBindings = new Set();
       const initial = new Map();
       for (const reference of detailedReferences(receiver, fn)) {
         initial.set(referenceKey(reference), reference);
       }
-      if (initial.size === 0) return initial;
+      if (initial.size === 0) return { references: initial, terminalBindings };
       tainted.set(fn, initial);
       let changed = true;
       while (changed && preprocessStep()) {
@@ -2398,17 +2381,31 @@ export function createStaticEvaluator(sourceFile) {
           const caller = enclosingLocalFunction(call);
           if (!caller || !callPotentiallyReachable(call, caller, frames)) continue;
           for (const reference of calleeTaint.values()) {
-            const argument = call.arguments[reference.index];
-            if (!argument) continue;
-            for (const source of transferredReferences(
-              argument, reference, caller, frames,
-            )) {
-              if (addReference(caller, source)) changed = true;
+            const activeFrames = frames.length > 0 ? frames : [[]];
+            for (const active of activeFrames) {
+              const roots = parameterExpressions(
+                reference.parameter, reference.index, call,
+                expression => undefinedStateInFrames(expression, active),
+              );
+              const projected = reference.path.length > 0
+                ? roots.flatMap(root =>
+                  expressionsAtBindingProjection(root, reference, active)) : roots;
+              for (const value of projected) {
+                for (const source of detailedReferences(value, caller)) {
+                  if (addReference(caller, source)) changed = true;
+                }
+                const context = {
+                  calls: new Set(), bindings: new Set(), frames: active, depth: 0,
+                };
+                for (const binding of callAwareSourceBindings(value, context)) {
+                  if (!parameterReference(caller, binding)) terminalBindings.add(binding);
+                }
+              }
             }
           }
         }
       }
-      return tainted.get(fn) ?? initial;
+      return { references: tainted.get(fn) ?? initial, terminalBindings };
     }
 
     for (const { receiver, evidence } of mutationReceivers) {
@@ -2428,13 +2425,16 @@ export function createStaticEvaluator(sourceFile) {
         markMutated(rootBinding(receiver), evidence);
       }
       if (invocations.unresolved && invocations.cycle) {
-        const taintedParameters = recursiveTaintedParameters(
+        const recursiveTaint = recursiveTaintedParameters(
           owner, receiver, invocations.frames,
         );
+        for (const binding of recursiveTaint.terminalBindings) {
+          markMutated(binding, evidence);
+        }
         for (const frames of invocations.frames) {
           frames.forEach((frame, frameIndex) => {
             if (frame.fn !== owner) return;
-            for (const reference of taintedParameters.values()) {
+            for (const reference of recursiveTaint.references.values()) {
               const argument = frame.call.arguments[reference.index];
               if (!argument) return;
               const context = {
