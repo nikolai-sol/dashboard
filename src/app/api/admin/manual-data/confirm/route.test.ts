@@ -21,7 +21,11 @@ function confirmedRequest(sourceConfig: Record<string, unknown>) {
   });
 }
 
-function createConnection(options: { updateError?: Error; commitError?: Error } = {}) {
+function createConnection(options: {
+  updateError?: Error;
+  commitError?: Error;
+  dashboardClientId?: string;
+} = {}) {
   const calls = { rollbacks: 0, commits: 0, releases: 0 };
   const connection = {
     async beginTransaction() {},
@@ -30,6 +34,7 @@ function createConnection(options: { updateError?: Error; commitError?: Error } 
         return [[{
           id: 22,
           dashboard_id: 11,
+          dashboard_client_id: options.dashboardClientId ?? "gidrofuril",
           platform: "manual_data",
           source_config: "{}",
         }], []];
@@ -61,7 +66,11 @@ function createConnection(options: { updateError?: Error; commitError?: Error } 
   return { connection, calls };
 }
 
-function createHandler(connection: ReturnType<typeof createConnection>["connection"], queuedState: QueuedState, captured: { sourceUrl?: string }) {
+function createHandler(
+  connection: ReturnType<typeof createConnection>["connection"],
+  queuedState: QueuedState,
+  captured: { sourceUrl?: string; registered?: number },
+) {
   return createManualDataConfirmPostHandler({
     pool: { getConnection: async () => connection } as never,
     adminEmail: (request) => verifyAdminSession(
@@ -95,6 +104,14 @@ function createHandler(connection: ReturnType<typeof createConnection>["connecti
         platform_account_id: "gidrofuril-search",
       },
     }),
+    registerGoogleSheetAccount: async () => {
+      captured.registered = (captured.registered ?? 0) + 1;
+      return {
+        advertiser_key: "gidrofuril",
+        source_key: "yandex_direct",
+        platform_account_id: "gidrofuril-search",
+      };
+    },
     createSnapshotKey: () => "2166d807-11f8-4e34-a59b-fc9f0c64fe4f",
   });
 }
@@ -104,14 +121,43 @@ const sheetConfig = { sheet_url: "https://docs.google.com/spreadsheets/d/sheet-i
 test("manual import confirmation passes the raw Google Sheet URL to enqueue", async () => {
   const { connection } = createConnection();
   const queuedState = { discards: 0, releases: 0 };
-  const captured: { sourceUrl?: string } = {};
+  const captured: { sourceUrl?: string; registered?: number } = {};
   const POST = createHandler(connection, queuedState, captured);
 
   const response = await POST(confirmedRequest({ sheet_url: `${sheetConfig.sheet_url} ` }));
 
   assert.equal(response.status, 200);
   assert.equal(captured.sourceUrl, `${sheetConfig.sheet_url} `);
+  assert.equal(captured.registered, 1);
   assert.equal(queuedState.releases, 1);
+});
+
+test("Sheet confirmation rejects an advertiser outside the dashboard identity", async () => {
+  const { connection, calls } = createConnection({ dashboardClientId: "another-client" });
+  const queuedState = { discards: 0, releases: 0 };
+  const captured: { registered?: number } = {};
+  const POST = createHandler(connection, queuedState, captured);
+
+  const response = await POST(confirmedRequest(sheetConfig));
+
+  assert.equal(response.status, 403);
+  assert.equal(captured.registered ?? 0, 0);
+  assert.equal(calls.rollbacks, 1);
+  assert.equal(calls.commits, 0);
+});
+
+test("uploaded facts keep the existing authorized account path", async () => {
+  const { connection } = createConnection();
+  const queuedState = { discards: 0, releases: 0 };
+  const captured: { registered?: number } = {};
+  const POST = createHandler(connection, queuedState, captured);
+
+  const response = await POST(confirmedRequest({
+    upload_file: { filename: "facts.csv", content_base64: "ZGF0YQ==" },
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(captured.registered ?? 0, 0);
 });
 
 test("manual import confirmation discards an upload when its source update fails", async () => {
