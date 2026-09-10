@@ -14,7 +14,7 @@
   "templateVersion": "1cdbe390fd988cf30dfbeb58bab01ef11bb87377",
   "sources": [
     {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-example-clinic", "importCadence": ["previous_iso_week"]},
-    {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-example-clinic", "importCadence": ["previous_month", "previous_iso_week"]},
+    {"sourceKey": "google_search_console", "mode": "disabled", "bindingId": null, "importCadence": []},
     {"sourceKey": "yandex_webmaster", "mode": "disabled", "bindingId": null, "importCadence": []},
     {"sourceKey": "yandex_wordstat", "mode": "disabled", "bindingId": null, "importCadence": []},
     {"sourceKey": "yandex_webmaster_alice_manual", "mode": "disabled", "bindingId": null, "importCadence": []},

@@ -15,6 +15,16 @@ test("preview validates MedRoche and reports an unconfigured binding without wri
   assert.equal(result.profile.siteId, "site-medroche");
   assert.equal(result.bindings.yandex_metrika.status, "unconfigured");
   assert.equal(result.bindings.yandex_metrika.counterId, "10630330");
+  assert.equal(result.bindings.google_search_console.status, "unconfigured");
+  assert.equal(result.bindings.google_search_console.domain, "med.roche.ru");
+  assert.equal(result.bindings.yandex_webmaster.status, "unconfigured");
+  assert.equal(result.bindings.yandex_wordstat.status, "unconfigured");
+  assert.equal(result.bindings.yandex_webmaster_alice_manual.status, "missing");
+  assert.equal(result.bindings.seo_os.status, "missing_inputs");
+  assert.equal(result.registrationStatus, "proposed_local");
+  assert.equal(result.proposedClientId, "client-roche");
+  assert.equal(result.proposedSiteId, "site-medroche");
+  assert.equal(result.proposedDashboardId, 41);
   assert.match(result.previewId, /^site-preview-/);
 });
 

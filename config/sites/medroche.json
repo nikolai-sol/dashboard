@@ -15,10 +15,10 @@
   "sources": [
     {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-medroche", "importCadence": ["previous_iso_week"]},
     {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-medroche", "importCadence": ["previous_month", "previous_iso_week"]},
-    {"sourceKey": "yandex_webmaster", "mode": "disabled", "bindingId": null, "importCadence": []},
-    {"sourceKey": "yandex_wordstat", "mode": "disabled", "bindingId": null, "importCadence": []},
-    {"sourceKey": "yandex_webmaster_alice_manual", "mode": "disabled", "bindingId": null, "importCadence": []},
-    {"sourceKey": "seo_os", "mode": "disabled", "bindingId": null, "importCadence": []}
+    {"sourceKey": "yandex_webmaster", "mode": "automated", "bindingId": "binding-webmaster-medroche", "importCadence": ["previous_iso_week"]},
+    {"sourceKey": "yandex_wordstat", "mode": "automated", "bindingId": "binding-wordstat-medroche", "importCadence": ["previous_iso_week"]},
+    {"sourceKey": "yandex_webmaster_alice_manual", "mode": "manual", "bindingId": "binding-alice-medroche", "importCadence": ["previous_month"]},
+    {"sourceKey": "seo_os", "mode": "automated", "bindingId": "binding-seo-os-medroche", "importCadence": ["previous_iso_week"]}
   ],
   "taxonomyVersion": "medroche-taxonomy-v1",
   "seoRulesVersion": "site-seo-rules-v1",

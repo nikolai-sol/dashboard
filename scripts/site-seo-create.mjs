@@ -40,8 +40,8 @@ function makeBindings(profile) {
       bindingId: source.bindingId,
       mode: source.mode,
       status: entry.status || "unconfigured",
+      ...(source.sourceKey === "google_search_console" ? { domain: profile.domain } : {}),
       ...(entry.counterId ? { counterId: entry.counterId } : {}),
-      ...(entry.property ? { property: entry.property } : {}),
     };
   }
   return result;
@@ -66,7 +66,10 @@ export function previewCreate(profileFilename, { registry = [] } = {}) {
     profileHash: hash,
     profile,
     bindings: makeBindings(profile),
-    existingClientId: profile.clientId,
+    proposedClientId: profile.clientId,
+    proposedSiteId: profile.siteId,
+    proposedDashboardId: profile.dashboardId,
+    registrationStatus: "proposed_local",
     creates: {
       registry: `site:${profile.siteId}`,
       deployPath: profile.runtime.deployPath,

@@ -15,6 +15,10 @@
   "deployLockPath": "/var/www/.dashboard-medroche-deploy.lock",
   "sourceBindings": {
     "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "10630330", "status": "unconfigured"},
-    "binding-gsc-medroche": {"sourceKey": "google_search_console", "property": "sc-domain:med.roche.ru", "status": "unconfigured"}
+    "binding-gsc-medroche": {"sourceKey": "google_search_console", "status": "unconfigured"},
+    "binding-webmaster-medroche": {"sourceKey": "yandex_webmaster", "status": "unconfigured"},
+    "binding-wordstat-medroche": {"sourceKey": "yandex_wordstat", "status": "unconfigured"},
+    "binding-alice-medroche": {"sourceKey": "yandex_webmaster_alice_manual", "status": "missing"},
+    "binding-seo-os-medroche": {"sourceKey": "seo_os", "status": "missing_inputs"}
   }
 }
