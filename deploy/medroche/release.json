@@ -14,7 +14,7 @@
   "releaseBranch": "release/medroche",
   "deployLockPath": "/var/www/.dashboard-medroche-deploy.lock",
   "sourceBindings": {
-    "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "94927113", "status": "unconfigured"},
+    "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "94927113", "status": "configured"},
     "binding-gsc-medroche": {"sourceKey": "google_search_console", "status": "unconfigured"},
     "binding-webmaster-medroche": {"sourceKey": "yandex_webmaster", "status": "unconfigured"},
     "binding-wordstat-medroche": {"sourceKey": "yandex_wordstat", "status": "unconfigured"},

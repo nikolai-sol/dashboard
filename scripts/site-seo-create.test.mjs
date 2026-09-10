@@ -9,11 +9,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PROFILE = path.join(ROOT, "config/sites/medroche.json");
 const EXAMPLE = path.join(ROOT, "config/sites/fixtures/example-clinic.json");
 
-test("preview validates MedRoche and reports an unconfigured binding without writes", async () => {
+test("preview validates MedRoche and reports the configured Metrika binding without writes", async () => {
   const { previewCreate } = await import("./site-seo-create.mjs");
   const result = previewCreate(PROFILE, { registry: [] });
   assert.equal(result.profile.siteId, "site-medroche");
-  assert.equal(result.bindings.yandex_metrika.status, "unconfigured");
+  assert.equal(result.bindings.yandex_metrika.status, "configured");
   assert.equal(result.bindings.yandex_metrika.counterId, "94927113");
   assert.equal(result.bindings.google_search_console.status, "unconfigured");
   assert.equal(result.bindings.google_search_console.domain, "med.roche.ru");
