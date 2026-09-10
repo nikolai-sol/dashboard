@@ -456,13 +456,13 @@ async function readWebmasterData(database: CanonicalDatabase, query: CanonicalRe
 
 async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta> {
   const rows = await rowsFor<DatasetMetaRow>(database, {
-    sql: `SELECT 1 AS coverage_rows, status,
-                 ingestion_run_id AS import_id, updated_at AS loaded_at
+    sql: `SELECT COUNT(*) AS coverage_rows,
+                 SUM(status = 'success') AS success_rows,
+                 MAX(ingestion_run_id) AS import_id,
+                 MAX(updated_at) AS loaded_at
             FROM canonical_wordstat_coverage
            WHERE source_key = ? AND analytics_account_id = ?
-             AND requested_from <= ? AND requested_to >= ?
-           ORDER BY updated_at DESC, id DESC
-           LIMIT 1`,
+             AND requested_from <= ? AND requested_to >= ?`,
     params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to],
   });
   const row = rows[0];
@@ -498,9 +498,9 @@ async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalRea
       latestAttempt: "failed",
     };
   }
-  return row.status === "success_empty"
-    ? datasetMeta(query, row, "automated", "complete_empty", "complete")
-    : datasetMeta(query, row, "automated", "ready", "complete");
+  return numeric(row.success_rows) > 0
+    ? datasetMeta(query, row, "automated", "ready", "complete")
+    : datasetMeta(query, row, "automated", "complete_empty", "complete");
 }
 
 type WordstatRow = Readonly<{

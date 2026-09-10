@@ -106,7 +106,7 @@ test("canonical source readers preserve empty, partial, and exact resource seman
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
-    if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, status: "success_empty", import_id: 91, loaded_at: "2026-09-01 01:00:00" }], []];
+    if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, success_rows: 0, import_id: 91, loaded_at: "2026-09-01 01:00:00" }], []];
     if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
     if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
     if (/site-seo:webmaster-(summary|daily|pages)/.test(sql)) return [[], []];
@@ -137,7 +137,7 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
-    if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, status: "success", import_id: 12, loaded_at: "2026-08-26 01:00:00" }], []];
+    if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, success_rows: 1, import_id: 12, loaded_at: "2026-08-26 01:00:00" }], []];
     if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
     if (sql.includes("site-seo:wordstat-queries")) return [[{
       query_text: "лечение", count: "100", request_kind: "popular",
@@ -164,6 +164,8 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
     window: { from: "2026-07-27", to: "2026-08-25", snapshotDate: "2026-08-25", registryVersion: "registry-2", importId: "run-2" },
   }]);
   const queryCall = calls.find((call) => call.sql.includes("site-seo:wordstat-queries"));
+  assert.match(calls[0]!.sql, /SUM\(status = 'success'\) AS success_rows/i);
+  assert.doesNotMatch(calls[0]!.sql, /ORDER BY[\s\S]*LIMIT 1/i);
   assert.match(queryCall!.sql, /WITH selected_snapshot/i);
   assert.match(queryCall!.sql, /window_from <= \?/i);
   assert.match(queryCall!.sql, /window_to >= \?/i);
