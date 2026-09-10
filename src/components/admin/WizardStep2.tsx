@@ -1489,14 +1489,16 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       </div>
 
       <div className="rounded-xl border border-slate-200 p-4">
-        <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-800">
-          <input
-            type="checkbox"
-            checked={Boolean(planSource)}
-            onChange={(e) => togglePlan(e.target.checked)}
-          />
-          Connect media plan source
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className="text-sm font-semibold text-slate-900">Media plan</h4>
+          <button
+            type="button"
+            onClick={() => togglePlan(!planSource)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            {planSource ? "Remove media plan Sheet" : "Add media plan Sheet"}
+          </button>
+        </div>
 
         {planSource ? (
           <div className="mt-3 space-y-3">
@@ -2290,7 +2292,7 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
       </div>
 
       <div className="rounded-xl border border-slate-200 p-4">
-        <h4 className="text-sm font-semibold text-slate-900">Ручные данные (Manual Data Source)</h4>
+        <h4 className="text-sm font-semibold text-slate-900">Advertising actuals from file or Google Sheet</h4>
         <p className="mt-1 text-xs text-slate-500">
           CSV/XLSX or a Google Sheet is reviewed and then queued for canonical advertising publication.
         </p>
@@ -2465,7 +2467,7 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
           onClick={addManualDataSource}
           className="mt-3 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50"
         >
-          + Добавить ручной источник данных
+          + Add advertising actuals Sheet
         </button>
       </div>
     </section>

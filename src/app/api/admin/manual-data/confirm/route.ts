@@ -15,6 +15,7 @@ type ConfirmRequestBody = {
 type SourceRow = RowDataPacket & {
   id: number;
   dashboard_id: number;
+  dashboard_client_id: string;
   platform: string;
   source_config: string | Record<string, unknown> | null;
 };
@@ -41,11 +42,13 @@ function adminEmail(request: Request): string | null {
   return verifyAdminSession(parseCookieValue(request.headers.get("cookie"), ADMIN_SESSION_COOKIE))?.email ?? null;
 }
 
-type CanonicalAccountBinding = RowDataPacket & {
+type CanonicalAccountBinding = {
   advertiser_key: string;
   source_key: string;
   platform_account_id: string;
 };
+
+type CanonicalAccountBindingRow = RowDataPacket & CanonicalAccountBinding;
 
 type ImportStatusRow = RowDataPacket & {
   status: "pending" | "processing" | "retryable" | "published" | "rejected" | "failed";
@@ -75,8 +78,44 @@ type ManualDataConfirmDependencies = {
   adminEmail: typeof adminEmail;
   enqueueCanonicalImport: typeof enqueueCanonicalImport;
   resolveReviewedAdvertisingSource: typeof resolveReviewedAdvertisingSource;
+  registerGoogleSheetAccount: typeof registerGoogleSheetAccount;
   createSnapshotKey: () => string;
 };
+
+async function registerGoogleSheetAccount(
+  conn: Awaited<ReturnType<typeof pool.getConnection>>,
+  binding: CanonicalAccountBinding,
+  accountName: string,
+): Promise<CanonicalAccountBinding> {
+  await conn.execute(
+    `INSERT INTO canonical_source_accounts
+       (source_key, platform_account_id, account_name, advertiser_name,
+        account_status, first_seen_at, last_seen_at)
+     VALUES (?, ?, ?, ?, 'active', UTC_TIMESTAMP(), UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE last_seen_at = UTC_TIMESTAMP()`,
+    [binding.source_key, binding.platform_account_id, accountName, binding.advertiser_key],
+  );
+  await conn.execute(
+    `INSERT IGNORE INTO canonical_advertiser_source_accounts
+       (advertiser_key, source_key, platform_account_id)
+     VALUES (?, ?, ?)`,
+    [binding.advertiser_key, binding.source_key, binding.platform_account_id],
+  );
+  await conn.execute(
+    `INSERT IGNORE INTO canonical_source_account_collection_settings
+       (source_key, platform_account_id, is_active, cron_enabled)
+     VALUES (?, ?, 1, 1)`,
+    [binding.source_key, binding.platform_account_id],
+  );
+  await conn.execute(
+    `INSERT IGNORE INTO canonical_ad_source_schedule_policies
+       (source_key, platform_account_id, timezone_name, expected_hour_local,
+        source_delay_days, allowed_lag_days, lookback_days, retry_limit, publication_mode)
+     VALUES (?, ?, 'Europe/Moscow', 7, 1, 0, 3, 3, 'authoritative_snapshot')`,
+    [binding.source_key, binding.platform_account_id],
+  );
+  return binding;
+}
 
 async function ignoreCleanupFailure(action: () => Promise<void>): Promise<void> {
   try {
@@ -94,6 +133,7 @@ export function createManualDataConfirmPostHandler(
     adminEmail,
     enqueueCanonicalImport,
     resolveReviewedAdvertisingSource,
+    registerGoogleSheetAccount,
     createSnapshotKey: randomUUID,
     ...overrides,
   };
@@ -114,8 +154,12 @@ export function createManualDataConfirmPostHandler(
   try {
     await conn.beginTransaction();
     const [rows] = await conn.execute<SourceRow[]>(
-      `SELECT id, dashboard_id, platform, source_config
-       FROM dashboard_sources WHERE id = ? AND dashboard_id = ? LIMIT 1 FOR UPDATE`,
+      `SELECT ds.id, ds.dashboard_id, d.client_id AS dashboard_client_id,
+              ds.platform, ds.source_config
+       FROM dashboard_sources ds
+       INNER JOIN dashboards d ON d.id = ds.dashboard_id
+       WHERE ds.id = ? AND ds.dashboard_id = ?
+       LIMIT 1 FOR UPDATE`,
       [requestIds.sourceId, requestIds.dashboardId],
     );
     const source = rows[0];
@@ -144,14 +188,33 @@ export function createManualDataConfirmPostHandler(
     }
 
     const transport = hasUpload ? "upload" : "google_sheet";
-    const [bindings] = await conn.execute<CanonicalAccountBinding[]>(
-      `SELECT advertiser_key, source_key, platform_account_id
-       FROM canonical_advertiser_source_accounts
-       WHERE advertiser_key = ? AND source_key = ? AND platform_account_id = ?
-       LIMIT 1 FOR UPDATE`,
-      [reviewed.advertiserKey, reviewed.sourceKey, reviewed.platformAccountId],
-    );
-    const binding = bindings[0];
+    let binding: CanonicalAccountBinding | undefined;
+    if (transport === "google_sheet") {
+      if (
+        reviewed.advertiserKey.trim().toLowerCase() !==
+        String(source.dashboard_client_id ?? "").trim().toLowerCase()
+      ) {
+        throw new ConfirmError(403, "The reviewed advertiser source account is not authorized for import");
+      }
+      binding = await dependencies.registerGoogleSheetAccount(
+        conn,
+        {
+          advertiser_key: reviewed.advertiserKey,
+          source_key: reviewed.sourceKey,
+          platform_account_id: reviewed.platformAccountId,
+        } as CanonicalAccountBinding,
+        String(sourceConfig.account_name ?? sourceConfig.title ?? reviewed.platformAccountId).trim(),
+      );
+    } else {
+      const [bindings] = await conn.execute<CanonicalAccountBindingRow[]>(
+        `SELECT advertiser_key, source_key, platform_account_id
+         FROM canonical_advertiser_source_accounts
+         WHERE advertiser_key = ? AND source_key = ? AND platform_account_id = ?
+         LIMIT 1 FOR UPDATE`,
+        [reviewed.advertiserKey, reviewed.sourceKey, reviewed.platformAccountId],
+      );
+      binding = bindings[0];
+    }
     if (!binding) {
       throw new ConfirmError(403, "The reviewed advertiser source account is not authorized for import");
     }
