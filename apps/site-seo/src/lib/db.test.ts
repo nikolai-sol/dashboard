@@ -107,6 +107,7 @@ test("canonical source readers preserve empty, partial, and exact resource seman
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
     if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, success_rows: 0, import_id: 91, loaded_at: "2026-09-01 01:00:00" }], []];
+    if (sql.includes("canonical_collector_runs")) return [[{ status: "success", import_id: 91, loaded_at: "2026-09-01 01:01:00" }], []];
     if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
     if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
     if (/site-seo:webmaster-(summary|daily|pages)/.test(sql)) return [[], []];
@@ -138,6 +139,7 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
     if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, success_rows: 1, import_id: 12, loaded_at: "2026-08-26 01:00:00" }], []];
+    if (sql.includes("canonical_collector_runs")) return [[{ status: "success", import_id: 12, loaded_at: "2026-08-26 01:01:00" }], []];
     if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
     if (sql.includes("site-seo:wordstat-queries")) return [[{
       query_text: "лечение", count: "100", request_kind: "popular",
@@ -206,6 +208,42 @@ test("Wordstat reports a failed scoped collection instead of inventing zero dema
     "2026-09-07",
     "2026-09-13",
   ]);
+});
+
+test("Wordstat keeps covered facts visible but reports a same-run partial attempt", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    calls.push(sql);
+    if (sql.includes("canonical_wordstat_coverage")) return [[{
+      coverage_rows: 2, success_rows: 1, import_id: 118, loaded_at: "2026-09-10 08:00:00",
+    }], []];
+    if (sql.includes("canonical_collector_runs")) return [[{
+      status: "partial", import_id: 118, loaded_at: "2026-09-10 08:01:00",
+    }], []];
+    if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
+    if (sql.includes("site-seo:wordstat-queries")) return [[{
+      query_text: "лечение", count: "100", request_kind: "popular",
+      snapshot_date: "2026-09-10", window_from: "2026-08-12", window_to: "2026-09-10",
+      registry_version: "registry-2", ingestion_run_id: "118",
+    }], []];
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "medroche-wordstat", resourceId: "ru" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "wordstat");
+  assert.equal("state" in result && result.state, "partial");
+  assert.equal("latestAttempt" in result && result.latestAttempt, "failed");
+  assert.equal("demand" in result && result.demand, 35);
+  assert.equal("queries" in result && result.queries.length, 1);
+  assert.ok(calls.some((sql) => sql.includes("canonical_collector_runs")));
+  assert.ok(calls.some((sql) => sql.includes("site-seo:wordstat-queries")));
 });
 
 test("Wordstat remains missing when neither scoped coverage nor an attempt exists", async () => {

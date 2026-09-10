@@ -454,53 +454,72 @@ async function readWebmasterData(database: CanonicalDatabase, query: CanonicalRe
   };
 }
 
-async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta> {
-  const rows = await rowsFor<DatasetMetaRow>(database, {
-    sql: `SELECT COUNT(*) AS coverage_rows,
-                 SUM(status = 'success') AS success_rows,
-                 MAX(ingestion_run_id) AS import_id,
-                 MAX(updated_at) AS loaded_at
-            FROM canonical_wordstat_coverage
-           WHERE source_key = ? AND analytics_account_id = ?
-             AND requested_from <= ? AND requested_to >= ?`,
-    params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to],
-  });
-  const row = rows[0];
-  if (!row || numeric(row.coverage_rows) === 0) {
-    const attempts = await rowsFor<DatasetMetaRow>(database, {
+async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<Readonly<{ meta: DatasetMeta; hasCoverage: boolean }>> {
+  const attemptParams = [
+    query.scope.sourceKey,
+    `yandex_wordstat:${query.scope.analyticsAccountId}:current`,
+    `yandex_wordstat:${query.scope.analyticsAccountId}:historical`,
+    `yandex_wordstat:${query.scope.analyticsAccountId}:all`,
+    `yandex_wordstat:${query.scope.analyticsAccountId}:regions`,
+    query.period.from,
+    query.period.to,
+  ];
+  const [rows, attempts] = await Promise.all([
+    rowsFor<DatasetMetaRow>(database, {
+      sql: `SELECT COUNT(*) AS coverage_rows,
+                   SUM(status = 'success') AS success_rows,
+                   MAX(ingestion_run_id) AS import_id,
+                   MAX(updated_at) AS loaded_at
+              FROM canonical_wordstat_coverage
+             WHERE source_key = ? AND analytics_account_id = ?
+               AND requested_from <= ? AND requested_to >= ?`,
+      params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to],
+    }),
+    rowsFor<DatasetMetaRow>(database, {
       sql: `SELECT status, id AS import_id,
                    COALESCE(finished_at, started_at) AS loaded_at
               FROM canonical_collector_runs
              WHERE source_key = ?
                AND job_key IN (?, ?, ?, ?)
                AND date_from <= ? AND date_to >= ?
-               AND status IN ('failed', 'partial')
+               AND status IN ('success', 'failed', 'partial')
              ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
              LIMIT 1`,
-      params: [
-        query.scope.sourceKey,
-        `yandex_wordstat:${query.scope.analyticsAccountId}:current`,
-        `yandex_wordstat:${query.scope.analyticsAccountId}:historical`,
-        `yandex_wordstat:${query.scope.analyticsAccountId}:all`,
-        `yandex_wordstat:${query.scope.analyticsAccountId}:regions`,
-        query.period.from,
-        query.period.to,
-      ],
-    });
-    const attempt = attempts[0];
-    if (!attempt) return missingMeta(query.scope.sourceKey, "automated");
-    return {
+      params: attemptParams,
+    }),
+  ]);
+  const row = rows[0];
+  const attempt = attempts[0];
+  const hasCoverage = Boolean(row && numeric(row.coverage_rows) > 0);
+  if (!hasCoverage) {
+    if (!attempt || attempt.status === "success") {
+      return { meta: missingMeta(query.scope.sourceKey, "automated"), hasCoverage: false };
+    }
+    return { meta: {
       ...missingMeta(query.scope.sourceKey, "automated"),
       period: query.period,
       state: attempt.status === "failed" ? "failed" : "partial",
       importId: attempt.import_id === null || attempt.import_id === undefined ? null : String(attempt.import_id),
       loadedAt: attempt.loaded_at === null || attempt.loaded_at === undefined ? null : String(attempt.loaded_at),
       latestAttempt: "failed",
-    };
+    }, hasCoverage: false };
   }
-  return numeric(row.success_rows) > 0
+
+  const base = numeric(row!.success_rows) > 0
     ? datasetMeta(query, row, "automated", "ready", "complete")
-    : datasetMeta(query, row, "automated", "complete_empty", "complete");
+    : attempt?.status === "success"
+      ? datasetMeta(query, row, "automated", "complete_empty", "complete")
+      : datasetMeta(query, row, "automated", "partial", "unknown");
+  const coverageRun = numeric(row!.import_id);
+  const attemptRun = numeric(attempt?.import_id);
+  const sameOrNewerFailedAttempt = (attempt?.status === "failed" || attempt?.status === "partial")
+    && (coverageRun === 0 || attemptRun >= coverageRun);
+  return {
+    meta: sameOrNewerFailedAttempt
+      ? { ...base, state: "partial", completeness: "unknown", latestAttempt: "failed" }
+      : base,
+    hasCoverage: true,
+  };
 }
 
 type WordstatRow = Readonly<{
@@ -516,8 +535,8 @@ type WordstatRow = Readonly<{
 }>;
 
 async function readWordstatData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | WordstatCanonicalData> {
-  const meta = await readWordstatMeta(database, query);
-  if (meta.state === "missing" || meta.latestAttempt === "failed") return meta;
+  const { meta, hasCoverage } = await readWordstatMeta(database, query);
+  if (!hasCoverage) return meta;
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
   const [summaryRows, queryRows] = await Promise.all([
     rowsFor<WordstatRow>(database, {
