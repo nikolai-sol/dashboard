@@ -48,6 +48,15 @@ export function assertRegistered(profile, registryFilename) {
   if (!Array.isArray(registry)) throw new TypeError("site registry must be an array");
   const registration = registry.find((entry) => entry.profile?.siteId === profile.siteId);
   if (!registration || profileHash(registration.profile) !== profileHash(profile)) throw new Error(`site ${profile.siteId} is not registered at this profile version`);
+  if (!Array.isArray(registration.bindings)) throw new TypeError("site registration bindings must be an array");
+  return registration;
+}
+
+export function writeRuntimeRegistration(standaloneRoot, registration) {
+  const destination = path.join(standaloneRoot, "apps", "site-seo", "site-registration.json");
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, `${JSON.stringify(registration, null, 2)}\n`, { mode: 0o640 });
+  return destination;
 }
 
 export function createBuildMetadata(standaloneRoot, profile) {
@@ -61,7 +70,7 @@ export function createBuildMetadata(standaloneRoot, profile) {
 
 export function buildSite(profileFilenameValue, { dryRun = false, registryFilename = null } = {}) {
   const profile = readSiteProfile(profileFilenameValue);
-  assertRegistered(profile, registryFilename);
+  const registration = assertRegistered(profile, registryFilename);
   const appRoot = path.join(ROOT, "apps/site-seo");
   const env = { ...process.env, ...buildEnvironment(profile) };
   if (dryRun) return { profile, environment: buildEnvironment(profile), appRoot, command: "next build --webpack" };
@@ -74,6 +83,7 @@ export function buildSite(profileFilenameValue, { dryRun = false, registryFilena
   const outputRoot = path.join(appRoot, profile.runtime.buildOutputDir);
   const standaloneRoot = path.join(outputRoot, "standalone");
   if (!fs.existsSync(standaloneRoot)) throw new Error(`missing standalone output: ${standaloneRoot}`);
+  writeRuntimeRegistration(standaloneRoot, registration);
   return { profile, ...createBuildMetadata(standaloneRoot, profile) };
 }
 

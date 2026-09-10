@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { buildSite } from "./site-seo-build.mjs";
+import { assertRegistered, buildSite, writeRuntimeRegistration } from "./site-seo-build.mjs";
 import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
 
 const profileFilename = path.resolve("config/sites/medroche.json");
@@ -21,9 +21,34 @@ test("build accepts the exact registered profile in preview mode", () => {
   try {
     const profile = readSiteProfile(profileFilename);
     const registry = path.join(directory, "registry.json");
-    writeFileSync(registry, `${JSON.stringify([{ profile, profileHash: profileHash(profile) }])}\n`);
+    writeFileSync(registry, `${JSON.stringify([{ profile, bindings: [], profileHash: profileHash(profile) }])}\n`);
     const result = buildSite(profileFilename, { dryRun: true, registryFilename: registry });
     assert.equal(result.profile.siteId, "site-medroche");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("build embeds the exact registration inside the standalone app", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "site-seo-build-registration-"));
+  try {
+    const profile = readSiteProfile(profileFilename);
+    const registration = { profile, bindings: [] };
+    const registry = path.join(directory, "registry.json");
+    const standalone = path.join(directory, "standalone");
+    mkdirSync(path.join(standalone, "apps", "site-seo"), { recursive: true });
+    writeFileSync(registry, JSON.stringify([registration]));
+
+    const destination = writeRuntimeRegistration(
+      standalone,
+      assertRegistered(profile, registry),
+    );
+
+    assert.equal(
+      destination,
+      path.join(standalone, "apps", "site-seo", "site-registration.json"),
+    );
+    assert.deepEqual(JSON.parse(readFileSync(destination, "utf8")), registration);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -8,7 +8,12 @@ module.exports = {
     gid: 'dashboard-medroche',
     instances: 1,
     exec_mode: 'fork',
-    env: { NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: 3003 },
+    env: {
+      NODE_ENV: 'production',
+      HOSTNAME: '127.0.0.1',
+      PORT: 3003,
+      SITE_SEO_REGISTRATION_PATH: './site-registration.json',
+    },
     max_restarts: 10,
     restart_delay: 3000,
     max_memory_restart: '800M',
