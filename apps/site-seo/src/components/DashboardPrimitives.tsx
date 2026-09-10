@@ -18,7 +18,7 @@ export function Panel({ title, subtitle, state, children }: PanelProps) {
     <section className="site-seo-panel" data-state={state}>
       <header className="site-seo-panel-header">
         <h2>{title}</h2>
-        {subtitle ? <p>{subtitle}</p> : null}
+      {subtitle !== undefined && subtitle !== null ? <p>{subtitle}</p> : null}
       </header>
       <div className="site-seo-panel-body">{children}</div>
     </section>
@@ -34,7 +34,7 @@ export function Kpi({ label, value, detail }: KpiProps) {
     <div className="site-seo-kpi">
       <span className="site-seo-kpi-label">{label}</span>
       <span className="site-seo-kpi-value">{value}</span>
-      {detail ? <span className="site-seo-kpi-detail">{detail}</span> : null}
+      {detail !== undefined && detail !== null ? <span className="site-seo-kpi-detail">{detail}</span> : null}
     </div>
   );
 }

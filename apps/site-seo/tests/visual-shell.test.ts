@@ -48,3 +48,10 @@ test("neutral KPI and status primitives render supplied presentation values", ()
   assert.match(html, /data-state="success"/);
   assert.match(html, />success<\/span>/);
 });
+
+test("neutral primitives retain numeric zero copy", () => {
+  const panel = renderToStaticMarkup(createElement(Panel, { title: "Трафик", subtitle: 0 }, "body"));
+  const kpi = renderToStaticMarkup(createElement(Kpi, { label: "Изменение", value: 0, detail: 0 }));
+  assert.match(panel, />0<\/p>/);
+  assert.match(kpi, /site-seo-kpi-detail[^>]*>0</);
+});
