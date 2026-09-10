@@ -48,6 +48,10 @@ test("MedRoche PM2 launch reads only its dedicated runtime secret file", () => {
   assert.match(launcher, /SITE_SEO_REGISTRATION_PATH/);
   assert.match(launcher, /parsed\.HOSTNAME !== '127\.0\.0\.1'/);
   assert.match(launcher, /parsed\.PORT !== '3003'/);
+  assert.match(launcher, /HOME:\s*'\/var\/lib\/dashboard-medroche'/);
+  assert.match(launcher, /XDG_CACHE_HOME:\s*'\/var\/lib\/dashboard-medroche\/cache'/);
+  assert.match(launcher, /XDG_CONFIG_HOME:\s*'\/var\/lib\/dashboard-medroche\/config'/);
+  assert.match(launcher, /TMPDIR:\s*'\/var\/lib\/dashboard-medroche\/tmp'/);
   assert.match(launcher, /apps\/site-seo\/server\.js/);
   assert.doesNotMatch(launcher, /dashboard-zaruku|3002/);
 });

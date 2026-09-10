@@ -26,5 +26,10 @@ for (const key of ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME', 'D
   if (!parsed[key]) throw new Error('Incomplete MedRoche runtime environment');
 }
 for (const key of Object.keys(process.env)) delete process.env[key];
-Object.assign(process.env, parsed);
+Object.assign(process.env, parsed, {
+  HOME: '/var/lib/dashboard-medroche',
+  XDG_CACHE_HOME: '/var/lib/dashboard-medroche/cache',
+  XDG_CONFIG_HOME: '/var/lib/dashboard-medroche/config',
+  TMPDIR: '/var/lib/dashboard-medroche/tmp',
+});
 require('/var/www/dashboard-medroche/apps/site-seo/server.js');
