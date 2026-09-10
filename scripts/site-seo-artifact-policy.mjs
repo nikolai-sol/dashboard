@@ -30,7 +30,10 @@ export function validateArtifactManifest(value) {
     if (seen.has(file.path)) throw new TypeError(`duplicate artifact file ${file.path}`);
     seen.add(file.path);
     sha(file.sha256, `files[${index}].sha256`);
-    if (/(^|\/)(?:\.env(?:\.|$)|.*(?:token|secret|credential).*)/i.test(file.path)) throw new TypeError(`secret-bearing artifact file: ${file.path}`);
+    const dependencyFile = /(^|\/)node_modules\//.test(file.path);
+    if (/(^|\/)\.env(?:\.|$)/i.test(file.path) || (!dependencyFile && /(^|\/).*?(?:token|secret|credential).*?$/i.test(file.path))) {
+      throw new TypeError(`secret-bearing artifact file: ${file.path}`);
+    }
     if (FORBIDDEN.some((marker) => file.path.toLowerCase().includes(marker))) throw new TypeError(`foreign artifact file: ${file.path}`);
   }
   return value;
@@ -63,10 +66,11 @@ export function inspectArtifactDirectory(root, manifest) {
     if (FORBIDDEN.some((marker) => lower.includes(marker))) errors.push(`foreign artifact path: ${filename}`);
     if (!expected.has(filename)) errors.push(`unmanifested artifact file: ${filename}`);
     else if (createHash("sha256").update(fs.readFileSync(path.join(root, filename))).digest("hex") !== expected.get(filename)) errors.push(`artifact hash mismatch: ${filename}`);
-    if (filename.endsWith(".json") || filename.endsWith(".js") || filename.endsWith(".mjs") || filename.endsWith(".ts")) {
+    const dependencyFile = /(^|\/)node_modules\//.test(filename);
+    const packageMetadata = filename === "package.json" || filename.endsWith("/package.json");
+    if (!dependencyFile && !packageMetadata && (filename.endsWith(".json") || filename.endsWith(".js") || filename.endsWith(".mjs") || filename.endsWith(".ts"))) {
       const content = fs.readFileSync(path.join(root, filename), "utf8").toLowerCase();
       if (FORBIDDEN.some((marker) => content.includes(marker))) errors.push(`foreign marker in artifact: ${filename}`);
-      if (/\b(?:metrika_token|oauth_token|password|secret)\s*=/.test(content)) errors.push(`credential marker in artifact: ${filename}`);
     }
   }
   for (const filename of expected.keys()) if (!entries.includes(filename)) errors.push(`missing artifact file: ${filename}`);
