@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
 import { ADMIN_SESSION_COOKIE, parseCookieValue, verifyAdminSession } from "@/lib/access-auth";
-import { enqueueCanonicalImport, type EnqueuedCanonicalImport } from "@/lib/canonical-import-request";
+import {
+  enqueueCanonicalImport,
+  normalizeGoogleSheetUrl,
+  type EnqueuedCanonicalImport,
+} from "@/lib/canonical-import-request";
 import { resolveReviewedAdvertisingSource } from "@/lib/admin-dashboards";
 
 type ConfirmRequestBody = {
@@ -82,7 +86,7 @@ type ManualDataConfirmDependencies = {
   createSnapshotKey: () => string;
 };
 
-async function registerGoogleSheetAccount(
+export async function registerGoogleSheetAccount(
   conn: Awaited<ReturnType<typeof pool.getConnection>>,
   binding: CanonicalAccountBinding,
   accountName: string,
@@ -95,6 +99,16 @@ async function registerGoogleSheetAccount(
      ON DUPLICATE KEY UPDATE last_seen_at = UTC_TIMESTAMP()`,
     [binding.source_key, binding.platform_account_id, accountName, binding.advertiser_key],
   );
+  const [owners] = await conn.execute<CanonicalAccountBindingRow[]>(
+    `SELECT advertiser_key, source_key, platform_account_id
+     FROM canonical_advertiser_source_accounts
+     WHERE source_key = ? AND platform_account_id = ?
+     FOR UPDATE`,
+    [binding.source_key, binding.platform_account_id],
+  );
+  if (owners.some((owner) => owner.advertiser_key !== binding.advertiser_key)) {
+    throw new ConfirmError(409, "This source account already belongs to another advertiser");
+  }
   await conn.execute(
     `INSERT IGNORE INTO canonical_advertiser_source_accounts
        (advertiser_key, source_key, platform_account_id)
@@ -181,13 +195,16 @@ export function createManualDataConfirmPostHandler(
     const sourceConfig = { ...existingSourceConfig, ...incomingSourceConfig };
     const reviewed = dependencies.resolveReviewedAdvertisingSource(sourceConfig);
     const upload = sourceConfig.upload_file;
-    const sheetUrl = String(sourceConfig.sheet_url ?? "");
+    const rawSheetUrl = String(sourceConfig.sheet_url ?? "");
     const hasUpload = upload && typeof upload === "object";
-    if (hasUpload === Boolean(sheetUrl)) {
+    const hasSheet = Boolean(rawSheetUrl.trim());
+    if (hasUpload === hasSheet) {
       throw new ConfirmError(400, "Provide exactly one upload or Google Sheet URL");
     }
 
     const transport = hasUpload ? "upload" : "google_sheet";
+    const sheetUrl = transport === "google_sheet" ? normalizeGoogleSheetUrl(rawSheetUrl.trim()) : "";
+    if (transport === "google_sheet") sourceConfig.sheet_url = sheetUrl;
     let binding: CanonicalAccountBinding | undefined;
     if (transport === "google_sheet") {
       if (

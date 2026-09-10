@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createAdminSession, ADMIN_SESSION_COOKIE, verifyAdminSession } from "@/lib/access-auth";
-import { createManualDataConfirmPostHandler } from "./route";
+import { createManualDataConfirmPostHandler, registerGoogleSheetAccount } from "./route";
 
 type QueuedState = {
   discards: number;
@@ -118,7 +118,7 @@ function createHandler(
 
 const sheetConfig = { sheet_url: "https://docs.google.com/spreadsheets/d/sheet-id#gid=1" };
 
-test("manual import confirmation passes the raw Google Sheet URL to enqueue", async () => {
+test("manual import confirmation persists and enqueues the normalized Google Sheet URL", async () => {
   const { connection } = createConnection();
   const queuedState = { discards: 0, releases: 0 };
   const captured: { sourceUrl?: string; registered?: number } = {};
@@ -127,9 +127,32 @@ test("manual import confirmation passes the raw Google Sheet URL to enqueue", as
   const response = await POST(confirmedRequest({ sheet_url: `${sheetConfig.sheet_url} ` }));
 
   assert.equal(response.status, 200);
-  assert.equal(captured.sourceUrl, `${sheetConfig.sheet_url} `);
+  assert.equal(captured.sourceUrl, sheetConfig.sheet_url);
   assert.equal(captured.registered, 1);
   assert.equal(queuedState.releases, 1);
+});
+
+test("Sheet account registration rejects an existing owner from another advertiser", async () => {
+  const statements: string[] = [];
+  const connection = {
+    async execute(sql: string) {
+      statements.push(sql);
+      if (sql.includes("FROM canonical_advertiser_source_accounts")) {
+        return [[{ advertiser_key: "another-client" }], []];
+      }
+      return [{ affectedRows: 1 }, []];
+    },
+  };
+
+  await assert.rejects(
+    registerGoogleSheetAccount(connection as never, {
+      advertiser_key: "gidrofuril",
+      source_key: "yandex_direct",
+      platform_account_id: "gidrofuril-search",
+    }, "Gidrofuril Search"),
+    /already belongs to another advertiser/,
+  );
+  assert.equal(statements.some((sql) => sql.includes("INSERT IGNORE INTO canonical_advertiser_source_accounts")), false);
 });
 
 test("Sheet confirmation rejects an advertiser outside the dashboard identity", async () => {
