@@ -22,8 +22,8 @@ test("MedRoche registry pins only the confirmed Metrika source scope", () => {
     siteId: "site-medroche",
     dashboardId: 41,
     sourceKey: "yandex_metrika",
-    analyticsAccountId: "10630330",
-    resourceId: "10630330",
+    analyticsAccountId: "94927113",
+    resourceId: "94927113",
   }]);
 
   const unboundSourceKeys = profile.sources

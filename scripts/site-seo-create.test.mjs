@@ -14,7 +14,7 @@ test("preview validates MedRoche and reports an unconfigured binding without wri
   const result = previewCreate(PROFILE, { registry: [] });
   assert.equal(result.profile.siteId, "site-medroche");
   assert.equal(result.bindings.yandex_metrika.status, "unconfigured");
-  assert.equal(result.bindings.yandex_metrika.counterId, "10630330");
+  assert.equal(result.bindings.yandex_metrika.counterId, "94927113");
   assert.equal(result.bindings.google_search_console.status, "unconfigured");
   assert.equal(result.bindings.google_search_console.domain, "med.roche.ru");
   assert.equal(result.bindings.yandex_webmaster.status, "unconfigured");
