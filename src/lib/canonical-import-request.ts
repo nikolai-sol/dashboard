@@ -71,7 +71,7 @@ function decodeUpload(contentBase64: string): Buffer {
   return data;
 }
 
-function normalizeGoogleSheetUrl(value: string): string {
+export function normalizeGoogleSheetUrl(value: string): string {
   try {
     const url = new URL(value);
     const source = value.match(/^[a-zA-Z][a-zA-Z\d+.-]*:\/\/([^/?#]*)([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/);
