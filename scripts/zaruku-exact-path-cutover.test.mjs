@@ -166,3 +166,160 @@ test('candidate is deterministic and leaves predecessor bytes outside one block 
   const withoutBlock = first.replace(new RegExp(`${CUTOVER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${CUTOVER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n\\n`), '');
   assert.equal(withoutBlock, predecessor);
 });
+
+function cutoverAdapter({ failAt, falseAt, baselineDrift = false } = {}) {
+  const calls = [];
+  const authority = fixtureAuthority();
+  const candidate = predecessor.replace(
+    '    location ^~ /dashboard/ {',
+    '__candidate-generated-by-state-machine__\n    location ^~ /dashboard/ {',
+  );
+  const pass = (name, value = { passed: true }) => async (...args) => {
+    calls.push(args.length && ['nginxTest', 'reload'].includes(name) ? `${name}:${args[0]}` : name);
+    if (failAt === name || failAt === `${name}:${args[0]}`) throw new Error(`private ${name} failure`);
+    if (falseAt === name || falseAt === `${name}:${args[0]}`) return { passed: false };
+    return value;
+  };
+  let baselineCount = 0;
+  const baseline = {
+    combined: { pid: 4101, cwd: '/var/www/dashboard', sourceSha: '96f16c5df88da796813e701d565191b84dac278b', port: 3001 },
+    isolated: { pid: 4202, cwd: '/var/www/dashboard-zaruku/apps/zaruku', sourceSha: authority.reviewedAppSha, port: 3002, loopbackOnly: true },
+    targetSha256: authority.expectedPredecessorSha256,
+    loadedNginxSha256: 'b'.repeat(64),
+    managerAuth: true,
+    publicPortsClosed: true,
+  };
+  return {
+    calls,
+    authority: pass('authority', authority),
+    source: pass('source', { clean: true, branch: 'codex/zaruku-exact-path-cutover', appSha: authority.reviewedAppSha }),
+    shadow: pass('shadow', { decision: 'GO', sourceSha: authority.reviewedAppSha, stableCanonicalComparison: true }),
+    baseline: async () => {
+      calls.push('baseline');
+      baselineCount += 1;
+      if (failAt === 'baseline') throw new Error('private baseline failure');
+      if (baselineDrift && baselineCount > 1) return { ...baseline, combined: { ...baseline.combined, pid: 9999 } };
+      return baselineCount > 2 ? { ...baseline, targetSha256: sha256(candidate), loadedNginxSha256: 'c'.repeat(64) } : baseline;
+    },
+    readPredecessor: pass('readPredecessor', predecessor),
+    render: pass('render', candidate),
+    validate: pass('validate'),
+    backup: pass('backup', { passed: true, path: '/etc/nginx/conf.d/.dashboard-next.conf.pre-zaruku-1c0363a5', sha256: authority.expectedPredecessorSha256 }),
+    stageCandidate: pass('stageCandidate', { passed: true, sha256: sha256(candidate) }),
+    install: pass('install'),
+    nginxTest: pass('nginxTest'),
+    reload: pass('reload'),
+    verify: pass('verify', { passed: true, publicRouteOwner: 3002, restoredViews: true, foreignRoutesUnchanged: true }),
+    restore: pass('restore'),
+    verifyRollback: pass('verifyRollback', { passed: true, publicRouteOwner: 3001 }),
+    report: pass('report'),
+  };
+}
+
+test('cutover state machine follows the fixed successful order', async () => {
+  const { runCutover } = await import(modulePath);
+  const adapter = cutoverAdapter();
+  const result = await runCutover(adapter);
+  assert.equal(result.decision, 'CUTOVER');
+  assert.match(result.candidateSha256, /^[a-f0-9]{64}$/);
+  assert.equal(result.backupPath, '/etc/nginx/conf.d/.dashboard-next.conf.pre-zaruku-1c0363a5');
+  assert.deepEqual(adapter.calls, [
+    'authority', 'source', 'shadow', 'baseline', 'readPredecessor', 'render', 'validate',
+    'baseline', 'backup', 'stageCandidate', 'install', 'nginxTest:candidate', 'reload:candidate',
+    'verify', 'baseline', 'report',
+  ]);
+});
+
+test('pre-install failures never restore or reload nginx', async () => {
+  const { runCutover } = await import(modulePath);
+  for (const failAt of ['source', 'shadow', 'baseline', 'readPredecessor', 'render', 'validate', 'backup', 'stageCandidate']) {
+    const adapter = cutoverAdapter({ failAt });
+    await assert.rejects(() => runCutover(adapter), /Zaruku exact-path cutover failed/);
+    assert.equal(adapter.calls.some(call => call.startsWith('restore')), false, failAt);
+    assert.equal(adapter.calls.some(call => call.startsWith('reload')), false, failAt);
+  }
+});
+
+test('every post-install failure performs one complete verified rollback', async () => {
+  const { runCutover } = await import(modulePath);
+  for (const failAt of ['install', 'nginxTest:candidate', 'reload:candidate', 'verify']) {
+    const adapter = cutoverAdapter({ failAt });
+    const result = await runCutover(adapter);
+    assert.equal(result.decision, 'ROLLED-BACK', failAt);
+    assert.equal(result.failure, failAt === 'install' ? 'install' : failAt.split(':')[0], failAt);
+    assert.deepEqual(
+      adapter.calls.filter(call => ['restore', 'nginxTest:rollback', 'reload:rollback', 'verifyRollback'].includes(call)),
+      ['restore', 'nginxTest:rollback', 'reload:rollback', 'verifyRollback'],
+      failAt,
+    );
+  }
+});
+
+test('false mutation acknowledgements trigger rollback exactly like transport failures', async () => {
+  const { runCutover } = await import(modulePath);
+  for (const falseAt of ['install', 'nginxTest:candidate', 'reload:candidate']) {
+    const adapter = cutoverAdapter({ falseAt });
+    const result = await runCutover(adapter);
+    assert.equal(result.decision, 'ROLLED-BACK', falseAt);
+    assert.deepEqual(
+      adapter.calls.filter(call => ['restore', 'nginxTest:rollback', 'reload:rollback', 'verifyRollback'].includes(call)),
+      ['restore', 'nginxTest:rollback', 'reload:rollback', 'verifyRollback'],
+      falseAt,
+    );
+  }
+});
+
+test('rollback refuses a false restore, syntax-test, or reload acknowledgement', async () => {
+  const { runCutover } = await import(modulePath);
+  for (const falseAt of ['restore', 'nginxTest:rollback', 'reload:rollback']) {
+    const adapter = cutoverAdapter({ failAt: 'verify', falseAt });
+    await assert.rejects(() => runCutover(adapter), /Zaruku exact-path cutover failed/);
+  }
+});
+
+test('combined-runtime drift after candidate staging refuses before install', async () => {
+  const { runCutover } = await import(modulePath);
+  const adapter = cutoverAdapter({ baselineDrift: true });
+  await assert.rejects(() => runCutover(adapter), /Zaruku exact-path cutover failed/);
+  assert.equal(adapter.calls.includes('install'), false);
+  assert.equal(adapter.calls.includes('restore'), false);
+});
+
+test('state-machine decisions contain only sanitized evidence', async () => {
+  const { runCutover } = await import(modulePath);
+  const adapter = cutoverAdapter({ failAt: 'verify' });
+  const result = await runCutover(adapter);
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /private|cookie|password|authorization/i);
+  assert.deepEqual(Object.keys(result).sort(), [
+    'backupPath', 'candidateSha256', 'decision', 'failure', 'reviewedAppSha',
+  ]);
+});
+
+test('production SSH transport is fixed to beget and carries no candidate bytes in argv', async () => {
+  const { cutoverSshArguments } = await import(modulePath);
+  const args = cutoverSshArguments('install');
+  assert.deepEqual(args.slice(0, 8), [
+    '-F', '/dev/null', '-o', 'HostName=5.35.85.218', '-o', 'User=root', '-o', 'Port=22',
+  ]);
+  assert.equal(args.at(-2), 'beget');
+  assert.match(args.at(-1), /^\/usr\/bin\/env -i \/usr\/bin\/node --input-type=module -e /);
+  assert.doesNotMatch(args.join(' '), /BEGIN REPORTINGDASH|"candidate"\s*:/i);
+});
+
+test('production adapter rejects every authority override', async () => {
+  const { createProductionCutoverAdapter } = await import(modulePath);
+  assert.throws(() => createProductionCutoverAdapter({ host: 'other' }), /cutover adapter refused/);
+  assert.throws(() => createProductionCutoverAdapter({ targetFile: '/tmp/nginx.conf' }), /cutover adapter refused/);
+  assert.throws(() => createProductionCutoverAdapter({ isolatedPort: 3999 }), /cutover adapter refused/);
+});
+
+test('CLI accepts only check or apply', async () => {
+  const { cutoverMain } = await import(modulePath);
+  let created = false;
+  const factory = () => { created = true; return cutoverAdapter(); };
+  await assert.rejects(() => cutoverMain([], factory), /cutover invocation refused/);
+  await assert.rejects(() => cutoverMain(['apply', 'again'], factory), /cutover invocation refused/);
+  await assert.rejects(() => cutoverMain(['rollback'], factory), /cutover invocation refused/);
+  assert.equal(created, false);
+});
