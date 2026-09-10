@@ -36,7 +36,10 @@ export function createDashboardJsonHandler(deps: DashboardJsonDependencies) {
     try { session = await authorize(deps); }
     catch { return Response.json({ error: "unauthorized" }, { status: 401 }); }
     try {
-      return Response.json(await loadDashboardReadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute }));
+      return Response.json(
+        await loadDashboardReadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute }),
+        { headers: { "cache-control": "private, no-store" } },
+      );
     } catch {
       return Response.json({ error: "canonical_read_unavailable" }, { status: 503 });
     }

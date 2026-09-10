@@ -46,6 +46,7 @@ test("forwards one structured selection, publication, and filters to the JSON re
   });
   const response = await handler({ slug: "medroche", selection: createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: period }, "Europe/Moscow"), publicationId: "publication-7", filters: { country: "RU" } });
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
   assert.deepEqual(queries, [{ name: "gsc", scope: { bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }, period, publicationId: "publication-7", filters: { country: "RU" } }]);
 });
 
