@@ -215,13 +215,19 @@ export function assertSiteRegistry(
       throw new TypeError("bindings must be an array");
     const bindings = registration.bindings.map(assertBinding);
     const bindingIds = new Set(bindings.map((binding) => binding.bindingId));
+    for (const binding of bindings) {
+      const source = profile.sources.find(
+        (candidate) => candidate.bindingId === binding.bindingId,
+      );
+      if (!source || source.mode === "disabled" || source.sourceKey !== binding.sourceKey)
+        throw new TypeError(`binding ${binding.bindingId} is not declared by profile`);
+    }
     for (const source of profile.sources) {
       if (source.mode === "disabled") continue;
       const binding = bindings.find(
         (candidate) => candidate.bindingId === source.bindingId,
       );
-      if (!binding)
-        throw new TypeError(`binding ${source.bindingId} is missing`);
+      if (!binding) continue;
       if (binding.clientId !== profile.clientId)
         throw new TypeError("binding clientId does not match profile");
       if (binding.siteId !== profile.siteId)

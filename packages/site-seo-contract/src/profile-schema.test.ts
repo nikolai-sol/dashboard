@@ -136,6 +136,22 @@ test("registry rejects a binding whose client or resource scope does not match",
   );
 });
 
+test("registry permits an enabled source to remain explicitly unconfigured", () => {
+  const value = registration();
+  const registered = assertSiteRegistry([{ ...value, bindings: [] }]);
+
+  assert.equal(registered[0].profile.siteId, "site-medroche");
+  assert.deepEqual(registered[0].bindings, []);
+});
+
+test("registry rejects a binding not declared by the profile", () => {
+  const value = registration();
+  assert.throws(
+    () => assertSiteRegistry([{ ...value, bindings: [{ ...value.bindings[0], bindingId: "extra" }] }]),
+    /not declared by profile/i,
+  );
+});
+
 test("registry rejects duplicate dashboard, slug, domain, route, port and runtime paths", () => {
   const first = registration();
   const secondProfile = profile({
@@ -144,7 +160,7 @@ test("registry rejects duplicate dashboard, slug, domain, route, port and runtim
     sources: [],
   });
   assert.throws(
-    () => assertSiteRegistry([first, registration(secondProfile)]),
+    () => assertSiteRegistry([first, { profile: secondProfile, bindings: [] }]),
     /dashboardId|slug|domain|route|port|runtime/i,
   );
 });
