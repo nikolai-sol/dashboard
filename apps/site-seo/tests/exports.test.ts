@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DatasetMeta, Period } from "@reportingdash/site-seo-contract";
 import { buildExportRows, toCsv } from "../src/lib/exports.ts";
-import { createExcelExportHandler } from "../src/app/api/dashboard/[siteSlug]/excel/route.ts";
-import { createPdfExportHandler } from "../src/app/api/dashboard/[siteSlug]/pdf/route.ts";
+import { createExcelExportHandler, createPdfExportHandler } from "../src/lib/route-handlers.ts";
 import { createPeriodSelection } from "../src/lib/period-selection.ts";
 
 const period: Period = { kind: "iso_week", key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" };

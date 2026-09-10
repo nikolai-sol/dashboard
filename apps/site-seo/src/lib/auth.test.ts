@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assertAuthorizedSiteSession, type SiteSeoSession } from "./auth.ts";
-import { createDashboardJsonHandler } from "../app/api/dashboard/[siteSlug]/route.ts";
+import { createDashboardJsonHandler } from "./route-handlers.ts";
 import { createPeriodSelection } from "./period-selection.ts";
 
 const now = Date.parse("2026-09-10T10:00:00Z");

@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { readFile as readFileFromDisk } from "node:fs/promises";
 import type { SiteRegistration } from "@reportingdash/site-seo-contract";
 import { calendarMonthPeriod, createPeriodSelection, isoWeekPeriod } from "./period-selection.ts";
-import type { DashboardReadRequest } from "../app/api/dashboard/[siteSlug]/route.ts";
+import type { DashboardReadRequest } from "./route-handlers.ts";
 import type { SiteSeoSession } from "./auth.ts";
 import { canonicalReadExecutor, loadCurrentCredentialVersion } from "./db.ts";
 
