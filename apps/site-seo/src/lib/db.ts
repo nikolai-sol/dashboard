@@ -80,6 +80,7 @@ function stateForCoverage(state: ManualCoverageRow["coverage_state"]): Pick<Data
   if (state === "complete") return { state: "ready", completeness: "complete" };
   if (state === "complete_empty") return { state: "complete_empty", completeness: "complete" };
   if (state === "limited") return { state: "partial", completeness: "limited" };
+  if (state === "unknown") return { state: "partial", completeness: "unknown" };
   return { state: "missing", completeness: "unknown" };
 }
 

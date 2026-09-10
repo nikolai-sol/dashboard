@@ -51,6 +51,7 @@ test("canonical GSC executor reads only full scoped MySQL facts and preserves pr
       if (sql.includes("canonical_seo_manual_coverage")) return [[
         { ...importFields(), layer_name: "daily", coverage_state: "complete", row_count: 1, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
         { ...importFields(), layer_name: "query", coverage_state: "limited", row_count: 1, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+        { ...importFields(), layer_name: "page", coverage_state: "unknown", row_count: 1, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
       ], []];
       throw new Error("unexpected query");
     },
@@ -67,6 +68,8 @@ test("canonical GSC executor reads only full scoped MySQL facts and preserves pr
   assert.equal("summary" in result && result.summary?.clicks, 2);
   assert.equal("meta" in result && result.meta.importId, "publication-7");
   assert.equal("dimensions" in result && result.dimensions[0]?.meta.completeness, "limited");
+  assert.equal("dimensionCoverage" in result && result.dimensionCoverage?.page?.state, "partial");
+  assert.equal("dimensionCoverage" in result && result.dimensionCoverage?.page?.completeness, "unknown");
   assert.ok(calls.every(({ params }) => params.includes(scope.clientId) && params.includes(scope.siteId) && params.includes(41)));
   assert.ok(calls.every(({ params }) => params.includes("publication-7")));
   assert.ok(calls.every(({ sql }) => !/api\.|oauth|token/i.test(sql)));
