@@ -20,9 +20,12 @@ test("the isolation verifier rejects cross-site runtime identity reuse", async (
 
 test("MedRoche nginx routes only its page, API and assets to the isolated port", () => {
   const nginx = readFileSync(new URL("../deploy/medroche/nginx.conf", import.meta.url), "utf8");
+  assert.match(nginx, /location = \/dashboard\/medroche\s*\{[\s\S]*?proxy_pass http:\/\/127\.0\.0\.1:3003;/);
   assert.match(nginx, /location \^~ \/dashboard\/medroche\//);
+  assert.match(nginx, /location = \/api\/dashboard\/medroche\s*\{[\s\S]*?proxy_pass http:\/\/127\.0\.0\.1:3003;/);
   assert.match(nginx, /location \^~ \/api\/dashboard\/medroche\//);
   assert.match(nginx, /location \^~ \/_next-medroche\//);
-  assert.equal((nginx.match(/127\.0\.0\.1:3003/g) ?? []).length, 3);
+  assert.equal((nginx.match(/127\.0\.0\.1:3003/g) ?? []).length, 5);
+  assert.doesNotMatch(nginx, /return 308/);
   assert.doesNotMatch(nginx, /3001|3002|dashboard\/zaruku|dashboard\/abbott/);
 });
