@@ -11,7 +11,10 @@ const profileFilename = path.resolve("config/sites/medroche.json");
 
 test("build accepts only source tree matching the exact profile template commit", () => {
   const profile = readSiteProfile(profileFilename);
-  assert.equal(assertTemplateSource(profile).revision, profile.templateVersion);
+  const source = assertTemplateSource(profile);
+  assert.equal(source.revision, profile.templateVersion);
+  assert.ok(source.sourcePaths.includes("src/db/site-seo"));
+  assert.ok(source.sourcePaths.includes("package-lock.json"));
   assert.throws(
     () => assertTemplateSource({ ...profile, templateVersion: "1cdbe390fd988cf30dfbeb58bab01ef11bb87377" }),
     /template|source|revision/i,

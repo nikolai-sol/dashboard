@@ -6,7 +6,14 @@ import { createArtifactManifest, inspectArtifactDirectory, validateArtifactManif
 import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TEMPLATE_SOURCE_PATHS = ["apps/site-seo", "packages/site-seo-contract"];
+const TEMPLATE_SOURCE_PATHS = [
+  "apps/site-seo",
+  "packages/site-seo-contract",
+  "src/db/site-seo",
+  "package.json",
+  "package-lock.json",
+  "tsconfig.json",
+];
 
 function parse(argv) {
   const result = {};
