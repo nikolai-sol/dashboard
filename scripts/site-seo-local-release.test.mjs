@@ -101,6 +101,28 @@ test("local release starts a Next standalone server.js and checks /api/health", 
   }
 });
 
+test("Next standalone receives its packaged registration path without inheriting a host path", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "site-seo-local-registration-"));
+  const artifactRoot = path.join(root, "artifacts");
+  const inherited = process.env.SITE_SEO_REGISTRATION_PATH;
+  delete process.env.SITE_SEO_REGISTRATION_PATH;
+  let running;
+  try {
+    const port = await freePort();
+    const artifact = writeNextArtifact(artifactRoot, "next-registered-v1", { registration: true, site: "clinic-registered", port });
+    deployLocalFixture({ root, site: "clinic-registered", processName: "dashboard-clinic-registered", artifactRoot: artifact, profileHash: "profile-registered-v1", releaseId: "next-registered-v1", port });
+    running = await startLocalFixture({ root, site: "clinic-registered" });
+    assert.equal((await healthCheckLocalFixture({ root, site: "clinic-registered" })).releaseId, "next-registered-v1");
+    const processInfo = JSON.parse(readFileSync(path.join(root, "sites/clinic-registered/process.json"), "utf8"));
+    assert.equal(processInfo.healthSiteId, "site-clinic-registered");
+  } finally {
+    if (running) await stopLocalFixture({ root, site: "clinic-registered" }).catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+    if (inherited === undefined) delete process.env.SITE_SEO_REGISTRATION_PATH;
+    else process.env.SITE_SEO_REGISTRATION_PATH = inherited;
+  }
+});
+
 test("local release CLI awaits async start, health, and stop actions", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "site-seo-local-cli-"));
   const artifactRoot = path.join(root, "artifacts");
@@ -141,22 +163,28 @@ function writeArtifact(root, releaseId) {
   return directory;
 }
 
-function writeNextArtifact(root, releaseId) {
+function writeNextArtifact(root, releaseId, { registration = false, site = "clinic-next", port = 0 } = {}) {
   const directory = path.join(root, `next-artifact-${releaseId}`, "apps/site-seo");
   mkdirSync(directory, { recursive: true });
   writeFileSync(path.join(directory, "server.js"), [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
     'const http = require("node:http");',
     'const port = Number(process.env.PORT);',
     'const siteId = process.env.SITE_SEO_FIXTURE_SITE;',
     'const version = process.env.SITE_SEO_FIXTURE_RELEASE;',
+    'const packagedRegistration = path.join(__dirname, "site-registration.json");',
     'const server = http.createServer((request, response) => {',
     '  if (request.url !== "/api/health") { response.writeHead(404); response.end(); return; }',
+    '  if (fs.existsSync(packagedRegistration) && !process.env.SITE_SEO_REGISTRATION_PATH) { response.writeHead(503); response.end(JSON.stringify({ status: "site_runtime_unavailable" })); return; }',
+    '  const registration = process.env.SITE_SEO_REGISTRATION_PATH ? JSON.parse(fs.readFileSync(process.env.SITE_SEO_REGISTRATION_PATH, "utf8")) : null;',
     '  response.setHeader("content-type", "application/json");',
-    '  response.end(JSON.stringify({ siteId, version }));',
+    '  response.end(JSON.stringify(registration ? { siteId: registration.profile.siteId, version: registration.profile.profileVersion } : { siteId, version }));',
     '});',
     'server.listen(port, "127.0.0.1");',
     'process.on("SIGTERM", () => server.close(() => process.exit(0)));',
   ].join("\n"));
+  if (registration) writeFileSync(path.join(directory, "site-registration.json"), JSON.stringify({ profile: { siteId: `site-${site}`, profileVersion: "profile-registered-v1", slug: site, runtime: { processName: `dashboard-${site}`, port } }, bindings: [] }));
   return path.dirname(path.dirname(directory));
 }
 

@@ -200,13 +200,29 @@ export async function startLocalFixture({ root, site }) {
   const serverCandidate = candidates.find(({ relativePath }) => fs.existsSync(path.join(standalone, relativePath)));
   if (!serverCandidate) throw new Error("standalone fixture server is missing");
   const server = path.join(standalone, serverCandidate.relativePath);
-  const registration = serverCandidate.healthKind === "next"
-    ? readJson(path.join(standalone, "apps", "site-seo", "site-registration.json"), null)
+  const registrationPath = serverCandidate.healthKind === "next"
+    ? path.join(standalone, "apps", "site-seo", "site-registration.json")
     : null;
+  const registration = registrationPath ? readJson(registrationPath, null) : null;
+  if (registration) {
+    const profile = registration.profile;
+    if (!profile?.siteId || profile.slug !== site || profile.runtime?.processName !== current.processName || profile.runtime?.port !== current.port) {
+      throw new Error("standalone registration is outside fixture scope");
+    }
+  }
   const startedAt = Date.now();
+  const childEnv = { ...process.env };
+  delete childEnv.SITE_SEO_REGISTRATION_PATH;
   const child = spawn(process.execPath, [server], {
     cwd: path.dirname(server),
-    env: { ...process.env, HOSTNAME: "127.0.0.1", PORT: String(current.port), SITE_SEO_FIXTURE_SITE: site, SITE_SEO_FIXTURE_RELEASE: current.releaseId },
+    env: {
+      ...childEnv,
+      HOSTNAME: "127.0.0.1",
+      PORT: String(current.port),
+      SITE_SEO_FIXTURE_SITE: site,
+      SITE_SEO_FIXTURE_RELEASE: current.releaseId,
+      ...(registration ? { SITE_SEO_REGISTRATION_PATH: registrationPath } : {}),
+    },
     stdio: "ignore",
   });
   child.unref();
