@@ -11,7 +11,7 @@
   "logoAsset": null,
   "locale": "ru-RU",
   "businessTimezone": "Europe/Moscow",
-  "templateVersion": "d77ae37660b2e28cc88d0e754709faca1212d06c",
+  "templateVersion": "8be5d998e5dad9c4d78db3f9bd9d01e16d874b1b",
   "sources": [
     {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-medroche", "importCadence": ["previous_iso_week"]},
     {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-medroche", "importCadence": ["previous_month", "previous_iso_week"]},
