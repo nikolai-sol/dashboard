@@ -46,6 +46,27 @@ test("import requests identify advertiser, source account, protected artifact, a
   assert.match(request, /UNIQUE KEY uniq_ad_import_sheet_snapshot/);
 });
 
+test("daily Sheet snapshots may reuse content while uploads remain content-idempotent", () => {
+  const migrationPath = path.resolve(
+    "src/db/migrations/064_advertising_google_sheet_snapshot_dedup.sql",
+  );
+  assert.equal(existsSync(migrationPath), true);
+  const migration = readFileSync(migrationPath, "utf8");
+
+  assert.match(migration, /DROP INDEX uniq_ad_import_upload/);
+  assert.match(
+    migration,
+    /upload_content_sha256 CHAR\(64\)[\s\S]*?GENERATED ALWAYS AS \(\s*CASE WHEN transport = 'upload' THEN content_sha256 ELSE NULL END\s*\) STORED/,
+  );
+  assert.match(
+    migration,
+    /UNIQUE KEY uniq_ad_import_upload \(\s*advertiser_key,\s*source_key,\s*platform_account_id,\s*upload_content_sha256,\s*adapter_config_sha256\s*\)/,
+  );
+  assert.doesNotMatch(migration, /canonical_ad_fact_versions_daily/);
+  assert.doesNotMatch(migration, /canonical_ad_publications/);
+  assert.doesNotMatch(migration, /canonical_ad_coverage_daily/);
+});
+
 test("import request identity binds advertiser scope to a canonical adapter configuration", () => {
   const request = tableDefinition("canonical_ad_import_requests");
   assert.match(
