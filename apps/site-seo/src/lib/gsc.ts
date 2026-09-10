@@ -15,6 +15,7 @@ export type GscReadRows = Readonly<{
   summary: Metrics | null;
   daily: readonly GscDailyRow[];
   dimensions: readonly GscDimensionReadRow[];
+  dimensionCoverage?: Readonly<Partial<Record<ManualSheet, DatasetMeta>>>;
   indexing: DatasetMeta;
 }>;
 
@@ -71,7 +72,9 @@ export function loadGscView(rows: GscReadRows, period: Period): GscView {
   const daily = rows.daily.filter((row) => row.date >= period.from && row.date <= period.to);
   const dimensionMeta: Partial<Record<ManualSheet, DatasetMeta>> = {};
   for (const sheet of ["query", "page", "country", "device", "appearance"] as const) {
-    dimensionMeta[sheet] = dimensions.find((row) => row.dimension === sheet)?.meta ?? missingMeta(rows.meta);
+    const coverage = rows.dimensionCoverage?.[sheet];
+    dimensionMeta[sheet] = dimensions.find((row) => row.dimension === sheet)?.meta
+      ?? (coverage && samePeriod(coverage.period, period) ? coverage : missingMeta(rows.meta));
   }
   return {
     meta: selectedMeta(rows.meta, period, daily),

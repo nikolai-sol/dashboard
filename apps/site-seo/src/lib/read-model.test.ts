@@ -64,3 +64,22 @@ test("reads generic canonical coverage for enabled Metrika and Webmaster but ski
   assert.equal(model.datasets.yandex_wordstat?.state, "missing");
   assert.equal(model.datasets.yandex_metrika?.state, "ready");
 });
+
+test("loads configured Metrika when GSC is disabled for a second profile", async () => {
+  const secondRegistration = {
+    profile: { ...profile, siteId: "site-two", clientId: "client-two", dashboardId: 43, slug: "two", sources: [
+      { sourceKey: "google_search_console" as const, mode: "disabled" as const, bindingId: null, importCadence: [] },
+      { sourceKey: "yandex_metrika" as const, mode: "automated" as const, bindingId: "metrika-two", importCadence: [] },
+    ] },
+    bindings: [{ bindingId: "metrika-two", clientId: "client-two", siteId: "site-two", dashboardId: 43, sourceKey: "yandex_metrika" as const, analyticsAccountId: "account-two", resourceId: "counter-two" }],
+  } satisfies SiteRegistration;
+  const queries: CanonicalReadQuery[] = [];
+  const model = await loadDashboardReadModel({ registration: secondRegistration, claim: { dashboardId: 43, siteId: "site-two" }, selection, publicationId: null, filters: {}, execute: async (query) => {
+    queries.push(query);
+    return { sourceKey: query.scope.sourceKey, period: query.period, state: "ready", collectionMode: "automated", completeness: "complete", importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current", latestAttempt: "success" };
+  } });
+
+  assert.deepEqual(queries.map((query) => query.scope.sourceKey), ["yandex_metrika"]);
+  assert.equal(model.gsc.meta.state, "missing");
+  assert.equal(model.datasets.yandex_metrika?.state, "ready");
+});

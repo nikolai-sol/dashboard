@@ -39,3 +39,17 @@ test("returns exact weekly query dimensions with their own provenance", () => {
   assert.deepEqual(view.dimensions.map((row) => row.value), ["недельный запрос"]);
   assert.equal(view.dimensionMeta.query?.period?.key, "2026-W01");
 });
+
+test("preserves complete-empty dimension coverage when there are no fact rows", () => {
+  const empty = { ...meta(month), state: "complete_empty" as const };
+  const rows: GscReadRows = {
+    meta: empty, summary: null, daily: [], dimensions: [], indexing: meta(month),
+    dimensionCoverage: { query: empty },
+  };
+
+  const view = loadGscView(rows, month);
+
+  assert.equal(view.dimensionMeta.query?.state, "complete_empty");
+  assert.equal(view.dimensionMeta.query?.completeness, "complete");
+  assert.equal(view.dimensionMeta.page?.state, "missing");
+});
