@@ -9,7 +9,7 @@ import { releaseAuthorityGitEnvironment } from './freeze-zaruku-shadow-release.m
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXPECTED_AUTHORITY = Object.freeze({
   scope: 'zaruku',
-  reviewedAppSha: '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8',
+  reviewedAppSha: '01069b16f708404460b811bd821cdb41aff963b8',
   combinedPort: 3001,
   isolatedPort: 3002,
   targetFile: '/etc/nginx/conf.d/dashboard-next.conf',
@@ -318,7 +318,7 @@ async function remoteWorker(action) {
   const child = await import('node:child_process');
   const TARGET = '/etc/nginx/conf.d/dashboard-next.conf';
   const AUTH = '/var/www/.dashboard-zaruku-shadow/auth.json';
-  const APP_SHA = '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8';
+  const APP_SHA = '01069b16f708404460b811bd821cdb41aff963b8';
   const PREDECESSOR_SHA = '1c0363a55ae130e0e96be984fcaafe32384f2cf3c73d21e8d319dd96e940566b';
   const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
   const refuse = () => { throw new Error(); };

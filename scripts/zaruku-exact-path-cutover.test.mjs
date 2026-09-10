@@ -94,7 +94,7 @@ test('Wordstat no-data state is accepted only when canonical tables are empty an
 function fixtureAuthority(overrides = {}) {
   return Object.freeze({
     scope: 'zaruku',
-    reviewedAppSha: '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8',
+    reviewedAppSha: '01069b16f708404460b811bd821cdb41aff963b8',
     combinedPort: 3001,
     isolatedPort: 3002,
     targetFile: '/etc/nginx/conf.d/dashboard-next.conf',
@@ -118,7 +118,7 @@ test('committed cutover authority pins the reviewed release and live predecessor
   const authority = loadCutoverAuthority(path.join(root, 'deploy/zaruku/nginx-cutover.json'));
   assert.deepEqual(authority, {
     scope: 'zaruku',
-    reviewedAppSha: '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8',
+    reviewedAppSha: '01069b16f708404460b811bd821cdb41aff963b8',
     combinedPort: 3001,
     isolatedPort: 3002,
     targetFile: '/etc/nginx/conf.d/dashboard-next.conf',

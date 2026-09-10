@@ -5,10 +5,11 @@ implementation. Keep the existing public hostname and URLs. Only Zaruku moves
 to its dedicated loopback process on port 3002. Do not redeploy or restart the
 combined application, change collectors, or write canonical data.
 
-Application release: `1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8` on
-`release/zaruku`. Compared with `0630a94`, only a legacy-directory observation
-check and regression tests changed. Existing shared-directory ownership is
-preserved; credential and executable ownership checks remain unchanged.
+Application release: `01069b16f708404460b811bd821cdb41aff963b8` on
+`release/zaruku`. Compared with `0630a94`, fixes cover legacy version-metadata
+observation and two Wordstat SQL compatibility errors (reserved alias and
+cross-table collations). No schema or canonical facts changed. Existing shared
+directory ownership is preserved; credential ownership checks remain strict.
 
 ## Execution
 
@@ -32,7 +33,9 @@ whole-response equality would reject the intended update.
 Instead, the cutover makes fresh authenticated paired reads for each month
 January–August. Established historical fact sections must agree. Published
 Alice snapshot IDs, months, official values and child counts must match
-canonical MySQL. Wordstat must be available. Anonymous data/export requests
+canonical MySQL. Wordstat must match canonical availability: the confirmed
+zero-row state in all five account-scoped tables is accepted only with no
+query-failure message and no invented displayed rows. Anonymous data/export requests
 must be rejected; authenticated PDF and XLSX responses must be valid files.
 The client-rendered page is checked by its isolated asset prefix and actual
 browser rendering, not by expecting dynamic tab labels in initial HTML.
