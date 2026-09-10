@@ -3,6 +3,11 @@ import test from "node:test";
 import type { SiteProfile } from "@reportingdash/site-seo-contract";
 import { dashboardTabs } from "../src/components/Dashboard.tsx";
 import { sourceStatusLabel } from "../src/components/Sources.tsx";
+import { buildDashboardQuery } from "../src/components/PeriodSelector.tsx";
+import { createPeriodSelection, calendarMonthPeriod } from "../src/lib/period-selection.ts";
+import { Dashboard } from "../src/components/Dashboard.tsx";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 
 const profile = {
   sources: [
@@ -25,4 +30,24 @@ test("hides disabled adapters while preserving the available source sections", (
 
 test("labels manual data with its actual loaded period rather than calling it current", () => {
   assert.match(sourceStatusLabel({ sourceKey: "google_search_console", period: { kind: "calendar_month", key: "2026-01", from: "2026-01-01", to: "2026-01-31", sourceTimezone: "Europe/Moscow" }, state: "ready", collectionMode: "manual", completeness: "complete", importId: "fixture", exportedAt: null, loadedAt: "2026-02-01T00:00:00Z", freshness: "delayed", latestAttempt: "success" }), /2026-01-01/);
+});
+
+test("preserves validated periods, comparison, publication, and filters in controls and exports", () => {
+  const query = buildDashboardQuery(createPeriodSelection({ primaryWeek: "2026-W01", comparisonWeek: "2025-W52", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow"), "publication-7", { country: "RU" });
+  assert.match(query, /traffic_compare=2025-W52/);
+  assert.match(query, /gsc_period=2026-01/);
+  assert.match(query, /publication=publication-7/);
+  assert.match(query, /filter_country=RU/);
+});
+
+test("renders period controls and export links without emitting disabled GSC content", () => {
+  const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
+  const disabledGscProfile = { ...profile, title: "Тест", slug: "fixture", sources: [{ sourceKey: "google_search_console" as const, mode: "disabled" as const, bindingId: null, importCadence: [] }, { sourceKey: "yandex_webmaster" as const, mode: "automated" as const, bindingId: "webmaster", importCadence: [] }] } as SiteProfile;
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const model = { gsc: { meta: missing, summary: { clicks: 999, impressions: 999, ctrPct: 99, averagePosition: 1 }, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: { yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "ready" as const, collectionMode: "automated" as const, completeness: "complete" as const, importId: "fixture", freshness: "current" as const, latestAttempt: "success" as const } }, trafficComparison: {} };
+  const html = renderToStaticMarkup(createElement(Dashboard, { profile: disabledGscProfile, selection, publicationId: "publication-7", filters: { country: "RU" }, model }));
+  assert.match(html, /traffic_week/);
+  assert.match(html, /\/excel\?/);
+  assert.match(html, /\/pdf\?/);
+  assert.doesNotMatch(html, /GSC:|999/);
 });

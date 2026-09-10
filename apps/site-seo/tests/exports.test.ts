@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DatasetMeta, Period } from "@reportingdash/site-seo-contract";
-import { buildExportRows, toCsv } from "../src/lib/exports.ts";
+import { buildDashboardExportRows, buildExportRows, buildGscExportRows, toCsv } from "../src/lib/exports.ts";
 import { createExcelExportHandler, createPdfExportHandler } from "../src/lib/route-handlers.ts";
 import { createPeriodSelection } from "../src/lib/period-selection.ts";
 
@@ -15,6 +15,19 @@ test("exports actual period and the missing-data limitation instead of a zero re
   assert.match(csv, /2025-12-29/);
   assert.match(csv, /Нужна выгрузка/);
   assert.doesNotMatch(csv, /0,00/);
+});
+
+test("exports canonical GSC summary, daily facts, and exact dimension rows", () => {
+  const rows = buildGscExportRows({ period, source: { ...meta, state: "ready", period }, summary: { clicks: 7, impressions: 100, ctrPct: 7, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 2, impressions: 10, ctrPct: 20, averagePosition: 2 } }], dimensions: [{ dimension: "query", value: "онкология", metrics: { clicks: 2, impressions: 10, ctrPct: 20, averagePosition: 2 } }] });
+  assert.match(toCsv(rows), /онкология/);
+  assert.match(toCsv(rows), /2026-01-02/);
+  assert.match(toCsv(rows), /Итоговые клики/);
+});
+
+test("omits GSC rows from an export when GSC is disabled in the profile", () => {
+  const rows = buildDashboardExportRows({ profile: { sources: [{ sourceKey: "google_search_console", mode: "disabled", bindingId: null, importCadence: [] }, { sourceKey: "yandex_webmaster", mode: "automated", bindingId: "webmaster", importCadence: [] }] } as never, selection, model: { gsc: { meta, summary: { clicks: 999, impressions: 999, ctrPct: 99, averagePosition: 1 }, daily: [], dimensions: [], dimensionMeta: {} }, datasets: { yandex_webmaster: { ...meta, sourceKey: "yandex_webmaster", state: "ready" } } } });
+  assert.doesNotMatch(toCsv(rows), /Google Search Console|999/);
+  assert.match(toCsv(rows), /yandex_webmaster/);
 });
 
 test("refuses an export session from another dashboard before any canonical read", async () => {

@@ -6,6 +6,8 @@ import { Wordstat } from "./Wordstat.tsx";
 import { Alice } from "./Alice.tsx";
 import { SeoOs } from "./SeoOs.tsx";
 import { Sources } from "./Sources.tsx";
+import { PeriodSelector, buildDashboardQuery } from "./PeriodSelector.tsx";
+import type { PeriodSelection } from "../lib/period-selection.ts";
 
 export type DashboardTab = Readonly<{ id: string; label: string }>;
 
@@ -24,13 +26,17 @@ export function dashboardTabs(profile: SiteProfile): DashboardTab[] {
   return tabs;
 }
 
-export function Dashboard({ profile, model }: Readonly<{ profile: SiteProfile; model: DashboardReadModel }>) {
+export function Dashboard({ profile, model, selection, publicationId, filters }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>> }>) {
+  const query = buildDashboardQuery(selection, publicationId, filters);
+  const gscEnabled = enabled(profile, "google_search_console");
   return <main data-dashboard-ready="true">
     <h1>{profile.title}</h1>
+    <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} />
+    <p><a href={`/api/dashboard/${profile.slug}?${query}`}>JSON</a>{" · "}<a href={`/api/dashboard/${profile.slug}/excel?${query}`}>Excel</a>{" · "}<a href={`/api/dashboard/${profile.slug}/pdf?${query}`}>PDF</a></p>
     <nav aria-label="Разделы">{dashboardTabs(profile).map((tab) => <a key={tab.id} href={`#${tab.id}`}>{tab.label}</a>)}</nav>
     <Overview id="overview" model={model} />
     {enabled(profile, "yandex_metrika") && <section id="traffic"><h2>Посещаемость и страницы</h2><p>{model.datasets.yandex_metrika?.state ?? "missing"}</p></section>}
-    {(enabled(profile, "yandex_webmaster") || enabled(profile, "google_search_console")) && <Search id="search" model={model} />}
+    {(enabled(profile, "yandex_webmaster") || gscEnabled) && <Search id="search" model={model} showGsc={gscEnabled} />}
     {enabled(profile, "yandex_wordstat") && <Wordstat id="wordstat" meta={model.datasets.yandex_wordstat} />}
     {enabled(profile, "yandex_webmaster_alice_manual") && <Alice id="alice" meta={model.datasets.yandex_webmaster_alice_manual} />}
     {enabled(profile, "seo_os") && <SeoOs id="seo-os" meta={model.datasets.seo_os} />}

@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import type { SiteRegistration } from "@reportingdash/site-seo-contract";
 import { assertAuthorizedSiteSession, type SiteSeoSession } from "./auth.ts";
 import type { CanonicalReadExecutor } from "./db.ts";
-import { buildExportRows } from "./exports.ts";
+import { buildDashboardExportRows } from "./exports.ts";
 import { loadDashboardReadModel } from "./read-model.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 
@@ -51,7 +51,7 @@ export function createExcelExportHandler(deps: DashboardJsonDependencies) {
     catch { return Response.json({ error: "unauthorized" }, { status: 401 }); }
     try {
       const model = await loadDashboardReadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute });
-      const sheet = XLSX.utils.json_to_sheet(buildExportRows({ title: "Google Search Console", period: request.selection.gsc, source: model.gsc.meta }));
+      const sheet = XLSX.utils.json_to_sheet(buildDashboardExportRows({ profile: deps.registration.profile, selection: request.selection, model }));
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, sheet, "SEO");
       return new Response(XLSX.write(workbook, { type: "array", bookType: "xlsx" }), { headers: {
@@ -78,7 +78,7 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 }
 
-function printableHtml(rows: ReturnType<typeof buildExportRows>): string {
+function printableHtml(rows: ReturnType<typeof buildDashboardExportRows>): string {
   return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>SEO export</title><body><table>${rows.map((row) => `<tr><th>${escapeHtml(row.field)}</th><td>${escapeHtml(row.value)}</td></tr>`).join("")}</table></body></html>`;
 }
 
@@ -96,7 +96,7 @@ export function createPdfExportHandler(deps: DashboardJsonDependencies, options:
       const page = await browser.newPage();
       await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
       await page.emulateMediaType("print");
-      await page.setContent(printableHtml(buildExportRows({ title: "Google Search Console", period: request.selection.gsc, source: model.gsc.meta })), { waitUntil: "networkidle0" });
+      await page.setContent(printableHtml(buildDashboardExportRows({ profile: deps.registration.profile, selection: request.selection, model })), { waitUntil: "networkidle0" });
       const pdf = await page.pdf({ format: "A4", landscape: true, printBackground: true, margin: { top: "18mm", right: "12mm", bottom: "18mm", left: "12mm" } });
       return new Response(new Uint8Array(pdf), { headers: { "content-type": "application/pdf", "content-disposition": "attachment; filename=site-seo-export.pdf", "cache-control": "private, no-store" } });
     } catch {
