@@ -6,6 +6,10 @@ const ddl = readFileSync(
   new URL("./manual-period-contract.sql", import.meta.url),
   "utf8",
 );
+const migration = readFileSync(
+  new URL("../migrations/064_site_seo_manual_periods.sql", import.meta.url),
+  "utf8",
+);
 
 const requiredTables = [
   "canonical_seo_manual_imports",
@@ -21,6 +25,10 @@ test("manual period DDL is additive and idempotent", () => {
     assert.match(ddl, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\b`));
   }
   assert.doesNotMatch(ddl, /\b(?:DROP|TRUNCATE|ALTER)\s+TABLE\b/i);
+});
+
+test("migration 064 is the reviewed manual period contract verbatim", () => {
+  assert.equal(migration, ddl);
 });
 
 test("immutable import scope and file identity include resource and filters", () => {

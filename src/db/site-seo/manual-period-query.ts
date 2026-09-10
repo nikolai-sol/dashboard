@@ -119,6 +119,7 @@ export function buildManualDailyReadQuery(
   scope: ManualReadScope,
   from: string,
   to: string,
+  publicationId: string | null = null,
 ): CanonicalReadQuery {
   assertIsoDate(from, "from");
   assertIsoDate(to, "to");
@@ -137,6 +138,7 @@ export function buildManualDailyReadQuery(
     ON c.import_id = i.id AND c.layer_name = 'daily'
   WHERE ${SCOPE_WHERE}
     AND i.status = 'published'
+    ${publicationId === null ? "" : "AND i.import_uid = ?"}
     AND d.report_date BETWEEN ? AND ?
 ), ranked_daily AS (
   SELECT c.*,
@@ -148,13 +150,14 @@ export function buildManualDailyReadQuery(
   FROM candidate_daily c
 )
 SELECT * FROM ranked_daily WHERE row_choice = 1 ORDER BY report_date`,
-    params: [...scopeParams(scope), from, to, from, to],
+    params: [...scopeParams(scope), ...(publicationId === null ? [] : [publicationId]), from, to, from, to],
   };
 }
 
 function exactPeriodParams(
   scope: ManualReadScope,
   period: ManualPeriodIdentity,
+  publicationId: string | null,
 ): readonly unknown[] {
   assertIsoDate(period.from, "period.from");
   assertIsoDate(period.to, "period.to");
@@ -164,19 +167,24 @@ function exactPeriodParams(
     period.from,
     period.to,
     period.key,
+    ...(publicationId === null ? [] : [publicationId]),
   ];
 }
 
-const EXACT_PERIOD_WHERE = `${SCOPE_WHERE}
+function exactPeriodWhere(publicationId: string | null): string {
+  return `${SCOPE_WHERE}
     AND i.period_kind = ?
     AND i.period_from = ?
     AND i.period_to = ?
     AND i.period_key = ?
-    AND i.status = 'published'`;
+    AND i.status = 'published'
+    ${publicationId === null ? "" : "AND i.import_uid = ?"}`;
+}
 
 export function buildManualDimensionsReadQuery(
   scope: ManualReadScope,
   period: ManualPeriodIdentity,
+  publicationId: string | null = null,
 ): CanonicalReadQuery {
   return {
     sql: `WITH ranked_dimensions AS (
@@ -195,17 +203,18 @@ FROM canonical_fact_gsc_manual_period_dimensions d
 JOIN canonical_seo_manual_imports i ON i.id = d.import_id
 JOIN canonical_seo_manual_coverage c
   ON c.import_id = i.id AND c.layer_name = d.dimension_name
-WHERE ${EXACT_PERIOD_WHERE}
+WHERE ${exactPeriodWhere(publicationId)}
 )
 SELECT * FROM ranked_dimensions WHERE row_choice = 1
 ORDER BY dimension_name, source_row_ordinal`,
-    params: exactPeriodParams(scope, period),
+    params: exactPeriodParams(scope, period, publicationId),
   };
 }
 
 export function buildManualIndexingReadQuery(
   scope: ManualReadScope,
   snapshotDate: string,
+  publicationId: string | null = null,
 ): Readonly<{ totals: CanonicalReadQuery; urlSamples: CanonicalReadQuery }> {
   assertIsoDate(snapshotDate, "snapshotDate");
   const chosenImport = `WITH chosen_import AS (
@@ -218,6 +227,7 @@ export function buildManualIndexingReadQuery(
     AND i.period_from = ?
     AND i.period_to = ?
     AND i.status = 'published'
+    ${publicationId === null ? "" : "AND i.import_uid = ?"}
   ORDER BY c.publication_priority DESC, i.revision DESC, i.id DESC
   LIMIT 1
 )`;
@@ -225,6 +235,7 @@ export function buildManualIndexingReadQuery(
     ...scopeParams(scope),
     snapshotDate,
     snapshotDate,
+    ...(publicationId === null ? [] : [publicationId]),
     snapshotDate,
   ];
   return {
@@ -257,6 +268,7 @@ WHERE u.snapshot_date = ? ORDER BY u.reason, u.source_row_ordinal`,
 export function buildManualCoverageReadQuery(
   scope: ManualReadScope,
   period: ManualPeriodIdentity,
+  publicationId: string | null = null,
 ): CanonicalReadQuery {
   return {
     sql: `SELECT
@@ -268,8 +280,8 @@ export function buildManualCoverageReadQuery(
   c.publication_priority, c.publication_revision
 FROM canonical_seo_manual_coverage c
 JOIN canonical_seo_manual_imports i ON i.id = c.import_id
-WHERE ${EXACT_PERIOD_WHERE}
+WHERE ${exactPeriodWhere(publicationId)}
 ORDER BY c.layer_name`,
-    params: exactPeriodParams(scope, period),
+    params: exactPeriodParams(scope, period, publicationId),
   };
 }

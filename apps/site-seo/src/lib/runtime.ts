@@ -4,7 +4,7 @@ import type { SiteRegistration } from "@reportingdash/site-seo-contract";
 import { calendarMonthPeriod, createPeriodSelection, isoWeekPeriod } from "./period-selection.ts";
 import type { DashboardReadRequest } from "../app/api/dashboard/[siteSlug]/route.ts";
 import type { SiteSeoSession } from "./auth.ts";
-import { loadCurrentCredentialVersion, missingCanonicalReadExecutor } from "./db.ts";
+import { canonicalReadExecutor, loadCurrentCredentialVersion } from "./db.ts";
 
 type RuntimeFileDependencies = Readonly<{ registrationPath: string; readFile: (path: string, encoding: "utf8") => Promise<string>; validateRegistrations: (value: unknown) => readonly SiteRegistration[] }>;
 type ViewerCookiePayload = Readonly<{ dashboardId: number; credentialVersion: number | undefined; expiresAt: string }>;
@@ -106,6 +106,6 @@ export async function getSiteSeoRuntime() {
   return {
     registration,
     resolveSession: createSiteSeoSessionResolver({ verifyViewerCookie: createSignedViewerCookieVerifier(), loadCredentialVersion: loadCurrentCredentialVersion }),
-    execute: missingCanonicalReadExecutor,
+    execute: canonicalReadExecutor,
   } as const;
 }

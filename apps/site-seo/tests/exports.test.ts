@@ -32,7 +32,7 @@ test("refuses an export session from another dashboard before any canonical read
 
 test("creates an Excel workbook from the same scoped read model", async () => {
   const response = await createExcelExportHandler({
-    registration: { profile: { dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [{ sourceKey: "google_search_console", mode: "manual", bindingId: "gsc", importCadence: [] }] } as never, bindings: [{ bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }] },
+    registration: { profile: { clientId: "client-med", dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [{ sourceKey: "google_search_console", mode: "manual", bindingId: "gsc", importCadence: [] }] } as never, bindings: [{ bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }] },
     credentialVersion: 1,
     getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }),
     execute: async () => ({ meta: { ...meta, state: "complete_empty", period }, summary: null, daily: [], dimensions: [], indexing: meta }),
@@ -66,4 +66,14 @@ test("returns 401 for a stale PDF session before the canonical read or browser l
   assert.equal(response.status, 401);
   assert.equal(reads, 0);
   assert.equal(launches, 0);
+});
+
+test("reports an authorized Excel read failure as unavailable", async () => {
+  const response = await createExcelExportHandler({
+    registration: { profile: { clientId: "client-med", dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [{ sourceKey: "google_search_console", mode: "manual", bindingId: "gsc", importCadence: [] }] } as never, bindings: [{ bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }] },
+    credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }),
+    execute: async () => { throw new Error("database unavailable"); },
+  })(readRequest);
+  assert.equal(response.status, 503);
 });

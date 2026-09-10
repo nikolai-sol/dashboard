@@ -1,5 +1,5 @@
 import type { SiteProfile } from "@reportingdash/site-seo-contract";
-import { loadRegistrationFromEnvironment } from "../../lib/runtime.ts";
+import { loadRegistrationFromEnvironment } from "../../../lib/runtime.ts";
 
 export function createHealthHandler(profile: SiteProfile, version: string) {
   return () => Response.json({ siteId: profile.siteId, version });

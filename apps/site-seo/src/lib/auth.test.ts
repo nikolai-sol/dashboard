@@ -48,3 +48,15 @@ test("forwards one structured selection, publication, and filters to the JSON re
   assert.equal(response.status, 200);
   assert.deepEqual(queries, [{ name: "gsc", scope: { bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }, period, publicationId: "publication-7", filters: { country: "RU" } }]);
 });
+
+test("reports a canonical read failure as unavailable, not as bad credentials", async () => {
+  const period = { kind: "iso_week", key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" } as const;
+  const handler = createDashboardJsonHandler({
+    registration: { profile: { siteId: "site-med", clientId: "client-med", dashboardId: 42, slug: "medroche", sources: [{ sourceKey: "google_search_console", mode: "manual", bindingId: "gsc", importCadence: [] }] } as never, bindings: [{ bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }] },
+    credentialVersion: 3,
+    getSession: async () => session,
+    execute: async () => { throw new Error("database unavailable"); },
+  });
+  const response = await handler({ slug: "medroche", selection: createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: period }, "Europe/Moscow"), publicationId: null, filters: {} });
+  assert.equal(response.status, 503);
+});

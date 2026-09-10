@@ -24,11 +24,16 @@ export function createDashboardJsonHandler(deps: DashboardJsonDependencies) {
     if (request.slug !== deps.registration.profile.slug) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
+    let session: SiteSeoSession;
     try {
-      const session = assertAuthorizedSiteSession(
+      session = assertAuthorizedSiteSession(
         await deps.getSession(),
         { dashboardId: deps.registration.profile.dashboardId, siteId: deps.registration.profile.siteId, credentialVersion: deps.credentialVersion },
       );
+    } catch {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    try {
       const data = await loadDashboardReadModel({
         registration: deps.registration,
         claim: session,
@@ -39,7 +44,7 @@ export function createDashboardJsonHandler(deps: DashboardJsonDependencies) {
       });
       return Response.json(data);
     } catch {
-      return Response.json({ error: "unauthorized" }, { status: 401 });
+      return Response.json({ error: "canonical_read_unavailable" }, { status: 503 });
     }
   };
 }

@@ -101,3 +101,24 @@ test("coverage read is scoped and exposes evidence without inferring completenes
   assert.match(query.sql, /c\.evidence_json/);
   assert.match(query.sql, /i\.status = 'published'/);
 });
+
+test("an explicit publication id pins every read to one immutable import", () => {
+  const publicationId = "import-uid-7";
+  const period = {
+    kind: "calendar_month" as const,
+    from: "2026-08-01",
+    to: "2026-08-31",
+    key: "2026-08",
+  };
+  const queries = [
+    buildManualDailyReadQuery(scope, period.from, period.to, publicationId),
+    buildManualDimensionsReadQuery(scope, period, publicationId),
+    buildManualCoverageReadQuery(scope, period, publicationId),
+    buildManualIndexingReadQuery(scope, period.to, publicationId).totals,
+  ];
+
+  for (const query of queries) {
+    assert.match(query.sql, /i\.import_uid = \?/);
+    assert.ok(query.params.includes(publicationId));
+  }
+});
