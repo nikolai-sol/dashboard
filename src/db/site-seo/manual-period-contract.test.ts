@@ -72,6 +72,7 @@ test("facts and coverage belong to one import and preserve manual layers", () =>
   assert.match(ddl, /publication_priority/);
   assert.match(ddl, /predecessor_import_id/);
   assert.match(ddl, /owner_decision_id/);
+  assert.match(ddl, /coverage_state ENUM\('missing', 'unknown', 'limited', 'complete_empty', 'complete'\)/);
 });
 
 test("publication lock key is scoped to period and layer", () => {

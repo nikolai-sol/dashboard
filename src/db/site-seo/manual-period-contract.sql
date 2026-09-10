@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS canonical_fact_gsc_manual_indexing_urls (
 CREATE TABLE IF NOT EXISTS canonical_seo_manual_coverage (
   import_id BIGINT UNSIGNED NOT NULL,
   layer_name VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-  coverage_state ENUM('missing', 'limited', 'complete_empty', 'complete') NOT NULL,
+  coverage_state ENUM('missing', 'unknown', 'limited', 'complete_empty', 'complete') NOT NULL,
   row_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
   evidence_json JSON NOT NULL,
   publication_priority INT NOT NULL DEFAULT 0,

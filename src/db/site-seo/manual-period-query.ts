@@ -47,7 +47,7 @@ export type ManualGscDailyRow = ManualImportRow &
     impressions: number;
     ctr_pct: number | null;
     average_position: number | null;
-    coverage_state: "missing" | "limited" | "complete_empty" | "complete";
+    coverage_state: "missing" | "unknown" | "limited" | "complete_empty" | "complete";
   }>;
 
 export type ManualGscDimensionRow = ManualImportRow &
@@ -81,7 +81,7 @@ export type ManualGscIndexingUrlRow = Readonly<{
 export type ManualCoverageRow = ManualImportRow &
   Readonly<{
     layer_name: string;
-    coverage_state: "missing" | "limited" | "complete_empty" | "complete";
+    coverage_state: "missing" | "unknown" | "limited" | "complete_empty" | "complete";
     row_count: number;
     evidence_json: string;
     publication_priority: number;
