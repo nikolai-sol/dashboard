@@ -12,14 +12,16 @@ type DashboardLookupDatabase = {
 };
 
 export function parseSeedClientId(args: string[]) {
+  const clientId = args[1];
   if (
     args.length !== 2 ||
     args[0] !== "--client-id" ||
-    (args[1] !== "abbott" && args[1] !== "zaruku")
+    !clientId ||
+    !/^[a-z0-9][a-z0-9-]{0,63}$/.test(clientId)
   ) {
-    throw new Error("Usage: --client-id abbott|zaruku");
+    throw new Error("Usage: --client-id CLIENT_ID");
   }
-  return args[1];
+  return clientId;
 }
 
 export async function resolveActiveDashboardIdByClientId(

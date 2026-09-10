@@ -32,20 +32,22 @@ test("seed CLI accepts only a client id argument and reads password from fd zero
   assert.match(source, /process\.stdout\.write\("Shared dashboard password configured\.\\n"\)/);
 });
 
-test("seed CLI permits only Abbott and Zaruku", () => {
+test("seed CLI accepts existing shared dashboards and safe site-seo client ids", () => {
   assert.equal(parseSeedClientId(["--client-id", "abbott"]), "abbott");
   assert.equal(parseSeedClientId(["--client-id", "zaruku"]), "zaruku");
+  assert.equal(parseSeedClientId(["--client-id", "client-roche"]), "client-roche");
 
   for (const args of [
     [],
     ["--client-id"],
-    ["--client-id", "other"],
     ["--client-id", "ABBOTT"],
     ["--client-id", " zaruku "],
+    ["--client-id", "../other"],
+    ["--client-id", "other client"],
     ["--client-id", "zaruku", "unexpected"],
     ["--password", "not-allowed"],
   ]) {
-    assert.throws(() => parseSeedClientId(args), /Usage: --client-id abbott\|zaruku/);
+    assert.throws(() => parseSeedClientId(args), /Usage: --client-id CLIENT_ID/);
   }
 });
 
