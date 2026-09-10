@@ -10,6 +10,7 @@ const FINAL_DASHBOARD_TYPES = [
   "multibrand",
   "abbott_bi",
   "zaruku_bi",
+  "site_seo",
 ];
 
 const migrationsDirectory = path.resolve("src/db/migrations");
@@ -39,6 +40,7 @@ test("dashboard_type replay contract covers every historical ALTER migration", (
       "018_dashboard_multibrand_type.sql",
       "019_dashboard_abbott_bi_type.sql",
       "030_dashboard_zaruku_bi_type.sql",
+      "065_dashboard_site_seo_type.sql",
     ],
   );
 });
