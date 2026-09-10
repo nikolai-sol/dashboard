@@ -1,2 +1,3 @@
 import type { DatasetMeta } from "@reportingdash/site-seo-contract";
-export function Alice({ id, meta }: Readonly<{ id: string; meta?: DatasetMeta }>) { return <section id={id}><h2>AI-видимость и конкуренты</h2><p>{meta?.state === "missing" ? "Нужна выгрузка" : meta?.state ?? "нет данных"}</p></section>; }
+import type { AliceCanonicalData } from "../lib/db.ts";
+export function Alice({ id, meta, data }: Readonly<{ id: string; meta?: DatasetMeta; data: AliceCanonicalData | null }>) { return <section id={id}><h2>AI-видимость и конкуренты</h2><p>{meta?.state === "missing" ? "Нужна выгрузка" : meta?.state ?? "нет данных"}</p>{data && <><p>Официальный SOV: {data.officialSovPct ?? "нет данных"}; sample: {data.samplePresencePct ?? "нет данных"}</p><p>Конкуренты: {data.competitors.join(", ") || "нет данных"}</p><p>Источники: {data.sources.join(", ") || "нет данных"}</p></>}</section>; }

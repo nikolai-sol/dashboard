@@ -29,6 +29,8 @@ export function dashboardTabs(profile: SiteProfile): DashboardTab[] {
 export function Dashboard({ profile, model, selection, publicationId, filters }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>> }>) {
   const query = buildDashboardQuery(selection, publicationId, filters);
   const gscEnabled = enabled(profile, "google_search_console");
+  const metrikaComparison = model.trafficComparison.yandex_metrika;
+  const webmasterComparison = model.trafficComparison.yandex_webmaster;
   return <main data-dashboard-ready="true">
     <h1>{profile.title}</h1>
     <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} />
@@ -37,13 +39,15 @@ export function Dashboard({ profile, model, selection, publicationId, filters }:
     <Overview id="overview" model={model} showGsc={gscEnabled} />
     {enabled(profile, "yandex_metrika") && <section id="traffic"><h2>Посещаемость и страницы</h2><p>Метрика: {model.datasets.yandex_metrika?.state ?? "missing"}</p>
       {model.metrika?.summary && <p>Визиты: {model.metrika.summary.visits}; просмотры: {model.metrika.summary.pageviews}</p>}
+      {selection.traffic.comparison && metrikaComparison && "kind" in metrikaComparison && metrikaComparison.kind === "metrika" && <p>Сравнение {selection.traffic.comparison.key}: визиты {metrikaComparison.summary?.visits ?? "нет данных"}; просмотры {metrikaComparison.summary?.pageviews ?? "нет данных"}</p>}
       {model.metrika && <><h3>Динамика</h3><table><tbody>{model.metrika.daily.map((row) => <tr key={row.date}><th>{row.date}</th><td>визиты: {row.visits}</td><td>просмотры: {row.pageviews}</td><td>Пользователи за день: {row.users ?? "неизвестно"}</td></tr>)}</tbody></table>
         <h3>Страницы</h3><table><tbody>{model.metrika.topPages.map((row) => <tr key={row.page}><th>{row.page}</th><td>визиты: {row.visits}</td><td>просмотры: {row.pageviews}</td></tr>)}</tbody></table></>}
     </section>}
     {(enabled(profile, "yandex_webmaster") || gscEnabled) && <Search id="search" model={model} showGsc={gscEnabled} />}
-    {enabled(profile, "yandex_wordstat") && <Wordstat id="wordstat" meta={model.datasets.yandex_wordstat} />}
-    {enabled(profile, "yandex_webmaster_alice_manual") && <Alice id="alice" meta={model.datasets.yandex_webmaster_alice_manual} />}
-    {enabled(profile, "seo_os") && <SeoOs id="seo-os" meta={model.datasets.seo_os} />}
+    {selection.traffic.comparison && webmasterComparison && "kind" in webmasterComparison && webmasterComparison.kind === "webmaster" && <p>Сравнение Webmaster {selection.traffic.comparison.key}: клики {webmasterComparison.summary?.clicks ?? "нет данных"}; показы {webmasterComparison.summary?.impressions ?? "нет данных"}</p>}
+    {enabled(profile, "yandex_wordstat") && <Wordstat id="wordstat" meta={model.datasets.yandex_wordstat} data={model.wordstat} />}
+    {enabled(profile, "yandex_webmaster_alice_manual") && <Alice id="alice" meta={model.datasets.yandex_webmaster_alice_manual} data={model.alice} />}
+    {enabled(profile, "seo_os") && <SeoOs id="seo-os" meta={model.datasets.seo_os} data={model.seoOs} />}
     <Sources id="sources" profile={profile} model={model} />
   </main>;
 }

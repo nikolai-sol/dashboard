@@ -38,13 +38,15 @@ test("preserves validated periods, comparison, publication, and filters in contr
   assert.match(query, /gsc_period=2026-01/);
   assert.match(query, /publication=publication-7/);
   assert.match(query, /filter_country=RU/);
+  assert.match(query, /filter_search_type=web/);
+  assert.match(query, /filter_device=all/);
 });
 
 test("renders period controls and export links without emitting disabled GSC content", () => {
   const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
   const disabledGscProfile = { ...profile, title: "Тест", slug: "fixture", sources: [{ sourceKey: "google_search_console" as const, mode: "disabled" as const, bindingId: null, importCadence: [] }, { sourceKey: "yandex_webmaster" as const, mode: "automated" as const, bindingId: "webmaster", importCadence: [] }] } as SiteProfile;
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
-  const model = { gsc: { meta: missing, summary: { clicks: 999, impressions: 999, ctrPct: 99, averagePosition: 1 }, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: { yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "ready" as const, collectionMode: "automated" as const, completeness: "complete" as const, importId: "fixture", freshness: "current" as const, latestAttempt: "success" as const } }, metrika: null, webmaster: null, trafficComparison: {} };
+  const model = { gsc: { meta: missing, summary: { clicks: 999, impressions: 999, ctrPct: 99, averagePosition: 1 }, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: { yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "ready" as const, collectionMode: "automated" as const, completeness: "complete" as const, importId: "fixture", freshness: "current" as const, latestAttempt: "success" as const } }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
   const html = renderToStaticMarkup(createElement(Dashboard, { profile: disabledGscProfile, selection, publicationId: "publication-7", filters: { country: "RU" }, model }));
   assert.match(html, /traffic_week/);
   assert.match(html, /\/excel\?/);
@@ -63,7 +65,7 @@ test("renders canonical Metrika and Webmaster facts without treating daily users
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const model = {
     gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing,
-    datasets: { yandex_metrika: { ...missing, sourceKey: "yandex_metrika" as const, state: "ready" as const }, yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "partial" as const } }, trafficComparison: {},
+    datasets: { yandex_metrika: { ...missing, sourceKey: "yandex_metrika" as const, state: "ready" as const }, yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "partial" as const } }, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
     metrika: { ...missing, sourceKey: "yandex_metrika" as const, state: "ready" as const, kind: "metrika" as const, summary: { visits: 20, pageviews: 30 }, daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [{ page: "/a", visits: 4, pageviews: 6 }] },
     webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "partial" as const, kind: "webmaster" as const, summary: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }], topPages: [{ page: "/a", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }] },
   };

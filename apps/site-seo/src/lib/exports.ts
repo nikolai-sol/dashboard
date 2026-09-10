@@ -1,6 +1,6 @@
 import type { DatasetMeta, GscView, Period, SiteProfile } from "@reportingdash/site-seo-contract";
 import type { DashboardReadModel } from "./read-model.ts";
-import type { MetrikaCanonicalData, WebmasterCanonicalData } from "./db.ts";
+import type { AliceCanonicalData, MetrikaCanonicalData, SeoOsCanonicalData, WebmasterCanonicalData, WordstatCanonicalData } from "./db.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 
 export type ExportRow = Readonly<{ field: string; value: string }>;
@@ -70,10 +70,33 @@ function buildWebmasterExportRows(input: Readonly<{ period: Period; data: Webmas
   return rows;
 }
 
+function buildWordstatExportRows(input: Readonly<{ period: Period; data: WordstatCanonicalData }>): ExportRow[] {
+  const rows = buildExportRows({ title: "Wordstat", period: input.period, source: input.data });
+  if (input.data.demand !== null) rows.push({ field: "Спрос Wordstat", value: String(input.data.demand) });
+  for (const row of input.data.queries) rows.push({ field: `Wordstat ${row.kind}: ${row.query}`, value: String(row.count) });
+  return rows;
+}
+
+function buildAliceExportRows(input: Readonly<{ period: Period; data: AliceCanonicalData }>): ExportRow[] {
+  const rows = buildExportRows({ title: "Алиса", period: input.period, source: input.data });
+  rows.push({ field: "Официальный SOV Алиса, %", value: input.data.officialSovPct === null ? "неизвестно" : String(input.data.officialSovPct) });
+  rows.push({ field: "Sample presence Алиса, %", value: input.data.samplePresencePct === null ? "неизвестно" : String(input.data.samplePresencePct) });
+  for (const value of input.data.competitors) rows.push({ field: "Конкурент Алиса", value });
+  for (const value of input.data.sources) rows.push({ field: "Источник Алиса", value });
+  return rows;
+}
+
+function buildSeoOsExportRows(input: Readonly<{ period: Period; data: SeoOsCanonicalData }>): ExportRow[] {
+  const rows = buildExportRows({ title: "SEO OS", period: input.period, source: input.data });
+  for (const row of input.data.rows) rows.push({ field: `SEO OS ${row.engine}`, value: `упоминания ${row.mentions}; цитаты ${row.citations}; evidence ${row.evidence ?? "нет"}` });
+  for (const task of input.data.tasks) rows.push({ field: `Задача SEO OS ${task.title}`, value: task.status });
+  return rows;
+}
+
 export function buildDashboardExportRows(input: Readonly<{
   profile: Pick<SiteProfile, "sources">;
   selection: PeriodSelection;
-  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "metrika" | "webmaster">>;
+  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "metrika" | "webmaster" | "wordstat" | "alice" | "seoOs" | "trafficComparison">>;
 }>): ExportRow[] {
   const gscEnabled = input.profile.sources.some((source) => source.sourceKey === "google_search_console" && source.mode !== "disabled");
   const rows: ExportRow[] = gscEnabled
@@ -85,10 +108,27 @@ export function buildDashboardExportRows(input: Readonly<{
     const period = source.sourceKey === "yandex_webmaster_alice_manual" ? input.selection.alice : input.selection.traffic.primary;
     if (source.sourceKey === "yandex_metrika" && input.model.metrika) rows.push(...buildMetrikaExportRows({ period, data: input.model.metrika }));
     else if (source.sourceKey === "yandex_webmaster" && input.model.webmaster) rows.push(...buildWebmasterExportRows({ period, data: input.model.webmaster }));
+    else if (source.sourceKey === "yandex_wordstat" && input.model.wordstat) rows.push(...buildWordstatExportRows({ period, data: input.model.wordstat }));
+    else if (source.sourceKey === "yandex_webmaster_alice_manual" && input.model.alice) rows.push(...buildAliceExportRows({ period, data: input.model.alice }));
+    else if (source.sourceKey === "seo_os" && input.model.seoOs) rows.push(...buildSeoOsExportRows({ period, data: input.model.seoOs }));
     else {
       const meta = input.model.datasets[source.sourceKey];
       if (meta) rows.push(...buildExportRows({ title: source.sourceKey, period, source: meta }));
     }
+  }
+  const comparison = input.selection.traffic.comparison;
+  if (comparison) {
+    rows.push({ field: "Сравнение", value: comparison.key });
+    const metrika = input.model.trafficComparison?.yandex_metrika;
+    if (metrika && "kind" in metrika && metrika.kind === "metrika" && metrika.summary) rows.push(
+      { field: "Визиты Metrika (сравнение)", value: String(metrika.summary.visits) },
+      { field: "Просмотры Metrika (сравнение)", value: String(metrika.summary.pageviews) },
+    );
+    const webmaster = input.model.trafficComparison?.yandex_webmaster;
+    if (webmaster && "kind" in webmaster && webmaster.kind === "webmaster" && webmaster.summary) rows.push(
+      { field: "Клики Webmaster (сравнение)", value: String(webmaster.summary.clicks) },
+      { field: "Показы Webmaster (сравнение)", value: String(webmaster.summary.impressions) },
+    );
   }
   return rows;
 }

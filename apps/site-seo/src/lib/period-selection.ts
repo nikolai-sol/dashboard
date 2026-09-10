@@ -1,5 +1,15 @@
 import type { Period } from "@reportingdash/site-seo-contract";
 
+export const DEFAULT_GSC_FILTERS: Readonly<Record<string, string>> = {
+  country: "all",
+  search_type: "web",
+  device: "all",
+};
+
+export function gscFilters(filters: Readonly<Record<string, string>> = {}): Record<string, string> {
+  return { ...DEFAULT_GSC_FILTERS, ...filters };
+}
+
 export type PeriodSelection = Readonly<{
   traffic: Readonly<{ primary: Period; comparison: Period | null }>;
   alice: Period;

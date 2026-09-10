@@ -1,2 +1,3 @@
 import type { DatasetMeta } from "@reportingdash/site-seo-contract";
-export function SeoOs({ id, meta }: Readonly<{ id: string; meta?: DatasetMeta }>) { return <section id={id}><h2>SEO OS</h2><p>{meta?.state === "ready" ? "Сигналы доступны" : "Недостаточно сигналов для рекомендаций"}</p></section>; }
+import type { SeoOsCanonicalData } from "../lib/db.ts";
+export function SeoOs({ id, meta, data }: Readonly<{ id: string; meta?: DatasetMeta; data: SeoOsCanonicalData | null }>) { return <section id={id}><h2>SEO OS</h2><p>{meta?.state === "ready" ? "Сигналы доступны" : "Недостаточно сигналов для рекомендаций"}</p><table><tbody>{data?.rows.map((row) => <tr key={row.engine}><th>{row.engine}</th><td>упоминания: {row.mentions}</td><td>цитаты: {row.citations}</td><td>evidence: {row.evidence ?? "нет"}</td></tr>)}</tbody></table><ul>{data?.tasks.map((task) => <li key={task.title}>{task.title}: {task.status}</li>)}</ul></section>; }

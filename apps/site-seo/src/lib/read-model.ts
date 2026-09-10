@@ -1,5 +1,5 @@
 import type { DatasetMeta, SiteRegistration, SourceKey } from "@reportingdash/site-seo-contract";
-import { type CanonicalDatasetData, type CanonicalReadExecutor, type MetrikaCanonicalData, type WebmasterCanonicalData } from "./db.ts";
+import { type AliceCanonicalData, type CanonicalDatasetData, type CanonicalReadExecutor, type MetrikaCanonicalData, type SeoOsCanonicalData, type WebmasterCanonicalData, type WordstatCanonicalData } from "./db.ts";
 import { loadGscView } from "./gsc.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 import { MissingSourceScopeError, resolveSourceScope, type SiteScopeClaim } from "./scope.ts";
@@ -10,7 +10,10 @@ export type DashboardReadModel = Readonly<{
   datasets: Readonly<Partial<Record<SourceKey, DatasetMeta>>>;
   metrika: MetrikaCanonicalData | null;
   webmaster: WebmasterCanonicalData | null;
-  trafficComparison: Readonly<Partial<Record<SourceKey, DatasetMeta>>>;
+  wordstat: WordstatCanonicalData | null;
+  alice: AliceCanonicalData | null;
+  seoOs: SeoOsCanonicalData | null;
+  trafficComparison: Readonly<Partial<Record<SourceKey, DatasetMeta | CanonicalDatasetData>>>;
 }>;
 
 function missingMeta(): DatasetMeta {
@@ -32,6 +35,9 @@ function isMetrikaData(value: DatasetMeta | CanonicalDatasetData): value is Metr
 function isWebmasterData(value: DatasetMeta | CanonicalDatasetData): value is WebmasterCanonicalData {
   return "kind" in value && value.kind === "webmaster";
 }
+function isWordstatData(value: DatasetMeta | CanonicalDatasetData): value is WordstatCanonicalData { return "kind" in value && value.kind === "wordstat"; }
+function isAliceData(value: DatasetMeta | CanonicalDatasetData): value is AliceCanonicalData { return "kind" in value && value.kind === "alice"; }
+function isSeoOsData(value: DatasetMeta | CanonicalDatasetData): value is SeoOsCanonicalData { return "kind" in value && value.kind === "seo_os"; }
 
 export async function loadDashboardReadModel(input: Readonly<{
   registration: SiteRegistration;
@@ -57,9 +63,12 @@ export async function loadDashboardReadModel(input: Readonly<{
   }
 
   const datasets: Partial<Record<SourceKey, DatasetMeta>> = { google_search_console: gsc.meta };
-  const trafficComparison: Partial<Record<SourceKey, DatasetMeta>> = {};
+  const trafficComparison: Partial<Record<SourceKey, DatasetMeta | CanonicalDatasetData>> = {};
   let metrika: MetrikaCanonicalData | null = null;
   let webmaster: WebmasterCanonicalData | null = null;
+  let wordstat: WordstatCanonicalData | null = null;
+  let alice: AliceCanonicalData | null = null;
+  let seoOs: SeoOsCanonicalData | null = null;
   for (const source of input.registration.profile.sources) {
     if (source.sourceKey === "google_search_console") continue;
     if (source.mode === "disabled") {
@@ -73,13 +82,16 @@ export async function loadDashboardReadModel(input: Readonly<{
       datasets[source.sourceKey] = data;
       if (isMetrikaData(data)) metrika = data;
       if (isWebmasterData(data)) webmaster = data;
+      if (isWordstatData(data)) wordstat = data;
+      if (isAliceData(data)) alice = data;
+      if (isSeoOsData(data)) seoOs = data;
       if (input.selection.traffic.comparison && (source.sourceKey === "yandex_metrika" || source.sourceKey === "yandex_webmaster")) {
-        trafficComparison[source.sourceKey] = await input.execute({ name: "dataset", scope, period: input.selection.traffic.comparison, publicationId: input.publicationId, filters: input.filters }) as DatasetMeta;
+        trafficComparison[source.sourceKey] = await input.execute({ name: "dataset", scope, period: input.selection.traffic.comparison, publicationId: input.publicationId, filters: input.filters }) as DatasetMeta | CanonicalDatasetData;
       }
     } catch (error) {
       if (!(error instanceof MissingSourceScopeError)) throw error;
       datasets[source.sourceKey] = missingMetaFor(source.sourceKey, source.mode === "manual" ? "manual" : "automated");
     }
   }
-  return { gsc, indexing, datasets, metrika, webmaster, trafficComparison };
+  return { gsc, indexing, datasets, metrika, webmaster, wordstat, alice, seoOs, trafficComparison };
 }

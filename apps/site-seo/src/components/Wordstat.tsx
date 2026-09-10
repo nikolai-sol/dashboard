@@ -1,2 +1,3 @@
 import type { DatasetMeta } from "@reportingdash/site-seo-contract";
-export function Wordstat({ id, meta }: Readonly<{ id: string; meta?: DatasetMeta }>) { return <section id={id}><h2>Wordstat</h2><p>{meta?.state === "missing" ? "Нужна выгрузка" : meta?.state ?? "нет данных"}</p></section>; }
+import type { WordstatCanonicalData } from "../lib/db.ts";
+export function Wordstat({ id, meta, data }: Readonly<{ id: string; meta?: DatasetMeta; data: WordstatCanonicalData | null }>) { return <section id={id}><h2>Wordstat</h2><p>{meta?.state === "missing" ? "Нужна выгрузка" : meta?.state ?? "нет данных"}</p>{data?.demand != null && <p>Спрос: {data.demand}</p>}<table><tbody>{data?.queries.map((row) => <tr key={`${row.kind}:${row.query}`}><th>{row.query}</th><td>{row.kind}</td><td>{row.count}</td></tr>)}</tbody></table></section>; }

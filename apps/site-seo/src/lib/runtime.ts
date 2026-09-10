@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { readFile as readFileFromDisk } from "node:fs/promises";
 import type { SiteRegistration } from "@reportingdash/site-seo-contract";
-import { calendarMonthPeriod, createPeriodSelection, isoWeekPeriod } from "./period-selection.ts";
+import { calendarMonthPeriod, createPeriodSelection, gscFilters, isoWeekPeriod } from "./period-selection.ts";
 import type { DashboardReadRequest } from "./route-handlers.ts";
 import type { SiteSeoSession } from "./auth.ts";
 import { canonicalReadExecutor, loadCurrentCredentialVersion } from "./db.ts";
@@ -51,7 +51,7 @@ export function parseDashboardReadRequest(url: URL, slug: string, timezone: stri
   const gscPeriod = url.searchParams.get("gsc_period");
   const aliceMonth = url.searchParams.get("alice_month");
   if (!trafficWeek || !gscPeriod || !aliceMonth) throw new Error("Reporting periods are required");
-  const filters: Record<string, string> = {};
+  const filters: Record<string, string> = gscFilters();
   for (const [key, value] of url.searchParams.entries()) {
     if (key.startsWith("filter_") && key.length > "filter_".length) filters[key.slice("filter_".length)] = value;
   }

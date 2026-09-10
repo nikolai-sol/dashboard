@@ -152,6 +152,71 @@ test("registry rejects a binding not declared by the profile", () => {
   );
 });
 
+test("registry rejects one Metrika counter bound to different resource scopes", () => {
+  const metrikaSource = (bindingId: string) => [{
+    sourceKey: "yandex_metrika" as const,
+    mode: "automated" as const,
+    bindingId,
+    importCadence: [],
+  }];
+  const firstProfile = profile({ sources: metrikaSource("metrika-one") });
+  const secondProfile = profile({
+    siteId: "site-second",
+    clientId: "client-second",
+    dashboardId: 42,
+    slug: "second",
+    domain: "second.example.test",
+    allowedDomains: ["second.example.test"],
+    title: "Second dashboard",
+    sources: metrikaSource("metrika-two"),
+    runtime: {
+      route: "/dashboard/second",
+      assetPrefix: "/_next-second",
+      buildOutputDir: ".next-second",
+      processName: "dashboard-second",
+      port: 3004,
+      deployPath: "/var/www/dashboard-second",
+      releaseBranch: "release/second",
+      deployLockPath: "/var/www/.dashboard-second-deploy.lock",
+    },
+  });
+  const first: SiteRegistration = {
+    profile: firstProfile,
+    bindings: [{ bindingId: "metrika-one", clientId: firstProfile.clientId, siteId: firstProfile.siteId, dashboardId: firstProfile.dashboardId, sourceKey: "yandex_metrika", analyticsAccountId: "counter-123", resourceId: "counter-123" }],
+  };
+  const second: SiteRegistration = {
+    profile: secondProfile,
+    bindings: [{ bindingId: "metrika-two", clientId: secondProfile.clientId, siteId: secondProfile.siteId, dashboardId: secondProfile.dashboardId, sourceKey: "yandex_metrika", analyticsAccountId: "counter-123", resourceId: "counter-456" }],
+  };
+
+  assert.throws(() => assertSiteRegistry([first, second]), /metrika.*counter|counter.*scope/i);
+});
+
+test("registry requires a Metrika counter account and resource identity to match", () => {
+  const siteProfile = profile({
+    sources: [{ sourceKey: "yandex_metrika", mode: "automated", bindingId: "metrika", importCadence: [] }],
+  });
+  const value: SiteRegistration = {
+    profile: siteProfile,
+    bindings: [{ bindingId: "metrika", clientId: siteProfile.clientId, siteId: siteProfile.siteId, dashboardId: siteProfile.dashboardId, sourceKey: "yandex_metrika", analyticsAccountId: "counter-123", resourceId: "different-resource" }],
+  };
+
+  assert.throws(() => assertSiteRegistry([value]), /metrika.*account.*resource|counter.*identity/i);
+});
+
+test("registry rejects one Wordstat account across distinct site scopes", () => {
+  const wordstatSource = (bindingId: string) => [{ sourceKey: "yandex_wordstat" as const, mode: "automated" as const, bindingId, importCadence: [] }];
+  const firstProfile = profile({ sources: wordstatSource("wordstat-one") });
+  const secondProfile = profile({
+    siteId: "site-wordstat-second", clientId: "client-wordstat-second", dashboardId: 43, slug: "wordstat-second", domain: "wordstat-second.example.test", allowedDomains: ["wordstat-second.example.test"], title: "Second Wordstat", sources: wordstatSource("wordstat-two"),
+    runtime: { route: "/dashboard/wordstat-second", assetPrefix: "/_next-wordstat-second", buildOutputDir: ".next-wordstat-second", processName: "dashboard-wordstat-second", port: 3005, deployPath: "/var/www/dashboard-wordstat-second", releaseBranch: "release/wordstat-second", deployLockPath: "/var/www/.dashboard-wordstat-second-deploy.lock" },
+  });
+  const first: SiteRegistration = { profile: firstProfile, bindings: [{ bindingId: "wordstat-one", clientId: firstProfile.clientId, siteId: firstProfile.siteId, dashboardId: firstProfile.dashboardId, sourceKey: "yandex_wordstat", analyticsAccountId: "wordstat-account", resourceId: "ru" }] };
+  const second: SiteRegistration = { profile: secondProfile, bindings: [{ bindingId: "wordstat-two", clientId: secondProfile.clientId, siteId: secondProfile.siteId, dashboardId: secondProfile.dashboardId, sourceKey: "yandex_wordstat", analyticsAccountId: "wordstat-account", resourceId: "ru" }] };
+
+  assert.throws(() => assertSiteRegistry([first, second]), /wordstat.*account|account.*scope/i);
+});
+
 test("registry rejects duplicate dashboard, slug, domain, route, port and runtime paths", () => {
   const first = registration();
   const secondProfile = profile({

@@ -1,10 +1,10 @@
-import type { PeriodSelection } from "../lib/period-selection.ts";
+import { gscFilters, type PeriodSelection } from "../lib/period-selection.ts";
 
 export function buildDashboardQuery(selection: PeriodSelection, publicationId: string | null, filters: Readonly<Record<string, string>>): string {
   const params = new URLSearchParams({ traffic_week: selection.traffic.primary.key, gsc_period: selection.gsc.key, alice_month: selection.alice.key });
   if (selection.traffic.comparison) params.set("traffic_compare", selection.traffic.comparison.key);
   if (publicationId) params.set("publication", publicationId);
-  for (const [key, value] of Object.entries(filters)) params.set(`filter_${key}`, value);
+  for (const [key, value] of Object.entries(gscFilters(filters))) params.set(`filter_${key}`, value);
   return params.toString();
 }
 

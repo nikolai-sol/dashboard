@@ -107,8 +107,10 @@ test("canonical source readers preserve empty, partial, and exact resource seman
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
     if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, status: "success_empty", import_id: 91, loaded_at: "2026-09-01 01:00:00" }], []];
+    if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
     if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
     if (/site-seo:webmaster-(summary|daily|pages)/.test(sql)) return [[], []];
+    if (/site-seo:alice-(summary|competitors|sources)/.test(sql)) return [[], []];
     if (sql.includes("canonical_alice_visibility_snapshots")) return [[{ row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
     throw new Error("unexpected query");
   } });
@@ -121,12 +123,12 @@ test("canonical source readers preserve empty, partial, and exact resource seman
   assert.equal("state" in webmaster && webmaster.state, "partial");
   assert.equal("state" in alice && alice.state, "ready");
   assert.match(calls[0]!.sql, /canonical_wordstat_coverage/i);
-  assert.deepEqual(calls[1]!.params, ["yandex_webmaster", "webmaster-account", "https:example.test:443", "2026-08-03", "2026-08-09"]);
+  assert.deepEqual(calls.find((call) => call.sql.includes("site-seo:webmaster-meta"))?.params, ["yandex_webmaster", "webmaster-account", "https:example.test:443", "2026-08-03", "2026-08-09"]);
   assert.deepEqual(calls.at(-1)?.params, ["yandex_webmaster_alice_manual", "alice-account", "example.test", "2026-08-01", "2026-08-31"]);
 });
 
 test("derived SEO OS without a canonical materialization stays honestly missing", async () => {
-  const execute = createCanonicalReadExecutor({ async execute() { throw new Error("must not query"); } });
+  const execute = createCanonicalReadExecutor({ async execute() { return [[], []]; } });
   const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os" }, period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
   assert.equal("state" in result && result.state, "missing");
 });

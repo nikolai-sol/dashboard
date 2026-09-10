@@ -4,6 +4,7 @@ import { Dashboard } from "../../../components/Dashboard.tsx";
 import { LoginForm } from "../../../components/LoginForm.tsx";
 import { loadDashboardReadModel } from "../../../lib/read-model.ts";
 import { defaultPeriodSelection, getSiteSeoRuntime, parseDashboardReadRequest } from "../../../lib/runtime.ts";
+import { gscFilters } from "../../../lib/period-selection.ts";
 
 export default async function SiteSeoDashboardPage({ params, searchParams }: Readonly<{ params: Promise<{ siteSlug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }>) {
   const runtime = await getSiteSeoRuntime();
@@ -18,7 +19,7 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
     const hasPeriodState = ["traffic_week", "gsc_period", "alice_month"].some((key) => url.searchParams.has(key));
     const request = hasPeriodState
       ? parseDashboardReadRequest(url, siteSlug, runtime.registration.profile.businessTimezone)
-      : { slug: siteSlug, selection: defaultPeriodSelection(runtime.registration.profile.businessTimezone), publicationId: null, filters: {} };
+      : { slug: siteSlug, selection: defaultPeriodSelection(runtime.registration.profile.businessTimezone), publicationId: null, filters: gscFilters() };
     const model = await loadDashboardReadModel({ registration: runtime.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: runtime.execute });
     return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} />;
   } catch {

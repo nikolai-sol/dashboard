@@ -27,8 +27,13 @@ test("binds the signed viewer cookie to the registration dashboard, site, and cu
 test("parses periods, publication, and filters without accepting source IDs from the URL", () => {
   const request = parseDashboardReadRequest(new URL("https://example.test/dashboard/fixture?traffic_week=2026-W01&gsc_period=2026-01&alice_month=2026-01&publication=pub-7&filter_country=RU&analyticsAccountId=attacker"), "fixture", "Europe/Moscow");
   assert.equal(request.publicationId, "pub-7");
-  assert.deepEqual(request.filters, { country: "RU" });
+  assert.deepEqual(request.filters, { country: "RU", search_type: "web", device: "all" });
   assert.equal(request.selection.gsc.key, "2026-01");
+});
+
+test("uses one explicit default GSC filter identity when a dashboard URL has none", () => {
+  const request = parseDashboardReadRequest(new URL("https://example.test/dashboard/fixture?traffic_week=2026-W01&gsc_period=2026-01&alice_month=2026-01"), "fixture", "Europe/Moscow");
+  assert.deepEqual(request.filters, { country: "all", search_type: "web", device: "all" });
 });
 
 test("verifies the existing signed viewer-cookie shape for the exact dashboard", async () => {

@@ -45,7 +45,27 @@ export type WebmasterCanonicalData = DatasetMeta & Readonly<{
   topPages: readonly Readonly<{ page: string; metrics: WebmasterCanonicalMetrics }>[];
 }>;
 
-export type CanonicalDatasetData = MetrikaCanonicalData | WebmasterCanonicalData;
+export type WordstatCanonicalData = DatasetMeta & Readonly<{
+  kind: "wordstat";
+  demand: number | null;
+  queries: readonly Readonly<{ query: string; count: number; kind: string }>[];
+}>;
+
+export type AliceCanonicalData = DatasetMeta & Readonly<{
+  kind: "alice";
+  officialSovPct: number | null;
+  samplePresencePct: number | null;
+  competitors: readonly string[];
+  sources: readonly string[];
+}>;
+
+export type SeoOsCanonicalData = DatasetMeta & Readonly<{
+  kind: "seo_os";
+  rows: readonly Readonly<{ engine: string; mentions: number; citations: number; evidence: string | null }>[];
+  tasks: readonly Readonly<{ title: string; status: string }>[];
+}>;
+
+export type CanonicalDatasetData = MetrikaCanonicalData | WebmasterCanonicalData | WordstatCanonicalData | AliceCanonicalData | SeoOsCanonicalData;
 
 /**
  * The runtime implementation is supplied by the site's MySQL-only adapter.
@@ -429,6 +449,36 @@ async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalRea
     : datasetMeta(query, row, "automated", "ready", "complete");
 }
 
+type WordstatRow = Readonly<{ demand?: unknown; query_text?: unknown; count?: unknown; request_kind?: unknown }>;
+
+async function readWordstatData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | WordstatCanonicalData> {
+  const meta = await readWordstatMeta(database, query);
+  if (meta.state === "missing") return meta;
+  const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
+  const [summaryRows, queryRows] = await Promise.all([
+    rowsFor<WordstatRow>(database, {
+      sql: `/* site-seo:wordstat-demand */
+            SELECT SUM(count) AS demand
+              FROM canonical_fact_wordstat_dynamics_daily
+             WHERE source_key = ? AND analytics_account_id = ? AND region_scope = ?
+               AND device_type = 'all' AND report_date BETWEEN ? AND ?`, params,
+    }),
+    rowsFor<WordstatRow>(database, {
+      sql: `/* site-seo:wordstat-queries */
+            SELECT query_text, SUM(count) AS count, request_kind
+              FROM canonical_fact_wordstat_requests_snapshot
+             WHERE source_key = ? AND analytics_account_id = ?
+               AND device_type = 'all' AND snapshot_date BETWEEN ? AND ?
+             GROUP BY query_text, request_kind
+             ORDER BY count DESC, query_text ASC
+             LIMIT 20`, params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to],
+    }),
+  ]);
+  const summary = summaryRows[0];
+  return { ...meta, kind: "wordstat", demand: summary && summary.demand !== null ? numeric(summary.demand) : null,
+    queries: queryRows.map((row) => ({ query: String(row.query_text), count: numeric(row.count), kind: String(row.request_kind) })) };
+}
+
 async function readAliceMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta> {
   const rows = await rowsFor<DatasetMetaRow>(database, {
     sql: `SELECT COUNT(*) AS row_count,
@@ -446,13 +496,64 @@ async function readAliceMeta(database: CanonicalDatabase, query: CanonicalReadQu
     : missingMeta(query.scope.sourceKey, "manual");
 }
 
+type AliceRow = Readonly<{ official_sov_pct?: unknown; sample_presence_pct?: unknown; site_domain?: unknown; source_domain?: unknown }>;
+
+async function readAliceData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | AliceCanonicalData> {
+  const meta = await readAliceMeta(database, query);
+  if (meta.state === "missing") return meta;
+  const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
+  const [snapshotRows, competitorRows, sourceRows] = await Promise.all([
+    rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-summary */
+      SELECT official_sov_pct, sample_presence_pct
+      FROM canonical_alice_visibility_snapshots
+      WHERE source_key = ? AND analytics_account_id = ? AND domain = ? AND period_month BETWEEN ? AND ? AND publication_status = 'published'
+      ORDER BY period_month DESC, id DESC LIMIT 1`, params }),
+    rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-competitors */
+      SELECT featured.site_domain
+      FROM canonical_alice_visibility_featured_sites featured
+      JOIN canonical_alice_visibility_snapshots snapshot ON snapshot.id = featured.snapshot_id
+      WHERE snapshot.source_key = ? AND snapshot.analytics_account_id = ? AND snapshot.domain = ? AND snapshot.period_month BETWEEN ? AND ? AND snapshot.publication_status = 'published'
+      ORDER BY snapshot.period_month DESC, featured.display_order ASC LIMIT 20`, params }),
+    rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-sources */
+      SELECT DISTINCT source.source_domain
+      FROM canonical_alice_visibility_sources source
+      JOIN canonical_alice_visibility_queries query_row ON query_row.id = source.query_id
+      JOIN canonical_alice_visibility_snapshots snapshot ON snapshot.id = query_row.snapshot_id
+      WHERE snapshot.source_key = ? AND snapshot.analytics_account_id = ? AND snapshot.domain = ? AND snapshot.period_month BETWEEN ? AND ? AND snapshot.publication_status = 'published'
+      ORDER BY source.source_domain ASC LIMIT 20`, params }),
+  ]);
+  const snapshot = snapshotRows[0];
+  return { ...meta, kind: "alice", officialSovPct: snapshot ? nullableNumeric(snapshot.official_sov_pct) : null,
+    samplePresencePct: snapshot ? nullableNumeric(snapshot.sample_presence_pct) : null,
+    competitors: competitorRows.map((row) => String(row.site_domain)), sources: sourceRows.map((row) => String(row.source_domain)) };
+}
+
+type SeoOsRow = Readonly<{ engine?: unknown; mentions?: unknown; citations?: unknown; evidence?: unknown; title?: unknown; status?: unknown }>;
+
+async function readSeoOsData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | SeoOsCanonicalData> {
+  const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.key];
+  const [rows, taskRows] = await Promise.all([
+    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-rows */
+      SELECT engine, SUM(mention_count) AS mentions, SUM(citation_count) AS citations, MAX(run_id) AS evidence
+      FROM seo_ai_visibility_weekly
+      WHERE source_key = ? AND analytics_account_id = ? AND week_key = ?
+      GROUP BY engine ORDER BY engine ASC`, params }),
+    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-tasks */
+      SELECT CONCAT(opportunity_type, ': ', cluster_id) AS title, status
+      FROM seo_tasks WHERE analytics_account_id = ? AND week_key = ? ORDER BY task_id ASC LIMIT 20`, params: [query.scope.analyticsAccountId, query.period.key] }),
+  ]);
+  if (rows.length === 0 && taskRows.length === 0) return missingMeta("seo_os", "derived");
+  const meta = datasetMeta(query, { import_id: null, loaded_at: null }, "derived", "partial", "unknown");
+  return { ...meta, kind: "seo_os", rows: rows.map((row) => ({ engine: String(row.engine), mentions: numeric(row.mentions), citations: numeric(row.citations), evidence: row.evidence == null ? null : String(row.evidence) })), tasks: taskRows.map((row) => ({ title: String(row.title), status: String(row.status) })) };
+}
+
 async function readDatasetMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | CanonicalDatasetData> {
   switch (query.scope.sourceKey) {
     case "yandex_metrika": return readMetrikaData(database, query);
     case "yandex_webmaster": return readWebmasterData(database, query);
-    case "yandex_wordstat": return readWordstatMeta(database, query);
-    case "yandex_webmaster_alice_manual": return readAliceMeta(database, query);
-    case "seo_os": return missingMeta("seo_os", "derived");
+    case "yandex_wordstat": return readWordstatData(database, query);
+    case "yandex_webmaster_alice_manual": return readAliceData(database, query);
+    case "seo_os": return readSeoOsData(database, query);
     case "google_search_console": return missingMeta("google_search_console", "manual");
   }
 }

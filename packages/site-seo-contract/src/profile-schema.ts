@@ -207,6 +207,13 @@ export function assertSiteRegistry(
     "deployLockPath",
   ])
     seen.set(field, new Set());
+  // These canonical readers are account-grained, so an account cannot safely
+  // identify more than one registered site/resource scope.
+  const accountGrainedScopes = new Map<SourceKey, Map<string, SiteBinding>>([
+    ["yandex_metrika", new Map()],
+    ["yandex_wordstat", new Map()],
+    ["seo_os", new Map()],
+  ]);
 
   for (const [index, rawRegistration] of value.entries()) {
     const registration = object(rawRegistration, `registrations[${index}]`);
@@ -236,6 +243,22 @@ export function assertSiteRegistry(
         throw new TypeError("binding dashboardId does not match profile");
       if (binding.sourceKey !== source.sourceKey)
         throw new TypeError("binding sourceKey does not match profile");
+    }
+    for (const binding of bindings) {
+      const scopes = accountGrainedScopes.get(binding.sourceKey);
+      if (!scopes) continue;
+      if (binding.sourceKey === "yandex_metrika" && binding.analyticsAccountId !== binding.resourceId)
+        throw new TypeError("Metrika counter account and resource identity must match");
+      const previous = scopes.get(binding.analyticsAccountId);
+      if (previous && (
+        previous.clientId !== binding.clientId ||
+        previous.siteId !== binding.siteId ||
+        previous.dashboardId !== binding.dashboardId ||
+        previous.resourceId !== binding.resourceId
+      )) {
+        throw new TypeError(`${binding.sourceKey} account must not be bound to different scopes`);
+      }
+      scopes.set(binding.analyticsAccountId, binding);
     }
     if (bindingIds.size !== bindings.length)
       throw new TypeError("bindingId must be unique within a site");

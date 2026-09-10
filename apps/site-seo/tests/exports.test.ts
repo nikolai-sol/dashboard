@@ -55,6 +55,26 @@ test("exports the same canonical Metrika and Webmaster facts shown by the dashbo
   assert.doesNotMatch(csv, /Пользователи за период/);
 });
 
+test("exports selected traffic comparison period and its canonical metrics", () => {
+  const comparison = createPeriodSelection({ primaryWeek: "2026-W01", comparisonWeek: "2025-W52", aliceMonth: "2026-01", gsc: period }, "Europe/Moscow");
+  const rows = buildDashboardExportRows({
+    profile: { sources: [{ sourceKey: "yandex_metrika", mode: "automated", bindingId: "metrika", importCadence: [] }] } as never,
+    selection: comparison,
+    model: {
+      gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} },
+      datasets: { yandex_metrika: { ...meta, sourceKey: "yandex_metrika", state: "ready", period } },
+      metrika: null,
+      webmaster: null,
+      trafficComparison: {
+        yandex_metrika: { ...meta, sourceKey: "yandex_metrika", state: "ready", period: comparison.traffic.comparison!, kind: "metrika", summary: { visits: 98765, pageviews: 123456 }, daily: [], topPages: [] },
+      },
+    },
+  } as never);
+  const csv = toCsv(rows);
+  assert.match(csv, /Сравнение.*2025-W52/);
+  assert.match(csv, /98765/);
+});
+
 test("refuses an export session from another dashboard before any canonical read", async () => {
   let calls = 0;
   const response = await createExcelExportHandler({
