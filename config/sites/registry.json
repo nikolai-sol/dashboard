@@ -1,0 +1,51 @@
+[
+  {
+    "profile": {
+      "schemaVersion": 1,
+      "profileVersion": "2026.09.10-1",
+      "siteId": "site-medroche",
+      "clientId": "client-roche",
+      "dashboardId": 41,
+      "slug": "medroche",
+      "domain": "med.roche.ru",
+      "allowedDomains": ["med.roche.ru"],
+      "title": "MedRoche SEO",
+      "logoAsset": null,
+      "locale": "ru-RU",
+      "businessTimezone": "Europe/Moscow",
+      "templateVersion": "bf89138b02467fd3dea732659f864b387ee323d2",
+      "sources": [
+        {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-medroche", "importCadence": ["previous_iso_week"]},
+        {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-medroche", "importCadence": ["previous_month", "previous_iso_week"]},
+        {"sourceKey": "yandex_webmaster", "mode": "automated", "bindingId": "binding-webmaster-medroche", "importCadence": ["previous_iso_week"]},
+        {"sourceKey": "yandex_wordstat", "mode": "automated", "bindingId": "binding-wordstat-medroche", "importCadence": ["previous_iso_week"]},
+        {"sourceKey": "yandex_webmaster_alice_manual", "mode": "manual", "bindingId": "binding-alice-medroche", "importCadence": ["previous_month"]},
+        {"sourceKey": "seo_os", "mode": "automated", "bindingId": "binding-seo-os-medroche", "importCadence": ["previous_iso_week"]}
+      ],
+      "taxonomyVersion": "medroche-taxonomy-v1",
+      "seoRulesVersion": "site-seo-rules-v1",
+      "authPolicyRef": "dashboard-access:medroche",
+      "runtime": {
+        "route": "/dashboard/medroche",
+        "assetPrefix": "/_next-medroche",
+        "buildOutputDir": ".next-medroche",
+        "processName": "dashboard-medroche",
+        "port": 3003,
+        "deployPath": "/var/www/dashboard-medroche",
+        "releaseBranch": "release/medroche",
+        "deployLockPath": "/var/www/.dashboard-medroche-deploy.lock"
+      }
+    },
+    "bindings": [
+      {
+        "bindingId": "binding-metrika-medroche",
+        "clientId": "client-roche",
+        "siteId": "site-medroche",
+        "dashboardId": 41,
+        "sourceKey": "yandex_metrika",
+        "analyticsAccountId": "10630330",
+        "resourceId": "10630330"
+      }
+    ]
+  }
+]
