@@ -70,6 +70,7 @@ test
 node --import tsx --test packages/runtime-contract/src/index.test.ts
 run test:deploy-source
 run test:zaruku-production-shadow
+run test:zaruku-exact-path-cutover
 run test:release-runtime
 node scripts/run-node-tests.mjs apps/zaruku/src
 node --test scripts/runtime-artifact-policy.test.mjs
@@ -126,6 +127,7 @@ const required = [
   "node --import tsx --test packages/runtime-contract/src/index.test.ts",
   "npm run test:deploy-source",
   "npm run test:zaruku-production-shadow",
+  "npm run test:zaruku-exact-path-cutover",
   "npm run test:release-runtime",
   "node --test scripts/runtime-artifact-policy.test.mjs",
   "npm --workspace apps/zaruku run verify:artifact",

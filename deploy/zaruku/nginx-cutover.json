@@ -1,0 +1,11 @@
+{
+  "scope": "zaruku",
+  "reviewedAppSha": "0630a94c2ea493ba76e4c5932f6b83a351fbd810",
+  "combinedPort": 3001,
+  "isolatedPort": 3002,
+  "targetFile": "/etc/nginx/conf.d/dashboard-next.conf",
+  "expectedPredecessorSha256": "1c0363a55ae130e0e96be984fcaafe32384f2cf3c73d21e8d319dd96e940566b",
+  "assetPrefix": "/_next-zaruku",
+  "dashboardSlug": "zaruku",
+  "numericAlias": "28"
+}
