@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -36,4 +36,18 @@ test("deploy and rollback CLIs resolve the repository beside the passed manifest
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("MedRoche PM2 launch reads only its dedicated runtime secret file", () => {
+  const ecosystem = readFileSync("deploy/medroche/ecosystem.config.cjs", "utf8");
+  const launcher = readFileSync("deploy/medroche/start.cjs", "utf8");
+  assert.match(ecosystem, /script:\s*['"]\/usr\/bin\/env['"]/);
+  assert.match(ecosystem, /\/var\/www\/\.dashboard-medroche-launcher\.cjs/);
+  assert.doesNotMatch(ecosystem, /DB_PASSWORD|DASHBOARD_AUTH_SECRET/);
+  assert.match(launcher, /\/var\/www\/\.dashboard-medroche-secrets\/runtime\.env/);
+  assert.match(launcher, /SITE_SEO_REGISTRATION_PATH/);
+  assert.match(launcher, /parsed\.HOSTNAME !== '127\.0\.0\.1'/);
+  assert.match(launcher, /parsed\.PORT !== '3003'/);
+  assert.match(launcher, /apps\/site-seo\/server\.js/);
+  assert.doesNotMatch(launcher, /dashboard-zaruku|3002/);
 });
