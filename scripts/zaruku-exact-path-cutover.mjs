@@ -336,7 +336,10 @@ async function remoteWorker(action) {
   };
   const regular = (filename, expectedMode) => {
     const stat = fs.lstatSync(filename);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== 0 || stat.gid !== 0
+    // The combined deploy preserves its uploader UID. This exception is only
+    // for observed version metadata, never credentials or executable authority.
+    const ownerAllowed=stat.uid===0||filename==='/var/www/dashboard/.release-source-sha'&&stat.uid===501;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || !ownerAllowed || stat.gid !== 0
       || (expectedMode !== undefined && (stat.mode & 0o7777) !== expectedMode)) refuse();
     return stat;
   };
