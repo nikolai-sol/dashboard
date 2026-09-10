@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createArtifactManifest, inspectArtifactDirectory } from "./site-seo-artifact-policy.mjs";
+import { createArtifactManifest, inspectArtifactDirectory, validateArtifactManifest } from "./site-seo-artifact-policy.mjs";
 import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const TEMPLATE_SOURCE_PATHS = ["apps/site-seo", "packages/site-seo-contract"];
 
 function parse(argv) {
   const result = {};
@@ -40,6 +41,22 @@ export function buildEnvironment(profile) {
   };
 }
 
+export function assertTemplateSource(profile, { repositoryRoot = ROOT, sourcePaths = TEMPLATE_SOURCE_PATHS } = {}) {
+  if (!/^[a-f0-9]{40}$/i.test(profile.templateVersion)) throw new Error("templateVersion must be an exact git commit");
+  try {
+    execFileSync("git", ["cat-file", "-e", `${profile.templateVersion}^{commit}`], { cwd: repositoryRoot, stdio: "ignore" });
+  } catch {
+    throw new Error(`template source commit is unavailable: ${profile.templateVersion}`);
+  }
+  const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...sourcePaths], { cwd: repositoryRoot, encoding: "utf8" });
+  if (dirty.trim()) throw new Error("template source tree has uncommitted files");
+  for (const sourcePath of sourcePaths) {
+    const result = spawnSync("git", ["diff", "--quiet", profile.templateVersion, "--", sourcePath], { cwd: repositoryRoot });
+    if (result.status !== 0) throw new Error(`template source differs from ${profile.templateVersion}: ${sourcePath}`);
+  }
+  return { revision: profile.templateVersion, sourcePaths: [...sourcePaths] };
+}
+
 export function assertRegistered(profile, registryFilename) {
   if (!registryFilename || !fs.existsSync(registryFilename)) {
     throw new Error("site registry is required before build");
@@ -59,8 +76,11 @@ export function writeRuntimeRegistration(standaloneRoot, registration) {
   return destination;
 }
 
-export function createBuildMetadata(standaloneRoot, profile) {
+export function createBuildMetadata(standaloneRoot, profile, templateSource) {
   const manifest = createArtifactManifest(standaloneRoot, profile);
+  manifest.templateSourceCommit = templateSource.revision;
+  manifest.templateSourcePaths = templateSource.sourcePaths;
+  validateArtifactManifest(manifest);
   const destination = path.join(path.dirname(standaloneRoot), "site-seo-artifact-manifest.json");
   fs.writeFileSync(destination, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o640 });
   const errors = inspectArtifactDirectory(standaloneRoot, manifest);
@@ -70,6 +90,7 @@ export function createBuildMetadata(standaloneRoot, profile) {
 
 export function buildSite(profileFilenameValue, { dryRun = false, registryFilename = null } = {}) {
   const profile = readSiteProfile(profileFilenameValue);
+  const templateSource = assertTemplateSource(profile);
   const registration = assertRegistered(profile, registryFilename);
   const appRoot = path.join(ROOT, "apps/site-seo");
   const env = { ...process.env, ...buildEnvironment(profile) };
@@ -84,7 +105,7 @@ export function buildSite(profileFilenameValue, { dryRun = false, registryFilena
   const standaloneRoot = path.join(outputRoot, "standalone");
   if (!fs.existsSync(standaloneRoot)) throw new Error(`missing standalone output: ${standaloneRoot}`);
   writeRuntimeRegistration(standaloneRoot, registration);
-  return { profile, ...createBuildMetadata(standaloneRoot, profile) };
+  return { profile, ...createBuildMetadata(standaloneRoot, profile, templateSource) };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

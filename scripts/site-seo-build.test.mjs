@@ -4,10 +4,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { assertRegistered, buildSite, writeRuntimeRegistration } from "./site-seo-build.mjs";
+import { assertRegistered, assertTemplateSource, buildSite, writeRuntimeRegistration } from "./site-seo-build.mjs";
 import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
 
 const profileFilename = path.resolve("config/sites/medroche.json");
+
+test("build accepts only source tree matching the exact profile template commit", () => {
+  const profile = readSiteProfile(profileFilename);
+  assert.equal(assertTemplateSource(profile).revision, profile.templateVersion);
+  assert.throws(
+    () => assertTemplateSource({ ...profile, templateVersion: "1cdbe390fd988cf30dfbeb58bab01ef11bb87377" }),
+    /template|source|revision/i,
+  );
+});
 
 test("build refuses a profile that is not present at the same hash in the registry", () => {
   assert.throws(

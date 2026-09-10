@@ -21,6 +21,11 @@ export function validateArtifactManifest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("artifact manifest must be an object");
   if (value.schemaVersion !== 1) throw new TypeError("artifact schemaVersion must be 1");
   for (const key of ["siteId", "profileVersion", "templateVersion", "buildOutputDir", "assetPrefix", "route", "processName", "deployPath"]) text(value[key], key);
+  if (value.templateSourceCommit !== undefined) {
+    text(value.templateSourceCommit, "templateSourceCommit");
+    if (value.templateSourceCommit !== value.templateVersion) throw new TypeError("artifact template source does not match profile templateVersion");
+  }
+  if (value.templateSourcePaths !== undefined && (!Array.isArray(value.templateSourcePaths) || value.templateSourcePaths.length === 0 || value.templateSourcePaths.some((entry) => typeof entry !== "string" || entry.includes("..")))) throw new TypeError("templateSourcePaths are invalid");
   const slug = value.siteId.replace(/^site-/, "");
   if (value.route !== `/dashboard/${slug}` || value.assetPrefix !== `/_next-${slug}` || value.buildOutputDir !== `.next-${slug}` || value.processName !== `dashboard-${slug}` || value.deployPath !== `/var/www/dashboard-${slug}`) throw new TypeError("artifact runtime identity is outside site scope");
   if (!Array.isArray(value.files) || value.files.length === 0) throw new TypeError("artifact files are required");
