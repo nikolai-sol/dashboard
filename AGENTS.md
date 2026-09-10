@@ -244,13 +244,22 @@ filesystem with about 49 GiB available. The open-file limit is 1024.
 
 ### Zaruku canonical source truth
 
-Isolated-runtime branch target (not deployed): the release worker reads only
+Production since 2026-09-10: exact Zaruku page/API/export routes and
+`/_next-zaruku/` are served by `dashboard-zaruku` at `127.0.0.1:3002`,
+under `/var/www/dashboard-zaruku/apps/zaruku`. The public domain and URLs
+are unchanged; all other routes still use the shared app on 3001.
+Deploy Zaruku only with `scripts/deploy-zaruku.sh` from a clean app worktree
+on the reviewed `release/zaruku` lineage; never use the combined deploy for it.
+The application cutover release was `01069b16f708404460b811bd821cdb41aff963b8`.
+The release worker reads only
 `/var/www/.dashboard-zaruku-secrets/runtime.env`, in a root-owned `0700` directory
 with a root-owned single-link `0600` file. Required DB inputs are
 `ZARUKU_DB_HOST`, `ZARUKU_DB_PORT`, `ZARUKU_DB_USER`, `ZARUKU_DB_PASSWORD`, and
 `ZARUKU_DB_NAME`; generic combined `MYSQL_*`/`DB_*` inputs never provide a fallback.
 The exact file format/allowlist is in `OPS.md`. A dedicated least-privilege DB
-account, its grants, and secret installation remain reviewed cutover prerequisites.
+account, its grants, and secret installation were verified before cutover.
+Collectors and canonical data stay shared and account-scoped; dashboard isolation
+does not imply separate source accounts.
 Local build stamping requires Python 3 descriptor-relative filesystem support;
 direct sealed boot requires a non-root UID and EUID. Remote boot retains its
 dedicated Linux service-account privilege-drop path.
