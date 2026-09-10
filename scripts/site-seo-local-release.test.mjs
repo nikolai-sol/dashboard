@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -61,6 +62,27 @@ test("real local release keeps site B running and canonical history untouched wh
     if (siteB) await stopLocalFixture({ root, site: "clinic-b" }).catch(() => {});
     rmSync(root, { recursive: true, force: true });
     rmSync(canonicalHistory, { force: true });
+  }
+});
+
+test("local release CLI awaits async start, health, and stop actions", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "site-seo-local-cli-"));
+  const artifactRoot = path.join(root, "artifacts");
+  try {
+    const port = await freePort();
+    const artifact = writeArtifact(artifactRoot, "cli-v1");
+    const cli = (args) => {
+      const result = spawnSync(process.execPath, [path.resolve("scripts/site-seo-local-release.mjs"), ...args], { encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    };
+    cli(["--action", "deploy", "--root", root, "--site", "clinic-cli", "--process", "dashboard-clinic-cli", "--artifact-root", artifact, "--profile-hash", "profile-cli-v1", "--release-id", "cli-v1", "--port", String(port)]);
+    const started = cli(["--action", "start", "--root", root, "--site", "clinic-cli"]);
+    assert.match(started.processStartMarker, /^dashboard-clinic-cli:cli-v1:/);
+    assert.equal(cli(["--action", "health", "--root", root, "--site", "clinic-cli"]).releaseId, "cli-v1");
+    assert.equal(cli(["--action", "stop", "--root", root, "--site", "clinic-cli"]), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

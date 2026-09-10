@@ -160,6 +160,14 @@ function waitForExit(child, timeoutMs = 2000) {
   });
 }
 
+async function waitForPidExit(pid, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { process.kill(pid, 0); } catch (error) { if (error.code === "ESRCH") return; throw error; }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 export async function stopLocalFixture({ root, site }) {
   const filename = processFilename(root, site);
   const processInfo = readJson(filename, null);
@@ -172,6 +180,7 @@ export async function stopLocalFixture({ root, site }) {
     if (error.code !== "ESRCH") throw error;
   }
   if (child) await waitForExit(child);
+  else await waitForPidExit(processInfo.pid);
   CHILDREN.delete(processKey(root, site));
   fs.rmSync(filename, { force: true });
   return true;
@@ -190,6 +199,7 @@ export async function startLocalFixture({ root, site }) {
     env: { ...process.env, HOSTNAME: "127.0.0.1", PORT: String(current.port), SITE_SEO_FIXTURE_SITE: site, SITE_SEO_FIXTURE_RELEASE: current.releaseId },
     stdio: "ignore",
   });
+  child.unref();
   const processInfo = { pid: child.pid, port: current.port, releaseId: current.releaseId, profileHash: current.profileHash, processName: current.processName, processStartMarker: `${current.processName}:${current.releaseId}:${startedAt}`, healthUrl: `http://127.0.0.1:${current.port}/health` };
   CHILDREN.set(processKey(root, site), child);
   atomicJson(processFilename(root, site), processInfo);
@@ -253,13 +263,13 @@ function parse(argv) {
   return options;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try {
-    const options = parse(process.argv.slice(2));
-    const action = options.action;
-    if (!["deploy", "update", "rollback", "start", "health", "stop"].includes(action)) throw new Error("--action must be deploy, update, rollback, start, health, or stop");
-    const common = { root: options.root, site: options.site, processName: options.process, profileHash: options["profile-hash"], releaseId: options["release-id"], port: options.port ? Number(options.port) : undefined, artifactRoot: options["artifact-root"] };
-    const result = action === "rollback" ? rollbackLocalFixture(common) : action === "deploy" ? deployLocalFixture({ ...common, artifact: options.artifact }) : action === "update" ? updateLocalFixture({ ...common, artifact: options.artifact }) : action === "start" ? startLocalFixture(common) : action === "health" ? healthCheckLocalFixture(common) : stopLocalFixture(common);
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
+async function main() {
+  const options = parse(process.argv.slice(2));
+  const action = options.action;
+  if (!["deploy", "update", "rollback", "start", "health", "stop"].includes(action)) throw new Error("--action must be deploy, update, rollback, start, health, or stop");
+  const common = { root: options.root, site: options.site, processName: options.process, profileHash: options["profile-hash"], releaseId: options["release-id"], port: options.port ? Number(options.port) : undefined, artifactRoot: options["artifact-root"] };
+  const result = action === "rollback" ? rollbackLocalFixture(common) : action === "deploy" ? deployLocalFixture({ ...common, artifact: options.artifact }) : action === "update" ? updateLocalFixture({ ...common, artifact: options.artifact }) : action === "start" ? startLocalFixture(common) : action === "health" ? healthCheckLocalFixture(common) : stopLocalFixture(common);
+  process.stdout.write(`${JSON.stringify(await result, null, 2)}\n`);
 }
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
