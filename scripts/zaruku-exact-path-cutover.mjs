@@ -47,6 +47,13 @@ export function isolatedShellAsset(html) {
   return asset;
 }
 
+export function verifyWordstatState(value,canonicalEmpty) {
+  if(!value||value.messages?.some(message=>message.includes('таблиц')))throw new Error('Wordstat read failed');
+  if(['available','partial','empty'].includes(value.status))return value.status;
+  if(value.status==='unavailable'&&canonicalEmpty&&value.historical?.rows?.length===0&&value.current?.queries?.length===0&&value.current?.regions?.length===0)return 'not-collected';
+  throw new Error('Wordstat canonical mismatch');
+}
+
 function readJsonRegular(filename) {
   let descriptor;
   try {
@@ -321,6 +328,12 @@ async function remoteWorker(action) {
     return result;
   };
   const text = (bin, args) => run(bin, args).stdout.toString().trim();
+  const wordstatCanonicalEmpty=()=>{
+    const tables=['canonical_wordstat_seed_registry','canonical_fact_wordstat_dynamics_daily','canonical_fact_wordstat_requests_snapshot','canonical_fact_wordstat_regions_snapshot','canonical_wordstat_coverage'];
+    const sql=tables.map(table=>`SELECT COUNT(*) FROM ${table} WHERE analytics_account_id='66624469'`).join(' UNION ALL ');
+    const rows=text('/usr/bin/mysql',['--defaults-extra-file=/root/.my.cnf','--batch','--raw','--skip-column-names','report_bd','--execute',sql]).split('\n');
+    return rows.length===tables.length&&rows.every(row=>row==='0');
+  };
   const regular = (filename, expectedMode) => {
     const stat = fs.lstatSync(filename);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.uid !== 0 || stat.gid !== 0
@@ -432,7 +445,8 @@ async function remoteWorker(action) {
       compareHistoricalMetrics(pair[0],pair[1]);latest=pair[1];
     }
     const seo=latest?.zaruku_seo;
-    if(!seo?.wordstat||seo.wordstat.status==='unavailable'||!seo.alice_visibility?.snapshots?.length)refuse();
+    const wordstat=verifyWordstatState(seo?.wordstat,wordstatCanonicalEmpty());
+    if(!seo.alice_visibility?.snapshots?.length)refuse();
     const sql="SELECT JSON_OBJECT('id',CAST(s.id AS CHAR),'month',DATE_FORMAT(s.period_month,'%Y-%m'),'sov',s.official_sov_pct,'queries',(SELECT COUNT(*) FROM canonical_alice_visibility_queries q WHERE q.snapshot_id=s.id),'featured',(SELECT COUNT(*) FROM canonical_alice_visibility_featured_sites f WHERE f.snapshot_id=s.id)) FROM canonical_alice_visibility_snapshots s WHERE s.analytics_account_id='66624469' AND s.publication_status='published' ORDER BY s.period_month";
     const facts=text('/usr/bin/mysql',['--defaults-extra-file=/root/.my.cnf','--batch','--raw','--skip-column-names','report_bd','--execute',sql]).split('\n').filter(Boolean).map(row=>JSON.parse(row));
     if(!facts.some(row=>row.month==='2026-07')||!facts.some(row=>row.month==='2026-08'))refuse();
@@ -440,7 +454,7 @@ async function remoteWorker(action) {
     if(seo.alice_visibility.snapshots.length!==facts.length)refuse();
     for(const suffix of ['','/pdf','/excel']){const r=await fetch(`http://127.0.0.1:3002/api/dashboard/zaruku${suffix}`);if(r.status!==401)refuse();}
     for(const [suffix,type,magic]of [['/pdf','application/pdf','%PDF-'],['/excel','spreadsheetml','PK']]){const r=await fetch(`http://127.0.0.1:3002/api/dashboard/zaruku${suffix}?from=2026-07-01&to=2026-08-31`,{headers:{cookie},signal:AbortSignal.timeout(60000)});const bytes=Buffer.from(await r.arrayBuffer());if(r.status!==200||!(r.headers.get('content-type')??'').includes(type)||!bytes.subarray(0,magic.length).equals(Buffer.from(magic)))refuse();}
-    return {decision:'GO',sourceSha:APP_SHA,stableCanonicalComparison:true,monthsChecked:8,aliceSnapshotsChecked:facts.length};
+    return {decision:'GO',sourceSha:APP_SHA,stableCanonicalComparison:true,monthsChecked:8,aliceSnapshotsChecked:facts.length,wordstat};
   }
   if (action === 'baseline') return baseline();
   if (action === 'read-predecessor') return { text: read(TARGET, 0o644).toString('utf8') };
@@ -493,12 +507,13 @@ async function remoteWorker(action) {
     const numericPage = await fetch('https://dashboards.adreports.ru/dashboard/28', { headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(15000) });
     const numericHtml = await numericPage.text();
     const wordstat = api?.zaruku_seo?.wordstat;
+    verifyWordstatState(wordstat,wordstatCanonicalEmpty());
     const alice = api?.zaruku_seo?.alice_visibility;
     const months = Array.isArray(alice?.snapshots) ? alice.snapshots.map(row => row.month) : [];
     const competitors = Array.isArray(alice?.snapshots) && alice.snapshots.some(row => Array.isArray(row.competitors) && row.competitors.length > 0);
     const passed = assetResponse.status === 200 && apiResponse.status === 200 && aliasResponse.status === 200
       && api?.dashboard?.type === 'zaruku_bi' && alias?.dashboard?.type === 'zaruku_bi'
-      && wordstat && wordstat.status !== 'unavailable' && months.includes('2026-07') && months.includes('2026-08') && competitors
+      && wordstat && months.includes('2026-07') && months.includes('2026-08') && competitors
       && pdf.status === 200 && (pdf.headers.get('content-type') ?? '').includes('application/pdf')
       && xlsx.status === 200 && (xlsx.headers.get('content-type') ?? '').includes('spreadsheetml')
       && numericPage.status === 200 && numericHtml.includes('/_next-zaruku/');
@@ -508,7 +523,7 @@ async function remoteWorker(action) {
 }
 
 function remoteCode(action) {
-  return `const isolatedShellAsset=${isolatedShellAsset.toString()};const compareHistoricalMetrics=${compareHistoricalMetrics.toString()};const worker=${remoteWorker.toString()};try{const result=await worker(${JSON.stringify(action)});process.stdout.write(JSON.stringify(result)+'\\n');}catch{process.stderr.write('Zaruku cutover remote operation refused\\n');process.exitCode=1;}`;
+  return `const verifyWordstatState=${verifyWordstatState.toString()};const isolatedShellAsset=${isolatedShellAsset.toString()};const compareHistoricalMetrics=${compareHistoricalMetrics.toString()};const worker=${remoteWorker.toString()};try{const result=await worker(${JSON.stringify(action)});process.stdout.write(JSON.stringify(result)+'\\n');}catch{process.stderr.write('Zaruku cutover remote operation refused\\n');process.exitCode=1;}`;
 }
 
 export function cutoverSshArguments(action) {

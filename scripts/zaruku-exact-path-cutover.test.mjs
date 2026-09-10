@@ -80,6 +80,16 @@ test('cutover inspects the existing root PM2 daemon, not a new default daemon',a
   assert.match(worker,/HOME:.*?\/root/);assert.match(worker,/PM2_HOME:.*?\/root\/\.pm2/);
 });
 
+test('Wordstat no-data state is accepted only when canonical tables are empty and reads did not fail',async()=>{
+  const {verifyWordstatState}=await import(modulePath);
+  const empty={status:'unavailable',messages:[],historical:{rows:[]},current:{queries:[],regions:[]}};
+  assert.equal(verifyWordstatState(empty,true),'not-collected');
+  assert.throws(()=>verifyWordstatState(empty,false));
+  assert.throws(()=>verifyWordstatState({...empty,messages:['Часть канонических таблиц Wordstat сейчас недоступна.']},true));
+  assert.throws(()=>verifyWordstatState({...empty,current:{queries:[{}],regions:[]}},true));
+  assert.equal(verifyWordstatState({...empty,status:'available'},false),'available');
+});
+
 function fixtureAuthority(overrides = {}) {
   return Object.freeze({
     scope: 'zaruku',
