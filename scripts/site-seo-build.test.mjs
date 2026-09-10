@@ -21,6 +21,18 @@ test("build accepts only source tree matching the exact profile template commit"
   );
 });
 
+test("an existing isolated build output is not treated as mutable template source", () => {
+  const output = path.resolve("apps/site-seo/.next-fixture-check");
+  try {
+    mkdirSync(output, { recursive: true });
+    writeFileSync(path.join(output, "BUILD_ID"), "fixture");
+    const profile = readSiteProfile(profileFilename);
+    assert.equal(assertTemplateSource(profile).revision, profile.templateVersion);
+  } finally {
+    rmSync(output, { recursive: true, force: true });
+  }
+});
+
 test("build refuses a profile that is not present at the same hash in the registry", () => {
   assert.throws(
     () => buildSite(profileFilename, { dryRun: true, registryFilename: null }),

@@ -55,8 +55,11 @@ export function assertTemplateSource(profile, { repositoryRoot = ROOT, sourcePat
   } catch {
     throw new Error(`template source commit is unavailable: ${profile.templateVersion}`);
   }
-  const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...sourcePaths], { cwd: repositoryRoot, encoding: "utf8" });
-  if (dirty.trim()) throw new Error("template source tree has uncommitted files");
+  const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=all", "--", ...sourcePaths], { cwd: repositoryRoot, encoding: "utf8" })
+    .split("\n")
+    .filter((line) => line.trim())
+    .filter((line) => !/^apps\/site-seo\/\.next-[^/]+(?:\/|$)/.test(line.slice(3)));
+  if (dirty.length) throw new Error("template source tree has uncommitted files");
   for (const sourcePath of sourcePaths) {
     const result = spawnSync("git", ["diff", "--quiet", profile.templateVersion, "--", sourcePath], { cwd: repositoryRoot });
     if (result.status !== 0) throw new Error(`template source differs from ${profile.templateVersion}: ${sourcePath}`);
