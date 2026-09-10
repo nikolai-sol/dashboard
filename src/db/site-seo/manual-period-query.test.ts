@@ -7,7 +7,7 @@ import {
   buildManualDimensionsReadQuery,
   buildManualIndexingReadQuery,
   type ManualReadScope,
-} from "./manual-period-query.ts";
+} from "./manual-period-query";
 
 const scope: ManualReadScope = {
   clientId: "medroche",

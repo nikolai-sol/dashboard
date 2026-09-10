@@ -97,7 +97,7 @@ const SCOPE_WHERE = `
     AND i.resource_id = ?
     AND i.filters_hash = ?`;
 
-function scopeParams(scope: ManualReadScope): readonly string[] {
+function scopeParams(scope: ManualReadScope): readonly (string | number)[] {
   return [
     scope.clientId,
     scope.siteId,
