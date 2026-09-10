@@ -33,6 +33,7 @@ test("refuses a direct JSON request for another site slug", async () => {
   const period = { kind: "iso_week", key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" } as const;
   const response = await handler({ slug: "other-site", selection: createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: period }, "Europe/Moscow"), publicationId: null, filters: {} });
   assert.equal(response.status, 404);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
 });
 
 test("forwards one structured selection, publication, and filters to the JSON read", async () => {

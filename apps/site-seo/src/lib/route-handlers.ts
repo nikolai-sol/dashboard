@@ -21,6 +21,8 @@ export type DashboardReadRequest = Readonly<{
   filters: Readonly<Record<string, string>>;
 }>;
 
+const PRIVATE_JSON = { headers: { "cache-control": "private, no-store" } } as const;
+
 function authorize(deps: DashboardJsonDependencies) {
   return deps.getSession().then((session) => assertAuthorizedSiteSession(session, {
     dashboardId: deps.registration.profile.dashboardId,
@@ -31,27 +33,27 @@ function authorize(deps: DashboardJsonDependencies) {
 
 export function createDashboardJsonHandler(deps: DashboardJsonDependencies) {
   return async (request: DashboardReadRequest): Promise<Response> => {
-    if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404 });
+    if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404, ...PRIVATE_JSON });
     let session: SiteSeoSession;
     try { session = await authorize(deps); }
-    catch { return Response.json({ error: "unauthorized" }, { status: 401 }); }
+    catch { return Response.json({ error: "unauthorized" }, { status: 401, ...PRIVATE_JSON }); }
     try {
       return Response.json(
         await loadDashboardReadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute }),
         { headers: { "cache-control": "private, no-store" } },
       );
     } catch {
-      return Response.json({ error: "canonical_read_unavailable" }, { status: 503 });
+      return Response.json({ error: "canonical_read_unavailable" }, { status: 503, ...PRIVATE_JSON });
     }
   };
 }
 
 export function createExcelExportHandler(deps: DashboardJsonDependencies) {
   return async (request: DashboardReadRequest): Promise<Response> => {
-    if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404 });
+    if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404, ...PRIVATE_JSON });
     let session: SiteSeoSession;
     try { session = await authorize(deps); }
-    catch { return Response.json({ error: "unauthorized" }, { status: 401 }); }
+    catch { return Response.json({ error: "unauthorized" }, { status: 401, ...PRIVATE_JSON }); }
     try {
       const model = await loadDashboardReadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute });
       const sheet = XLSX.utils.json_to_sheet(buildDashboardExportRows({ profile: deps.registration.profile, selection: request.selection, model }));
@@ -63,7 +65,7 @@ export function createExcelExportHandler(deps: DashboardJsonDependencies) {
         "cache-control": "private, no-store",
       } });
     } catch {
-      return Response.json({ error: "canonical_read_unavailable" }, { status: 503 });
+      return Response.json({ error: "canonical_read_unavailable" }, { status: 503, ...PRIVATE_JSON });
     }
   };
 }
@@ -88,7 +90,7 @@ function printableHtml(rows: ReturnType<typeof buildDashboardExportRows>): strin
 export function createPdfExportHandler(deps: DashboardJsonDependencies, options: Readonly<{ launch?: PdfLaunch }> = {}) {
   const launch = options.launch ?? (puppeteer.launch.bind(puppeteer) as unknown as PdfLaunch);
   return async (request: DashboardReadRequest): Promise<Response> => {
-    if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404 });
+    if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404, ...PRIVATE_JSON });
     let session: SiteSeoSession;
     try { session = await authorize(deps); }
     catch { return Response.json({ error: "unauthorized" }, { status: 401, headers: { "cache-control": "private, no-store" } }); }
