@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { notFound } from "next/navigation";
 import { Dashboard } from "../../../components/Dashboard.tsx";
 import { LoginForm } from "../../../components/LoginForm.tsx";
 import { loadDashboardReadModel } from "../../../lib/read-model.ts";
@@ -7,7 +8,7 @@ import { defaultPeriodSelection, getSiteSeoRuntime, parseDashboardReadRequest } 
 export default async function SiteSeoDashboardPage({ params, searchParams }: Readonly<{ params: Promise<{ siteSlug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }>) {
   const runtime = await getSiteSeoRuntime();
   const { siteSlug } = await params;
-  if (siteSlug !== runtime.registration.profile.slug) return <main>Страница не найдена</main>;
+  if (siteSlug !== runtime.registration.profile.slug) notFound();
   const session = await runtime.resolveSession((await cookies()).toString(), runtime.registration);
   if (!session) return <main><h1>{runtime.registration.profile.title}</h1><LoginForm dashboardId={runtime.registration.profile.dashboardId} /></main>;
   try {
