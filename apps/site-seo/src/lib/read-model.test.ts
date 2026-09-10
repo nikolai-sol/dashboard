@@ -30,3 +30,29 @@ test("reports a missing source instead of querying an invented account", async (
   assert.equal(calls, 0);
   assert.equal(model.gsc.meta.state, "missing");
 });
+
+test("reads generic canonical coverage for enabled Metrika and Webmaster but skips disabled adapters", async () => {
+  const sources = [
+    ...profile.sources,
+    { sourceKey: "yandex_metrika" as const, mode: "automated" as const, bindingId: "metrika-fixture", importCadence: [] },
+    { sourceKey: "yandex_webmaster" as const, mode: "automated" as const, bindingId: "webmaster-fixture", importCadence: [] },
+    { sourceKey: "yandex_wordstat" as const, mode: "disabled" as const, bindingId: null, importCadence: [] },
+  ];
+  const scopedRegistration = {
+    profile: { ...profile, sources },
+    bindings: [...registration.bindings,
+      { bindingId: "metrika-fixture", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "yandex_metrika" as const, analyticsAccountId: "account-metrika", resourceId: "resource-metrika" },
+      { bindingId: "webmaster-fixture", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "yandex_webmaster" as const, analyticsAccountId: "account-webmaster", resourceId: "resource-webmaster" },
+    ],
+  } satisfies SiteRegistration;
+  const queries: CanonicalReadQuery[] = [];
+  const genericMeta = { sourceKey: "yandex_metrika" as const, period, state: "ready" as const, collectionMode: "automated" as const, completeness: "complete" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
+  const model = await loadDashboardReadModel({ registration: scopedRegistration, claim: { dashboardId: 42, siteId: "site-med" }, period, execute: async (query) => {
+    queries.push(query);
+    if (query.name === "dataset") return { ...genericMeta, sourceKey: query.scope.sourceKey };
+    return { meta: { ...genericMeta, sourceKey: "google_search_console" as const }, summary: null, daily: [], dimensions: [], indexing: genericMeta };
+  }});
+  assert.deepEqual(queries.filter((query) => query.name === "dataset").map((query) => query.scope.sourceKey).sort(), ["yandex_metrika", "yandex_webmaster"]);
+  assert.equal(model.datasets.yandex_wordstat?.state, "missing");
+  assert.equal(model.datasets.yandex_metrika?.state, "ready");
+});

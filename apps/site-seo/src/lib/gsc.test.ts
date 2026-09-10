@@ -10,7 +10,7 @@ const metrics = { clicks: 7, impressions: 100, ctrPct: 7, averagePosition: 3 };
 
 test("keeps covering daily facts for a selected ISO week but excludes month-only queries", () => {
   const rows: GscReadRows = {
-    meta: meta(month), summary: metrics,
+    meta: meta(month), summary: { ...metrics, clicks: 99 },
     daily: [{ date: "2026-01-02", metrics, meta: meta(month) }, { date: "2026-01-12", metrics, meta: meta(month) }],
     dimensions: [{ dimension: "query", value: "месячный запрос", metrics, meta: meta(month) }],
     indexing: meta(month),
@@ -19,6 +19,7 @@ test("keeps covering daily facts for a selected ISO week but excludes month-only
   const view = loadGscView(rows, week);
 
   assert.deepEqual(view.daily.map((point) => point.date), ["2026-01-02"]);
+  assert.equal(view.summary?.clicks, 7);
   assert.deepEqual(view.dimensions, []);
   assert.equal(view.dimensionMeta.query?.state, "missing");
 });

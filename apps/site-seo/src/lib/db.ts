@@ -2,7 +2,7 @@ import type { Period, SourceScope } from "@reportingdash/site-seo-contract";
 import type { GscReadRows } from "./gsc.ts";
 
 export type CanonicalReadQuery = Readonly<{
-  name: "gsc";
+  name: "gsc" | "dataset";
   scope: SourceScope;
   period: Period;
 }>;
@@ -14,4 +14,4 @@ export type CanonicalReadQuery = Readonly<{
  */
 export type CanonicalReadExecutor = (
   query: CanonicalReadQuery,
-) => Promise<GscReadRows>;
+) => Promise<GscReadRows | import("@reportingdash/site-seo-contract").DatasetMeta>;

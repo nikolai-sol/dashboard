@@ -30,17 +30,42 @@ function missingMeta(source: DatasetMeta): DatasetMeta {
   };
 }
 
+function summaryForPeriod(
+  source: GscReadRows,
+  period: Period,
+  daily: readonly GscDailyRow[],
+): Metrics | null {
+  if (samePeriod(source.meta.period, period)) return source.summary;
+  if (daily.length === 0) return null;
+  const clicks = daily.reduce((total, row) => total + row.metrics.clicks, 0);
+  const impressions = daily.reduce((total, row) => total + row.metrics.impressions, 0);
+  const positionedImpressions = daily.reduce(
+    (total, row) => total + (row.metrics.averagePosition === null ? 0 : row.metrics.impressions),
+    0,
+  );
+  const weightedPosition = daily.reduce(
+    (total, row) => total + (row.metrics.averagePosition === null ? 0 : row.metrics.averagePosition * row.metrics.impressions),
+    0,
+  );
+  return {
+    clicks,
+    impressions,
+    ctrPct: impressions > 0 ? clicks / impressions * 100 : null,
+    averagePosition: positionedImpressions > 0 ? weightedPosition / positionedImpressions : null,
+  };
+}
+
 export function loadGscView(rows: GscReadRows, period: Period): GscView {
   const dimensions = rows.dimensions.filter((row) => samePeriod(row.meta.period, period));
+  const daily = rows.daily.filter((row) => row.date >= period.from && row.date <= period.to);
   const dimensionMeta: Partial<Record<ManualSheet, DatasetMeta>> = {};
   for (const sheet of ["query", "page", "country", "device", "appearance"] as const) {
     dimensionMeta[sheet] = dimensions.find((row) => row.dimension === sheet)?.meta ?? missingMeta(rows.meta);
   }
   return {
     meta: rows.meta,
-    summary: rows.summary,
-    daily: rows.daily
-      .filter((row) => row.date >= period.from && row.date <= period.to)
+    summary: summaryForPeriod(rows, period, daily),
+    daily: daily
       .map(({ date, metrics }) => ({ date, metrics })),
     dimensions: dimensions.map(({ dimension, value, metrics }) => ({ dimension, value, metrics })),
     dimensionMeta,
