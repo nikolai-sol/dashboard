@@ -366,7 +366,7 @@ async function remoteWorker(action) {
   const processState = (name, cwd, releaseFile, port) => {
     const processId = pid(name);
     if (fs.realpathSync(`/proc/${processId}/cwd`) !== cwd) refuse();
-    const sourceSha = read(releaseFile, port === 3001 ? 0o644 : 0o600, 128).toString().trim();
+    const sourceSha = read(releaseFile, 0o644, 128).toString().trim();
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) refuse();
     const listeners = text('/usr/bin/ss', ['-ltnpH']);
     const rows = listeners.split(/\r?\n/).filter(row => row.includes(`:${port}`));

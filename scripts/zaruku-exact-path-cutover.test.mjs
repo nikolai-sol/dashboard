@@ -78,6 +78,7 @@ test('cutover inspects the existing root PM2 daemon, not a new default daemon',a
   const {cutoverSshArguments}=await import(modulePath);
   const worker=cutoverSshArguments('baseline').at(-1);
   assert.match(worker,/HOME:.*?\/root/);assert.match(worker,/PM2_HOME:.*?\/root\/\.pm2/);
+  assert.match(worker,/read\(releaseFile, 0o644, 128\)/);
 });
 
 test('Wordstat no-data state is accepted only when canonical tables are empty and reads did not fail',async()=>{
