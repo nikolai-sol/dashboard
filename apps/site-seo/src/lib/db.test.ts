@@ -172,6 +172,55 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   assert.deepEqual(queryCall!.params, ["yandex_wordstat", "wordstat-account", "2026-08-17", "2026-08-23", "yandex_wordstat", "wordstat-account"]);
 });
 
+test("Wordstat reports a failed scoped collection instead of inventing zero demand", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_wordstat_coverage")) return [[], []];
+    if (sql.includes("canonical_collector_runs")) return [[{
+      status: "failed", import_id: 117, loaded_at: "2026-09-10 08:00:00",
+    }], []];
+    throw new Error("facts must not be read after a failed collection");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "medroche-wordstat", resourceId: "ru" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("state" in result && result.state, "failed");
+  assert.equal("latestAttempt" in result && result.latestAttempt, "failed");
+  assert.equal(calls.length, 2);
+  assert.match(calls[1]!.sql, /canonical_collector_runs/i);
+  assert.deepEqual(calls[1]!.params, [
+    "yandex_wordstat",
+    "yandex_wordstat:medroche-wordstat:current",
+    "yandex_wordstat:medroche-wordstat:historical",
+    "yandex_wordstat:medroche-wordstat:all",
+    "yandex_wordstat:medroche-wordstat:regions",
+    "2026-09-07",
+    "2026-09-13",
+  ]);
+});
+
+test("Wordstat remains missing when neither scoped coverage nor an attempt exists", async () => {
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_wordstat_coverage") || sql.includes("canonical_collector_runs")) return [[], []];
+    throw new Error("unexpected fact query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "new-wordstat-account", resourceId: "ru" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+  assert.equal("state" in result && result.state, "missing");
+});
+
 test("Alice retains published per-query portal and ranked source facts without conflating official SOV", async () => {
   const execute = createCanonicalReadExecutor({ async execute(sql) {
     if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{ row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];

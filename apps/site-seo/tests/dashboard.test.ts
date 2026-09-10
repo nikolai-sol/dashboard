@@ -8,6 +8,7 @@ import { createPeriodSelection, calendarMonthPeriod } from "../src/lib/period-se
 import { Dashboard } from "../src/components/Dashboard.tsx";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
+import { Wordstat } from "../src/components/Wordstat.tsx";
 
 const profile = {
   sources: [
@@ -74,4 +75,14 @@ test("renders canonical Metrika and Webmaster facts without treating daily users
   assert.match(html, /Пользователи за день: 3/);
   assert.match(html, /Webmaster: partial; клики: 5; показы: 50/);
   assert.doesNotMatch(html, /Пользователи за период/);
+});
+
+test("Wordstat distinguishes an unconfigured source, failed collection, partial data, and confirmed empty", () => {
+  const base = { sourceKey: "yandex_wordstat" as const, period: null, collectionMode: "automated" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const renderState = (state: "missing" | "failed" | "partial" | "complete_empty") => renderToStaticMarkup(createElement(Wordstat, { id: "wordstat", meta: { ...base, state, latestAttempt: state === "failed" ? "failed" : "none" }, data: null }));
+
+  assert.match(renderState("missing"), /Источник не настроен или сбор ещё не выполнен/);
+  assert.match(renderState("failed"), /Последний сбор завершился ошибкой/);
+  assert.match(renderState("partial"), /Неполные данные/);
+  assert.match(renderState("complete_empty"), /Подтверждённо пусто/);
 });

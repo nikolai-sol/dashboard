@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { DatasetMeta, Period } from "@reportingdash/site-seo-contract";
+import * as XLSX from "xlsx";
 import { buildDashboardExportRows, buildExportRows, buildGscExportRows, toCsv } from "../src/lib/exports.ts";
 import { createExcelExportHandler, createPdfExportHandler } from "../src/lib/route-handlers.ts";
 import { createPeriodSelection } from "../src/lib/period-selection.ts";
@@ -131,22 +132,29 @@ test("creates an Excel workbook from the same scoped read model", async () => {
     execute: async () => ({ meta: { ...meta, state: "complete_empty", period }, summary: null, daily: [], dimensions: [], indexing: meta }),
   })(readRequest);
   assert.equal(response.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  assert.deepEqual([...new Uint8Array(await response.arrayBuffer()).slice(0, 2)], [80, 75]);
+  const workbook = XLSX.read(await response.arrayBuffer(), { type: "array" });
+  assert.deepEqual(workbook.SheetNames, ["SEO"]);
+  const rows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets.SEO!);
+  assert.ok(rows.length > 0);
+  assert.ok(rows.some((row) => row.field === "Период от" && row.value === "2025-12-29"));
+  assert.ok(rows.some((row) => row.field === "Источник" && row.value === "google_search_console"));
 });
 
 test("renders a real PDF only after the same site-scoped authorization and read", async () => {
   let closed = false;
   let setContentWaitUntil: string | null = null;
+  let launchedExecutablePath: string | null = null;
   const response = await createPdfExportHandler({
     registration: { profile: { dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [{ sourceKey: "google_search_console", mode: "manual", bindingId: "gsc", importCadence: [] }] } as never, bindings: [{ bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }] },
     credentialVersion: 1,
     getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }),
     execute: async () => ({ meta: { ...meta, state: "complete_empty", period }, summary: null, daily: [], dimensions: [], indexing: meta }),
-  }, { launch: async () => ({ newPage: async () => ({ setViewport: async () => {}, emulateMediaType: async () => {}, setContent: async (_html, options) => { setContentWaitUntil = options.waitUntil; }, pdf: async () => new Uint8Array([37, 80, 68, 70]) }), close: async () => { closed = true; } }) })(readRequest);
+  }, { executablePath: "/opt/chromium/chrome", launch: async (options) => { launchedExecutablePath = options.executablePath ?? null; return { newPage: async () => ({ setViewport: async () => {}, emulateMediaType: async () => {}, setContent: async (_html, pageOptions) => { setContentWaitUntil = pageOptions.waitUntil; }, pdf: async () => new Uint8Array([37, 80, 68, 70]) }), close: async () => { closed = true; } }; } })(readRequest);
   assert.equal(response.headers.get("content-type"), "application/pdf");
   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [37, 80, 68, 70]);
   assert.equal(closed, true);
   assert.equal(setContentWaitUntil, "load");
+  assert.equal(launchedExecutablePath, "/opt/chromium/chrome");
 });
 
 test("returns 401 for a stale PDF session before the canonical read or browser launch", async () => {

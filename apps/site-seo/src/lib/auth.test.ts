@@ -7,7 +7,7 @@ import { createPeriodSelection } from "./period-selection.ts";
 const now = Date.parse("2026-09-10T10:00:00Z");
 const session: SiteSeoSession = {
   audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med",
-  credentialVersion: 3, expiresAt: "2026-09-10T11:00:00Z",
+  credentialVersion: 3, expiresAt: "2099-09-10T11:00:00Z",
 };
 
 test("accepts only a current session scoped to the requested MedRoche site", () => {
@@ -20,7 +20,7 @@ test("rejects a session issued for another dashboard or credential version", () 
 });
 
 test("rejects an expired session", () => {
-  assert.throws(() => assertAuthorizedSiteSession(session, { dashboardId: 42, siteId: "site-med", credentialVersion: 3 }, Date.parse("2026-09-10T12:00:00Z")), /expired/);
+  assert.throws(() => assertAuthorizedSiteSession({ ...session, expiresAt: "2026-09-10T11:00:00Z" }, { dashboardId: 42, siteId: "site-med", credentialVersion: 3 }, Date.parse("2026-09-10T12:00:00Z")), /expired/);
 });
 
 test("refuses a direct JSON request for another site slug", async () => {

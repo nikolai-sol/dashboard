@@ -77,7 +77,7 @@ type PdfPage = Readonly<{
   pdf: (options: { format: "A4"; landscape: true; printBackground: true; margin: Record<"top" | "right" | "bottom" | "left", string> }) => Promise<Uint8Array>;
 }>;
 type PdfBrowser = Readonly<{ newPage: () => Promise<PdfPage>; close: () => Promise<void> }>;
-export type PdfLaunch = (options: { headless: true; args: string[] }) => Promise<PdfBrowser>;
+export type PdfLaunch = (options: { headless: true; args: string[]; executablePath?: string }) => Promise<PdfBrowser>;
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
@@ -87,8 +87,9 @@ function printableHtml(rows: ReturnType<typeof buildDashboardExportRows>): strin
   return `<!doctype html><html lang="ru"><meta charset="utf-8"><title>SEO export</title><body><table>${rows.map((row) => `<tr><th>${escapeHtml(row.field)}</th><td>${escapeHtml(row.value)}</td></tr>`).join("")}</table></body></html>`;
 }
 
-export function createPdfExportHandler(deps: DashboardJsonDependencies, options: Readonly<{ launch?: PdfLaunch }> = {}) {
+export function createPdfExportHandler(deps: DashboardJsonDependencies, options: Readonly<{ launch?: PdfLaunch; executablePath?: string }> = {}) {
   const launch = options.launch ?? (puppeteer.launch.bind(puppeteer) as unknown as PdfLaunch);
+  const executablePath = options.executablePath ?? process.env.PUPPETEER_EXECUTABLE_PATH;
   return async (request: DashboardReadRequest): Promise<Response> => {
     if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404, ...PRIVATE_JSON });
     let session: SiteSeoSession;
@@ -97,7 +98,7 @@ export function createPdfExportHandler(deps: DashboardJsonDependencies, options:
     let browser: PdfBrowser | null = null;
     try {
       const model = await loadDashboardReadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute });
-      browser = await launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] });
+      browser = await launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"], ...(executablePath ? { executablePath } : {}) });
       const page = await browser.newPage();
       await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
       await page.emulateMediaType("print");
