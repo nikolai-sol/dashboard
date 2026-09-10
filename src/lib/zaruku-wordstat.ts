@@ -608,8 +608,8 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             ON classifications.analytics_account_id = facts.analytics_account_id
             AND classifications.registry_version = facts.registry_version
             AND classifications.query_hash = facts.query_hash
-          LEFT JOIN latest_positions positions ON positions.normalized_query = facts.normalized_query
-          LEFT JOIN confirmed_urls urls ON urls.normalized_query = facts.normalized_query
+          LEFT JOIN latest_positions positions ON positions.normalized_query COLLATE utf8mb4_unicode_ci = facts.normalized_query COLLATE utf8mb4_unicode_ci
+          LEFT JOIN confirmed_urls urls ON urls.normalized_query COLLATE utf8mb4_unicode_ci = facts.normalized_query COLLATE utf8mb4_unicode_ci
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
             AND facts.device_type = 'all'
