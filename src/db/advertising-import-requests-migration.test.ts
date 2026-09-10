@@ -56,12 +56,15 @@ test("daily Sheet snapshots may reuse content while uploads remain content-idemp
   assert.match(migration, /DROP INDEX uniq_ad_import_upload/);
   assert.match(
     migration,
-    /upload_content_sha256 CHAR\(64\)[\s\S]*?GENERATED ALWAYS AS \(\s*CASE WHEN transport = 'upload' THEN content_sha256 ELSE NULL END\s*\) STORED/,
+    /upload_content_sha256 CHAR\(64\)[\s\S]*?GENERATED ALWAYS AS \(\s*CASE WHEN transport = ''upload'' THEN content_sha256 ELSE NULL END\s*\) STORED/,
   );
   assert.match(
     migration,
     /UNIQUE KEY uniq_ad_import_upload \(\s*advertiser_key,\s*source_key,\s*platform_account_id,\s*upload_content_sha256,\s*adapter_config_sha256\s*\)/,
   );
+  assert.match(migration, /information_schema\.COLUMNS/);
+  assert.match(migration, /information_schema\.STATISTICS/);
+  assert.match(migration, /PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt/);
   assert.doesNotMatch(migration, /canonical_ad_fact_versions_daily/);
   assert.doesNotMatch(migration, /canonical_ad_publications/);
   assert.doesNotMatch(migration, /canonical_ad_coverage_daily/);
