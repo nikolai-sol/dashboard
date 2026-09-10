@@ -25,7 +25,7 @@ export function dashboardTabs(profile: SiteProfile): DashboardTab[] {
 }
 
 export function Dashboard({ profile, model }: Readonly<{ profile: SiteProfile; model: DashboardReadModel }>) {
-  return <main>
+  return <main data-dashboard-ready="true">
     <h1>{profile.title}</h1>
     <nav aria-label="Разделы">{dashboardTabs(profile).map((tab) => <a key={tab.id} href={`#${tab.id}`}>{tab.label}</a>)}</nav>
     <Overview id="overview" model={model} />

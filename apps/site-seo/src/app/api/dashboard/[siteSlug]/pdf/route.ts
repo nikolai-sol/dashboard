@@ -3,6 +3,7 @@ import { assertAuthorizedSiteSession } from "../../../../../lib/auth.ts";
 import { buildExportRows } from "../../../../../lib/exports.ts";
 import { loadDashboardReadModel } from "../../../../../lib/read-model.ts";
 import type { DashboardJsonDependencies, DashboardReadRequest } from "../route.ts";
+import { getSiteSeoRuntime, parseDashboardReadRequest } from "../../../../../lib/runtime.ts";
 
 type PdfPage = Readonly<{
   setViewport: (options: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;
@@ -44,4 +45,11 @@ export function createPdfExportHandler(deps: DashboardJsonDependencies, options:
   };
 }
 
-export async function GET(): Promise<Response> { return Response.json({ error: "site_not_configured" }, { status: 503 }); }
+export async function GET(request: Request, context: { params: Promise<{ siteSlug: string }> | { siteSlug: string } }): Promise<Response> {
+  try {
+    const runtime = await getSiteSeoRuntime();
+    const { siteSlug } = await Promise.resolve(context.params);
+    const session = await runtime.resolveSession(request.headers.get("cookie"), runtime.registration);
+    return createPdfExportHandler({ registration: runtime.registration, credentialVersion: session?.credentialVersion ?? -1, getSession: async () => session, execute: runtime.execute })(parseDashboardReadRequest(new URL(request.url), siteSlug, runtime.registration.profile.businessTimezone));
+  } catch { return Response.json({ error: "site_runtime_unavailable" }, { status: 503 }); }
+}

@@ -3,6 +3,7 @@ import { type SiteSeoSession, assertAuthorizedSiteSession } from "../../../../li
 import type { CanonicalReadExecutor } from "../../../../lib/db.ts";
 import { loadDashboardReadModel } from "../../../../lib/read-model.ts";
 import type { PeriodSelection } from "../../../../lib/period-selection.ts";
+import { getSiteSeoRuntime, parseDashboardReadRequest } from "../../../../lib/runtime.ts";
 
 export type DashboardJsonDependencies = Readonly<{
   registration: SiteRegistration;
@@ -44,6 +45,14 @@ export function createDashboardJsonHandler(deps: DashboardJsonDependencies) {
 }
 
 /** Runtime wiring is intentionally fail-closed until T7 registers the profile and shared password authority. */
-export async function GET(): Promise<Response> {
-  return Response.json({ error: "site_not_configured" }, { status: 503 });
+export async function GET(request: Request, context: { params: Promise<{ siteSlug: string }> | { siteSlug: string } }): Promise<Response> {
+  try {
+    const runtime = await getSiteSeoRuntime();
+    const { siteSlug } = await Promise.resolve(context.params);
+    const session = await runtime.resolveSession(request.headers.get("cookie"), runtime.registration);
+    const handler = createDashboardJsonHandler({ registration: runtime.registration, credentialVersion: session?.credentialVersion ?? -1, getSession: async () => session, execute: runtime.execute });
+    return handler(parseDashboardReadRequest(new URL(request.url), siteSlug, runtime.registration.profile.businessTimezone));
+  } catch {
+    return Response.json({ error: "site_runtime_unavailable" }, { status: 503 });
+  }
 }
