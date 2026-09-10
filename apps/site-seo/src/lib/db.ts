@@ -160,11 +160,18 @@ function missingMeta(sourceKey: SourceScope["sourceKey"], collectionMode: Datase
 
 type DatasetMetaRow = Readonly<{
   coverage_rows?: unknown;
+  current_coverage_rows?: unknown;
+  current_success_rows?: unknown;
+  current_import_id?: unknown;
+  historical_coverage_rows?: unknown;
+  historical_success_rows?: unknown;
+  historical_import_id?: unknown;
   covered_days?: unknown;
   success_rows?: unknown;
   incomplete_rows?: unknown;
   row_count?: unknown;
   status?: unknown;
+  job_key?: unknown;
   import_id?: unknown;
   loaded_at?: unknown;
 }>;
@@ -455,69 +462,90 @@ async function readWebmasterData(database: CanonicalDatabase, query: CanonicalRe
 }
 
 async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<Readonly<{ meta: DatasetMeta; hasCoverage: boolean }>> {
-  const attemptParams = [
-    query.scope.sourceKey,
-    `yandex_wordstat:${query.scope.analyticsAccountId}:current`,
-    `yandex_wordstat:${query.scope.analyticsAccountId}:historical`,
-    `yandex_wordstat:${query.scope.analyticsAccountId}:all`,
-    `yandex_wordstat:${query.scope.analyticsAccountId}:regions`,
-    query.period.from,
-    query.period.to,
-  ];
+  const currentJob = `yandex_wordstat:${query.scope.analyticsAccountId}:current`;
+  const historicalJob = `yandex_wordstat:${query.scope.analyticsAccountId}:historical`;
+  const allJob = `yandex_wordstat:${query.scope.analyticsAccountId}:all`;
   const [rows, attempts] = await Promise.all([
     rowsFor<DatasetMetaRow>(database, {
       sql: `SELECT COUNT(*) AS coverage_rows,
-                   SUM(status = 'success') AS success_rows,
+                   SUM(endpoint = 'top_requests') AS current_coverage_rows,
+                   SUM(endpoint = 'top_requests' AND status = 'success') AS current_success_rows,
+                   MAX(CASE WHEN endpoint = 'top_requests' THEN ingestion_run_id END) AS current_import_id,
+                   SUM(endpoint = 'dynamics') AS historical_coverage_rows,
+                   SUM(endpoint = 'dynamics' AND status = 'success') AS historical_success_rows,
+                   MAX(CASE WHEN endpoint = 'dynamics' THEN ingestion_run_id END) AS historical_import_id,
                    MAX(ingestion_run_id) AS import_id,
                    MAX(updated_at) AS loaded_at
               FROM canonical_wordstat_coverage
              WHERE source_key = ? AND analytics_account_id = ?
+               AND endpoint IN ('top_requests', 'dynamics')
                AND requested_from <= ? AND requested_to >= ?`,
       params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to],
     }),
     rowsFor<DatasetMetaRow>(database, {
-      sql: `SELECT status, id AS import_id,
-                   COALESCE(finished_at, started_at) AS loaded_at
-              FROM canonical_collector_runs
-             WHERE source_key = ?
-               AND job_key IN (?, ?, ?, ?)
-               AND date_from <= ? AND date_to >= ?
-               AND status IN ('success', 'failed', 'partial')
-             ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
-             LIMIT 1`,
-      params: attemptParams,
+      sql: `WITH ranked_runs AS (
+              SELECT job_key, status, id AS import_id,
+                     COALESCE(finished_at, started_at) AS loaded_at,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY job_key
+                       ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
+                     ) AS dedup_rank
+                FROM canonical_collector_runs
+               WHERE source_key = ?
+                 AND job_key IN (?, ?, ?)
+                 AND date_from <= ? AND date_to >= ?
+                 AND status IN ('success', 'failed', 'partial')
+            )
+            SELECT job_key, status, import_id, loaded_at
+              FROM ranked_runs
+             WHERE dedup_rank = 1`,
+      params: [query.scope.sourceKey, currentJob, historicalJob, allJob, query.period.from, query.period.to],
     }),
   ]);
   const row = rows[0];
-  const attempt = attempts[0];
-  const hasCoverage = Boolean(row && numeric(row.coverage_rows) > 0);
+  const newest = (jobKeys: readonly string[]): DatasetMetaRow | undefined => attempts
+    .filter((attempt) => jobKeys.includes(String(attempt.job_key)))
+    .sort((left, right) => numeric(right.import_id) - numeric(left.import_id))[0];
+  const currentAttempt = newest([currentJob, allJob]);
+  const historicalAttempt = newest([historicalJob, allJob]);
+  const failed = (attempt: DatasetMetaRow | undefined, coverageRun: unknown): boolean => (
+    attempt?.status === "failed" || attempt?.status === "partial"
+  ) && (numeric(coverageRun) === 0 || numeric(attempt.import_id) >= numeric(coverageRun));
+  const failures = [
+    failed(currentAttempt, row?.current_import_id) ? currentAttempt : undefined,
+    failed(historicalAttempt, row?.historical_import_id) ? historicalAttempt : undefined,
+  ].filter((attempt): attempt is DatasetMetaRow => attempt !== undefined);
+  const hasCurrentCoverage = numeric(row?.current_coverage_rows) > 0;
+  const hasHistoricalCoverage = numeric(row?.historical_coverage_rows) > 0;
+  const hasCoverage = hasCurrentCoverage || hasHistoricalCoverage;
+
   if (!hasCoverage) {
-    if (!attempt || attempt.status === "success") {
-      return { meta: missingMeta(query.scope.sourceKey, "automated"), hasCoverage: false };
-    }
+    const failure = failures.sort((left, right) => numeric(right.import_id) - numeric(left.import_id))[0];
+    if (!failure) return { meta: missingMeta(query.scope.sourceKey, "automated"), hasCoverage: false };
     return { meta: {
       ...missingMeta(query.scope.sourceKey, "automated"),
       period: query.period,
-      state: attempt.status === "failed" ? "failed" : "partial",
-      importId: attempt.import_id === null || attempt.import_id === undefined ? null : String(attempt.import_id),
-      loadedAt: attempt.loaded_at === null || attempt.loaded_at === undefined ? null : String(attempt.loaded_at),
+      state: failure.status === "failed" ? "failed" : "partial",
+      importId: failure.import_id === null || failure.import_id === undefined ? null : String(failure.import_id),
+      loadedAt: failure.loaded_at === null || failure.loaded_at === undefined ? null : String(failure.loaded_at),
       latestAttempt: "failed",
     }, hasCoverage: false };
   }
 
-  const base = numeric(row!.success_rows) > 0
-    ? datasetMeta(query, row, "automated", "ready", "complete")
-    : attempt?.status === "success"
-      ? datasetMeta(query, row, "automated", "complete_empty", "complete")
-      : datasetMeta(query, row, "automated", "partial", "unknown");
-  const coverageRun = numeric(row!.import_id);
-  const attemptRun = numeric(attempt?.import_id);
-  const sameOrNewerFailedAttempt = (attempt?.status === "failed" || attempt?.status === "partial")
-    && (coverageRun === 0 || attemptRun >= coverageRun);
+  const fullyCovered = hasCurrentCoverage && hasHistoricalCoverage;
+  const anyFacts = numeric(row?.current_success_rows) + numeric(row?.historical_success_rows) > 0;
+  const confirmedEmpty = fullyCovered
+    && currentAttempt?.status === "success"
+    && historicalAttempt?.status === "success";
+  const base = failures.length > 0 || !fullyCovered
+    ? datasetMeta(query, row, "automated", "partial", "unknown")
+    : anyFacts
+      ? datasetMeta(query, row, "automated", "ready", "complete")
+      : confirmedEmpty
+        ? datasetMeta(query, row, "automated", "complete_empty", "complete")
+        : datasetMeta(query, row, "automated", "partial", "unknown");
   return {
-    meta: sameOrNewerFailedAttempt
-      ? { ...base, state: "partial", completeness: "unknown", latestAttempt: "failed" }
-      : base,
+    meta: failures.length > 0 ? { ...base, latestAttempt: "failed" } : base,
     hasCoverage: true,
   };
 }

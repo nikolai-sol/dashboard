@@ -106,8 +106,15 @@ test("canonical source readers preserve empty, partial, and exact resource seman
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
-    if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, success_rows: 0, import_id: 91, loaded_at: "2026-09-01 01:00:00" }], []];
-    if (sql.includes("canonical_collector_runs")) return [[{ status: "success", import_id: 91, loaded_at: "2026-09-01 01:01:00" }], []];
+    if (sql.includes("canonical_wordstat_coverage")) return [[{
+      coverage_rows: 2, current_coverage_rows: 1, current_success_rows: 0, current_import_id: 91,
+      historical_coverage_rows: 1, historical_success_rows: 0, historical_import_id: 91,
+      import_id: 91, loaded_at: "2026-09-01 01:00:00",
+    }], []];
+    if (sql.includes("canonical_collector_runs")) return [[
+      { job_key: "yandex_wordstat:wordstat-account:current", status: "success", import_id: 91, loaded_at: "2026-09-01 01:01:00" },
+      { job_key: "yandex_wordstat:wordstat-account:historical", status: "success", import_id: 90, loaded_at: "2026-09-01 00:59:00" },
+    ], []];
     if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
     if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
     if (/site-seo:webmaster-(summary|daily|pages)/.test(sql)) return [[], []];
@@ -138,8 +145,15 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
-    if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, success_rows: 1, import_id: 12, loaded_at: "2026-08-26 01:00:00" }], []];
-    if (sql.includes("canonical_collector_runs")) return [[{ status: "success", import_id: 12, loaded_at: "2026-08-26 01:01:00" }], []];
+    if (sql.includes("canonical_wordstat_coverage")) return [[{
+      coverage_rows: 2, current_coverage_rows: 1, current_success_rows: 1, current_import_id: 12,
+      historical_coverage_rows: 1, historical_success_rows: 1, historical_import_id: 11,
+      import_id: 12, loaded_at: "2026-08-26 01:00:00",
+    }], []];
+    if (sql.includes("canonical_collector_runs")) return [[
+      { job_key: "yandex_wordstat:wordstat-account:current", status: "success", import_id: 12, loaded_at: "2026-08-26 01:01:00" },
+      { job_key: "yandex_wordstat:wordstat-account:historical", status: "success", import_id: 11, loaded_at: "2026-08-26 00:59:00" },
+    ], []];
     if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
     if (sql.includes("site-seo:wordstat-queries")) return [[{
       query_text: "лечение", count: "100", request_kind: "popular",
@@ -166,7 +180,7 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
     window: { from: "2026-07-27", to: "2026-08-25", snapshotDate: "2026-08-25", registryVersion: "registry-2", importId: "run-2" },
   }]);
   const queryCall = calls.find((call) => call.sql.includes("site-seo:wordstat-queries"));
-  assert.match(calls[0]!.sql, /SUM\(status = 'success'\) AS success_rows/i);
+  assert.match(calls[0]!.sql, /current_success_rows/i);
   assert.doesNotMatch(calls[0]!.sql, /ORDER BY[\s\S]*LIMIT 1/i);
   assert.match(queryCall!.sql, /WITH selected_snapshot/i);
   assert.match(queryCall!.sql, /window_from <= \?/i);
@@ -182,7 +196,7 @@ test("Wordstat reports a failed scoped collection instead of inventing zero dema
     calls.push({ sql, params });
     if (sql.includes("canonical_wordstat_coverage")) return [[], []];
     if (sql.includes("canonical_collector_runs")) return [[{
-      status: "failed", import_id: 117, loaded_at: "2026-09-10 08:00:00",
+      job_key: "yandex_wordstat:medroche-wordstat:current", status: "failed", import_id: 117, loaded_at: "2026-09-10 08:00:00",
     }], []];
     throw new Error("facts must not be read after a failed collection");
   } });
@@ -204,22 +218,25 @@ test("Wordstat reports a failed scoped collection instead of inventing zero dema
     "yandex_wordstat:medroche-wordstat:current",
     "yandex_wordstat:medroche-wordstat:historical",
     "yandex_wordstat:medroche-wordstat:all",
-    "yandex_wordstat:medroche-wordstat:regions",
     "2026-09-07",
     "2026-09-13",
   ]);
 });
 
-test("Wordstat keeps covered facts visible but reports a same-run partial attempt", async () => {
+test("Wordstat keeps covered facts visible and an unrelated newer regions success cannot hide a partial current run", async () => {
   const calls: string[] = [];
   const execute = createCanonicalReadExecutor({ async execute(sql) {
     calls.push(sql);
     if (sql.includes("canonical_wordstat_coverage")) return [[{
-      coverage_rows: 2, success_rows: 1, import_id: 118, loaded_at: "2026-09-10 08:00:00",
+      coverage_rows: 2, current_coverage_rows: 1, current_success_rows: 1, current_import_id: 118,
+      historical_coverage_rows: 1, historical_success_rows: 1, historical_import_id: 117,
+      import_id: 118, loaded_at: "2026-09-10 08:00:00",
     }], []];
-    if (sql.includes("canonical_collector_runs")) return [[{
-      status: "partial", import_id: 118, loaded_at: "2026-09-10 08:01:00",
-    }], []];
+    if (sql.includes("canonical_collector_runs")) return [[
+      { job_key: "yandex_wordstat:medroche-wordstat:current", status: "partial", import_id: 118, loaded_at: "2026-09-10 08:01:00" },
+      { job_key: "yandex_wordstat:medroche-wordstat:historical", status: "success", import_id: 117, loaded_at: "2026-09-10 08:00:00" },
+      { job_key: "yandex_wordstat:medroche-wordstat:regions", status: "success", import_id: 119, loaded_at: "2026-09-10 08:02:00" },
+    ], []];
     if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
     if (sql.includes("site-seo:wordstat-queries")) return [[{
       query_text: "лечение", count: "100", request_kind: "popular",
