@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SiteProfile } from "@reportingdash/site-seo-contract";
-import { dashboardTabs } from "../src/components/Dashboard.tsx";
+import { dashboardTabs, resolveActiveTab } from "../src/components/Dashboard.tsx";
 import { sourceStatusLabel } from "../src/components/Sources.tsx";
 import { buildDashboardQuery } from "../src/components/PeriodSelector.tsx";
 import { createPeriodSelection, calendarMonthPeriod } from "../src/lib/period-selection.ts";
@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { Wordstat } from "../src/components/Wordstat.tsx";
 import { siteLoginPath } from "../src/components/LoginForm.tsx";
+import { readFileSync } from "node:fs";
 
 const profile = {
   sources: [
@@ -25,6 +26,11 @@ test("uses the site-scoped standalone login route", () => {
   assert.equal(siteLoginPath("medroche"), "/api/dashboard/medroche/login");
 });
 
+test("passes the tab query from server search params into the dashboard", () => {
+  const page = readFileSync(new URL("../src/app/dashboard/[siteSlug]/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /activeTab=\{typeof values\.tab === "string" \? values\.tab : undefined\}/);
+});
+
 test("hides disabled adapters while preserving the available source sections", () => {
   const labels = dashboardTabs(profile).map((tab) => tab.label);
   assert.ok(labels.includes("Обзор"));
@@ -32,6 +38,11 @@ test("hides disabled adapters while preserving the available source sections", (
   assert.ok(labels.includes("AI-видимость и конкуренты"));
   assert.ok(labels.includes("SEO OS"));
   assert.ok(!labels.includes("Wordstat"));
+});
+
+test("falls back from an unknown or disabled tab to overview", () => {
+  assert.equal(resolveActiveTab(dashboardTabs(profile), "wordstat"), "overview");
+  assert.equal(resolveActiveTab(dashboardTabs(profile), "unknown"), "overview");
 });
 
 test("labels manual data with its actual loaded period rather than calling it current", () => {
@@ -61,6 +72,27 @@ test("renders period controls and export links without emitting disabled GSC con
   assert.doesNotMatch(html, /Google Search Console/);
 });
 
+test("renders one enabled active tab in the neutral shell and preserves scope query", () => {
+  const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
+  const searchProfile = { ...profile, title: "Тест", slug: "fixture", domain: "fixture.example", logoAsset: null, sources: [
+    { sourceKey: "google_search_console" as const, mode: "manual" as const, bindingId: "gsc", importCadence: ["previous_month" as const] },
+    { sourceKey: "yandex_wordstat" as const, mode: "disabled" as const, bindingId: null, importCadence: [] },
+  ] } as SiteProfile;
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+
+  const html = renderToStaticMarkup(createElement(Dashboard, { profile: searchProfile, selection, publicationId: "publication-7", filters: { country: "RU" }, model, activeTab: "search" }));
+
+  assert.match(html, /site-seo-shell/);
+  assert.equal(html.match(/aria-current="page"/g)?.length, 1);
+  assert.match(html, /tab=search/);
+  assert.match(html, /traffic_week=2026-W01/);
+  assert.match(html, /filter_country=RU/);
+  assert.match(html, /id="search"/);
+  assert.doesNotMatch(html, /id="overview"/);
+  assert.doesNotMatch(html, /id="wordstat"/);
+});
+
 test("renders canonical Metrika and Webmaster facts without treating daily users as a period total", () => {
   const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
   const sourceProfile = { ...profile, title: "Тест", slug: "fixture", sources: [
@@ -75,11 +107,12 @@ test("renders canonical Metrika and Webmaster facts without treating daily users
     metrika: { ...missing, sourceKey: "yandex_metrika" as const, state: "ready" as const, kind: "metrika" as const, summary: { visits: 20, pageviews: 30 }, daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [{ page: "/a", visits: 4, pageviews: 6 }] },
     webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "partial" as const, kind: "webmaster" as const, summary: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }], topPages: [{ page: "/a", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }] },
   };
-  const html = renderToStaticMarkup(createElement(Dashboard, { profile: sourceProfile, selection, publicationId: null, filters: {}, model }));
-  assert.match(html, /Визиты: 20/);
-  assert.match(html, /Пользователи за день: 3/);
-  assert.match(html, /Webmaster: partial; клики: 5; показы: 50/);
-  assert.doesNotMatch(html, /Пользователи за период/);
+  const trafficHtml = renderToStaticMarkup(createElement(Dashboard, { profile: sourceProfile, selection, publicationId: null, filters: {}, model, activeTab: "traffic" }));
+  const searchHtml = renderToStaticMarkup(createElement(Dashboard, { profile: sourceProfile, selection, publicationId: null, filters: {}, model, activeTab: "search" }));
+  assert.match(trafficHtml, /site-seo-kpi-label[^>]*>Визиты<\/span><span class="site-seo-kpi-value">20/);
+  assert.match(trafficHtml, /Пользователи за день: 3/);
+  assert.match(searchHtml, /Webmaster: partial; клики: 5; показы: 50/);
+  assert.doesNotMatch(trafficHtml, /Пользователи за период/);
 });
 
 test("Wordstat distinguishes an unconfigured source, failed collection, partial data, and confirmed empty", () => {

@@ -21,7 +21,7 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
       ? parseDashboardReadRequest(url, siteSlug, runtime.registration.profile.businessTimezone)
       : { slug: siteSlug, selection: defaultPeriodSelection(runtime.registration.profile.businessTimezone), publicationId: null, filters: gscFilters() };
     const model = await loadDashboardReadModel({ registration: runtime.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: runtime.execute });
-    return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} />;
+    return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} activeTab={typeof values.tab === "string" ? values.tab : undefined} />;
   } catch {
     return <main><h1>{runtime.registration.profile.title}</h1><p>Данные пока недоступны: не установлен canonical read model.</p></main>;
   }

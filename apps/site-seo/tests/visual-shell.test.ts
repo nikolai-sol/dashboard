@@ -10,6 +10,7 @@ import {
   StatusBadge,
   TableFrame,
 } from "../src/components/DashboardPrimitives";
+import { SiteSeoShell } from "../src/components/SiteSeoShell";
 
 test("neutral primitives expose a panel header and an accessible table frame", () => {
   const panel = renderToStaticMarkup(
@@ -54,4 +55,26 @@ test("neutral primitives retain numeric zero copy", () => {
   const kpi = renderToStaticMarkup(createElement(Kpi, { label: "Изменение", value: 0, detail: 0 }));
   assert.match(panel, />0<\/p>/);
   assert.match(kpi, /site-seo-kpi-detail[^>]*>0</);
+});
+
+test("neutral shell renders profile identity, server links, toolbar, exports, and selected content", () => {
+  const html = renderToStaticMarkup(createElement(SiteSeoShell, {
+    title: "Клиника",
+    domain: "clinic.example",
+    logoAsset: "/logo.svg",
+    tabs: [{ id: "overview", label: "Обзор" }, { id: "search", label: "Поиск" }],
+    activeTab: "search",
+    tabHref: (id: string) => `?scope=fixture&tab=${id}`,
+    toolbar: createElement("form", { "aria-label": "toolbar" }),
+    exports: createElement("a", { href: "/export" }, "Экспорт"),
+  }, createElement("section", { id: "search" }, "Содержимое")));
+
+  assert.match(html, /site-seo-shell/);
+  assert.match(html, /Клиника/);
+  assert.match(html, /clinic\.example/);
+  assert.match(html, /src="\/logo\.svg"/);
+  assert.match(html, /href="\?scope=fixture&amp;tab=search" aria-current="page"/);
+  assert.match(html, /aria-label="toolbar"/);
+  assert.match(html, /href="\/export"/);
+  assert.match(html, /id="search"/);
 });
