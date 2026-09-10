@@ -37,11 +37,11 @@ test("reports a missing source instead of querying an invented account", async (
 });
 
 test("reads generic canonical coverage for enabled Metrika and Webmaster but skips disabled adapters", async () => {
-  const sources = [
+  const sources: SiteProfile["sources"] = [
     ...profile.sources,
     { sourceKey: "yandex_metrika" as const, mode: "automated" as const, bindingId: "metrika-fixture", importCadence: [] },
     { sourceKey: "yandex_webmaster" as const, mode: "automated" as const, bindingId: "webmaster-fixture", importCadence: [] },
-    { sourceKey: "yandex_webmaster_alice_manual" as const, mode: "manual" as const, bindingId: "alice-fixture", importCadence: ["previous_month"] },
+    { sourceKey: "yandex_webmaster_alice_manual" as const, mode: "manual" as const, bindingId: "alice-fixture", importCadence: ["previous_month"] as const },
     { sourceKey: "yandex_wordstat" as const, mode: "disabled" as const, bindingId: null, importCadence: [] },
   ];
   const scopedRegistration = {

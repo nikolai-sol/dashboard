@@ -11,6 +11,10 @@ export function isSharedPasswordClient(value: string) {
   return SHARED_PASSWORD_CLIENT_IDS.has(normalizeSharedPasswordClientId(value));
 }
 
+export function isSharedPasswordDashboard(clientId: string, dashboardType?: string) {
+  return isSharedPasswordClient(clientId) || String(dashboardType ?? "").trim().toLowerCase() === "site_seo";
+}
+
 export function validateSharedPasswordChange(input: {
   new_password: unknown;
   confirm_password: unknown;

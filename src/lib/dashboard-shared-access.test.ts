@@ -15,6 +15,7 @@ type FakeSetting = {
 
 type FakeDatabaseInput = {
   client_id: string | null;
+  dashboard_type?: string;
   is_active?: boolean;
   setting: FakeSetting | null;
   failOnUpsert?: boolean;
@@ -107,6 +108,7 @@ function fakeDatabase(input: FakeDatabaseInput) {
       if (input.client_id === null) return [[], []];
       return [[{
         client_id: input.client_id,
+        dashboard_type: input.dashboard_type,
         password_hash: visibleSetting?.password_hash ?? null,
         credential_version: visibleSetting?.credential_version ?? null,
         updated_at: visibleSetting?.updated_at ?? null,
@@ -116,7 +118,7 @@ function fakeDatabase(input: FakeDatabaseInput) {
       if (!connection) throw new Error("Lock query requires a connection");
       await acquireLock(connection);
       if (input.client_id === null || input.is_active === false) return [[], []];
-      return [[{ client_id: input.client_id }], []];
+      return [[{ client_id: input.client_id, dashboard_type: input.dashboard_type }], []];
     }
     if (normalizedSql.includes("from dashboard_shared_access_settings")) {
       if (input.failAfterUpsert && connection?.hasStagedSetting) {
@@ -299,6 +301,22 @@ test("Zaruku without a DB row fails closed", async () => {
   );
 
   assert.equal(await store.verifySharedDashboardPassword(28, "zaruku", "anything-at-all"), null);
+});
+
+test("a generic site-seo client uses a database shared password without a client allowlist", async () => {
+  const store = createDashboardSharedAccessStore(
+    fakeDatabase({
+      client_id: "client-roche",
+      dashboard_type: "site_seo",
+      setting: { password_hash: hashPassword("site-seo-password"), credential_version: 2 },
+    }),
+    { abbottLegacyPassword: null },
+  );
+
+  assert.deepEqual(await store.verifySharedDashboardPassword(41, "client-roche", "site-seo-password"), {
+    credentialVersion: 2,
+  });
+  assert.equal(await store.verifySharedDashboardPassword(41, "other-client", "site-seo-password"), null);
 });
 
 test("admin state never returns password material", async () => {

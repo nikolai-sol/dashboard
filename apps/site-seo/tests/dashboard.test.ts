@@ -12,7 +12,7 @@ const profile = {
     { sourceKey: "yandex_webmaster_alice_manual", mode: "manual", bindingId: "fixture", importCadence: ["previous_month"] },
     { sourceKey: "seo_os", mode: "automated", bindingId: "fixture", importCadence: [] },
   ],
-} as SiteProfile;
+} as unknown as SiteProfile;
 
 test("hides disabled adapters while preserving the available source sections", () => {
   const labels = dashboardTabs(profile).map((tab) => tab.label);

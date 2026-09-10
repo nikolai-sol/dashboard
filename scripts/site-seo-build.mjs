@@ -41,12 +41,13 @@ export function buildEnvironment(profile) {
 }
 
 export function assertRegistered(profile, registryFilename) {
-  if (!registryFilename || !fs.existsSync(registryFilename)) return false;
+  if (!registryFilename || !fs.existsSync(registryFilename)) {
+    throw new Error("site registry is required before build");
+  }
   const registry = JSON.parse(fs.readFileSync(registryFilename, "utf8"));
   if (!Array.isArray(registry)) throw new TypeError("site registry must be an array");
   const registration = registry.find((entry) => entry.profile?.siteId === profile.siteId);
   if (!registration || profileHash(registration.profile) !== profileHash(profile)) throw new Error(`site ${profile.siteId} is not registered at this profile version`);
-  return true;
 }
 
 export function createBuildMetadata(standaloneRoot, profile) {

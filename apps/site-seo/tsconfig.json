@@ -1,11 +1,12 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["../../src/*"],
+      "@/*": ["./src/*"],
       "@site-seo/*": ["./src/*"],
-      "@reportingdash/runtime-contract": ["../../packages/runtime-contract/src/index.ts"]
+      "@reportingdash/site-seo-contract": ["../../packages/site-seo-contract/src/index.ts"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next-medroche/types/**/*.ts", ".next-medroche/dev/types/**/*.ts"],
