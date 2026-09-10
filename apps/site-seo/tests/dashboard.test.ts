@@ -9,6 +9,7 @@ import { Dashboard } from "../src/components/Dashboard.tsx";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { Wordstat } from "../src/components/Wordstat.tsx";
+import { Search } from "../src/components/Search.tsx";
 import { siteLoginPath } from "../src/components/LoginForm.tsx";
 import { readFileSync } from "node:fs";
 
@@ -118,9 +119,32 @@ test("renders canonical Metrika and Webmaster facts without treating daily users
 test("Wordstat distinguishes an unconfigured source, failed collection, partial data, and confirmed empty", () => {
   const base = { sourceKey: "yandex_wordstat" as const, period: null, collectionMode: "automated" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const renderState = (state: "missing" | "failed" | "partial" | "complete_empty") => renderToStaticMarkup(createElement(Wordstat, { id: "wordstat", meta: { ...base, state, latestAttempt: state === "failed" ? "failed" : "none" }, data: null }));
+  const expectedStateCopy = {
+    missing: "Источник не настроен или сбор ещё не выполнен",
+    failed: "Последний сбор завершился ошибкой",
+    partial: "Неполные данные",
+    complete_empty: "Подтверждённо пусто",
+  } as const;
 
-  assert.match(renderState("missing"), /Источник не настроен или сбор ещё не выполнен/);
-  assert.match(renderState("failed"), /Последний сбор завершился ошибкой/);
-  assert.match(renderState("partial"), /Неполные данные/);
-  assert.match(renderState("complete_empty"), /Подтверждённо пусто/);
+  for (const state of ["missing", "failed", "partial", "complete_empty"] as const) {
+    const html = renderState(state);
+    assert.match(html, /site-seo-panel/);
+    assert.match(html, new RegExp(`data-state="${state}"`));
+    assert.match(html, new RegExp(expectedStateCopy[state]));
+  }
+});
+
+test("wide factual tables use a labelled local scroll frame and semantic headings", () => {
+  const base = { sourceKey: "google_search_console" as const, period: null, state: "ready" as const, collectionMode: "manual" as const, completeness: "complete" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
+  const model = {
+    gsc: { meta: base, summary: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 } }], dimensions: [], dimensionMeta: {} },
+    indexing: base, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+  };
+
+  const html = renderToStaticMarkup(createElement(Search, { id: "search", model, showGsc: true }));
+
+  assert.match(html, /site-seo-panel/);
+  assert.match(html, /site-seo-table-frame/);
+  assert.match(html, /aria-label="Динамика GSC"/);
+  assert.match(html, /<thead><tr><th>Дата<\/th><th>Клики<\/th><th>Показы<\/th><\/tr><\/thead><tbody>/);
 });

@@ -15,5 +15,5 @@ export function LoginForm({ dashboardId, siteSlug }: Readonly<{ dashboardId: num
     if (!response.ok) { setError("Не удалось войти"); return; }
     window.location.reload();
   }
-  return <form onSubmit={submit}><label>Пароль <input name="password" type="password" required autoComplete="current-password" /></label><button type="submit">Войти</button>{error && <p role="alert">{error}</p>}</form>;
+  return <form className="site-seo-login-form" onSubmit={submit}><label>Пароль <input name="password" type="password" required autoComplete="current-password" /></label><button type="submit">Войти</button>{error && <p role="alert">{error}</p>}</form>;
 }

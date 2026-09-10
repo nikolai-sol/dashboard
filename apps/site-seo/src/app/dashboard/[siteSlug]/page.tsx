@@ -11,7 +11,7 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
   const { siteSlug } = await params;
   if (siteSlug !== runtime.registration.profile.slug) notFound();
   const session = await runtime.resolveSession((await cookies()).toString(), runtime.registration);
-  if (!session) return <main><h1>{runtime.registration.profile.title}</h1><LoginForm dashboardId={runtime.registration.profile.dashboardId} siteSlug={siteSlug} /></main>;
+  if (!session) return <main className="site-seo-state-page" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}><section className="site-seo-state-card" style={{ width: "min(100%, 440px)", padding: 24, border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff" }}><h1>{runtime.registration.profile.title}</h1><LoginForm dashboardId={runtime.registration.profile.dashboardId} siteSlug={siteSlug} /></section></main>;
   try {
     const values = await searchParams;
     const url = new URL("https://site-seo.local/dashboard");
@@ -23,6 +23,6 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
     const model = await loadDashboardReadModel({ registration: runtime.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: runtime.execute });
     return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} activeTab={typeof values.tab === "string" ? values.tab : undefined} />;
   } catch {
-    return <main><h1>{runtime.registration.profile.title}</h1><p>Данные пока недоступны: не установлен canonical read model.</p></main>;
+    return <main className="site-seo-state-page" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}><section className="site-seo-state-card" style={{ width: "min(100%, 440px)", padding: 24, border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff" }}><h1>{runtime.registration.profile.title}</h1><p>Данные пока недоступны: не установлен canonical read model.</p></section></main>;
   }
 }

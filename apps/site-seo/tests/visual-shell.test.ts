@@ -11,6 +11,7 @@ import {
   TableFrame,
 } from "../src/components/DashboardPrimitives";
 import { SiteSeoShell } from "../src/components/SiteSeoShell";
+import { readFileSync } from "node:fs";
 
 test("neutral primitives expose a panel header and an accessible table frame", () => {
   const panel = renderToStaticMarkup(
@@ -77,4 +78,13 @@ test("neutral shell renders profile identity, server links, toolbar, exports, an
   assert.match(html, /aria-label="toolbar"/);
   assert.match(html, /href="\/export"/);
   assert.match(html, /id="search"/);
+});
+
+test("login and unavailable responses use the local centred state-card wrapper", () => {
+  const page = readFileSync(new URL("../src/app/dashboard/[siteSlug]/page.tsx", import.meta.url), "utf8");
+
+  assert.match(page, /site-seo-state-page/);
+  assert.equal(page.match(/site-seo-state-card/g)?.length, 2);
+  assert.match(page, /<LoginForm dashboardId=\{runtime\.registration\.profile\.dashboardId\} siteSlug=\{siteSlug\} \/>/);
+  assert.match(page, /Данные пока недоступны: не установлен canonical read model\./);
 });
