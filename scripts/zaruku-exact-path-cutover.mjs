@@ -531,7 +531,7 @@ export function cutoverSshArguments(action) {
   return [
     '-F', '/dev/null', '-o', 'HostName=5.35.85.218', '-o', 'User=root', '-o', 'Port=22',
     '-o', 'IdentityFile=/Users/nafanya/.ssh/beget_ed25519', '-o', 'IdentitiesOnly=yes',
-    '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=/Users/nafanya/.ssh/known_hosts',
+    '-o', 'BatchMode=yes', '-o', 'LogLevel=ERROR', '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=/Users/nafanya/.ssh/known_hosts',
     '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ClearAllForwardings=yes', '-o', 'ForwardAgent=no',
     '-o', 'ForwardX11=no', '-o', 'PermitLocalCommand=no', '-o', 'RemoteCommand=none',
     '--', 'beget', `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(remoteCode(action))}`,
