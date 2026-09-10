@@ -30,6 +30,31 @@ test("omits GSC rows from an export when GSC is disabled in the profile", () => 
   assert.match(toCsv(rows), /yandex_webmaster/);
 });
 
+test("exports the same canonical Metrika and Webmaster facts shown by the dashboard", () => {
+  const rows = buildDashboardExportRows({
+    profile: { sources: [
+      { sourceKey: "google_search_console", mode: "disabled", bindingId: null, importCadence: [] },
+      { sourceKey: "yandex_metrika", mode: "automated", bindingId: "metrika", importCadence: [] },
+      { sourceKey: "yandex_webmaster", mode: "automated", bindingId: "webmaster", importCadence: [] },
+    ] } as never,
+    selection,
+    model: {
+      gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} },
+      datasets: {
+        yandex_metrika: { ...meta, sourceKey: "yandex_metrika", state: "ready", period },
+        yandex_webmaster: { ...meta, sourceKey: "yandex_webmaster", state: "partial", period },
+      },
+      metrika: { ...meta, sourceKey: "yandex_metrika", state: "ready", period, kind: "metrika", summary: { visits: 20, pageviews: 30 }, daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [{ page: "/a", visits: 4, pageviews: 6 }] },
+      webmaster: { ...meta, sourceKey: "yandex_webmaster", state: "partial", period, kind: "webmaster", summary: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }], topPages: [{ page: "/a", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }] },
+    },
+  });
+  const csv = toCsv(rows);
+  assert.match(csv, /Визиты Metrika.*20/);
+  assert.match(csv, /Показы Webmaster.*50/);
+  assert.match(csv, /Пользователи за день 2026-01-02.*3/);
+  assert.doesNotMatch(csv, /Пользователи за период/);
+});
+
 test("refuses an export session from another dashboard before any canonical read", async () => {
   let calls = 0;
   const response = await createExcelExportHandler({

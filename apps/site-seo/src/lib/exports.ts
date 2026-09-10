@@ -1,5 +1,6 @@
 import type { DatasetMeta, GscView, Period, SiteProfile } from "@reportingdash/site-seo-contract";
 import type { DashboardReadModel } from "./read-model.ts";
+import type { MetrikaCanonicalData, WebmasterCanonicalData } from "./db.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 
 export type ExportRow = Readonly<{ field: string; value: string }>;
@@ -38,21 +39,58 @@ export function buildGscExportRows(input: Pick<GscView, "summary" | "daily" | "d
   return rows;
 }
 
+function buildMetrikaExportRows(input: Readonly<{ period: Period; data: MetrikaCanonicalData }>): ExportRow[] {
+  const rows = buildExportRows({ title: "Яндекс Метрика", period: input.period, source: input.data });
+  if (input.data.summary) rows.push(
+    { field: "Визиты Metrika", value: String(input.data.summary.visits) },
+    { field: "Просмотры Metrika", value: String(input.data.summary.pageviews) },
+  );
+  for (const row of input.data.daily) rows.push(
+    { field: `День Metrika ${row.date}`, value: `визиты ${row.visits}; просмотры ${row.pageviews}` },
+    { field: `Пользователи за день ${row.date}`, value: row.users === null ? "неизвестно" : String(row.users) },
+  );
+  for (const row of input.data.topPages) rows.push({ field: `Страница Metrika ${row.page}`, value: `визиты ${row.visits}; просмотры ${row.pageviews}` });
+  return rows;
+}
+
+function buildWebmasterExportRows(input: Readonly<{ period: Period; data: WebmasterCanonicalData }>): ExportRow[] {
+  const rows = buildExportRows({ title: "Яндекс Вебмастер", period: input.period, source: input.data });
+  const append = (title: string, metrics: WebmasterCanonicalData["summary"]) => {
+    if (!metrics) return;
+    rows.push(
+      { field: `Клики Webmaster${title}`, value: String(metrics.clicks) },
+      { field: `Показы Webmaster${title}`, value: String(metrics.impressions) },
+      { field: `CTR Webmaster${title}, %`, value: metrics.ctrPct === null ? "неизвестно" : String(metrics.ctrPct) },
+      { field: `Средняя позиция Webmaster${title}`, value: metrics.averagePosition === null ? "неизвестно" : String(metrics.averagePosition) },
+    );
+  };
+  append("", input.data.summary);
+  for (const row of input.data.daily) append(` ${row.date}`, row.metrics);
+  for (const row of input.data.topPages) append(` ${row.page}`, row.metrics);
+  return rows;
+}
+
 export function buildDashboardExportRows(input: Readonly<{
   profile: Pick<SiteProfile, "sources">;
   selection: PeriodSelection;
-  model: Pick<DashboardReadModel, "gsc" | "datasets">;
+  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "metrika" | "webmaster">>;
 }>): ExportRow[] {
   const gscEnabled = input.profile.sources.some((source) => source.sourceKey === "google_search_console" && source.mode !== "disabled");
-  if (gscEnabled) return buildGscExportRows({ ...input.model.gsc, period: input.selection.gsc, source: input.model.gsc.meta });
-  return input.profile.sources
+  const rows: ExportRow[] = gscEnabled
+    ? buildGscExportRows({ ...input.model.gsc, period: input.selection.gsc, source: input.model.gsc.meta })
+    : [];
+  for (const source of input.profile.sources
     .filter((source) => source.mode !== "disabled" && source.sourceKey !== "google_search_console")
-    .flatMap((source) => {
+  ) {
+    const period = source.sourceKey === "yandex_webmaster_alice_manual" ? input.selection.alice : input.selection.traffic.primary;
+    if (source.sourceKey === "yandex_metrika" && input.model.metrika) rows.push(...buildMetrikaExportRows({ period, data: input.model.metrika }));
+    else if (source.sourceKey === "yandex_webmaster" && input.model.webmaster) rows.push(...buildWebmasterExportRows({ period, data: input.model.webmaster }));
+    else {
       const meta = input.model.datasets[source.sourceKey];
-      if (!meta) return [];
-      const period = source.sourceKey === "yandex_webmaster_alice_manual" ? input.selection.alice : input.selection.traffic.primary;
-      return buildExportRows({ title: source.sourceKey, period, source: meta });
-    });
+      if (meta) rows.push(...buildExportRows({ title: source.sourceKey, period, source: meta }));
+    }
+  }
+  return rows;
 }
 
 function csvCell(value: string): string {

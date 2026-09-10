@@ -83,3 +83,28 @@ test("loads configured Metrika when GSC is disabled for a second profile", async
   assert.equal(model.gsc.meta.state, "missing");
   assert.equal(model.datasets.yandex_metrika?.state, "ready");
 });
+
+test("keeps canonical Metrika and Webmaster facts on the shared selected model", async () => {
+  const sources: SiteProfile["sources"] = [
+    { sourceKey: "google_search_console", mode: "disabled", bindingId: null, importCadence: [] },
+    { sourceKey: "yandex_metrika", mode: "automated", bindingId: "metrika", importCadence: [] },
+    { sourceKey: "yandex_webmaster", mode: "automated", bindingId: "webmaster", importCadence: [] },
+  ];
+  const scopedRegistration = {
+    profile: { ...profile, sources },
+    bindings: [
+      { bindingId: "metrika", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "yandex_metrika", analyticsAccountId: "counter", resourceId: "counter-resource" },
+      { bindingId: "webmaster", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "yandex_webmaster", analyticsAccountId: "webmaster", resourceId: "host" },
+    ],
+  } satisfies SiteRegistration;
+  const model = await loadDashboardReadModel({ registration: scopedRegistration, claim: { dashboardId: 42, siteId: "site-med" }, selection, publicationId: "publication-7", filters: {}, execute: async (query) => {
+    const meta = { sourceKey: query.scope.sourceKey, period: query.period, state: "ready" as const, collectionMode: "automated" as const, completeness: "complete" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
+    if (query.scope.sourceKey === "yandex_metrika") return { ...meta, kind: "metrika" as const, summary: { visits: 20, pageviews: 30 }, daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [{ page: "/a", visits: 4, pageviews: 6 }] };
+    return { ...meta, kind: "webmaster" as const, summary: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }], topPages: [{ page: "/a", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }] };
+  } });
+
+  assert.deepEqual(model.metrika?.summary, { visits: 20, pageviews: 30 });
+  assert.equal(model.metrika?.daily[0]?.users, 3);
+  assert.deepEqual(model.webmaster?.summary, { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 });
+  assert.equal(model.datasets.yandex_webmaster?.state, "ready");
+});
