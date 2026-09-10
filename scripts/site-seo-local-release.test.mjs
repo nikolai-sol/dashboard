@@ -65,6 +65,42 @@ test("real local release keeps site B running and canonical history untouched wh
   }
 });
 
+test("standard rollback restarts the active standalone process", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "site-seo-local-rollback-"));
+  const artifactRoot = path.join(root, "artifacts");
+  let running;
+  try {
+    const port = await freePort();
+    const a1 = writeArtifact(artifactRoot, "a1");
+    const a2 = writeArtifact(artifactRoot, "a2");
+    deployLocalFixture({ root, site: "clinic-a", processName: "dashboard-clinic-a", artifactRoot: a1, profileHash: "profile-a-v1", releaseId: "a1", port });
+    running = await startLocalFixture({ root, site: "clinic-a" });
+    await updateLocalFixture({ root, site: "clinic-a", processName: "dashboard-clinic-a", artifactRoot: a2, profileHash: "profile-a-v2", releaseId: "a2", port });
+    assert.equal((await healthCheckLocalFixture({ root, site: "clinic-a" })).releaseId, "a2");
+    await rollbackLocalFixture({ root, site: "clinic-a", releaseId: "a1" });
+    assert.equal((await healthCheckLocalFixture({ root, site: "clinic-a" })).releaseId, "a1");
+  } finally {
+    if (running) await stopLocalFixture({ root, site: "clinic-a" }).catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local release starts a Next standalone server.js and checks /api/health", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "site-seo-local-next-"));
+  const artifactRoot = path.join(root, "artifacts");
+  let running;
+  try {
+    const port = await freePort();
+    const artifact = writeNextArtifact(artifactRoot, "next-v1");
+    deployLocalFixture({ root, site: "clinic-next", processName: "dashboard-clinic-next", artifactRoot: artifact, profileHash: "profile-next-v1", releaseId: "next-v1", port });
+    running = await startLocalFixture({ root, site: "clinic-next" });
+    assert.equal((await healthCheckLocalFixture({ root, site: "clinic-next" })).releaseId, "next-v1");
+  } finally {
+    if (running) await stopLocalFixture({ root, site: "clinic-next" }).catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("local release CLI awaits async start, health, and stop actions", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "site-seo-local-cli-"));
   const artifactRoot = path.join(root, "artifacts");
@@ -103,6 +139,25 @@ function writeArtifact(root, releaseId) {
     'process.on("SIGTERM", () => server.close(() => process.exit(0)));',
   ].join("\n"));
   return directory;
+}
+
+function writeNextArtifact(root, releaseId) {
+  const directory = path.join(root, `next-artifact-${releaseId}`, "apps/site-seo");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, "server.js"), [
+    'const http = require("node:http");',
+    'const port = Number(process.env.PORT);',
+    'const siteId = process.env.SITE_SEO_FIXTURE_SITE;',
+    'const version = process.env.SITE_SEO_FIXTURE_RELEASE;',
+    'const server = http.createServer((request, response) => {',
+    '  if (request.url !== "/api/health") { response.writeHead(404); response.end(); return; }',
+    '  response.setHeader("content-type", "application/json");',
+    '  response.end(JSON.stringify({ siteId, version }));',
+    '});',
+    'server.listen(port, "127.0.0.1");',
+    'process.on("SIGTERM", () => server.close(() => process.exit(0)));',
+  ].join("\n"));
+  return path.dirname(path.dirname(directory));
 }
 
 function freePort() {

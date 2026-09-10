@@ -134,7 +134,7 @@ function rollbackState({ root, site, releaseId }) {
 }
 
 export function rollbackLocalFixture(options) {
-  if (options.artifactRoot !== undefined && isRunning(options.root, options.site)) return rollbackRunningFixture(options);
+  if (isRunning(options.root, options.site)) return rollbackRunningFixture(options);
   return rollbackState(options);
 }
 
@@ -191,8 +191,18 @@ export async function startLocalFixture({ root, site }) {
   const current = readJson(path.join(base, "current.json"), null);
   if (!current || current.artifactKind !== "standalone") throw new Error("standalone fixture release is not active");
   if (isRunning(root, site)) throw new Error("fixture process is already running");
-  const server = path.join(base, "releases", current.releaseId, "standalone", "server.mjs");
-  if (!fs.existsSync(server)) throw new Error("standalone fixture server is missing");
+  const standalone = path.join(base, "releases", current.releaseId, "standalone");
+  const candidates = [
+    { relativePath: "server.mjs", healthPath: "/health", healthKind: "fixture" },
+    { relativePath: "apps/site-seo/server.js", healthPath: "/api/health", healthKind: "next" },
+    { relativePath: "server.js", healthPath: "/api/health", healthKind: "next" },
+  ];
+  const serverCandidate = candidates.find(({ relativePath }) => fs.existsSync(path.join(standalone, relativePath)));
+  if (!serverCandidate) throw new Error("standalone fixture server is missing");
+  const server = path.join(standalone, serverCandidate.relativePath);
+  const registration = serverCandidate.healthKind === "next"
+    ? readJson(path.join(standalone, "apps", "site-seo", "site-registration.json"), null)
+    : null;
   const startedAt = Date.now();
   const child = spawn(process.execPath, [server], {
     cwd: path.dirname(server),
@@ -200,7 +210,18 @@ export async function startLocalFixture({ root, site }) {
     stdio: "ignore",
   });
   child.unref();
-  const processInfo = { pid: child.pid, port: current.port, releaseId: current.releaseId, profileHash: current.profileHash, processName: current.processName, processStartMarker: `${current.processName}:${current.releaseId}:${startedAt}`, healthUrl: `http://127.0.0.1:${current.port}/health` };
+  const processInfo = {
+    pid: child.pid,
+    port: current.port,
+    releaseId: current.releaseId,
+    profileHash: current.profileHash,
+    processName: current.processName,
+    processStartMarker: `${current.processName}:${current.releaseId}:${startedAt}`,
+    healthUrl: `http://127.0.0.1:${current.port}${serverCandidate.healthPath}`,
+    healthKind: serverCandidate.healthKind,
+    ...(registration?.profile?.siteId ? { healthSiteId: registration.profile.siteId } : {}),
+    ...(registration?.profile?.profileVersion ? { healthVersion: registration.profile.profileVersion } : {}),
+  };
   CHILDREN.set(processKey(root, site), child);
   atomicJson(processFilename(root, site), processInfo);
   const updatedCurrent = { ...current, processStartMarker: processInfo.processStartMarker };
@@ -224,6 +245,12 @@ export async function healthCheckLocalFixture({ root, site, timeoutMs = 1500 }) 
       const response = await fetch(processInfo.healthUrl, { signal: AbortSignal.timeout(Math.min(500, Math.max(1, deadline - Date.now()))) });
       if (!response.ok) throw new Error(`health status ${response.status}`);
       const body = await response.json();
+      if (processInfo.healthKind === "next") {
+        if (typeof body.siteId !== "string" || typeof body.version !== "string") throw new Error("health identity mismatch");
+        if (processInfo.healthSiteId && body.siteId !== processInfo.healthSiteId) throw new Error("health site identity mismatch");
+        if (processInfo.healthVersion && body.version !== processInfo.healthVersion) throw new Error("health profile identity mismatch");
+        return { ...body, releaseId: processInfo.releaseId };
+      }
       if (body.site !== site || body.release !== processInfo.releaseId) throw new Error("health identity mismatch");
       return { ...body, releaseId: body.release };
     } catch (error) {

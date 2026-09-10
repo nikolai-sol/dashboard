@@ -8,6 +8,7 @@ import { assertRegistered, assertTemplateSource, buildSite, copyRuntimeAssets, w
 import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
 
 const profileFilename = path.resolve("config/sites/medroche.json");
+const exampleProfileFilename = path.resolve("config/sites/fixtures/example-clinic.json");
 
 test("build accepts only source tree matching the exact profile template commit", () => {
   const profile = readSiteProfile(profileFilename);
@@ -48,6 +49,25 @@ test("build accepts the exact registered profile in preview mode", () => {
     writeFileSync(registry, `${JSON.stringify([{ profile, bindings: [], profileHash: profileHash(profile) }])}\n`);
     const result = buildSite(profileFilename, { dryRun: true, registryFilename: registry });
     assert.equal(result.profile.siteId, "site-medroche");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("build rejects a registry whose Metrika account is shared across site scopes", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "site-seo-build-registry-scope-"));
+  try {
+    const medroche = readSiteProfile(profileFilename);
+    const exampleClinic = readSiteProfile(exampleProfileFilename);
+    const registry = path.join(directory, "registry.json");
+    writeFileSync(registry, `${JSON.stringify([
+      registrationWithMetrika(medroche, "123"),
+      registrationWithMetrika(exampleClinic, "123"),
+    ])}\n`);
+    assert.throws(
+      () => assertRegistered(medroche, registry),
+      /account.*different scopes|counter.*scope|registry/i,
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -94,3 +114,19 @@ test("standalone artifact contains the immutable Next static assets", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+function registrationWithMetrika(profile, counter) {
+  const source = profile.sources.find(({ sourceKey }) => sourceKey === "yandex_metrika");
+  return {
+    profile,
+    bindings: [{
+      bindingId: source.bindingId,
+      clientId: profile.clientId,
+      siteId: profile.siteId,
+      dashboardId: profile.dashboardId,
+      sourceKey: "yandex_metrika",
+      analyticsAccountId: counter,
+      resourceId: counter,
+    }],
+  };
+}

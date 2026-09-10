@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertSiteRegistry } from "../packages/site-seo-contract/src/index.ts";
 import { createArtifactManifest, inspectArtifactDirectory, validateArtifactManifest } from "./site-seo-artifact-policy.mjs";
 import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
 
@@ -72,7 +73,11 @@ export function assertRegistered(profile, registryFilename) {
     throw new Error("site registry is required before build");
   }
   const registry = JSON.parse(fs.readFileSync(registryFilename, "utf8"));
-  if (!Array.isArray(registry)) throw new TypeError("site registry must be an array");
+  try {
+    assertSiteRegistry(registry);
+  } catch (error) {
+    throw new Error(`site registry validation failed: ${error.message}`, { cause: error });
+  }
   const registration = registry.find((entry) => entry.profile?.siteId === profile.siteId);
   if (!registration || profileHash(registration.profile) !== profileHash(profile)) throw new Error(`site ${profile.siteId} is not registered at this profile version`);
   if (!Array.isArray(registration.bindings)) throw new TypeError("site registration bindings must be an array");
