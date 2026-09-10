@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { assertRegistered, assertTemplateSource, buildSite, writeRuntimeRegistration } from "./site-seo-build.mjs";
+import { assertRegistered, assertTemplateSource, buildSite, copyRuntimeAssets, writeRuntimeRegistration } from "./site-seo-build.mjs";
 import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
 
 const profileFilename = path.resolve("config/sites/medroche.json");
@@ -73,6 +73,23 @@ test("build embeds the exact registration inside the standalone app", () => {
       path.join(standalone, "apps", "site-seo", "site-registration.json"),
     );
     assert.deepEqual(JSON.parse(readFileSync(destination, "utf8")), registration);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("standalone artifact contains the immutable Next static assets", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "site-seo-build-static-"));
+  try {
+    const output = path.join(directory, ".next-site");
+    const standalone = path.join(output, "standalone");
+    mkdirSync(path.join(output, "static/chunks"), { recursive: true });
+    mkdirSync(path.join(standalone, "apps/site-seo"), { recursive: true });
+    writeFileSync(path.join(output, "static/chunks/app.js"), "fixture");
+
+    copyRuntimeAssets(output, standalone, ".next-site");
+
+    assert.equal(readFileSync(path.join(standalone, "apps/site-seo/.next-site/static/chunks/app.js"), "utf8"), "fixture");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

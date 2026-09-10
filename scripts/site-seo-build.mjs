@@ -86,6 +86,15 @@ export function writeRuntimeRegistration(standaloneRoot, registration) {
   return destination;
 }
 
+export function copyRuntimeAssets(outputRoot, standaloneRoot, buildOutputDir) {
+  const source = path.join(outputRoot, "static");
+  if (!fs.existsSync(source)) throw new Error(`missing Next static output: ${source}`);
+  const destination = path.join(standaloneRoot, "apps", "site-seo", buildOutputDir, "static");
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.cpSync(source, destination, { recursive: true });
+  return destination;
+}
+
 export function createBuildMetadata(standaloneRoot, profile, templateSource) {
   const manifest = createArtifactManifest(standaloneRoot, profile);
   manifest.templateSourceCommit = templateSource.revision;
@@ -115,6 +124,7 @@ export function buildSite(profileFilenameValue, { dryRun = false, registryFilena
   const standaloneRoot = path.join(outputRoot, "standalone");
   if (!fs.existsSync(standaloneRoot)) throw new Error(`missing standalone output: ${standaloneRoot}`);
   writeRuntimeRegistration(standaloneRoot, registration);
+  copyRuntimeAssets(outputRoot, standaloneRoot, profile.runtime.buildOutputDir);
   return { profile, ...createBuildMetadata(standaloneRoot, profile, templateSource) };
 }
 
