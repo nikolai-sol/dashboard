@@ -316,7 +316,7 @@ async function remoteWorker(action) {
   const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
   const refuse = () => { throw new Error(); };
   const run = (bin, args) => {
-    const result = child.spawnSync(bin, args, { env: { PATH: '/usr/sbin:/usr/bin:/bin' }, encoding: null, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 1048576 });
+    const result = child.spawnSync(bin, args, { env: { PATH: '/usr/sbin:/usr/bin:/bin', HOME: '/root', PM2_HOME: '/root/.pm2' }, encoding: null, stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000, maxBuffer: 1048576 });
     if (result.error || result.signal || result.status !== 0) refuse();
     return result;
   };

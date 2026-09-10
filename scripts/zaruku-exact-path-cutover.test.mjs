@@ -74,6 +74,12 @@ test('client-rendered Zaruku shell is verified by its isolated asset, not absent
   assert.throws(()=>isolatedShellAsset('<script src="/_next/static/app.js"></script>'),/shell/);
 });
 
+test('cutover inspects the existing root PM2 daemon, not a new default daemon',async()=>{
+  const {cutoverSshArguments}=await import(modulePath);
+  const worker=cutoverSshArguments('baseline').at(-1);
+  assert.match(worker,/HOME:.*?\/root/);assert.match(worker,/PM2_HOME:.*?\/root\/\.pm2/);
+});
+
 function fixtureAuthority(overrides = {}) {
   return Object.freeze({
     scope: 'zaruku',
