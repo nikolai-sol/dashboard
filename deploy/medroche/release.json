@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "scope": "site-seo",
+  "siteId": "site-medroche",
+  "profilePath": "config/sites/medroche.json",
+  "profileVersion": "2026.09.10-1",
+  "templateVersion": "1cdbe390fd988cf30dfbeb58bab01ef11bb87377",
+  "route": "/dashboard/medroche",
+  "assetPrefix": "/_next-medroche",
+  "buildOutputDir": ".next-medroche",
+  "processName": "dashboard-medroche",
+  "port": 3003,
+  "deployPath": "/var/www/dashboard-medroche",
+  "releaseBranch": "release/medroche",
+  "deployLockPath": "/var/www/.dashboard-medroche-deploy.lock",
+  "sourceBindings": {
+    "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "10630330", "status": "unconfigured"},
+    "binding-gsc-medroche": {"sourceKey": "google_search_console", "property": "sc-domain:med.roche.ru", "status": "unconfigured"}
+  }
+}

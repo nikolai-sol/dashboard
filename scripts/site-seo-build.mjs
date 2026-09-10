@@ -1,0 +1,87 @@
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { createArtifactManifest, inspectArtifactDirectory } from "./site-seo-artifact-policy.mjs";
+import { profileHash, readSiteProfile } from "./site-seo-profile.mjs";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function parse(argv) {
+  const result = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--dry-run") result.dryRun = true;
+    else if (argument.startsWith("--")) result[argument.slice(2)] = argv[++index];
+    else throw new Error(`unexpected argument: ${argument}`);
+  }
+  return result;
+}
+
+function profileFilename(site) {
+  if (site.includes("/") || site.includes("\\") || !/^[a-z0-9-]+$/.test(site)) throw new Error("invalid --site slug");
+  const preferred = path.join(ROOT, "config/sites", `${site}.json`);
+  const fixture = path.join(ROOT, "config/sites/fixtures", `${site}.json`);
+  if (fs.existsSync(preferred)) return preferred;
+  if (fs.existsSync(fixture)) return fixture;
+  throw new Error(`profile not found for site ${site}`);
+}
+
+export function buildEnvironment(profile) {
+  return {
+    SITE_SEO_SITE_ID: profile.siteId,
+    SITE_SEO_SITE_SLUG: profile.slug,
+    SITE_SEO_PROFILE_VERSION: profile.profileVersion,
+    SITE_SEO_TEMPLATE_VERSION: profile.templateVersion,
+    SITE_SEO_BUILD_OUTPUT_DIR: profile.runtime.buildOutputDir,
+    SITE_SEO_ASSET_PREFIX: profile.runtime.assetPrefix,
+    SITE_SEO_ROUTE: profile.runtime.route,
+    PORT: String(profile.runtime.port),
+  };
+}
+
+export function assertRegistered(profile, registryFilename) {
+  if (!registryFilename || !fs.existsSync(registryFilename)) return false;
+  const registry = JSON.parse(fs.readFileSync(registryFilename, "utf8"));
+  if (!Array.isArray(registry)) throw new TypeError("site registry must be an array");
+  const registration = registry.find((entry) => entry.profile?.siteId === profile.siteId);
+  if (!registration || profileHash(registration.profile) !== profileHash(profile)) throw new Error(`site ${profile.siteId} is not registered at this profile version`);
+  return true;
+}
+
+export function createBuildMetadata(standaloneRoot, profile) {
+  const manifest = createArtifactManifest(standaloneRoot, profile);
+  const destination = path.join(path.dirname(standaloneRoot), "site-seo-artifact-manifest.json");
+  fs.writeFileSync(destination, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o640 });
+  const errors = inspectArtifactDirectory(standaloneRoot, manifest);
+  if (errors.length) throw new Error(`site-seo artifact policy failed:\n${errors.join("\n")}`);
+  return { manifest, destination };
+}
+
+export function buildSite(profileFilenameValue, { dryRun = false, registryFilename = null } = {}) {
+  const profile = readSiteProfile(profileFilenameValue);
+  assertRegistered(profile, registryFilename);
+  const appRoot = path.join(ROOT, "apps/site-seo");
+  const env = { ...process.env, ...buildEnvironment(profile) };
+  if (dryRun) return { profile, environment: buildEnvironment(profile), appRoot, command: "next build --webpack" };
+  let dependencyRoot = ROOT;
+  while (!fs.existsSync(path.join(dependencyRoot, "node_modules/next/dist/bin/next")) && dependencyRoot !== path.dirname(dependencyRoot)) dependencyRoot = path.dirname(dependencyRoot);
+  const nextEntrypoint = path.join(dependencyRoot, "node_modules/next/dist/bin/next");
+  const result = spawnSync(process.execPath, [nextEntrypoint, "build", "--webpack"], { cwd: appRoot, env, stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Next build failed with status ${result.status}`);
+  const outputRoot = path.join(appRoot, profile.runtime.buildOutputDir);
+  const standaloneRoot = path.join(outputRoot, "standalone");
+  if (!fs.existsSync(standaloneRoot)) throw new Error(`missing standalone output: ${standaloneRoot}`);
+  return { profile, ...createBuildMetadata(standaloneRoot, profile) };
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const options = parse(process.argv.slice(2));
+    if (!options.site) throw new Error("--site is required");
+    const registry = options.registry ? path.resolve(options.registry) : path.join(ROOT, "config/sites/registry.json");
+    const result = buildSite(profileFilename(options.site), { dryRun: options.dryRun, registryFilename: fs.existsSync(registry) ? registry : null });
+    process.stdout.write(`${JSON.stringify({ siteId: result.profile.siteId, ...(result.environment ? { environment: result.environment, mode: "preview" } : { artifactManifest: result.destination }) }, null, 2)}\n`);
+  } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
+}

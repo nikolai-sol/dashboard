@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "siteId": "site-medroche",
+  "url": "git@github.com:nikolai-sol/dashboard.git",
+  "ref": "refs/heads/release/medroche",
+  "base": "dcbcdea4",
+  "approvedPredecessor": null,
+  "sourceBindings": {
+    "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "10630330", "status": "unconfigured"},
+    "binding-gsc-medroche": {"sourceKey": "google_search_console", "property": "sc-domain:med.roche.ru", "status": "unconfigured"}
+  }
+}

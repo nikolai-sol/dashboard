@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "profileVersion": "2026.09.10-1",
+  "siteId": "site-example-clinic",
+  "clientId": "client-example-clinic",
+  "dashboardId": 42,
+  "slug": "example-clinic",
+  "domain": "clinic.example.test",
+  "allowedDomains": ["clinic.example.test"],
+  "title": "Example Clinic SEO",
+  "logoAsset": null,
+  "locale": "ru-RU",
+  "businessTimezone": "Europe/Moscow",
+  "templateVersion": "1cdbe390fd988cf30dfbeb58bab01ef11bb87377",
+  "sources": [
+    {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-example-clinic", "importCadence": ["previous_iso_week"]},
+    {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-example-clinic", "importCadence": ["previous_month", "previous_iso_week"]},
+    {"sourceKey": "yandex_webmaster", "mode": "disabled", "bindingId": null, "importCadence": []},
+    {"sourceKey": "yandex_wordstat", "mode": "disabled", "bindingId": null, "importCadence": []},
+    {"sourceKey": "yandex_webmaster_alice_manual", "mode": "disabled", "bindingId": null, "importCadence": []},
+    {"sourceKey": "seo_os", "mode": "disabled", "bindingId": null, "importCadence": []}
+  ],
+  "taxonomyVersion": "example-clinic-taxonomy-v1",
+  "seoRulesVersion": "site-seo-rules-v1",
+  "authPolicyRef": "dashboard-access:example-clinic",
+  "runtime": {
+    "route": "/dashboard/example-clinic",
+    "assetPrefix": "/_next-example-clinic",
+    "buildOutputDir": ".next-example-clinic",
+    "processName": "dashboard-example-clinic",
+    "port": 3004,
+    "deployPath": "/var/www/dashboard-example-clinic",
+    "releaseBranch": "release/example-clinic",
+    "deployLockPath": "/var/www/.dashboard-example-clinic-deploy.lock"
+  }
+}
