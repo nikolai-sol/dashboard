@@ -73,7 +73,7 @@ export function createExcelExportHandler(deps: DashboardJsonDependencies) {
 type PdfPage = Readonly<{
   setViewport: (options: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;
   emulateMediaType: (type: "print") => Promise<void>;
-  setContent: (html: string, options: { waitUntil: "networkidle0" }) => Promise<void>;
+  setContent: (html: string, options: { waitUntil: "load" }) => Promise<void>;
   pdf: (options: { format: "A4"; landscape: true; printBackground: true; margin: Record<"top" | "right" | "bottom" | "left", string> }) => Promise<Uint8Array>;
 }>;
 type PdfBrowser = Readonly<{ newPage: () => Promise<PdfPage>; close: () => Promise<void> }>;
@@ -101,7 +101,7 @@ export function createPdfExportHandler(deps: DashboardJsonDependencies, options:
       const page = await browser.newPage();
       await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
       await page.emulateMediaType("print");
-      await page.setContent(printableHtml(buildDashboardExportRows({ profile: deps.registration.profile, selection: request.selection, model })), { waitUntil: "networkidle0" });
+      await page.setContent(printableHtml(buildDashboardExportRows({ profile: deps.registration.profile, selection: request.selection, model })), { waitUntil: "load" });
       const pdf = await page.pdf({ format: "A4", landscape: true, printBackground: true, margin: { top: "18mm", right: "12mm", bottom: "18mm", left: "12mm" } });
       return new Response(new Uint8Array(pdf), { headers: { "content-type": "application/pdf", "content-disposition": "attachment; filename=site-seo-export.pdf", "cache-control": "private, no-store" } });
     } catch {
