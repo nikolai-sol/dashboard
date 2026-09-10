@@ -1,9 +1,8 @@
 import puppeteer from "puppeteer";
-import type { Period } from "@reportingdash/site-seo-contract";
 import { assertAuthorizedSiteSession } from "../../../../../lib/auth.ts";
 import { buildExportRows } from "../../../../../lib/exports.ts";
 import { loadDashboardReadModel } from "../../../../../lib/read-model.ts";
-import type { DashboardJsonDependencies } from "../route.ts";
+import type { DashboardJsonDependencies, DashboardReadRequest } from "../route.ts";
 
 type PdfPage = Readonly<{
   setViewport: (options: { width: number; height: number; deviceScaleFactor: number }) => Promise<void>;
@@ -19,17 +18,22 @@ function printableHtml(rows: ReturnType<typeof buildExportRows>): string { retur
 
 export function createPdfExportHandler(deps: DashboardJsonDependencies, options: Readonly<{ launch?: PdfLaunch }> = {}) {
   const launch = options.launch ?? (puppeteer.launch.bind(puppeteer) as unknown as PdfLaunch);
-  return async (request: Readonly<{ slug: string; period: Period }>): Promise<Response> => {
+  return async (request: DashboardReadRequest): Promise<Response> => {
     if (request.slug !== deps.registration.profile.slug) return Response.json({ error: "not_found" }, { status: 404 });
+    let session;
+    try {
+      session = assertAuthorizedSiteSession(await deps.getSession(), { dashboardId: deps.registration.profile.dashboardId, siteId: deps.registration.profile.siteId, credentialVersion: deps.credentialVersion });
+    } catch {
+      return Response.json({ error: "unauthorized" }, { status: 401, headers: { "cache-control": "private, no-store" } });
+    }
     let browser: PdfBrowser | null = null;
     try {
-      const session = assertAuthorizedSiteSession(await deps.getSession(), { dashboardId: deps.registration.profile.dashboardId, siteId: deps.registration.profile.siteId, credentialVersion: deps.credentialVersion });
-      const model = await loadDashboardReadModel({ registration: deps.registration, claim: session, period: request.period, execute: deps.execute });
+      const model = await loadDashboardReadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute });
       browser = await launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] });
       const page = await browser.newPage();
       await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
       await page.emulateMediaType("print");
-      await page.setContent(printableHtml(buildExportRows({ title: "Google Search Console", period: request.period, source: model.gsc.meta })), { waitUntil: "networkidle0" });
+      await page.setContent(printableHtml(buildExportRows({ title: "Google Search Console", period: request.selection.gsc, source: model.gsc.meta })), { waitUntil: "networkidle0" });
       const pdf = await page.pdf({ format: "A4", landscape: true, printBackground: true, margin: { top: "18mm", right: "12mm", bottom: "18mm", left: "12mm" } });
       return new Response(new Uint8Array(pdf), { headers: { "content-type": "application/pdf", "content-disposition": "attachment; filename=site-seo-export.pdf", "cache-control": "private, no-store" } });
     } catch {

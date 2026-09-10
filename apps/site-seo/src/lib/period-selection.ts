@@ -1,5 +1,11 @@
 import type { Period } from "@reportingdash/site-seo-contract";
 
+export type PeriodSelection = Readonly<{
+  traffic: Readonly<{ primary: Period; comparison: Period | null }>;
+  alice: Period;
+  gsc: Period;
+}>;
+
 function formatDate(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
@@ -37,7 +43,7 @@ export function calendarMonthPeriod(key: string, sourceTimezone: string): Period
 export function createPeriodSelection(
   input: Readonly<{ primaryWeek: string; comparisonWeek?: string; aliceMonth: string; gsc: Period }>,
   sourceTimezone: string,
-) {
+): PeriodSelection {
   return {
     traffic: {
       primary: isoWeekPeriod(input.primaryWeek, sourceTimezone),

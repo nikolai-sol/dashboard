@@ -5,6 +5,8 @@ export type CanonicalReadQuery = Readonly<{
   name: "gsc" | "dataset";
   scope: SourceScope;
   period: Period;
+  publicationId: string | null;
+  filters: Readonly<Record<string, string>>;
 }>;
 
 /**

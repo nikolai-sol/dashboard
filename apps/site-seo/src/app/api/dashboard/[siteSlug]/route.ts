@@ -1,7 +1,8 @@
-import type { Period, SiteRegistration } from "@reportingdash/site-seo-contract";
+import type { SiteRegistration } from "@reportingdash/site-seo-contract";
 import { type SiteSeoSession, assertAuthorizedSiteSession } from "../../../../lib/auth.ts";
 import type { CanonicalReadExecutor } from "../../../../lib/db.ts";
 import { loadDashboardReadModel } from "../../../../lib/read-model.ts";
+import type { PeriodSelection } from "../../../../lib/period-selection.ts";
 
 export type DashboardJsonDependencies = Readonly<{
   registration: SiteRegistration;
@@ -10,8 +11,15 @@ export type DashboardJsonDependencies = Readonly<{
   execute: CanonicalReadExecutor;
 }>;
 
+export type DashboardReadRequest = Readonly<{
+  slug: string;
+  selection: PeriodSelection;
+  publicationId: string | null;
+  filters: Readonly<Record<string, string>>;
+}>;
+
 export function createDashboardJsonHandler(deps: DashboardJsonDependencies) {
-  return async (request: Readonly<{ slug: string; period: Period }>): Promise<Response> => {
+  return async (request: DashboardReadRequest): Promise<Response> => {
     if (request.slug !== deps.registration.profile.slug) {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
@@ -23,7 +31,9 @@ export function createDashboardJsonHandler(deps: DashboardJsonDependencies) {
       const data = await loadDashboardReadModel({
         registration: deps.registration,
         claim: session,
-        period: request.period,
+        selection: request.selection,
+        publicationId: request.publicationId,
+        filters: request.filters,
         execute: deps.execute,
       });
       return Response.json(data);

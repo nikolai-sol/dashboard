@@ -20,6 +20,10 @@ test("keeps covering daily facts for a selected ISO week but excludes month-only
 
   assert.deepEqual(view.daily.map((point) => point.date), ["2026-01-02"]);
   assert.equal(view.summary?.clicks, 7);
+  assert.equal(view.meta.period?.key, "2026-W01");
+  assert.equal(view.meta.collectionMode, "derived");
+  assert.equal(view.meta.completeness, "limited");
+  assert.equal(view.meta.importId, "fixture-import");
   assert.deepEqual(view.dimensions, []);
   assert.equal(view.dimensionMeta.query?.state, "missing");
 });

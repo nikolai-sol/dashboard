@@ -55,6 +55,17 @@ function summaryForPeriod(
   };
 }
 
+function selectedMeta(source: DatasetMeta, period: Period, daily: readonly GscDailyRow[]): DatasetMeta {
+  if (samePeriod(source.period, period) || daily.length === 0) return source;
+  return {
+    ...source,
+    period,
+    state: "partial",
+    collectionMode: "derived",
+    completeness: "limited",
+  };
+}
+
 export function loadGscView(rows: GscReadRows, period: Period): GscView {
   const dimensions = rows.dimensions.filter((row) => samePeriod(row.meta.period, period));
   const daily = rows.daily.filter((row) => row.date >= period.from && row.date <= period.to);
@@ -63,7 +74,7 @@ export function loadGscView(rows: GscReadRows, period: Period): GscView {
     dimensionMeta[sheet] = dimensions.find((row) => row.dimension === sheet)?.meta ?? missingMeta(rows.meta);
   }
   return {
-    meta: rows.meta,
+    meta: selectedMeta(rows.meta, period, daily),
     summary: summaryForPeriod(rows, period, daily),
     daily: daily
       .map(({ date, metrics }) => ({ date, metrics })),
