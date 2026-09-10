@@ -2,10 +2,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { runShadowWorker, validateInventory, attestLiveProcess, createMysqlAdapters, bindReadOnlySql, sanitizeDecision } from './zaruku-production-shadow-worker.mjs';
+import { runShadowWorker, validateInventory, inspectFixedInventory, attestLiveProcess, createMysqlAdapters, bindReadOnlySql, sanitizeDecision } from './zaruku-production-shadow-worker.mjs';
 
 const sha='a'.repeat(40), runId='00000000-0000-4000-8000-000000000000';
 const authority=JSON.parse(fs.readFileSync(path.join(import.meta.dirname,'../deploy/zaruku/production-shadow.json')));
+test('foreign SHA observation accepts a stable legacy-owned directory, not unsafe files or ancestors',()=>{
+  const files=new Map([[authority.otherRuntimeShas,Buffer.from('combined-dashboard\t/var/www/dashboard/.release-source-sha\n')],['/var/www/dashboard/.release-source-sha',Buffer.from(sha+'\n')]]);
+  const changes=new Map();
+  const stat=name=>({dev:1,ino:name.length,uid:name==='/var/www/dashboard'?501:0,gid:name==='/var/www/dashboard'?50:0,mode:files.has(name)?(name===authority.otherRuntimeShas?0o600:0o644):0o755,nlink:1,size:files.get(name)?.length??0,mtimeMs:1,ctimeMs:1,isDirectory:()=>!files.has(name),isFile:()=>files.has(name),...changes.get(name)});
+  const io={constants:fs.constants,lstatSync:stat,openSync:name=>name,fstatSync:stat,readFileSync:name=>files.get(name),closeSync:()=>{}};
+  assert.equal(inspectFixedInventory(io).foreignShas[0].sha,sha);
+  for(const [name,change]of [['/var/www',{uid:501}],['/var/www/dashboard',{mode:0o777}],['/var/www/dashboard',{isDirectory:()=>false}],['/var/www/dashboard/.release-source-sha',{uid:501}],[authority.otherRuntimeShas,{uid:501}]]){
+    changes.set(name,change);assert.throws(()=>inspectFixedInventory(io));changes.clear();
+  }
+});
 test('inventory accepts only the committed combined-dashboard row and no secret/path overrides',()=>{
   const valid='combined-dashboard\t/var/www/dashboard/.release-source-sha\n';
   assert.deepEqual(validateInventory(Buffer.from(valid),authority),authority.otherRuntimeShaEntries);
