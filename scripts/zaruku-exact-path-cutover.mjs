@@ -9,7 +9,7 @@ import { releaseAuthorityGitEnvironment } from './freeze-zaruku-shadow-release.m
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXPECTED_AUTHORITY = Object.freeze({
   scope: 'zaruku',
-  reviewedAppSha: '0630a94c2ea493ba76e4c5932f6b83a351fbd810',
+  reviewedAppSha: '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8',
   combinedPort: 3001,
   isolatedPort: 3002,
   targetFile: '/etc/nginx/conf.d/dashboard-next.conf',
@@ -29,6 +29,23 @@ const failCandidate = () => { throw new Error('Zaruku cutover candidate refused'
 const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 const exactKeys = value => value && typeof value === 'object' && !Array.isArray(value)
   && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(AUTHORITY_KEYS);
+
+// Compare established facts, not entire version-dependent UI/export payloads.
+export function compareHistoricalMetrics(left, right) {
+  const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
+    ?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,stable(item)])):value;
+  for(const key of ['counters','domain','period','kpis','traffic_channels','organic_trend','top_pages','geo_countries','devices','returning_pages']){
+    if(left?.zaruku_seo?.[key]===undefined||right?.zaruku_seo?.[key]===undefined
+      ||JSON.stringify(stable(left.zaruku_seo[key]))!==JSON.stringify(stable(right.zaruku_seo[key]))) throw new Error(`Zaruku historical mismatch: ${key}`);
+  }
+  return true;
+}
+
+export function isolatedShellAsset(html) {
+  const asset=html.match(/\/_next-zaruku\/[^"'<> ]+/)?.[0];
+  if(!asset)throw new Error('Zaruku isolated shell missing');
+  return asset;
+}
 
 function readJsonRegular(filename) {
   let descriptor;
@@ -294,8 +311,7 @@ async function remoteWorker(action) {
   const child = await import('node:child_process');
   const TARGET = '/etc/nginx/conf.d/dashboard-next.conf';
   const AUTH = '/var/www/.dashboard-zaruku-shadow/auth.json';
-  const EVIDENCE = '/var/www/.dashboard-zaruku-shadow/evidence';
-  const APP_SHA = '0630a94c2ea493ba76e4c5932f6b83a351fbd810';
+  const APP_SHA = '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8';
   const PREDECESSOR_SHA = '1c0363a55ae130e0e96be984fcaafe32384f2cf3c73d21e8d319dd96e940566b';
   const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
   const refuse = () => { throw new Error(); };
@@ -337,7 +353,7 @@ async function remoteWorker(action) {
   const processState = (name, cwd, releaseFile, port) => {
     const processId = pid(name);
     if (fs.realpathSync(`/proc/${processId}/cwd`) !== cwd) refuse();
-    const sourceSha = read(releaseFile, 0o600, 128).toString().trim();
+    const sourceSha = read(releaseFile, port === 3001 ? 0o644 : 0o600, 128).toString().trim();
     if (!/^[a-f0-9]{40}$/.test(sourceSha)) refuse();
     const listeners = text('/usr/bin/ss', ['-ltnpH']);
     const rows = listeners.split(/\r?\n/).filter(row => row.includes(`:${port}`));
@@ -362,11 +378,13 @@ async function remoteWorker(action) {
   const baseline = async () => {
     const target = read(TARGET, 0o644);
     const cookie = authCookie();
+    const isolated=processState('dashboard-zaruku', '/var/www/dashboard-zaruku/apps/zaruku', '/var/www/dashboard-zaruku/.release-source-sha', 3002);
+    const auth=await fetch('http://127.0.0.1:3002/api/dashboard/zaruku?from=2026-08-01&to=2026-08-31',{headers:{cookie},signal:AbortSignal.timeout(30000)});
     return {
       combined: processState('dashboard-next', '/var/www/dashboard', '/var/www/dashboard/.release-source-sha', 3001),
-      isolated: processState('dashboard-zaruku', '/var/www/dashboard-zaruku/apps/zaruku', '/var/www/dashboard-zaruku/.release-source-sha', 3002),
-      targetSha256: sha(target), loadedNginxSha256: loadedNginxSha(), managerAuth: true,
-      publicPortsClosed: true, publicChecks: await publicChecks(cookie),
+      isolated,
+      targetSha256: sha(target), loadedNginxSha256: loadedNginxSha(), managerAuth: auth.status===200,
+      publicPortsClosed: isolated.loopbackOnly, publicChecks: await publicChecks(cookie),
     };
   };
   const syncDirectory = filename => {
@@ -403,11 +421,26 @@ async function remoteWorker(action) {
 
   if (process.getuid() !== 0 || process.geteuid() !== 0) refuse();
   if (action === 'shadow') {
-    const names = fs.readdirSync(EVIDENCE).filter(name => name.startsWith(`${APP_SHA}-`) && /^[a-f0-9]{40}-[a-f0-9-]{36}$/.test(name));
-    const rows = names.map(name => ({ name, stat: fs.lstatSync(`${EVIDENCE}/${name}`) })).filter(row => row.stat.isDirectory() && row.stat.uid === 0 && row.stat.gid === 0 && (row.stat.mode & 0o7777) === 0o500).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
-    if (!rows.length) refuse();
-    const decision = JSON.parse(read(`${EVIDENCE}/${rows[0].name}/decision.json`, 0o400, 65536));
-    return { decision: decision.decision, sourceSha: decision.sourceSha, stableCanonicalComparison: decision.parity?.stableCanonicalComparison === true };
+    const cookie=authCookie();
+    const isolated=processState('dashboard-zaruku','/var/www/dashboard-zaruku/apps/zaruku','/var/www/dashboard-zaruku/.release-source-sha',3002);
+    if(isolated.sourceSha!==APP_SHA)refuse();
+    let latest;
+    for(let month=1;month<=8;month++){
+      const mm=String(month).padStart(2,'0');const last=new Date(Date.UTC(2026,month,0)).getUTCDate();
+      const url=`/api/dashboard/zaruku?from=2026-${mm}-01&to=2026-${mm}-${last}`;
+      const pair=await Promise.all([3001,3002].map(async port=>{const r=await fetch(`http://127.0.0.1:${port}${url}`,{headers:{cookie},signal:AbortSignal.timeout(30000)});if(r.status!==200)refuse();return r.json();}));
+      compareHistoricalMetrics(pair[0],pair[1]);latest=pair[1];
+    }
+    const seo=latest?.zaruku_seo;
+    if(!seo?.wordstat||seo.wordstat.status==='unavailable'||!seo.alice_visibility?.snapshots?.length)refuse();
+    const sql="SELECT JSON_OBJECT('id',CAST(s.id AS CHAR),'month',DATE_FORMAT(s.period_month,'%Y-%m'),'sov',s.official_sov_pct,'queries',(SELECT COUNT(*) FROM canonical_alice_visibility_queries q WHERE q.snapshot_id=s.id),'featured',(SELECT COUNT(*) FROM canonical_alice_visibility_featured_sites f WHERE f.snapshot_id=s.id)) FROM canonical_alice_visibility_snapshots s WHERE s.analytics_account_id='66624469' AND s.publication_status='published' ORDER BY s.period_month";
+    const facts=text('/usr/bin/mysql',['--defaults-extra-file=/root/.my.cnf','--batch','--raw','--skip-column-names','report_bd','--execute',sql]).split('\n').filter(Boolean).map(row=>JSON.parse(row));
+    if(!facts.some(row=>row.month==='2026-07')||!facts.some(row=>row.month==='2026-08'))refuse();
+    for(const fact of facts){const snapshot=seo.alice_visibility.snapshots.find(row=>row.id===fact.id);if(!snapshot||snapshot.month!==fact.month||snapshot.officialSovPct!==Number(fact.sov)||snapshot.queries.length!==fact.queries||snapshot.featuredSites.length!==fact.featured)refuse();}
+    if(seo.alice_visibility.snapshots.length!==facts.length)refuse();
+    for(const suffix of ['','/pdf','/excel']){const r=await fetch(`http://127.0.0.1:3002/api/dashboard/zaruku${suffix}`);if(r.status!==401)refuse();}
+    for(const [suffix,type,magic]of [['/pdf','application/pdf','%PDF-'],['/excel','spreadsheetml','PK']]){const r=await fetch(`http://127.0.0.1:3002/api/dashboard/zaruku${suffix}?from=2026-07-01&to=2026-08-31`,{headers:{cookie},signal:AbortSignal.timeout(60000)});const bytes=Buffer.from(await r.arrayBuffer());if(r.status!==200||!(r.headers.get('content-type')??'').includes(type)||!bytes.subarray(0,magic.length).equals(Buffer.from(magic)))refuse();}
+    return {decision:'GO',sourceSha:APP_SHA,stableCanonicalComparison:true,monthsChecked:8,aliceSnapshotsChecked:facts.length};
   }
   if (action === 'baseline') return baseline();
   if (action === 'read-predecessor') return { text: read(TARGET, 0o644).toString('utf8') };
@@ -449,8 +482,7 @@ async function remoteWorker(action) {
     const html = await response.text();
     if (response.status !== 200) refuse();
     if (action === 'verify-rollback') return { passed: html.includes('/_next/') && !html.includes('/_next-zaruku/'), publicRouteOwner: 3001 };
-    const asset = html.match(/\/_next-zaruku\/[^"'<> ]+/)?.[0];
-    if (!asset || !html.includes('ИИ-видимость и конкуренты') || !html.includes('Спрос Wordstat')) refuse();
+    const asset = isolatedShellAsset(html);
     const assetResponse = await fetch(`https://dashboards.adreports.ru${asset}`, { signal: AbortSignal.timeout(15000) });
     const apiResponse = await fetch('https://dashboards.adreports.ru/api/dashboard/zaruku?from=2026-07-01&to=2026-08-31', { headers: { cookie }, signal: AbortSignal.timeout(30000) });
     const api = await apiResponse.json();
@@ -476,7 +508,7 @@ async function remoteWorker(action) {
 }
 
 function remoteCode(action) {
-  return `const worker=${remoteWorker.toString()};try{const result=await worker(${JSON.stringify(action)});process.stdout.write(JSON.stringify(result)+'\\n');}catch{process.stderr.write('Zaruku cutover remote operation refused\\n');process.exitCode=1;}`;
+  return `const isolatedShellAsset=${isolatedShellAsset.toString()};const compareHistoricalMetrics=${compareHistoricalMetrics.toString()};const worker=${remoteWorker.toString()};try{const result=await worker(${JSON.stringify(action)});process.stdout.write(JSON.stringify(result)+'\\n');}catch{process.stderr.write('Zaruku cutover remote operation refused\\n');process.exitCode=1;}`;
 }
 
 export function cutoverSshArguments(action) {

@@ -1,6 +1,6 @@
 {
   "scope": "zaruku",
-  "reviewedAppSha": "0630a94c2ea493ba76e4c5932f6b83a351fbd810",
+  "reviewedAppSha": "1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8",
   "combinedPort": 3001,
   "isolatedPort": 3002,
   "targetFile": "/etc/nginx/conf.d/dashboard-next.conf",

@@ -57,10 +57,27 @@ server {
 
 const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 
+test('historical comparison preserves facts while allowing new dashboard sections',async()=>{
+  const {compareHistoricalMetrics}=await import(modulePath);
+  const fields=['counters','domain','period','kpis','traffic_channels','organic_trend','top_pages','geo_countries','devices','returning_pages'];
+  const legacy={zaruku_seo:Object.fromEntries(fields.map(name=>[name,[{value:42}]]))};
+  const next=structuredClone(legacy);next.zaruku_seo.alice_visibility={snapshots:[{month:'2026-08'}]};next.zaruku_seo.wordstat={status:'ready'};
+  assert.equal(compareHistoricalMetrics(legacy,next),true);
+  for(const name of fields){const bad=structuredClone(next);bad.zaruku_seo[name]=[{value:41}];assert.throws(()=>compareHistoricalMetrics(legacy,bad),/historical/);}
+  const missing=structuredClone(next);delete missing.zaruku_seo.organic_trend;assert.throws(()=>compareHistoricalMetrics(legacy,missing),/historical/);
+  assert.throws(()=>compareHistoricalMetrics({},{}),/historical/);
+});
+
+test('client-rendered Zaruku shell is verified by its isolated asset, not absent SSR tab labels',async()=>{
+  const {isolatedShellAsset}=await import(modulePath);
+  assert.equal(isolatedShellAsset('<script src="/_next-zaruku/static/chunks/app.js"></script><div>Loading</div>'),'/_next-zaruku/static/chunks/app.js');
+  assert.throws(()=>isolatedShellAsset('<script src="/_next/static/app.js"></script>'),/shell/);
+});
+
 function fixtureAuthority(overrides = {}) {
   return Object.freeze({
     scope: 'zaruku',
-    reviewedAppSha: '0630a94c2ea493ba76e4c5932f6b83a351fbd810',
+    reviewedAppSha: '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8',
     combinedPort: 3001,
     isolatedPort: 3002,
     targetFile: '/etc/nginx/conf.d/dashboard-next.conf',
@@ -84,7 +101,7 @@ test('committed cutover authority pins the reviewed release and live predecessor
   const authority = loadCutoverAuthority(path.join(root, 'deploy/zaruku/nginx-cutover.json'));
   assert.deepEqual(authority, {
     scope: 'zaruku',
-    reviewedAppSha: '0630a94c2ea493ba76e4c5932f6b83a351fbd810',
+    reviewedAppSha: '1a9de096ed7a0cbefe8e4df6bbcf8e0bc311f8d8',
     combinedPort: 3001,
     isolatedPort: 3002,
     targetFile: '/etc/nginx/conf.d/dashboard-next.conf',
