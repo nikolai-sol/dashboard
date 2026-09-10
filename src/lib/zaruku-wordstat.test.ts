@@ -17,6 +17,14 @@ test("Wordstat ranking aliases do not use the MySQL reserved ROW_NUMBER keyword"
   assert.match(currentQueries.sql, /AS dedup_rank/);
 });
 
+test("Wordstat joins established SEO/GSC tables with an explicit compatible collation", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const { currentQueries } = buildZarukuWordstatQueries("66624469", "2026-09-10");
+  for (const source of ["positions", "urls"]) {
+    assert.ok(currentQueries.sql.includes(`${source}.normalized_query COLLATE utf8mb4_unicode_ci = facts.normalized_query COLLATE utf8mb4_unicode_ci`));
+  }
+});
+
 function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "historical-rows" | "current-queries" | "current-regions", DbRow[]>>) {
   const queries: SqlQuery[] = [];
   const metadata = rows.metadata?.[0] ?? null;
