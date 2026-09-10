@@ -1,6 +1,7 @@
 import type { Period } from "@reportingdash/site-seo-contract";
+import * as XLSX from "xlsx";
 import { assertAuthorizedSiteSession } from "../../../../../lib/auth.ts";
-import { buildExportRows, toCsv } from "../../../../../lib/exports.ts";
+import { buildExportRows } from "../../../../../lib/exports.ts";
 import { loadDashboardReadModel } from "../../../../../lib/read-model.ts";
 import type { DashboardJsonDependencies } from "../route.ts";
 
@@ -12,8 +13,12 @@ export function createExcelExportHandler(deps: DashboardJsonDependencies) {
         dashboardId: deps.registration.profile.dashboardId, siteId: deps.registration.profile.siteId, credentialVersion: deps.credentialVersion,
       });
       const model = await loadDashboardReadModel({ registration: deps.registration, claim: session, period: request.period, execute: deps.execute });
-      return new Response(toCsv(buildExportRows({ title: "Google Search Console", period: request.period, source: model.gsc.meta })), {
-        headers: { "content-type": "text/csv; charset=utf-8", "content-disposition": "attachment; filename=site-seo-export.csv" },
+      const sheet = XLSX.utils.json_to_sheet(buildExportRows({ title: "Google Search Console", period: request.period, source: model.gsc.meta }));
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "SEO");
+      const contents = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+      return new Response(contents, {
+        headers: { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "content-disposition": "attachment; filename=site-seo-export.xlsx", "cache-control": "private, no-store" },
       });
     } catch {
       return Response.json({ error: "unauthorized" }, { status: 401 });
