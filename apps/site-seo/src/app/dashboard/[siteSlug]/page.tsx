@@ -11,7 +11,7 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
   const { siteSlug } = await params;
   if (siteSlug !== runtime.registration.profile.slug) notFound();
   const session = await runtime.resolveSession((await cookies()).toString(), runtime.registration);
-  if (!session) return <main><h1>{runtime.registration.profile.title}</h1><LoginForm dashboardId={runtime.registration.profile.dashboardId} /></main>;
+  if (!session) return <main><h1>{runtime.registration.profile.title}</h1><LoginForm dashboardId={runtime.registration.profile.dashboardId} siteSlug={siteSlug} /></main>;
   try {
     const values = await searchParams;
     const url = new URL("https://site-seo.local/dashboard");

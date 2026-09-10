@@ -9,6 +9,7 @@ import { Dashboard } from "../src/components/Dashboard.tsx";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { Wordstat } from "../src/components/Wordstat.tsx";
+import { siteLoginPath } from "../src/components/LoginForm.tsx";
 
 const profile = {
   sources: [
@@ -19,6 +20,10 @@ const profile = {
     { sourceKey: "seo_os", mode: "automated", bindingId: "fixture", importCadence: [] },
   ],
 } as unknown as SiteProfile;
+
+test("uses the site-scoped standalone login route", () => {
+  assert.equal(siteLoginPath("medroche"), "/api/dashboard/medroche/login");
+});
 
 test("hides disabled adapters while preserving the available source sections", () => {
   const labels = dashboardTabs(profile).map((tab) => tab.label);
