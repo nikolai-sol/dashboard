@@ -39,7 +39,7 @@ export function Dashboard({ profile, model, selection, publicationId, filters, a
   const tabs = dashboardTabs(profile);
   const activeTab = resolveActiveTab(tabs, requestedTab);
   const tabHref = (id: string) => `?${query}&tab=${encodeURIComponent(id)}`;
-  const toolbar = <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} />;
+  const toolbar = <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} activeTab={activeTab} />;
   const exports = <p><a href={`/api/dashboard/${profile.slug}?${query}`}>JSON</a>{" · "}<a href={`/api/dashboard/${profile.slug}/excel?${query}`}>Excel</a>{" · "}<a href={`/api/dashboard/${profile.slug}/pdf?${query}`}>PDF</a></p>;
 
   let section;

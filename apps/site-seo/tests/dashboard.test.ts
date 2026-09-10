@@ -3,7 +3,7 @@ import test from "node:test";
 import type { SiteProfile } from "@reportingdash/site-seo-contract";
 import { dashboardTabs, resolveActiveTab } from "../src/components/Dashboard.tsx";
 import { sourceStatusLabel } from "../src/components/Sources.tsx";
-import { buildDashboardQuery } from "../src/components/PeriodSelector.tsx";
+import { buildDashboardQuery, PeriodSelector } from "../src/components/PeriodSelector.tsx";
 import { createPeriodSelection, calendarMonthPeriod } from "../src/lib/period-selection.ts";
 import { Dashboard } from "../src/components/Dashboard.tsx";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -58,6 +58,19 @@ test("preserves validated periods, comparison, publication, and filters in contr
   assert.match(query, /filter_country=RU/);
   assert.match(query, /filter_search_type=web/);
   assert.match(query, /filter_device=all/);
+});
+
+test("period form preserves only the active display tab while export queries omit it", () => {
+  const selection = createPeriodSelection({ primaryWeek: "2026-W01", comparisonWeek: "2025-W52", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
+  const html = renderToStaticMarkup(createElement(PeriodSelector, {
+    selection,
+    publicationId: "publication-7",
+    filters: { country: "RU" },
+    activeTab: "search",
+  }));
+
+  assert.match(html, /<input type="hidden" name="tab" value="search"\/>/);
+  assert.equal(new URLSearchParams(buildDashboardQuery(selection, "publication-7", { country: "RU" })).has("tab"), false);
 });
 
 test("renders period controls and export links without emitting disabled GSC content", () => {
