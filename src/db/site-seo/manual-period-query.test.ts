@@ -12,6 +12,7 @@ import {
 const scope: ManualReadScope = {
   clientId: "medroche",
   siteId: "med.roche.ru",
+  dashboardId: 30,
   sourceKey: "google_search_console",
   analyticsAccountId: "medroche-gsc",
   resourceId: "sc-domain:med.roche.ru",
@@ -27,6 +28,7 @@ test("daily read resolves one published import per date using the full scope", (
   for (const column of [
     "client_id",
     "site_id",
+    "dashboard_id",
     "source_key",
     "analytics_account_id",
     "resource_id",
@@ -37,9 +39,10 @@ test("daily read resolves one published import per date using the full scope", (
   assert.match(query.sql, /PARTITION BY \w+\.report_date/);
   assert.match(query.sql, /\w+\.publication_priority DESC/);
   assert.match(query.sql, /row_choice = 1/);
-  assert.deepEqual(query.params.slice(0, 6), [
+  assert.deepEqual(query.params.slice(0, 7), [
     scope.clientId,
     scope.siteId,
+    scope.dashboardId,
     scope.sourceKey,
     scope.analyticsAccountId,
     scope.resourceId,

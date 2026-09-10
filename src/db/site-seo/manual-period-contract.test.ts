@@ -27,6 +27,7 @@ test("immutable import scope and file identity include resource and filters", ()
   for (const column of [
     "client_id",
     "site_id",
+    "dashboard_id",
     "source_key",
     "analytics_account_id",
     "resource_id",
@@ -42,7 +43,7 @@ test("immutable import scope and file identity include resource and filters", ()
   }
   assert.match(
     ddl,
-    /UNIQUE KEY uq_manual_import_file\s*\(\s*client_id,\s*site_id,\s*source_key,\s*analytics_account_id,\s*resource_id,\s*period_kind,\s*period_from,\s*period_to,\s*filters_hash,\s*adapter_version,\s*source_files_hash\s*\)/s,
+    /UNIQUE KEY uq_manual_import_file\s*\(\s*client_id,\s*site_id,\s*dashboard_id,\s*source_key,\s*analytics_account_id,\s*resource_id,\s*period_kind,\s*period_from,\s*period_to,\s*filters_hash,\s*adapter_version,\s*source_files_hash\s*\)/s,
   );
 });
 

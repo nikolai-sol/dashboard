@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS canonical_seo_manual_imports (
   import_uid CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   client_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   site_id VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  dashboard_id BIGINT UNSIGNED NOT NULL,
   source_key VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   analytics_account_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   resource_id VARCHAR(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -31,12 +32,12 @@ CREATE TABLE IF NOT EXISTS canonical_seo_manual_imports (
   PRIMARY KEY (id),
   UNIQUE KEY uq_manual_import_uid (import_uid),
   UNIQUE KEY uq_manual_import_file (
-    client_id, site_id, source_key, analytics_account_id, resource_id,
+    client_id, site_id, dashboard_id, source_key, analytics_account_id, resource_id,
     period_kind, period_from, period_to, filters_hash, adapter_version,
     source_files_hash
   ),
   KEY ix_manual_import_scope_period (
-    client_id, site_id, source_key, analytics_account_id, resource_id,
+    client_id, site_id, dashboard_id, source_key, analytics_account_id, resource_id,
     period_from, period_to, status
   ),
   CONSTRAINT fk_manual_import_predecessor

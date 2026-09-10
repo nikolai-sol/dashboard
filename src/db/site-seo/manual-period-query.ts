@@ -1,6 +1,7 @@
 export type ManualReadScope = Readonly<{
   clientId: string;
   siteId: string;
+  dashboardId: number;
   sourceKey: string;
   analyticsAccountId: string;
   resourceId: string;
@@ -24,6 +25,7 @@ export type ManualImportRow = Readonly<{
   import_uid: string;
   client_id: string;
   site_id: string;
+  dashboard_id: number;
   source_key: string;
   analytics_account_id: string;
   resource_id: string;
@@ -89,6 +91,7 @@ export type ManualCoverageRow = ManualImportRow &
 const SCOPE_WHERE = `
     i.client_id = ?
     AND i.site_id = ?
+    AND i.dashboard_id = ?
     AND i.source_key = ?
     AND i.analytics_account_id = ?
     AND i.resource_id = ?
@@ -98,6 +101,7 @@ function scopeParams(scope: ManualReadScope): readonly string[] {
   return [
     scope.clientId,
     scope.siteId,
+    scope.dashboardId,
     scope.sourceKey,
     scope.analyticsAccountId,
     scope.resourceId,
@@ -121,7 +125,7 @@ export function buildManualDailyReadQuery(
   return {
     sql: `WITH candidate_daily AS (
   SELECT
-    i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.source_key,
+    i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.dashboard_id, i.source_key,
     i.analytics_account_id, i.resource_id, i.period_kind, i.period_from,
     i.period_to, i.period_key, i.source_timezone, i.filters_hash,
     i.adapter_version, i.exported_at, i.revision,
@@ -177,7 +181,7 @@ export function buildManualDimensionsReadQuery(
   return {
     sql: `WITH ranked_dimensions AS (
 SELECT
-  i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.source_key,
+  i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.dashboard_id, i.source_key,
   i.analytics_account_id, i.resource_id, i.period_kind, i.period_from,
   i.period_to, i.period_key, i.source_timezone, i.filters_hash,
   i.adapter_version, i.exported_at, i.revision,
@@ -227,7 +231,7 @@ export function buildManualIndexingReadQuery(
     totals: {
       sql: `${chosenImport}
 SELECT
-  i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.source_key,
+  i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.dashboard_id, i.source_key,
   i.analytics_account_id, i.resource_id, i.period_kind, i.period_from,
   i.period_to, i.period_key, i.source_timezone, i.filters_hash,
   i.adapter_version, i.exported_at, i.revision,
@@ -256,7 +260,7 @@ export function buildManualCoverageReadQuery(
 ): CanonicalReadQuery {
   return {
     sql: `SELECT
-  i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.source_key,
+  i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.dashboard_id, i.source_key,
   i.analytics_account_id, i.resource_id, i.period_kind, i.period_from,
   i.period_to, i.period_key, i.source_timezone, i.filters_hash,
   i.adapter_version, i.exported_at, i.revision,
