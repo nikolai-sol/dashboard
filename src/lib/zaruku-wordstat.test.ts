@@ -10,6 +10,13 @@ async function wordstatModule() {
   return import("./zaruku-wordstat");
 }
 
+test("Wordstat ranking aliases do not use the MySQL reserved ROW_NUMBER keyword", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const { currentQueries } = buildZarukuWordstatQueries("66624469", "2026-09-10");
+  assert.doesNotMatch(currentQueries.sql, /(?:AS|WHERE)\s+row_number\b/i);
+  assert.match(currentQueries.sql, /AS dedup_rank/);
+});
+
 function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "historical-rows" | "current-queries" | "current-regions", DbRow[]>>) {
   const queries: SqlQuery[] = [];
   const metadata = rows.metadata?.[0] ?? null;

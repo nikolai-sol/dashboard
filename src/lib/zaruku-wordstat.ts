@@ -540,11 +540,11 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
               ROW_NUMBER() OVER (
                 PARTITION BY LOWER(TRIM(query))
                 ORDER BY week_key DESC, serp_position IS NULL ASC, serp_position ASC, matched_url ASC
-              ) AS row_number
+              ) AS dedup_rank
             FROM seo_positions_weekly
             WHERE analytics_account_id = ?
           ) ranked_positions
-          WHERE row_number = 1
+          WHERE dedup_rank = 1
         ),
         confirmed_urls AS (
           SELECT normalized_query, page
@@ -555,14 +555,14 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
               ROW_NUMBER() OVER (
                 PARTITION BY LOWER(TRIM(query))
                 ORDER BY report_date DESC, clicks DESC, impressions DESC, page ASC
-              ) AS row_number
+              ) AS dedup_rank
             FROM canonical_fact_gsc_queries_daily
             WHERE analytics_account_id = ?
               AND country = 'rus'
               AND page IS NOT NULL
               AND page <> ''
           ) ranked_urls
-          WHERE row_number = 1
+          WHERE dedup_rank = 1
         ),
         ranked_requests AS (
           SELECT
