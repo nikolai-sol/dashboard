@@ -75,6 +75,42 @@ test("exports selected traffic comparison period and its canonical metrics", () 
   assert.match(csv, /98765/);
 });
 
+test("exports actual Wordstat snapshot windows, Alice query sources, and published SEO OS evidence", () => {
+  const rows = buildDashboardExportRows({
+    profile: { sources: [
+      { sourceKey: "yandex_wordstat", mode: "automated", bindingId: "wordstat", importCadence: [] },
+      { sourceKey: "yandex_webmaster_alice_manual", mode: "manual", bindingId: "alice", importCadence: [] },
+      { sourceKey: "seo_os", mode: "automated", bindingId: "seo-os", importCadence: [] },
+    ] } as never,
+    selection,
+    model: {
+      gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} },
+      datasets: {},
+      wordstat: {
+        ...meta, sourceKey: "yandex_wordstat", period: { kind: "custom", key: "rolling:2026-07-27:2026-08-25", from: "2026-07-27", to: "2026-08-25", sourceTimezone: "Europe/Moscow" }, state: "partial", completeness: "unknown", kind: "wordstat", demand: null,
+        queries: [{ query: "лечение", kind: "popular", count: 100, window: { from: "2026-07-27", to: "2026-08-25", snapshotDate: "2026-08-25", registryVersion: "registry-2", importId: "run-2" } }],
+      },
+      alice: {
+        ...meta, sourceKey: "yandex_webmaster_alice_manual", period: selection.alice, state: "ready", completeness: "complete", kind: "alice", officialSovPct: 43.91, samplePresencePct: 43.87, competitors: [], sources: ["one.test"],
+        queries: [{ query: "лечение", portalPresent: true, portalPosition: 2, portalUrl: "https://portal.test/a", sources: [{ rank: 1, domain: "one.test", url: "https://one.test/a" }] }],
+      },
+      seoOs: {
+        ...meta, sourceKey: "seo_os", period, state: "partial", completeness: "unknown", kind: "seo_os", rows: [],
+        recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W01"], ruleVersion: "v3", publicationStatus: "published" }],
+        tasks: [{ id: "task-1", status: "open" }],
+      },
+    },
+  } as never);
+  const csv = toCsv(rows);
+  assert.match(csv, /2026-07-27.*2026-08-25/);
+  assert.match(csv, /snapshot 2026-08-25/);
+  assert.match(csv, /Официальный SOV Алиса.*43\.91/);
+  assert.match(csv, /Sample presence Алиса.*43\.87/);
+  assert.match(csv, /Запрос Алиса: лечение.*1\. one\.test/);
+  assert.match(csv, /Рекомендация SEO OS: Онкология.*Добавить раздел.*rule: v3/);
+  assert.match(csv, /Задача SEO OS task-1.*open/);
+});
+
 test("refuses an export session from another dashboard before any canonical read", async () => {
   let calls = 0;
   const response = await createExcelExportHandler({

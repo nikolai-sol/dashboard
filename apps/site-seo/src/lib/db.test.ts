@@ -110,7 +110,7 @@ test("canonical source readers preserve empty, partial, and exact resource seman
     if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
     if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
     if (/site-seo:webmaster-(summary|daily|pages)/.test(sql)) return [[], []];
-    if (/site-seo:alice-(summary|competitors|sources)/.test(sql)) return [[], []];
+    if (/site-seo:alice-(summary|competitors|queries)/.test(sql)) return [[], []];
     if (sql.includes("canonical_alice_visibility_snapshots")) return [[{ row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
     throw new Error("unexpected query");
   } });
@@ -131,6 +131,91 @@ test("derived SEO OS without a canonical materialization stays honestly missing"
   const execute = createCanonicalReadExecutor({ async execute() { return [[], []]; } });
   const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os" }, period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
   assert.equal("state" in result && result.state, "missing");
+});
+
+test("Wordstat pins one latest rolling snapshot and exposes its actual window", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_wordstat_coverage")) return [[{ coverage_rows: 1, status: "success", import_id: 12, loaded_at: "2026-08-26 01:00:00" }], []];
+    if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
+    if (sql.includes("site-seo:wordstat-queries")) return [[{
+      query_text: "лечение", count: "100", request_kind: "popular",
+      snapshot_date: "2026-08-25", window_from: "2026-07-27", window_to: "2026-08-25",
+      registry_version: "registry-2", ingestion_run_id: "run-2",
+    }], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "wordstat-account", resourceId: "ru" },
+    period: { kind: "iso_week", from: "2026-08-17", to: "2026-08-23", key: "2026-W34", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "wordstat");
+  assert.equal("state" in result && result.state, "partial");
+  assert.deepEqual("period" in result && result.period, {
+    kind: "custom", key: "rolling:2026-07-27:2026-08-25", from: "2026-07-27", to: "2026-08-25", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("queries" in result && result.queries, [{
+    query: "лечение", count: 100, kind: "popular",
+    window: { from: "2026-07-27", to: "2026-08-25", snapshotDate: "2026-08-25", registryVersion: "registry-2", importId: "run-2" },
+  }]);
+  const queryCall = calls.find((call) => call.sql.includes("site-seo:wordstat-queries"));
+  assert.match(queryCall!.sql, /WITH selected_snapshot/i);
+  assert.match(queryCall!.sql, /window_from <= \?/i);
+  assert.match(queryCall!.sql, /window_to >= \?/i);
+  assert.match(queryCall!.sql, /ORDER BY window_to DESC/i);
+  assert.doesNotMatch(queryCall!.sql, /SUM\(count\)/i);
+  assert.deepEqual(queryCall!.params, ["yandex_wordstat", "wordstat-account", "2026-08-17", "2026-08-23", "yandex_wordstat", "wordstat-account"]);
+});
+
+test("Alice retains published per-query portal and ranked source facts without conflating official SOV", async () => {
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{ row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
+    if (sql.includes("site-seo:alice-summary")) return [[{ official_sov_pct: "43.91", sample_presence_pct: "43.87" }], []];
+    if (sql.includes("site-seo:alice-competitors")) return [[{ site_domain: "competitor.test" }], []];
+    if (sql.includes("site-seo:alice-queries")) return [[
+      { query_id: 7, query_text: "лечение", portal_present: 1, portal_position: 2, portal_url: "https://portal.test/a", source_rank: 1, source_domain: "one.test", source_url: "https://one.test/a" },
+      { query_id: 7, query_text: "лечение", portal_present: 1, portal_position: 2, portal_url: "https://portal.test/a", source_rank: 2, source_domain: "two.test", source_url: "https://two.test/a" },
+      { query_id: 8, query_text: "диагностика", portal_present: 0, portal_position: null, portal_url: null, source_rank: 1, source_domain: "three.test", source_url: "https://three.test/a" },
+    ], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "yandex_webmaster_alice_manual", analyticsAccountId: "alice-account", resourceId: "example.test" }, period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+  assert.equal("kind" in result && result.kind, "alice");
+  assert.equal("officialSovPct" in result && result.officialSovPct, 43.91);
+  assert.equal("samplePresencePct" in result && result.samplePresencePct, 43.87);
+  assert.deepEqual("queries" in result && result.queries, [
+    { query: "лечение", portalPresent: true, portalPosition: 2, portalUrl: "https://portal.test/a", sources: [{ rank: 1, domain: "one.test", url: "https://one.test/a" }, { rank: 2, domain: "two.test", url: "https://two.test/a" }] },
+    { query: "диагностика", portalPresent: false, portalPosition: null, portalUrl: null, sources: [{ rank: 1, domain: "three.test", url: "https://three.test/a" }] },
+  ]);
+});
+
+test("SEO OS reads published recommendation evidence and task statuses, not a deprecated AI visibility table", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("site-seo:seo-os-run")) return [[{
+      run_id: 71, status: "published", loaded_at: "2026-08-10 09:00:00",
+      stages: JSON.stringify({ recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W32"], evidence: { ruleVersion: "v3" } }] }),
+    }], []];
+    if (sql.includes("site-seo:seo-os-tasks")) return [[{ task_id: "task-1", status: "open" }], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "seo-account" }, period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+  assert.equal("kind" in result && result.kind, "seo_os");
+  assert.deepEqual("recommendations" in result && result.recommendations, [{
+    kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел",
+    sourceIds: ["opp-1"], sourcePeriods: ["2026-W32"], ruleVersion: "v3", publicationStatus: "published",
+  }]);
+  assert.deepEqual("tasks" in result && result.tasks, [{ id: "task-1", status: "open" }]);
+  assert.ok(calls.some((call) => /seo_weekly_runs/i.test(call.sql)));
+  assert.ok(calls.every((call) => !/seo_ai_visibility_weekly/i.test(call.sql)));
 });
 
 test("Metrika returns scoped visits and pageviews while keeping users daily-only", async () => {

@@ -48,7 +48,13 @@ export type WebmasterCanonicalData = DatasetMeta & Readonly<{
 export type WordstatCanonicalData = DatasetMeta & Readonly<{
   kind: "wordstat";
   demand: number | null;
-  queries: readonly Readonly<{ query: string; count: number; kind: string }>[];
+  queries: readonly Readonly<{
+    query: string;
+    count: number;
+    kind: string;
+    /** A rolling snapshot is never represented as an exact selected week. */
+    window: Readonly<{ from: string; to: string; snapshotDate: string; registryVersion: string; importId: string | null }>;
+  }>[];
 }>;
 
 export type AliceCanonicalData = DatasetMeta & Readonly<{
@@ -57,12 +63,29 @@ export type AliceCanonicalData = DatasetMeta & Readonly<{
   samplePresencePct: number | null;
   competitors: readonly string[];
   sources: readonly string[];
+  queries: readonly Readonly<{
+    query: string;
+    portalPresent: boolean;
+    portalPosition: number | null;
+    portalUrl: string | null;
+    sources: readonly Readonly<{ rank: number; domain: string; url: string }>[];
+  }>[];
 }>;
 
 export type SeoOsCanonicalData = DatasetMeta & Readonly<{
   kind: "seo_os";
   rows: readonly Readonly<{ engine: string; mentions: number; citations: number; evidence: string | null }>[];
-  tasks: readonly Readonly<{ title: string; status: string }>[];
+  recommendations: readonly Readonly<{
+    kind: string | null;
+    topic: string | null;
+    pageUrl: string | null;
+    action: string | null;
+    sourceIds: readonly string[];
+    sourcePeriods: readonly string[];
+    ruleVersion: string | null;
+    publicationStatus: string | null;
+  }>[];
+  tasks: readonly Readonly<{ id: string; status: string }>[];
 }>;
 
 export type CanonicalDatasetData = MetrikaCanonicalData | WebmasterCanonicalData | WordstatCanonicalData | AliceCanonicalData | SeoOsCanonicalData;
@@ -449,7 +472,17 @@ async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalRea
     : datasetMeta(query, row, "automated", "ready", "complete");
 }
 
-type WordstatRow = Readonly<{ demand?: unknown; query_text?: unknown; count?: unknown; request_kind?: unknown }>;
+type WordstatRow = Readonly<{
+  demand?: unknown;
+  query_text?: unknown;
+  count?: unknown;
+  request_kind?: unknown;
+  snapshot_date?: unknown;
+  window_from?: unknown;
+  window_to?: unknown;
+  registry_version?: unknown;
+  ingestion_run_id?: unknown;
+}>;
 
 async function readWordstatData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | WordstatCanonicalData> {
   const meta = await readWordstatMeta(database, query);
@@ -465,18 +498,48 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalRea
     }),
     rowsFor<WordstatRow>(database, {
       sql: `/* site-seo:wordstat-queries */
-            SELECT query_text, SUM(count) AS count, request_kind
-              FROM canonical_fact_wordstat_requests_snapshot
-             WHERE source_key = ? AND analytics_account_id = ?
-               AND device_type = 'all' AND snapshot_date BETWEEN ? AND ?
-             GROUP BY query_text, request_kind
-             ORDER BY count DESC, query_text ASC
-             LIMIT 20`, params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to],
+            WITH selected_snapshot AS (
+              SELECT snapshot_date, window_from, window_to, registry_version, ingestion_run_id
+                FROM canonical_fact_wordstat_requests_snapshot
+               WHERE source_key = ? AND analytics_account_id = ? AND device_type = 'all'
+                 AND window_from <= ? AND window_to >= ?
+               ORDER BY window_to DESC, snapshot_date DESC, registry_version DESC, ingestion_run_id DESC
+               LIMIT 1
+            )
+            SELECT fact.query_text, fact.count, fact.request_kind,
+                   fact.snapshot_date, fact.window_from, fact.window_to,
+                   fact.registry_version, fact.ingestion_run_id
+              FROM canonical_fact_wordstat_requests_snapshot fact
+              JOIN selected_snapshot selected
+                ON fact.snapshot_date = selected.snapshot_date
+               AND fact.window_from = selected.window_from
+               AND fact.window_to = selected.window_to
+               AND fact.registry_version = selected.registry_version
+               AND fact.ingestion_run_id <=> selected.ingestion_run_id
+             WHERE fact.source_key = ? AND fact.analytics_account_id = ?
+               AND fact.device_type = 'all'
+             ORDER BY fact.count DESC, fact.query_text ASC
+             LIMIT 20`, params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to, query.scope.sourceKey, query.scope.analyticsAccountId],
     }),
   ]);
   const summary = summaryRows[0];
-  return { ...meta, kind: "wordstat", demand: summary && summary.demand !== null ? numeric(summary.demand) : null,
-    queries: queryRows.map((row) => ({ query: String(row.query_text), count: numeric(row.count), kind: String(row.request_kind) })) };
+  const window = queryRows[0] && {
+    from: String(queryRows[0].window_from), to: String(queryRows[0].window_to),
+    snapshotDate: String(queryRows[0].snapshot_date), registryVersion: String(queryRows[0].registry_version),
+    importId: queryRows[0].ingestion_run_id == null ? null : String(queryRows[0].ingestion_run_id),
+  };
+  const rollingMeta: DatasetMeta = window
+    ? {
+      ...meta,
+      period: { kind: "custom", key: `rolling:${window.from}:${window.to}`, from: window.from, to: window.to, sourceTimezone: query.period.sourceTimezone },
+      state: "partial",
+      completeness: "unknown",
+    }
+    : meta;
+  return { ...rollingMeta, kind: "wordstat", demand: summary && summary.demand !== null ? numeric(summary.demand) : null,
+    queries: window ? queryRows.map((row) => ({ query: String(row.query_text), count: numeric(row.count), kind: String(row.request_kind), window: {
+      from: String(row.window_from), to: String(row.window_to), snapshotDate: String(row.snapshot_date), registryVersion: String(row.registry_version), importId: row.ingestion_run_id == null ? null : String(row.ingestion_run_id),
+    } })) : [] };
 }
 
 async function readAliceMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta> {
@@ -496,13 +559,25 @@ async function readAliceMeta(database: CanonicalDatabase, query: CanonicalReadQu
     : missingMeta(query.scope.sourceKey, "manual");
 }
 
-type AliceRow = Readonly<{ official_sov_pct?: unknown; sample_presence_pct?: unknown; site_domain?: unknown; source_domain?: unknown }>;
+type AliceRow = Readonly<{
+  official_sov_pct?: unknown;
+  sample_presence_pct?: unknown;
+  site_domain?: unknown;
+  query_id?: unknown;
+  query_text?: unknown;
+  portal_present?: unknown;
+  portal_position?: unknown;
+  portal_url?: unknown;
+  source_rank?: unknown;
+  source_domain?: unknown;
+  source_url?: unknown;
+}>;
 
 async function readAliceData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | AliceCanonicalData> {
   const meta = await readAliceMeta(database, query);
   if (meta.state === "missing") return meta;
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
-  const [snapshotRows, competitorRows, sourceRows] = await Promise.all([
+  const [snapshotRows, competitorRows, queryRows] = await Promise.all([
     rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-summary */
       SELECT official_sov_pct, sample_presence_pct
       FROM canonical_alice_visibility_snapshots
@@ -514,37 +589,103 @@ async function readAliceData(database: CanonicalDatabase, query: CanonicalReadQu
       JOIN canonical_alice_visibility_snapshots snapshot ON snapshot.id = featured.snapshot_id
       WHERE snapshot.source_key = ? AND snapshot.analytics_account_id = ? AND snapshot.domain = ? AND snapshot.period_month BETWEEN ? AND ? AND snapshot.publication_status = 'published'
       ORDER BY snapshot.period_month DESC, featured.display_order ASC LIMIT 20`, params }),
-    rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-sources */
-      SELECT DISTINCT source.source_domain
-      FROM canonical_alice_visibility_sources source
-      JOIN canonical_alice_visibility_queries query_row ON query_row.id = source.query_id
-      JOIN canonical_alice_visibility_snapshots snapshot ON snapshot.id = query_row.snapshot_id
-      WHERE snapshot.source_key = ? AND snapshot.analytics_account_id = ? AND snapshot.domain = ? AND snapshot.period_month BETWEEN ? AND ? AND snapshot.publication_status = 'published'
-      ORDER BY source.source_domain ASC LIMIT 20`, params }),
+    rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-queries */
+      WITH selected_snapshot AS (
+        SELECT id FROM canonical_alice_visibility_snapshots
+         WHERE source_key = ? AND analytics_account_id = ? AND domain = ?
+           AND period_month BETWEEN ? AND ? AND publication_status = 'published'
+         ORDER BY period_month DESC, id DESC LIMIT 1
+      )
+      SELECT query_row.id AS query_id, query_row.query_text, query_row.portal_present,
+             query_row.portal_position, query_row.portal_url, source.source_rank,
+             source.source_domain, source.source_url
+        FROM canonical_alice_visibility_queries query_row
+        JOIN selected_snapshot selected ON selected.id = query_row.snapshot_id
+        LEFT JOIN canonical_alice_visibility_sources source ON source.query_id = query_row.id
+       ORDER BY query_row.id ASC, source.source_rank ASC
+       LIMIT 100`, params }),
   ]);
   const snapshot = snapshotRows[0];
+  const queries = new Map<string, {
+    query: string; portalPresent: boolean; portalPosition: number | null; portalUrl: string | null;
+    sources: { rank: number; domain: string; url: string }[];
+  }>();
+  for (const row of queryRows) {
+    const id = String(row.query_id);
+    let item = queries.get(id);
+    if (!item) {
+      item = {
+        query: String(row.query_text), portalPresent: numeric(row.portal_present) !== 0,
+        portalPosition: nullableNumeric(row.portal_position), portalUrl: row.portal_url == null ? null : String(row.portal_url), sources: [],
+      };
+      queries.set(id, item);
+    }
+    if (row.source_rank != null && row.source_domain != null && row.source_url != null) {
+      item.sources.push({ rank: numeric(row.source_rank), domain: String(row.source_domain), url: String(row.source_url) });
+    }
+  }
+  const queryList = [...queries.values()];
   return { ...meta, kind: "alice", officialSovPct: snapshot ? nullableNumeric(snapshot.official_sov_pct) : null,
     samplePresencePct: snapshot ? nullableNumeric(snapshot.sample_presence_pct) : null,
-    competitors: competitorRows.map((row) => String(row.site_domain)), sources: sourceRows.map((row) => String(row.source_domain)) };
+    competitors: competitorRows.map((row) => String(row.site_domain)),
+    sources: [...new Set(queryList.flatMap((item) => item.sources.map((source) => source.domain)))],
+    queries: queryList };
 }
 
-type SeoOsRow = Readonly<{ engine?: unknown; mentions?: unknown; citations?: unknown; evidence?: unknown; title?: unknown; status?: unknown }>;
+type SeoOsRow = Readonly<{ run_id?: unknown; status?: unknown; stages?: unknown; loaded_at?: unknown; task_id?: unknown }>;
+
+function objectValue(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
+}
+
+function jsonValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value) as unknown; } catch { return null; }
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stringsValue(value: unknown): readonly string[] {
+  return Array.isArray(value) ? value.map((item) => typeof item === "string" ? item : JSON.stringify(item)) : [];
+}
+
+function seoOsRecommendations(stages: unknown, publicationStatus: string | null): SeoOsCanonicalData["recommendations"] {
+  const recommendations = objectValue(jsonValue(stages))?.recommendations;
+  if (!Array.isArray(recommendations)) return [];
+  return recommendations.flatMap((value) => {
+    const row = objectValue(value);
+    if (!row) return [];
+    const evidence = objectValue(row.evidence);
+    return [{
+      kind: stringValue(row.kind), topic: stringValue(row.topic), pageUrl: stringValue(row.pageUrl), action: stringValue(row.action),
+      sourceIds: stringsValue(row.sourceIds), sourcePeriods: stringsValue(row.sourcePeriods), ruleVersion: stringValue(evidence?.ruleVersion), publicationStatus,
+    }];
+  });
+}
 
 async function readSeoOsData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | SeoOsCanonicalData> {
-  const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.key];
-  const [rows, taskRows] = await Promise.all([
-    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-rows */
-      SELECT engine, SUM(mention_count) AS mentions, SUM(citation_count) AS citations, MAX(run_id) AS evidence
-      FROM seo_ai_visibility_weekly
-      WHERE source_key = ? AND analytics_account_id = ? AND week_key = ?
-      GROUP BY engine ORDER BY engine ASC`, params }),
+  const [runRows, taskRows] = await Promise.all([
+    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-run */
+      SELECT id AS run_id, status, stages_json AS stages, finished_at AS loaded_at
+      FROM seo_weekly_runs
+      WHERE analytics_account_id = ? AND week_key = ?
+      ORDER BY finished_at DESC, id DESC LIMIT 1`, params: [query.scope.analyticsAccountId, query.period.key] }),
     rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-tasks */
-      SELECT CONCAT(opportunity_type, ': ', cluster_id) AS title, status
+      SELECT task_id, status
       FROM seo_tasks WHERE analytics_account_id = ? AND week_key = ? ORDER BY task_id ASC LIMIT 20`, params: [query.scope.analyticsAccountId, query.period.key] }),
   ]);
-  if (rows.length === 0 && taskRows.length === 0) return missingMeta("seo_os", "derived");
-  const meta = datasetMeta(query, { import_id: null, loaded_at: null }, "derived", "partial", "unknown");
-  return { ...meta, kind: "seo_os", rows: rows.map((row) => ({ engine: String(row.engine), mentions: numeric(row.mentions), citations: numeric(row.citations), evidence: row.evidence == null ? null : String(row.evidence) })), tasks: taskRows.map((row) => ({ title: String(row.title), status: String(row.status) })) };
+  const run = runRows[0];
+  if (!run) return missingMeta("seo_os", "derived");
+  const meta = datasetMeta(query, { import_id: run.run_id, loaded_at: run.loaded_at }, "derived", "partial", "unknown");
+  return {
+    ...meta,
+    kind: "seo_os",
+    rows: [],
+    recommendations: seoOsRecommendations(run.stages, stringValue(run.status)),
+    tasks: taskRows.map((row) => ({ id: String(row.task_id), status: String(row.status) })),
+  };
 }
 
 async function readDatasetMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | CanonicalDatasetData> {

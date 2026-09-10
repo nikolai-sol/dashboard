@@ -71,9 +71,12 @@ function buildWebmasterExportRows(input: Readonly<{ period: Period; data: Webmas
 }
 
 function buildWordstatExportRows(input: Readonly<{ period: Period; data: WordstatCanonicalData }>): ExportRow[] {
-  const rows = buildExportRows({ title: "Wordstat", period: input.period, source: input.data });
+  const rows = buildExportRows({ title: "Wordstat", period: input.data.period ?? input.period, source: input.data });
   if (input.data.demand !== null) rows.push({ field: "Спрос Wordstat", value: String(input.data.demand) });
-  for (const row of input.data.queries) rows.push({ field: `Wordstat ${row.kind}: ${row.query}`, value: String(row.count) });
+  for (const row of input.data.queries) rows.push({
+    field: `Wordstat ${row.kind}: ${row.query}`,
+    value: `${row.count}; окно ${row.window.from}…${row.window.to}; snapshot ${row.window.snapshotDate}; registry ${row.window.registryVersion}; import ${row.window.importId ?? "неизвестно"}`,
+  });
   return rows;
 }
 
@@ -83,13 +86,21 @@ function buildAliceExportRows(input: Readonly<{ period: Period; data: AliceCanon
   rows.push({ field: "Sample presence Алиса, %", value: input.data.samplePresencePct === null ? "неизвестно" : String(input.data.samplePresencePct) });
   for (const value of input.data.competitors) rows.push({ field: "Конкурент Алиса", value });
   for (const value of input.data.sources) rows.push({ field: "Источник Алиса", value });
+  for (const query of input.data.queries) rows.push({
+    field: `Запрос Алиса: ${query.query}`,
+    value: `портал: ${query.portalPresent ? "есть" : "нет"}; позиция: ${query.portalPosition ?? "нет"}; URL: ${query.portalUrl ?? "нет"}; источники: ${query.sources.map((source) => `${source.rank}. ${source.domain} (${source.url})`).join("; ") || "нет"}`,
+  });
   return rows;
 }
 
 function buildSeoOsExportRows(input: Readonly<{ period: Period; data: SeoOsCanonicalData }>): ExportRow[] {
   const rows = buildExportRows({ title: "SEO OS", period: input.period, source: input.data });
   for (const row of input.data.rows) rows.push({ field: `SEO OS ${row.engine}`, value: `упоминания ${row.mentions}; цитаты ${row.citations}; evidence ${row.evidence ?? "нет"}` });
-  for (const task of input.data.tasks) rows.push({ field: `Задача SEO OS ${task.title}`, value: task.status });
+  for (const recommendation of input.data.recommendations) rows.push({
+    field: `Рекомендация SEO OS: ${recommendation.topic ?? recommendation.kind ?? "без темы"}`,
+    value: `действие: ${recommendation.action ?? "нет"}; страница: ${recommendation.pageUrl ?? "нет"}; rule: ${recommendation.ruleVersion ?? "нет"}; периоды: ${recommendation.sourcePeriods.join(", ") || "нет"}; sources: ${recommendation.sourceIds.join(", ") || "нет"}; публикация: ${recommendation.publicationStatus ?? "нет"}`,
+  });
+  for (const task of input.data.tasks) rows.push({ field: `Задача SEO OS ${task.id}`, value: task.status });
   return rows;
 }
 
