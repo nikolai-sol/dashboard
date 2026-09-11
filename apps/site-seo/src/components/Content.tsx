@@ -41,19 +41,24 @@ export function aggregateContentSections(
     if (rows.length === 0) return [];
     const pageviews = rows.reduce((sum, row) => sum + row.pageviews, 0);
     const visits = rows.reduce((sum, row) => sum + row.visits, 0);
-    const weighted = (key: "bounceRate" | "avgVisitDurationSeconds" | "pageDepth") => {
-      const measured = rows.filter((row) => row[key] !== null && row.visits > 0);
-      const measuredVisits = measured.reduce((sum, row) => sum + row.visits, 0);
-      return measuredVisits > 0 ? measured.reduce((sum, row) => sum + row[key]! * row.visits, 0) / measuredVisits : null;
+    const weighted = (
+      key: "bounceRate" | "avgVisitDurationSeconds" | "pageDepth",
+      measuredVisitsKey: "bounceMeasuredVisits" | "durationMeasuredVisits" | "depthMeasuredVisits",
+    ) => {
+      const measured = rows.filter((row) => row[key] !== null && row[measuredVisitsKey] > 0);
+      const measuredVisits = measured.reduce((sum, row) => sum + row[measuredVisitsKey], 0);
+      return measuredVisits > 0
+        ? measured.reduce((sum, row) => sum + row[key]! * row[measuredVisitsKey], 0) / measuredVisits
+        : null;
     };
     return [{
       id: section.id,
       label: section.label,
       pageviews,
       visits,
-      bounceRate: weighted("bounceRate"),
-      avgVisitDurationSeconds: weighted("avgVisitDurationSeconds"),
-      pageDepth: weighted("pageDepth"),
+      bounceRate: weighted("bounceRate", "bounceMeasuredVisits"),
+      avgVisitDurationSeconds: weighted("avgVisitDurationSeconds", "durationMeasuredVisits"),
+      pageDepth: weighted("pageDepth", "depthMeasuredVisits"),
     }];
   });
 }

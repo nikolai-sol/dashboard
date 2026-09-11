@@ -20,6 +20,9 @@ const profile = {
 
 const row = (url: string, pageviews: number, visits: number, bounceRate: number | null, duration: number | null, depth: number | null, title: string | null = null): MetrikaContentPageRow => ({
   url, title, pageviews, visits, bounceRate, avgVisitDurationSeconds: duration, pageDepth: depth,
+  bounceMeasuredVisits: bounceRate === null ? 0 : visits,
+  durationMeasuredVisits: duration === null ? 0 : visits,
+  depthMeasuredVisits: depth === null ? 0 : visits,
 });
 
 function metrika(contentPages: readonly MetrikaContentPageRow[]): MetrikaCanonicalData {
@@ -41,6 +44,28 @@ test("content sections use longest-prefix matching and weighted entry-page metri
     { id: "innovations", label: "Инновации", pageviews: 30, visits: 10, bounceRate: 20, avgVisitDurationSeconds: 60, pageDepth: 2 },
     { id: "inno-puls", label: "INNO-ПУЛЬС", pageviews: 30, visits: 10, bounceRate: 20, avgVisitDurationSeconds: 84, pageDepth: 2.8 },
   ]);
+});
+
+test("content sections weight each behavior metric by its own measured visits", () => {
+  const result = aggregateContentSections(sections, [
+    {
+      ...row("/innovations/a", 120, 100, 10, 60, 2),
+      bounceMeasuredVisits: 10,
+      durationMeasuredVisits: 80,
+      depthMeasuredVisits: 25,
+    },
+    {
+      ...row("/innovations/b", 20, 10, 100, 180, 5),
+      bounceMeasuredVisits: 10,
+      durationMeasuredVisits: 10,
+      depthMeasuredVisits: 10,
+    },
+  ]);
+
+  const metrics = result.find(({ id }) => id === "innovations");
+  assert.equal(metrics?.bounceRate, 55);
+  assert.equal(metrics?.avgVisitDurationSeconds, 73.33333333333333);
+  assert.equal(metrics?.pageDepth, 2.857142857142857);
 });
 
 test("all-pages controls search, sort and paginate by 50 without inventing rows", () => {

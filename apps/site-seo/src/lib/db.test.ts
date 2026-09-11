@@ -571,6 +571,7 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
     if (sql.includes("site-seo:metrika-content-pages")) return [[{
       page_url: "/products/a", page_title: "Препарат A", pageviews: "31", visits: "12",
       bounce_rate: "25", avg_visit_duration_seconds: "90", page_depth: "2.5",
+      bounce_measured_visits: "8", duration_measured_visits: "11", depth_measured_visits: "10",
     }], []];
     if (sql.includes("site-seo:metrika-traffic-health")) return [[{
       visits: "100", pageviews: "160", bounce_rate: "17.5",
@@ -620,6 +621,7 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
   assert.deepEqual("contentPages" in result && result.contentPages, [{
     url: "/products/a", title: "Препарат A", pageviews: 31, visits: 12,
     bounceRate: 25, avgVisitDurationSeconds: 90, pageDepth: 2.5,
+    bounceMeasuredVisits: 8, durationMeasuredVisits: 11, depthMeasuredVisits: 10,
   }]);
   const facts = calls.filter((call) => call.sql.includes("canonical_fact_metrika_breakdowns_daily"));
   assert.equal(facts.length, 4);
@@ -638,6 +640,9 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
   assert.match(contentFacts.sql, /bounce_rate[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
   assert.match(contentFacts.sql, /avg_visit_duration_seconds[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
   assert.match(contentFacts.sql, /page_depth[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
+  assert.match(contentFacts.sql, /AS bounce_measured_visits/i);
+  assert.match(contentFacts.sql, /AS duration_measured_visits/i);
+  assert.match(contentFacts.sql, /AS depth_measured_visits/i);
   assert.doesNotMatch(contentFacts.sql, /\bLIMIT\b/i);
   const engineFacts = calls.filter((call) => call.sql.includes("site-seo:metrika-search-engines"));
   assert.equal(engineFacts.length, 1);

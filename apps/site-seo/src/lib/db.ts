@@ -51,6 +51,9 @@ export type MetrikaBreakdownRow = MetrikaTrafficMetrics & Readonly<{
 export type MetrikaContentPageRow = MetrikaTrafficMetrics & Readonly<{
   url: string;
   title: string | null;
+  bounceMeasuredVisits: number;
+  durationMeasuredVisits: number;
+  depthMeasuredVisits: number;
 }>;
 
 export type MetrikaCanonicalData = DatasetMeta & Readonly<{
@@ -392,6 +395,9 @@ type MetrikaTrafficRow = Readonly<{
   loaded_at?: unknown;
   page_url?: unknown;
   page_title?: unknown;
+  bounce_measured_visits?: unknown;
+  duration_measured_visits?: unknown;
+  depth_measured_visits?: unknown;
 }>;
 
 function metrikaTrafficMetrics(row: MetrikaTrafficRow): MetrikaTrafficMetrics {
@@ -478,7 +484,10 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalData
                      SUM(avg_visit_duration_seconds * CASE WHEN analytics_scope = 'entry_page' THEN COALESCE(visits, 0) ELSE 0 END) /
                        NULLIF(SUM(CASE WHEN analytics_scope = 'entry_page' AND avg_visit_duration_seconds IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS avg_visit_duration_seconds,
                      SUM(page_depth * CASE WHEN analytics_scope = 'entry_page' THEN COALESCE(visits, 0) ELSE 0 END) /
-                       NULLIF(SUM(CASE WHEN analytics_scope = 'entry_page' AND page_depth IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS page_depth
+                       NULLIF(SUM(CASE WHEN analytics_scope = 'entry_page' AND page_depth IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS page_depth,
+                     SUM(CASE WHEN analytics_scope = 'entry_page' AND bounce_rate IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END) AS bounce_measured_visits,
+                     SUM(CASE WHEN analytics_scope = 'entry_page' AND avg_visit_duration_seconds IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END) AS duration_measured_visits,
+                     SUM(CASE WHEN analytics_scope = 'entry_page' AND page_depth IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END) AS depth_measured_visits
                 FROM canonical_fact_site_analytics_daily
                WHERE source_key = ? AND analytics_account_id = ?
                  AND analytics_scope IN ('page', 'entry_page')
@@ -579,6 +588,9 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalData
       url: String(row.page_url),
       title: row.page_title === null || row.page_title === undefined || String(row.page_title).trim() === "" ? null : String(row.page_title),
       ...metrikaTrafficMetrics(row),
+      bounceMeasuredVisits: numeric(row.bounce_measured_visits),
+      durationMeasuredVisits: numeric(row.duration_measured_visits),
+      depthMeasuredVisits: numeric(row.depth_measured_visits),
     })),
   };
 }
