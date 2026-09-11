@@ -2,7 +2,7 @@
   {
     "profile": {
       "schemaVersion": 1,
-      "profileVersion": "2026.09.11-2",
+      "profileVersion": "2026.09.11-3",
       "siteId": "site-medroche",
       "clientId": "client-roche",
       "dashboardId": 41,
@@ -13,7 +13,7 @@
       "logoAsset": null,
       "locale": "ru-RU",
       "businessTimezone": "Europe/Moscow",
-      "templateVersion": "6b881c7784060b8cd5d52f2aac011e82ae488f13",
+      "templateVersion": "9a29df25d0c4e0e9f85276e171cc4d5c2491f5ce",
       "sources": [
         {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-medroche", "importCadence": ["previous_iso_week"]},
         {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-medroche", "importCadence": ["previous_month", "previous_iso_week"]},
