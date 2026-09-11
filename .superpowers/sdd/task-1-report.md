@@ -1,283 +1,85 @@
-# Task 1 Report — Production-Shadow Authority and Read-Only Preflight
+# Task 1 report: compact Alice history and contained query table
 
-## Status
+## Scope
 
-DONE
+Implemented only the presentation and pure-view changes required by Task 1. No database, collector, authentication, deployment, route, shared CSS, or source-API change was made.
 
-Commit: `7df2156` (`feat(zaruku): add production shadow preflight authority`)
+## RED evidence
 
-No production mutation, external source API call, database write, Nginx change, deployment, process change, or secret read was performed.
+Baseline command:
+
+```text
+node --import tsx --test src/components/ZarukuAliceVisibilityTab.test.ts src/components/zaruku-alice-visibility-view.test.ts
+```
+
+Baseline result before new tests: 18 tests, 18 pass, 0 fail.
+
+After adding the new tests, the same command exited 1 with 22 tests: 18 pass and 4 fail. The failures were expected and specific to the missing behavior:
+
+- stale `latestMonth` still selected July and rendered the month `<select>`;
+- the query table lacked `table-fixed`, `<colgroup>`, wrapping, bounded block-link, and sticky-header markup;
+- `buildAliceHistoryChart` did not exist for chronological gap-preserving rows;
+- `buildAliceHistoryChart` did not exist for compact 1/2/3/12-month sizing.
+
+The component-only RED command also exited 1 with 13 tests: 11 pass and 2 expected assertion failures.
+
+## GREEN evidence
+
+Focused test command:
+
+```text
+node --import tsx --test src/components/ZarukuAliceVisibilityTab.test.ts src/components/zaruku-alice-visibility-view.test.ts
+```
+
+Result after implementation: exit 0; 22 tests, 22 pass, 0 fail.
+
+Targeted lint command:
+
+```text
+./node_modules/.bin/eslint src/components/ZarukuAliceVisibilityTab.tsx src/components/ZarukuAliceVisibilityTab.test.ts src/components/zaruku-alice-visibility-view.ts src/components/zaruku-alice-visibility-view.test.ts
+```
+
+Result: exit 0 with no output.
+
+Diff hygiene command:
+
+```text
+git diff --check
+```
+
+Result: exit 0 with no whitespace errors.
 
 ## Implementation
 
-- Added the exact frozen Zaruku production-shadow authority at `deploy/zaruku/production-shadow.json`.
-- Added `loadShadowAuthority(filename)` with strict object-key and exact-value checks, loopback URL checks, normalized absolute-path checks, fixed reporting-period checks, deep freezing, and cross-validation against both `RUNTIME_MANIFESTS.zaruku` and `deploy/zaruku/release.json`.
-- Added the Task 1 `loadMysqlTableAuthority(filename)` boundary for a strict Zaruku/report_bd/fixed-account table authority. It rejects unknown keys, invalid or duplicate table identifiers, and unsorted table lists, and deep-freezes its result. The exact table inventory remains Task 2.
-- Added injected `inspectShadowPrerequisites(adapter)` and `assertShadowPrerequisites(evidence)` interfaces.
-- Sanitized preflight evidence contains only booleans, fixed paths, identity/process names, numeric IDs/ports, modes, and hashes. Raw Nginx text, PM2 environment, database rows, environment values, and secret contents are not returned.
-- Added a real read-only adapter limited to `id`, `getent`, fixed `command -v` lookups, `stat`, `ss`, `pm2 status`, `sha256sum`, read-only MySQL identity/schema metadata queries, and reads of selected Nginx configuration paths.
-- Added fail-closed assertions for the fixed online combined runtime/listener, port 3002 vacancy, no Nginx reference to port 3002, Nginx hash presence, exact tool paths, root local-socket MySQL authority, and safe existing Zaruku identities/resources.
-- Added `test:zaruku-production-shadow` and placed it in the shared predeploy gate without any `--apply` path.
-- Updated the existing predeploy ordering fixture because it intentionally enumerates every required predeploy command.
-
-## TDD evidence
-
-### RED
-
-Command:
-
-```text
-node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Initial result: exit 1. Both test files failed with `ERR_MODULE_NOT_FOUND` for the intentionally absent contract and preflight implementation modules.
-
-The wiring test was also added before package/predeploy changes and failed with the expected assertion that `test:zaruku-production-shadow` was undefined.
-
-Additional tightened preflight tests were run before extending the resource/listener checks; they failed because the new required resource inventory and combined-listener linkage were not yet implemented.
-
-### GREEN
-
-Final focused command:
-
-```text
-npm run test:zaruku-production-shadow
-```
-
-Result: exit 0, 10 tests passed, 0 failed.
-
-Final source-deploy command:
-
-```text
-npm run test:deploy-source
-```
-
-Result: exit 0. Deploy source guards, dashboard deploy lock tests, dashboard deploy integration tests, release source metadata bootstrap tests, and predeploy verification contract tests all passed.
-
-Additional verification:
-
-```text
-npm exec -- eslint scripts/zaruku-production-shadow-contract.mjs scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-git diff --check
-```
-
-Result: exit 0 with no lint errors or warnings and no whitespace errors.
+- Removed Alice month state and the month selector. Detail always uses `selectAliceSnapshot(data.snapshots, null)`, so an unsorted snapshot array and stale `latestMonth` cannot override the newest published snapshot.
+- Added an explicit `Последний загруженный месяц` label for the detail period.
+- Added `buildAliceHistoryChart`, which sorts snapshots chronologically, inserts `null` rows for unpublished middle months, preserves published numeric values exactly, and sizes the chart at 112 px per represented month with a 240 px minimum.
+- Put the fixed-width chart canvas inside its own bounded horizontal scroll region. Recharts receives every month row, `interval={0}`, zero tick gap, left/right axis padding, a two-line full month/year tick, a Y domain starting at zero, and `connectNulls={false}`.
+- Changed the query table to fixed layout with columns `28/8/8/22/24/10`, totaling 100%, and wired the existing bounded operational-frame sticky-header class.
+- Added anywhere wrapping for long uninterrupted queries and block-level bounded ellipsis for sanitized portal/external links. The complete sanitized URL remains in `href` and `title`; expanded source rows use the same containment.
+- Kept search, presence filtering, pagination, source expansion, safe-link resolution, partial/unavailable/empty states, summary-only behavior, and canonical data types unchanged.
+- Added the Alice-specific fixed-column, wrapping, link, expanded-source, sticky-header, and single-overflow-owner rules to the existing table-frame design document.
 
 ## Files changed
 
-- `deploy/zaruku/production-shadow.json`
-- `scripts/zaruku-production-shadow-contract.mjs`
-- `scripts/zaruku-production-shadow-contract.test.mjs`
-- `scripts/zaruku-production-shadow-preflight.mjs`
-- `scripts/zaruku-production-shadow-preflight.test.mjs`
-- `package.json`
-- `scripts/predeploy-verify.sh`
-- `scripts/predeploy-verify.test.sh`
-
-`package-lock.json` did not change because npm script-only edits do not alter lockfile content.
+- `src/components/ZarukuAliceVisibilityTab.tsx`
+- `src/components/ZarukuAliceVisibilityTab.test.ts`
+- `src/components/zaruku-alice-visibility-view.ts`
+- `src/components/zaruku-alice-visibility-view.test.ts`
+- `docs/superpowers/specs/2026-07-27-zaruku-design-system-table-frames-design.md`
+- `.superpowers/sdd/task-1-report.md`
 
 ## Self-review
 
-- Scope: changes are confined to the new Zaruku production-shadow authority/preflight and the source-only predeploy test wiring. Combined dashboard, Abbott, advertising, collector, schema, migration, and runtime deployment code are unchanged.
-- Authority: the JSON matches the brief exactly, extra/missing/changed values fail closed, nested values are frozen, and runtime/release contracts are checked.
-- Read-only behavior: the implementation contains no apply mode and no mutation command. MySQL statements are SELECT-only metadata checks. The test gate invokes fixtures only.
-- Isolation: the isolated listener must be absent, the combined PID must own a loopback 3001 listener, and Nginx must reference 3001 but not 3002.
-- Disclosure: raw Nginx input is reduced to booleans plus a digest; process/database environments, data rows, and secret-file contents are never included in evidence.
-- Existing state: absent state is accepted for initial provisioning; existing fixed resources/identities are accepted only with exact owner/group/mode/path/identity metadata, while incomplete, unsafe, or foreign state is rejected.
-- Integration: the existing predeploy order test was updated to cover the new gate, and the existing `test:deploy-source` script remained byte-for-byte unchanged.
-
-## Concerns
-
-None for Task 1. The real production adapter was not executed against production because this task explicitly permits source-only, read-only fixture verification and forbids production access/actions. Task 2 still owns the exact physical-table allowlist and database grant verification.
-
-## Review-finding remediation — 2026-09-08
-
-Implementation commit: `a0053a5` (`fix(zaruku): harden shadow preflight inspection`)
-
-### Changes
-
-- Rejects UID or GID `0` for the dedicated service identity and validates the independently queried `dashboard-zaruku` group, including exact name, positive GID, user/group GID agreement, and absence of foreign members or supplementary groups.
-- Adds explicit `inspected` evidence state so malformed/unknown identity, group, MySQL-account, and resource metadata cannot normalize to confirmed absence.
-- Replaces catch-all nullable command results with exit-status-aware results. Only documented not-found statuses count as absence; `stat` additionally requires the fixed `No such file or directory` diagnostic. Permission, backend, signal, spawn, supplementary-group, and unexpected command failures fail closed with sanitized errors.
-- Resolves the active Nginx include graph from `/etc/nginx/nginx.conf`, including relative, absolute, and glob paths outside previously hard-coded directories. Unresolved, variable, invalid, oversized, or over-large graphs fail closed. The evidence still exposes only route-reference booleans and a graph digest.
-
-### New RED evidence
-
-Identity and incomplete-inspection regressions were added first and run with:
-
-```text
-node --test scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 1; 6 passed and 2 failed. The two expected failures were `Missing expected exception` for root-equivalent UID/GID and for unknown/incomplete inspection state.
-
-The Nginx include-graph regression was then added before its implementation and run with the same command.
-
-Result: exit 1 with `SyntaxError: ... does not provide an export named 'readNginxIncludeGraph'`.
-
-The real-adapter command-result regression was added before command-runner injection and run with the same command.
-
-Result: exit 1; 10 passed and 1 failed. The expected failure occurred because the adapter did not yet support the injected runner and failed in the host `getent` path instead of using the fixture's confirmed-absence result.
-
-### New GREEN evidence
-
-Review-specific suite:
-
-```text
-node --test scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 0; 11 passed, 0 failed.
-
-Full focused shadow suite:
-
-```text
-node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 0; 15 passed, 0 failed.
-
-Source-deploy integration suite:
-
-```text
-npm run test:deploy-source
-```
-
-Result: exit 0. Deploy source guards, deploy lock/integration fixtures, release-source metadata fixtures, and the predeploy command contract all passed.
-
-Static verification:
-
-```text
-npm exec -- eslint scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-git diff --check
-```
-
-Result: exit 0 with no lint errors/warnings and no whitespace errors.
-
-### Review self-check and concerns
-
-- The Nginx fixture places a port-3002 `proxy_pass` in `custom-routing/*.conf`, a relative glob outside the former fixed-prefix scan; the graph resolver finds it and the assertion rejects it.
-- Confirmed absence and failed inspection now have distinct code paths in both the real adapter and sanitized evidence.
-- All new command-runner fixtures use read-only commands and validate only metadata/status behavior.
-- No production operation or later-task database/host provisioning behavior was added.
-- Concerns: none remaining for the three reported Important findings.
-
-## Symlinked Nginx glob remediation — 2026-09-08
-
-Implementation commit: `1ac5fe2` (`fix(zaruku): inspect symlinked nginx routes`)
-
-### Change
-
-- Nginx glob traversal now resolves the canonical target and metadata for every symlink encountered below a glob base.
-- A symlink to a directory is traversed through its logical path, so remaining glob segments match the same paths Nginx activates.
-- Canonical directory ancestry is tracked for cycle detection. Cycles, broken/uninspectable symlinks, non-file symlink targets, and failed target metadata reads fail closed.
-- Added the exact mixed fixture: `routes/ordinary/combined.conf` supplies port 3001 while `routes/linked` points to a separate directory whose `shadow.conf` supplies port 3002; the active directive is `include routes/*/*.conf;`.
-- Added a separate symlink-cycle fixture to prove traversal terminates by rejecting the graph.
-
-### RED evidence
-
-Command:
-
-```text
-node --test scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 1; 11 passed and 1 failed. The exact mixed ordinary-directory/symlinked-directory regression failed at `false !== true` because the port-3002 route behind the matched directory symlink was omitted.
-
-### GREEN evidence
-
-Review-specific suite:
-
-```text
-node --test scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 0; 13 passed, 0 failed, including the mixed-directory regression and symlink-cycle rejection.
-
-Full focused shadow suite:
-
-```text
-node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 0; 17 passed, 0 failed.
-
-Source-deploy integration suite:
-
-```text
-npm run test:deploy-source
-```
-
-Result: exit 0. Deploy source guards, deploy lock/integration fixtures, release-source metadata fixtures, and the predeploy command contract all passed.
-
-Static verification:
-
-```text
-npm exec -- eslint scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-git diff --check
-```
-
-Result: exit 0 with no lint errors/warnings and no whitespace errors.
-
-### Concerns
-
-None remaining for the symlinked-directory glob finding. No production operation or later-task behavior was performed.
-
-## POSIX bracket-glob remediation — 2026-09-08
-
-Implementation commit: `3362b8b` (`fix(zaruku): reject unsupported nginx globs`)
-
-### Change
-
-- Nginx include resolution now rejects every bracket expression before glob compilation and attestation.
-- This intentionally fail-closed behavior prevents POSIX bracket syntax such as `[!a]` from being interpreted with incompatible JavaScript regular-expression semantics.
-- Added the exact regression: `a.conf` contains the safe port-3001 route, `b.conf` contains a port-3002 route, and the active include is `routes/[!a]*.conf`.
-
-### RED evidence
-
-Command:
-
-```text
-node --test scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 1; 13 passed and 1 failed. The exact `[!a]*.conf` regression failed with `Missing expected exception`, proving the incompatible expression was accepted.
-
-### GREEN evidence
-
-Review-specific suite:
-
-```text
-node --test scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 0; 14 passed, 0 failed.
-
-Full focused shadow suite:
-
-```text
-node --test scripts/zaruku-production-shadow-contract.test.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-```
-
-Result: exit 0; 18 passed, 0 failed.
-
-Source-deploy integration suite:
-
-```text
-npm run test:deploy-source
-```
-
-Result: exit 0. Deploy source guards, deploy lock/integration fixtures, release-source metadata fixtures, and the predeploy command contract all passed.
-
-Static verification:
-
-```text
-npm exec -- eslint scripts/zaruku-production-shadow-preflight.mjs scripts/zaruku-production-shadow-preflight.test.mjs
-git diff --check
-```
-
-Result: exit 0 with no lint errors/warnings and no whitespace errors.
-
-### Concerns
-
-None remaining for the POSIX bracket-expression finding. Bracket expressions are deliberately unsupported until a separately reviewed POSIX-compatible matcher exists. No production operation or later-task behavior was performed.
+- The helper covers one, two, three, and twelve months, chronological input normalization, an absent middle month, and exact unrounded values.
+- Month-gap rows use `null`, not zero. The line explicitly does not connect through them.
+- With a 48 px Y axis, 28 px X-axis edge padding, and small chart margins, the 240/336/1344 px canvases keep the practical adjacent-month step near the specified 100–120 px range instead of distributing two points across the panel.
+- Table column percentages total exactly 100. `ZarukuTableFrame` remains the table's only scroll owner.
+- Existing safe-link tests remain present and green; the new long-URL test verifies complete source `href` and `title` values.
+- Concurrent release-predecessor edits in `deploy/zaruku/repository.json` and `scripts/freeze-zaruku-shadow-release*.mjs`, generated preview files, and operations notes were not edited or staged for this task.
+
+## Concerns and follow-up boundary
+
+- No unresolved Task 1 code concern is known from focused tests, lint, or diff review.
+- Browser checks at 430/768/1024/1440 and the Zaruku production build are intentionally owned by parent Task 2. They were not claimed here.
+- During implementation the filesystem briefly reached ENOSPC. The parent moved only disposable/recoverable build artifacts out of this worktree, after which edits and focused verification completed. No dependency install or build was run in this task.

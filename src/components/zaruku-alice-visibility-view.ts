@@ -11,6 +11,19 @@ export type AliceQueryFilter = {
 
 export type AliceDetailState = "ready" | "summary-only" | "empty";
 
+export type AliceHistoryChartRow = {
+  month: string;
+  sov: number | null;
+};
+
+export type AliceHistoryChart = {
+  rows: AliceHistoryChartRow[];
+  width: number;
+};
+
+const ALICE_HISTORY_MONTH_WIDTH = 112;
+const ALICE_HISTORY_MIN_WIDTH = 240;
+
 const RUSSIAN_MONTHS = [
   "январь", "февраль", "март", "апрель", "май", "июнь",
   "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
@@ -35,6 +48,38 @@ export function selectAliceSnapshot(
     if (selected) return selected;
   }
   return [...snapshots].sort((left, right) => right.month.localeCompare(left.month))[0] ?? null;
+}
+
+function aliceMonthOrdinal(month: string): number | null {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+  if (!match) return null;
+  return Number(match[1]) * 12 + Number(match[2]) - 1;
+}
+
+function aliceMonthFromOrdinal(ordinal: number): string {
+  const year = Math.floor(ordinal / 12);
+  const month = ordinal % 12 + 1;
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+export function buildAliceHistoryChart(
+  snapshots: Array<Pick<ZarukuAliceVisibilitySnapshot, "month" | "officialSovPct">>,
+): AliceHistoryChart {
+  const ordered = [...snapshots].sort((left, right) => left.month.localeCompare(right.month));
+  const ordinals = ordered.map((snapshot) => aliceMonthOrdinal(snapshot.month));
+  const allMonthsAreCanonical = ordinals.every((ordinal): ordinal is number => ordinal != null);
+  const values = new Map(ordered.map((snapshot) => [snapshot.month, snapshot.officialSovPct]));
+  const rows = allMonthsAreCanonical && ordinals.length > 0
+    ? Array.from({ length: ordinals.at(-1)! - ordinals[0]! + 1 }, (_, index) => {
+      const month = aliceMonthFromOrdinal(ordinals[0]! + index);
+      return { month, sov: values.get(month) ?? null };
+    })
+    : ordered.map((snapshot) => ({ month: snapshot.month, sov: snapshot.officialSovPct }));
+
+  return {
+    rows,
+    width: Math.max(ALICE_HISTORY_MIN_WIDTH, rows.length * ALICE_HISTORY_MONTH_WIDTH),
+  };
 }
 
 export function monthlySovDelta(

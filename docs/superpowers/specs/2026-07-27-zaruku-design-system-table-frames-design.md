@@ -180,6 +180,15 @@ Shared table rules:
 - visible focus states for sortable headers, links, and pagination controls;
 - no nested horizontal scroll containers.
 
+Alice query-table rules:
+
+- use the `operational` frame as the only horizontal and vertical scroll owner, with its sticky header;
+- use fixed table layout and stable column widths of 28%, 8%, 8%, 22%, 24%, and 10% for query, presence, position, page, sources, and answer;
+- allow query text to wrap normally and break an uninterrupted string anywhere before it can leave its cell;
+- render page and source links as `min-width: 0`, bounded block content with ellipsis, while retaining the complete sanitized URL in both `href` and `title`;
+- apply the same containment to every row in the expanded source list, including its rank and link, so expanding details cannot widen a cell or the document;
+- do not add an overflow container inside the table frame; search, presence filtering, pagination, expansion, and safe-link behavior remain owned by the Alice component.
+
 ### Table assignments
 
 | Area | Mode |
