@@ -15,9 +15,12 @@ test("MedRoche registry pins the confirmed canonical source scopes", () => {
   assert.ok(existsSync(registryFilename), "config/sites/registry.json is required");
   const registry = assertSiteRegistry(JSON.parse(readFileSync(registryFilename, "utf8")));
   const profile = readSiteProfile(profileFilename);
+  const release = JSON.parse(readFileSync(releaseFilename, "utf8"));
 
   assert.equal(registry.length, 1);
   assert.deepEqual(registry[0].profile, profile);
+  assert.equal(release.profileVersion, profile.profileVersion);
+  assert.equal(release.templateVersion, profile.templateVersion);
   assert.deepEqual(registry[0].bindings, [
     {
       bindingId: "binding-metrika-medroche",
