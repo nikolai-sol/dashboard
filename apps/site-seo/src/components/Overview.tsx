@@ -175,10 +175,12 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
   const gscMeta = showGsc ? model.gsc.meta : null;
   const webmasterMeta = showWebmaster ? model.webmaster ?? model.datasets.yandex_webmaster : null;
   const metrikaState = sourceState(metrikaMeta);
+  const trafficMeta = showMetrika ? model.metrika?.trafficMeta : null;
+  const trafficState = sourceState(trafficMeta);
   const trafficHealth = model.metrika?.trafficHealth;
   const channels = model.metrika?.channels ?? [];
   const searchEngines = model.metrika?.searchEngines ?? [];
-  const channelsState = breakdownState(channels, metrikaState);
+  const channelsState = breakdownState(channels, trafficState);
   const searchEnginesState = breakdownState(searchEngines, metrikaState);
 
   return (
@@ -195,10 +197,10 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
       </OverviewSlot>
 
       <OverviewSlot id="traffic_health">
-        <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={metrikaState} statusText={showMetrika ? undefined : "источник отключён"}>
+        <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={trafficState} statusText={showMetrika ? undefined : "источник отключён"}>
           <div className="site-seo-health-grid">
-            {showMetrika ? <HealthKpi label="Визиты" metric={value(trafficHealth?.visits)} detail={sourceDetail("весь трафик", metrikaMeta)} /> : null}
-            {showMetrika ? <HealthKpi label="Просмотры" metric={value(trafficHealth?.pageviews)} detail={sourceDetail("весь трафик", metrikaMeta)} /> : null}
+            {showMetrika ? <HealthKpi label="Визиты" metric={value(trafficHealth?.visits)} detail={sourceDetail("весь трафик", trafficMeta)} /> : null}
+            {showMetrika ? <HealthKpi label="Просмотры" metric={value(trafficHealth?.pageviews)} detail={sourceDetail("весь трафик", trafficMeta)} /> : null}
             {showMetrika ? <HealthKpi label="Отказы" metric={percent(trafficHealth?.bounceRate)} /> : null}
             {showMetrika ? <HealthKpi label="Ср. время" metric={duration(trafficHealth?.avgVisitDurationSeconds)} /> : null}
             {showMetrika ? <HealthKpi label="Глубина" metric={decimal(trafficHealth?.pageDepth)} /> : null}

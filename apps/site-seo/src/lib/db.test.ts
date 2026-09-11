@@ -96,6 +96,7 @@ test("Metrika reads exact account coverage from canonical MySQL", async () => {
   assert.equal("state" in result && result.state, "ready");
   assert.equal("completeness" in result && result.completeness, "complete");
   assert.equal("importId" in result && result.importId, "81");
+  assert.equal("trafficMeta" in result && result.trafficMeta?.state, "missing");
   assert.equal(calls.length, 7);
   assert.match(calls[0]!.sql, /canonical_metrika_breakdown_coverage_daily/i);
   assert.deepEqual(calls[0]!.params, ["yandex_metrika", "counter-account", "2026-08-03", "2026-08-09"]);
@@ -341,6 +342,7 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
     if (sql.includes("site-seo:metrika-traffic-health")) return [[{
       visits: "100", pageviews: "160", bounce_rate: "17.5",
       avg_visit_duration_seconds: "95", page_depth: "2.4",
+      row_count: "14", covered_days: "7", import_id: "84", loaded_at: "2026-08-10 13:00:00",
     }], []];
     if (sql.includes("site-seo:metrika-channels")) return [[
       { label: "Search engine traffic", visits: "60", pageviews: "100", bounce_rate: "10", avg_visit_duration_seconds: "110", page_depth: "2.8" },
@@ -370,6 +372,12 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
   assert.deepEqual("trafficHealth" in result && result.trafficHealth, {
     visits: 100, pageviews: 160, bounceRate: 17.5, avgVisitDurationSeconds: 95, pageDepth: 2.4,
   });
+  assert.deepEqual("trafficMeta" in result && result.trafficMeta, {
+    sourceKey: "yandex_metrika",
+    period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
+    state: "partial", collectionMode: "automated", completeness: "unknown",
+    importId: "84", exportedAt: null, loadedAt: "2026-08-10 13:00:00", freshness: "unknown", latestAttempt: "success",
+  });
   assert.deepEqual("channels" in result && result.channels, [
     { id: null, label: "Search engine traffic", visits: 60, pageviews: 100, bounceRate: 10, avgVisitDurationSeconds: 110, pageDepth: 2.8 },
     { id: null, label: "Direct traffic", visits: 40, pageviews: 60, bounceRate: 28.75, avgVisitDurationSeconds: 72.5, pageDepth: 1.8 },
@@ -385,9 +393,47 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
   assert.ok(trafficFacts.every((call) => /analytics_scope\s*=\s*'other'/i.test(call.sql)));
   assert.ok(trafficFacts.every((call) => call.params.includes("yandex_metrika") && call.params.includes("counter-account") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
   assert.ok(trafficFacts.every((call) => /bounce_rate[^]*visits/i.test(call.sql) && /avg_visit_duration_seconds[^]*visits/i.test(call.sql) && /page_depth[^]*visits/i.test(call.sql)));
+  assert.match(trafficFacts.find((call) => call.sql.includes("site-seo:metrika-traffic-health"))!.sql, /COUNT\(\*\) AS row_count[^]*COUNT\(DISTINCT report_date\) AS covered_days[^]*MAX\(ingestion_run_id\) AS import_id[^]*MAX\(updated_at\) AS loaded_at/i);
   const engineFacts = calls.filter((call) => call.sql.includes("site-seo:metrika-search-engines"));
   assert.equal(engineFacts.length, 1);
   assert.match(engineFacts[0]!.sql, /report_key\s*=\s*'search_engines'[^]*segment_key\s*=\s*'russia'[^]*row_kind\s*=\s*'detail'/i);
+});
+
+test("Metrika preserves all-traffic facts when search-engine coverage is missing", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    calls.push(sql);
+    if (sql.includes("canonical_metrika_breakdown_coverage_daily")) return [[{ coverage_rows: 0 }], []];
+    if (sql.includes("site-seo:metrika-traffic-health")) return [[{
+      visits: "9", pageviews: "14", bounce_rate: "20", avg_visit_duration_seconds: "75", page_depth: "1.8",
+      row_count: "2", covered_days: "2", import_id: "90", loaded_at: "2026-08-09 12:00:00",
+    }], []];
+    if (sql.includes("site-seo:metrika-channels")) return [[{
+      label: "Direct traffic", visits: "9", pageviews: "14", bounce_rate: "20", avg_visit_duration_seconds: "75", page_depth: "1.8",
+    }], []];
+    if (/site-seo:metrika-(summary|daily|pages|search-engines)/.test(sql)) return [[], []];
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_metrika", analyticsAccountId: "counter-account", resourceId: "counter-resource" },
+    period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "metrika");
+  assert.equal("state" in result && result.state, "missing", "main Metrika meta remains the search-engine coverage state");
+  assert.equal("trafficMeta" in result && result.trafficMeta?.state, "partial");
+  assert.equal("trafficMeta" in result && result.trafficMeta?.completeness, "unknown");
+  assert.equal("trafficHealth" in result && result.trafficHealth?.visits, 9);
+  assert.equal("channels" in result && result.channels?.[0]?.label, "Direct traffic");
+  assert.equal("summary" in result && result.summary, null);
+  assert.equal("daily" in result && result.daily.length, 0);
+  assert.equal("searchEngines" in result && result.searchEngines?.length, 0);
+  assert.equal(calls.length, 3);
+  assert.equal(calls.some((sql) => /site-seo:metrika-(summary|daily|pages|search-engines)/.test(sql)), false);
 });
 
 test("Webmaster aggregates scoped canonical facts with derived CTR and weighted position", async () => {
