@@ -4,7 +4,7 @@
   "siteId": "site-medroche",
   "profilePath": "config/sites/medroche.json",
   "profileVersion": "2026.09.10-1",
-  "templateVersion": "b332ba2e6b5bd10e151b649b5bdb75e6e6f2c5c2",
+  "templateVersion": "6bbcf01bbb3792fafe840ad20f7093baf86b7361",
   "route": "/dashboard/medroche",
   "assetPrefix": "/_next-medroche",
   "buildOutputDir": ".next-medroche",
@@ -16,8 +16,8 @@
   "sourceBindings": {
     "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "94927113", "status": "configured"},
     "binding-gsc-medroche": {"sourceKey": "google_search_console", "status": "unconfigured"},
-    "binding-webmaster-medroche": {"sourceKey": "yandex_webmaster", "status": "unconfigured"},
-    "binding-wordstat-medroche": {"sourceKey": "yandex_wordstat", "status": "unconfigured"},
+    "binding-webmaster-medroche": {"sourceKey": "yandex_webmaster", "analyticsAccountId": "94927113", "resourceId": "https:med.roche.ru:443", "status": "configured"},
+    "binding-wordstat-medroche": {"sourceKey": "yandex_wordstat", "analyticsAccountId": "94927113", "resourceId": "region:225", "status": "configured"},
     "binding-alice-medroche": {"sourceKey": "yandex_webmaster_alice_manual", "status": "missing"},
     "binding-seo-os-medroche": {"sourceKey": "seo_os", "status": "missing_inputs"}
   }

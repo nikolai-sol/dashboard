@@ -8,6 +8,8 @@ import { readSiteProfile } from "./site-seo-profile.mjs";
 
 const profileFilename = path.resolve("config/sites/medroche.json");
 const registryFilename = path.resolve("config/sites/registry.json");
+const releaseFilename = path.resolve("deploy/medroche/release.json");
+const repositoryFilename = path.resolve("deploy/medroche/repository.json");
 
 test("MedRoche registry pins the confirmed Metrika, Webmaster, and Russia Wordstat scopes", () => {
   assert.ok(existsSync(registryFilename), "config/sites/registry.json is required");
@@ -56,4 +58,20 @@ test("MedRoche registry pins the confirmed Metrika, Webmaster, and Russia Wordst
     "seo_os",
     "yandex_webmaster_alice_manual",
   ]);
+
+  for (const filename of [releaseFilename, repositoryFilename]) {
+    const metadata = JSON.parse(readFileSync(filename, "utf8"));
+    assert.deepEqual(metadata.sourceBindings["binding-webmaster-medroche"], {
+      sourceKey: "yandex_webmaster",
+      analyticsAccountId: "94927113",
+      resourceId: "https:med.roche.ru:443",
+      status: "configured",
+    });
+    assert.deepEqual(metadata.sourceBindings["binding-wordstat-medroche"], {
+      sourceKey: "yandex_wordstat",
+      analyticsAccountId: "94927113",
+      resourceId: "region:225",
+      status: "configured",
+    });
+  }
 });
