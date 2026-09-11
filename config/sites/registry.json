@@ -45,6 +45,24 @@
         "sourceKey": "yandex_metrika",
         "analyticsAccountId": "94927113",
         "resourceId": "94927113"
+      },
+      {
+        "bindingId": "binding-webmaster-medroche",
+        "clientId": "client-roche",
+        "siteId": "site-medroche",
+        "dashboardId": 41,
+        "sourceKey": "yandex_webmaster",
+        "analyticsAccountId": "94927113",
+        "resourceId": "https:med.roche.ru:443"
+      },
+      {
+        "bindingId": "binding-wordstat-medroche",
+        "clientId": "client-roche",
+        "siteId": "site-medroche",
+        "dashboardId": 41,
+        "sourceKey": "yandex_wordstat",
+        "analyticsAccountId": "94927113",
+        "resourceId": "region:225"
       }
     ]
   }
