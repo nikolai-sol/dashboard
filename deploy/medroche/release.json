@@ -4,7 +4,7 @@
   "siteId": "site-medroche",
   "profilePath": "config/sites/medroche.json",
   "profileVersion": "2026.09.10-1",
-  "templateVersion": "e164e363447bc35cf435a25a65706fafc37f3c73",
+  "templateVersion": "1e8fdff316ad5590dd772305ee6de12b00f10848",
   "route": "/dashboard/medroche",
   "assetPrefix": "/_next-medroche",
   "buildOutputDir": ".next-medroche",
