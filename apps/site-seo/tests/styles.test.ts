@@ -100,3 +100,11 @@ test("overview canonical breakdowns render as compact factual bars", () => {
   assert.match(css, /\.site-seo-breakdown-track\s*\{[^}]*background:/);
   assert.match(css, /\.site-seo-breakdown-track\s*>\s*span\s*\{[^}]*background:\s*var\(--site-seo-teal-600\)/);
 });
+
+test("overview search engines and weekly trend expose their two-column and labelled-axis geometry", () => {
+  const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
+
+  assert.match(css, /\.site-seo-engine-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /\.site-seo-trend-chart\s*\{[^}]*grid-template-columns:/);
+  assert.match(css, /\.site-seo-trend-y-axis\s*\{/);
+});

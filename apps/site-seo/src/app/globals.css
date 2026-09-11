@@ -640,6 +640,11 @@ body {
   list-style: none;
 }
 
+.site-seo-engine-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
 .site-seo-breakdown-list li {
   display: grid;
   gap: 5px;
@@ -709,6 +714,28 @@ body {
   overflow: visible;
 }
 
+.site-seo-trend-chart {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.site-seo-trend-y-axis {
+  display: grid;
+  min-width: 38px;
+  grid-template-rows: auto repeat(3, 1fr);
+  color: var(--site-seo-slate-500);
+  font-size: 0.7rem;
+  text-align: right;
+}
+
+.site-seo-trend-y-axis strong {
+  color: var(--site-seo-slate-700);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
 .site-seo-trend line {
   stroke: var(--site-seo-slate-200);
   stroke-dasharray: 4 4;
@@ -730,6 +757,7 @@ body {
   justify-content: space-between;
   color: var(--site-seo-slate-500);
   font-size: 0.7rem;
+  margin-left: 46px;
 }
 
 .site-seo-sr-only {

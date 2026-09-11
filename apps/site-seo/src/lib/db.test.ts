@@ -454,7 +454,7 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
   assert.deepEqual("trafficMeta" in result && result.trafficMeta, {
     sourceKey: "yandex_metrika",
     period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
-    state: "partial", collectionMode: "automated", completeness: "unknown",
+    state: "ready", collectionMode: "automated", completeness: "complete",
     importId: "84", exportedAt: null, loadedAt: "2026-08-10 13:00:00", freshness: "unknown", latestAttempt: "success",
   });
   assert.deepEqual("channels" in result && result.channels, [
@@ -485,7 +485,7 @@ test("Metrika preserves all-traffic facts when search-engine coverage is missing
     if (sql.includes("canonical_metrika_breakdown_coverage_daily")) return [[{ coverage_rows: 0 }], []];
     if (sql.includes("site-seo:metrika-traffic-health")) return [[{
       visits: "9", pageviews: "14", bounce_rate: "20", avg_visit_duration_seconds: "75", page_depth: "1.8",
-      row_count: "2", covered_days: "2", import_id: "90", loaded_at: "2026-08-09 12:00:00",
+      row_count: "4", covered_days: "4", import_id: "90", loaded_at: "2026-08-09 12:00:00",
     }], []];
     if (sql.includes("site-seo:metrika-channels")) return [[{
       label: "Direct traffic", visits: "9", pageviews: "14", bounce_rate: "20", avg_visit_duration_seconds: "75", page_depth: "1.8",

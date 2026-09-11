@@ -416,8 +416,9 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalRead
   ]);
   const trafficHealthRow = trafficHealthRows[0];
   const hasTrafficRows = numeric(trafficHealthRow?.row_count) > 0;
+  const hasCompleteTrafficWeek = hasTrafficRows && numeric(trafficHealthRow?.covered_days) === periodDays(query.period);
   const trafficMeta = hasTrafficRows
-    ? datasetMeta(query, trafficHealthRow, "automated", "partial", "unknown")
+    ? datasetMeta(query, trafficHealthRow, "automated", hasCompleteTrafficWeek ? "ready" : "partial", hasCompleteTrafficWeek ? "complete" : "unknown")
     : missingMeta(query.scope.sourceKey, "automated");
   if (meta.state === "missing" && trafficMeta.state === "missing") return meta;
 

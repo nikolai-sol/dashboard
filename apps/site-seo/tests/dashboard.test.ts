@@ -210,6 +210,7 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
       searchEngines: [
         { id: "google", label: "Google, search results", visits: 12, pageviews: 18, bounceRate: 8, avgVisitDurationSeconds: 120, pageDepth: 2.5 },
         { id: "yandex", label: "Yandex, search results", visits: 8, pageviews: 12, bounceRate: 15, avgVisitDurationSeconds: 90, pageDepth: 2 },
+        { id: "bing", label: "Bing, search results", visits: 3, pageviews: 5, bounceRate: 12, avgVisitDurationSeconds: 80, pageDepth: 1.8 },
       ],
       daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [],
     },
@@ -239,7 +240,9 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(html, /Поисковые визиты[^]*20/);
   assert.match(html, /Здоровье трафика[^]*Визиты[^]*100[^]*Просмотры[^]*160[^]*Отказы[^]*17,5%[^]*Ср\. время[^]*1:35[^]*Глубина[^]*2,4/);
   assert.match(html, /Каналы привлечения[^]*Поиск[^]*60[^]*Прямые заходы[^]*40/);
-  assert.match(html, /Поисковые системы[^]*Google, search results[^]*12[^]*Yandex, search results[^]*8/);
+  assert.match(html, /Поисковые системы[^]*>Google<[^]*12[^]*>Яндекс<[^]*8/);
+  assert.match(html, /site-seo-engine-grid/);
+  assert.doesNotMatch(html, /Bing, search results/);
   assert.match(html, /data-panel-id="overview\.traffic_health"[^]*?<section[^>]*data-state="partial"/);
   assert.match(html, /data-panel-id="overview\.channels"[^]*?<section[^>]*data-state="partial"/);
   assert.match(html, /data-panel-id="overview\.search_engines"[^]*?<section[^>]*data-state="ready"/);
@@ -306,14 +309,17 @@ test("overview distinguishes missing, failed, partial, and confirmed-empty sourc
   }
 });
 
-test("overview trend preserves calendar gaps and exposes the daily values", () => {
-  const meta = { sourceKey: "yandex_metrika" as const, period: { kind: "iso_week" as const, key: "2026-W01", from: "2026-01-01", to: "2026-01-07", sourceTimezone: "Europe/Moscow" }, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "success" as const };
-  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, metrika: { ...meta, kind: "metrika" as const, summary: { visits: 9, pageviews: 12 }, daily: [{ date: "2026-01-01", visits: 2, pageviews: 3, users: 2 }, { date: "2026-01-02", visits: 3, pageviews: 4, users: 3 }, { date: "2026-01-07", visits: 4, pageviews: 5, users: 4 }], topPages: [] } };
+test("overview trend aggregates observed dates into one ISO-week point and exposes the weekly total", () => {
+  const meta = { sourceKey: "yandex_metrika" as const, period: { kind: "iso_week" as const, key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" }, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "success" as const };
+  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, metrika: { ...meta, kind: "metrika" as const, summary: { visits: 9, pageviews: 12 }, daily: [{ date: "2026-01-01", visits: 2, pageviews: 3, users: 2 }, { date: "2026-01-02", visits: 3, pageviews: 4, users: 3 }, { date: "2026-01-04", visits: 4, pageviews: 5, users: 4 }], topPages: [] } };
   const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: true, showWebmaster: false }));
 
-  assert.equal(html.match(/data-series-segment=/g)?.length, 2);
-  assert.match(html, /<caption>Ежедневные поисковые визиты<\/caption>/);
-  assert.match(html, /2026-01-01[^]*2[^]*2026-01-07[^]*4/);
+  assert.equal(html.match(/data-week="2026-W01"/g)?.length, 1);
+  assert.match(html, /site-seo-trend-y-axis/);
+  assert.match(html, /<caption>Еженедельные поисковые визиты<\/caption>/);
+  assert.match(html, /<th>ISO-неделя<\/th><th>Визиты<\/th>/);
+  assert.match(html, /<td>2026-W01<\/td><td>9<\/td>/);
+  assert.doesNotMatch(html, /<th>Дата<\/th>|<td>2026-01-0[124]<\/td>/);
 });
 
 test("overview names a disabled Metrika source consistently", () => {

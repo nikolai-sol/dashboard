@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import type { SiteRegistration } from "@reportingdash/site-seo-contract";
-import { createSignedViewerCookieVerifier, createSiteSeoSessionResolver, loadRuntimeRegistration, parseDashboardReadRequest } from "./runtime.ts";
+import { createSignedViewerCookieVerifier, createSiteSeoSessionResolver, defaultPeriodSelection, loadRuntimeRegistration, parseDashboardReadRequest } from "./runtime.ts";
 
 const registration = {
   profile: { schemaVersion: 1, profileVersion: "fixture", siteId: "site-fixture", clientId: "client-fixture", dashboardId: 42, slug: "fixture", domain: "clinic.example.test", allowedDomains: ["clinic.example.test"], title: "Клиника", logoAsset: null, locale: "ru-RU", businessTimezone: "Europe/Moscow", templateVersion: "fixture", taxonomyVersion: "fixture", seoRulesVersion: "fixture", authPolicyRef: "site-seo", runtime: { route: "/dashboard/fixture", assetPrefix: "/_next-fixture", buildOutputDir: ".next-fixture", processName: "fixture", port: 3010, deployPath: "/var/www/fixture", releaseBranch: "release/fixture", deployLockPath: "/var/www/fixture.lock" }, sources: [{ sourceKey: "google_search_console", mode: "manual", bindingId: "gsc", importCadence: ["previous_month"] }] },
@@ -34,6 +34,18 @@ test("parses periods, publication, and filters without accepting source IDs from
 test("uses one explicit default GSC filter identity when a dashboard URL has none", () => {
   const request = parseDashboardReadRequest(new URL("https://example.test/dashboard/fixture?traffic_week=2026-W01&gsc_period=2026-01&alice_month=2026-01"), "fixture", "Europe/Moscow");
   assert.deepEqual(request.filters, { country: "all", search_type: "web", device: "all" });
+});
+
+test("defaults traffic to the previous completed ISO week across calendar and ISO-year boundaries", () => {
+  const september = defaultPeriodSelection("Europe/Moscow", new Date("2026-09-11T12:00:00Z"));
+  assert.equal(september.traffic.primary.key, "2026-W36");
+  assert.equal(september.gsc.key, "2026-09");
+  assert.equal(september.alice.key, "2026-09");
+
+  const january = defaultPeriodSelection("Europe/Moscow", new Date("2026-01-01T12:00:00Z"));
+  assert.equal(january.traffic.primary.key, "2025-W52");
+  assert.equal(january.gsc.key, "2026-01");
+  assert.equal(january.alice.key, "2026-01");
 });
 
 test("verifies the existing signed viewer-cookie shape for the exact dashboard", async () => {
