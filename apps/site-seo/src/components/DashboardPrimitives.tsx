@@ -4,6 +4,7 @@ type PanelProps = Readonly<{
   title: ReactNode;
   subtitle?: ReactNode;
   state?: string;
+  panelId?: string;
   children?: ReactNode;
 }>;
 
@@ -13,9 +14,22 @@ type KpiProps = Readonly<{
   detail?: ReactNode;
 }>;
 
-export function Panel({ title, subtitle, state, children }: PanelProps) {
+const stateLabels: Readonly<Record<string, string>> = {
+  ready: "Данные готовы",
+  partial: "Данные неполные",
+  complete_empty: "Подтверждённо пусто",
+  missing: "Данные не опубликованы",
+  failed: "Ошибка последнего сбора",
+  disabled: "Источник отключён",
+};
+
+export function datasetStateLabel(state: string): string {
+  return stateLabels[state] ?? state;
+}
+
+export function Panel({ title, subtitle, state, panelId, children }: PanelProps) {
   return (
-    <section className="site-seo-panel" data-state={state}>
+    <section className="site-seo-panel" data-state={state} data-panel-id={panelId}>
       <header className="site-seo-panel-header">
         <h2>{title}</h2>
       {subtitle !== undefined && subtitle !== null ? <p>{subtitle}</p> : null}
@@ -58,7 +72,11 @@ export function TableFrame({
 export function StatusBadge({ state }: Readonly<{ state: string }>) {
   return (
     <span className="site-seo-status-badge" data-state={state}>
-      {state}
+      {datasetStateLabel(state)}
     </span>
   );
+}
+
+export function EmptyNotice({ children }: Readonly<{ children: ReactNode }>) {
+  return <p className="site-seo-empty-notice">{children}</p>;
 }

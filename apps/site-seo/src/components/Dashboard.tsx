@@ -41,14 +41,13 @@ export function Dashboard({ profile, model, selection, publicationId, filters, a
   const tabs = dashboardTabs(profile);
   const activeTab = resolveActiveTab(tabs, requestedTab);
   const tabHref = (id: string) => `?${query}&tab=${encodeURIComponent(id)}`;
-  const toolbar = <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} activeTab={activeTab} />;
+  const toolbar = activeTab === "wordstat" || activeTab === "sources" ? null : <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} activeTab={activeTab} />;
   const exports = <p><a href={`/api/dashboard/${profile.slug}?${query}`}>JSON</a>{" · "}<a href={`/api/dashboard/${profile.slug}/excel?${query}`}>Excel</a>{" · "}<a href={`/api/dashboard/${profile.slug}/pdf?${query}`}>PDF</a></p>;
 
   let section;
   if (activeTab === "overview") section = <Overview id="overview" model={model} showGsc={gscEnabled} showMetrika={metrikaEnabled} showWebmaster={webmasterEnabled} />;
   else if (activeTab === "traffic") section = <Traffic id="traffic" model={model} selection={selection} />;
-  else if (activeTab === "search") section = <><Search id="search" model={model} showGsc={gscEnabled} />
-    {selection.traffic.comparison && webmasterComparison && "kind" in webmasterComparison && webmasterComparison.kind === "webmaster" && <p>Сравнение Webmaster {selection.traffic.comparison.key}: клики {webmasterComparison.summary?.clicks ?? "нет данных"}; показы {webmasterComparison.summary?.impressions ?? "нет данных"}</p>}</>;
+  else if (activeTab === "search") section = <Search id="search" model={model} showGsc={gscEnabled} showWebmaster={webmasterEnabled} comparison={webmasterComparison} comparisonKey={selection.traffic.comparison?.key} />;
   else if (activeTab === "wordstat") section = <Wordstat id="wordstat" meta={model.datasets.yandex_wordstat} data={model.wordstat} />;
   else if (activeTab === "alice") section = <Alice id="alice" meta={model.datasets.yandex_webmaster_alice_manual} data={model.alice} />;
   else if (activeTab === "seo-os") section = <SeoOs id="seo-os" meta={model.datasets.seo_os} data={model.seoOs} />;

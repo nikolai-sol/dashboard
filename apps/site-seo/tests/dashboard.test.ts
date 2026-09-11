@@ -11,6 +11,10 @@ import { createElement } from "react";
 import { Wordstat } from "../src/components/Wordstat.tsx";
 import { Search } from "../src/components/Search.tsx";
 import { Overview } from "../src/components/Overview.tsx";
+import { Traffic } from "../src/components/Traffic.tsx";
+import { Alice } from "../src/components/Alice.tsx";
+import { SeoOs } from "../src/components/SeoOs.tsx";
+import { Sources } from "../src/components/Sources.tsx";
 import { siteLoginPath } from "../src/components/LoginForm.tsx";
 import { readFileSync } from "node:fs";
 
@@ -74,6 +78,34 @@ test("period form preserves only the active display tab while export queries omi
   assert.equal(new URLSearchParams(buildDashboardQuery(selection, "publication-7", { country: "RU" })).has("tab"), false);
 });
 
+test("period controls follow the active sheet while preserving hidden scope parameters", () => {
+  const selection = createPeriodSelection({ primaryWeek: "2026-W37", comparisonWeek: "2026-W36", aliceMonth: "2026-09", gsc: calendarMonthPeriod("2026-09", "Europe/Moscow") }, "Europe/Moscow");
+  const traffic = renderToStaticMarkup(createElement(PeriodSelector, { selection, publicationId: null, filters: {}, activeTab: "traffic" }));
+  const search = renderToStaticMarkup(createElement(PeriodSelector, { selection, publicationId: null, filters: {}, activeTab: "search" }));
+  const alice = renderToStaticMarkup(createElement(PeriodSelector, { selection, publicationId: null, filters: {}, activeTab: "alice" }));
+
+  assert.match(traffic, />Неделя <input/);
+  assert.match(traffic, />Сравнение</);
+  assert.doesNotMatch(traffic, />GSC</);
+  assert.doesNotMatch(traffic, />Алиса</);
+  assert.match(traffic, /type="hidden" name="gsc_period" value="2026-09"/);
+  assert.match(traffic, /type="hidden" name="alice_month" value="2026-09"/);
+
+  assert.match(search, />Неделя <input/);
+  assert.match(search, />GSC</);
+  assert.doesNotMatch(search, />Сравнение</);
+  assert.doesNotMatch(search, />Алиса</);
+  assert.match(search, /type="hidden" name="traffic_compare" value="2026-W36"/);
+  assert.match(search, /type="hidden" name="alice_month" value="2026-09"/);
+
+  assert.match(alice, />Алиса</);
+  assert.doesNotMatch(alice, />Неделя <input/);
+  assert.doesNotMatch(alice, />Сравнение</);
+  assert.doesNotMatch(alice, />GSC</);
+  assert.match(alice, /type="hidden" name="traffic_week" value="2026-W37"/);
+  assert.match(alice, /type="hidden" name="gsc_period" value="2026-09"/);
+});
+
 test("renders period controls and export links without emitting disabled GSC content", () => {
   const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
   const disabledGscProfile = { ...profile, title: "Тест", slug: "fixture", sources: [{ sourceKey: "google_search_console" as const, mode: "disabled" as const, bindingId: null, importCadence: [] }, { sourceKey: "yandex_webmaster" as const, mode: "automated" as const, bindingId: "webmaster", importCadence: [] }] } as SiteProfile;
@@ -106,6 +138,23 @@ test("renders one enabled active tab in the neutral shell and preserves scope qu
   assert.match(html, /id="search"/);
   assert.doesNotMatch(html, /id="overview"/);
   assert.doesNotMatch(html, /id="wordstat"/);
+});
+
+test("rolling Wordstat and source quality sheets do not claim the traffic calendar", () => {
+  const selection = createPeriodSelection({ primaryWeek: "2026-W37", aliceMonth: "2026-09", gsc: calendarMonthPeriod("2026-09", "Europe/Moscow") }, "Europe/Moscow");
+  const sourceProfile = { ...profile, title: "Тест", slug: "fixture", domain: "fixture.example", logoAsset: null, sources: [
+    { sourceKey: "yandex_wordstat" as const, mode: "automated" as const, bindingId: "wordstat", importCadence: [] },
+    { sourceKey: "yandex_metrika" as const, mode: "automated" as const, bindingId: "metrika", importCadence: [] },
+  ] } as SiteProfile;
+  const missing = { sourceKey: "yandex_wordstat" as const, period: null, state: "missing" as const, collectionMode: "automated" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const gscMissing = { ...missing, sourceKey: "google_search_console" as const, collectionMode: "manual" as const };
+  const model = { gsc: { meta: gscMissing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: gscMissing, datasets: { yandex_wordstat: missing }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+
+  for (const activeTab of ["wordstat", "sources"] as const) {
+    const html = renderToStaticMarkup(createElement(Dashboard, { profile: sourceProfile, selection, publicationId: null, filters: {}, model, activeTab }));
+    assert.doesNotMatch(html, /site-seo-toolbar/);
+    assert.doesNotMatch(html, /site-seo-period-selector/);
+  }
 });
 
 test("renders canonical Metrika and Webmaster facts without treating daily users as a period total", () => {
@@ -303,4 +352,37 @@ test("wide factual tables use a labelled local scroll frame and semantic heading
   assert.match(html, /site-seo-table-frame/);
   assert.match(html, /aria-label="Динамика GSC"/);
   assert.match(html, /<thead><tr><th>Дата<\/th><th>Клики<\/th><th>Показы<\/th><\/tr><\/thead><tbody>/);
+});
+
+test("standard sheets use the accepted Zaruku-style stack of focused panels", () => {
+  const selection = createPeriodSelection({ primaryWeek: "2026-W37", aliceMonth: "2026-09", gsc: calendarMonthPeriod("2026-09", "Europe/Moscow") }, "Europe/Moscow");
+  const meta = { sourceKey: "yandex_metrika" as const, period: selection.traffic.primary, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "2474", exportedAt: null, loadedAt: "2026-09-11T06:55:01Z", freshness: "current" as const, latestAttempt: "success" as const };
+  const gscMeta = { ...meta, sourceKey: "google_search_console" as const, state: "missing" as const, collectionMode: "manual" as const, importId: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const webmasterMeta = { ...meta, sourceKey: "yandex_webmaster" as const };
+  const model = {
+    gsc: { meta: gscMeta, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: gscMeta,
+    datasets: { yandex_metrika: meta, google_search_console: gscMeta, yandex_webmaster: webmasterMeta }, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+    metrika: { ...meta, kind: "metrika" as const, summary: { visits: 46, pageviews: 75 }, daily: [{ date: "2026-09-10", visits: 15, pageviews: 26, users: 15 }], topPages: [{ page: "/page", visits: 8, pageviews: 12 }] },
+    webmaster: { ...webmasterMeta, kind: "webmaster" as const, summary: { clicks: 48, impressions: 1661, ctrPct: 2.9, averagePosition: 8.4 }, daily: [{ date: "2026-09-10", metrics: { clicks: 12, impressions: 400, ctrPct: 3, averagePosition: 8 } }], topPages: [{ page: "/page", metrics: { clicks: 8, impressions: 300, ctrPct: 2.7, averagePosition: 7 } }] },
+  };
+  const wordstat = { ...meta, sourceKey: "yandex_wordstat" as const, period: selection.traffic.primary, snapshotPeriod: { kind: "custom" as const, key: "rolling", from: "2026-08-13", to: "2026-09-11", sourceTimezone: "Europe/Moscow" }, kind: "wordstat" as const, demand: null, queries: [{ query: "бевацизумаб", count: 14982, kind: "popular", window: { from: "2026-08-13", to: "2026-09-11", snapshotDate: "2026-09-11", registryVersion: "core-v1", importId: "2474" } }] };
+  const aliceMeta = { ...meta, sourceKey: "yandex_webmaster_alice_manual" as const, collectionMode: "manual" as const };
+  const alice = { ...aliceMeta, kind: "alice" as const, officialSovPct: 12.5, samplePresencePct: 20, competitors: ["example.ru"], sources: ["alice.ru"], queries: [{ query: "лечение", portalPresent: true, portalPosition: 1, portalUrl: "https://med.roche.ru/page", sources: [{ rank: 1, domain: "med.roche.ru", url: "https://med.roche.ru/page" }] }] };
+  const seoMeta = { ...meta, sourceKey: "seo_os" as const, collectionMode: "derived" as const };
+  const seoOs = { ...seoMeta, kind: "seo_os" as const, rows: [], recommendations: [{ kind: "content", topic: "Онкология", pageUrl: "/page", action: "Обновить", sourceIds: ["webmaster"], sourcePeriods: ["2026-W37"], ruleVersion: "v1", publicationStatus: "published" }], tasks: [{ id: "task-1", status: "open" }] };
+
+  const trafficHtml = renderToStaticMarkup(createElement(Traffic, { id: "traffic", model, selection }));
+  const searchHtml = renderToStaticMarkup(createElement(Search, { id: "search", model, showGsc: true }));
+  const wordstatHtml = renderToStaticMarkup(createElement(Wordstat, { id: "wordstat", meta: wordstat, data: wordstat }));
+  const aliceHtml = renderToStaticMarkup(createElement(Alice, { id: "alice", meta: aliceMeta, data: alice }));
+  const seoHtml = renderToStaticMarkup(createElement(SeoOs, { id: "seo-os", meta: seoMeta, data: seoOs }));
+  const sourcesHtml = renderToStaticMarkup(createElement(Sources, { id: "sources", profile, model }));
+
+  for (const html of [trafficHtml, searchHtml, wordstatHtml, aliceHtml, seoHtml, sourcesHtml]) assert.match(html, /site-seo-section-stack/);
+  assert.deepEqual([...trafficHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["traffic.summary", "traffic.trend", "traffic.pages"]);
+  assert.deepEqual([...searchHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["search.summary", "search.gsc", "search.webmaster", "search.pages"]);
+  assert.deepEqual([...wordstatHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["wordstat.summary", "wordstat.queries"]);
+  assert.deepEqual([...aliceHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["alice.summary", "alice.competitors", "alice.queries"]);
+  assert.deepEqual([...seoHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo-os.summary", "seo-os.recommendations", "seo-os.tasks"]);
+  assert.deepEqual([...sourcesHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["sources.summary", "sources.list"]);
 });

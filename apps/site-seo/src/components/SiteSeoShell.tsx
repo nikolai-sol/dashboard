@@ -44,7 +44,7 @@ export function SiteSeoShell({ title, domain, logoAsset, tabs, activeTab, tabHre
             <nav className="site-seo-mobile-tabs" aria-label="Разделы">
               {tabs.map((tab) => <a key={tab.id} href={tabHref(tab.id)} aria-current={tab.id === activeTab ? "page" : undefined}>{tab.label}</a>)}
             </nav>
-            <div className="site-seo-toolbar">{toolbar}</div>
+            {toolbar ? <div className="site-seo-toolbar">{toolbar}</div> : null}
           </header>
           <div className="site-seo-selected-tab">{children}</div>
         </div>
