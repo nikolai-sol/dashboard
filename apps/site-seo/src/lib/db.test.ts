@@ -165,7 +165,7 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   } });
   const result = await execute({
     name: "dataset",
-    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "wordstat-account", resourceId: "ru" },
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "wordstat-account", resourceId: "region:225" },
     period: { kind: "iso_week", from: "2026-08-17", to: "2026-08-23", key: "2026-W34", sourceTimezone: "Europe/Moscow" },
     publicationId: null,
     filters: {},
@@ -189,6 +189,10 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   assert.match(queryCall!.sql, /ORDER BY window_to DESC/i);
   assert.doesNotMatch(queryCall!.sql, /SUM\(count\)/i);
   assert.deepEqual(queryCall!.params, ["yandex_wordstat", "wordstat-account", "2026-08-17", "2026-08-23", "yandex_wordstat", "wordstat-account"]);
+  assert.deepEqual(
+    calls.find((call) => call.sql.includes("site-seo:wordstat-demand"))?.params,
+    ["yandex_wordstat", "wordstat-account", "225", "2026-08-17", "2026-08-23"],
+  );
 });
 
 test("Wordstat reports a failed scoped collection instead of inventing zero demand", async () => {

@@ -688,10 +688,14 @@ type WordstatRow = Readonly<{
   ingestion_run_id?: unknown;
 }>;
 
+function wordstatRegionScope(resourceId: string) {
+  return resourceId.startsWith("region:") ? resourceId.slice("region:".length) : resourceId;
+}
+
 async function readWordstatData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | WordstatCanonicalData> {
   const { meta, hasCoverage } = await readWordstatMeta(database, query);
   if (!hasCoverage) return meta;
-  const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
+  const params = [query.scope.sourceKey, query.scope.analyticsAccountId, wordstatRegionScope(query.scope.resourceId), query.period.from, query.period.to];
   const [summaryRows, queryRows] = await Promise.all([
     rowsFor<WordstatRow>(database, {
       sql: `/* site-seo:wordstat-demand */
