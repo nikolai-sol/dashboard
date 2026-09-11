@@ -64,7 +64,6 @@ export function parseDashboardReadRequest(url: URL, slug: string, timezone: stri
 }
 
 export function defaultPeriodSelection(timezone: string, now = new Date()) {
-  const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const localDateParts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(now).map((part) => [part.type, part.value]));
@@ -76,7 +75,8 @@ export function defaultPeriodSelection(timezone: string, now = new Date()) {
   const firstThursday = new Date(Date.UTC(year, 0, 4));
   firstThursday.setUTCDate(firstThursday.getUTCDate() + 3 - ((firstThursday.getUTCDay() + 6) % 7));
   const week = 1 + Math.round((thursday.getTime() - firstThursday.getTime()) / 604800000);
-  const month = `${utc.getUTCFullYear()}-${String(utc.getUTCMonth() + 1).padStart(2, "0")}`;
+  const previousMonth = new Date(Date.UTC(Number(localDateParts.year), Number(localDateParts.month) - 2, 1));
+  const month = `${previousMonth.getUTCFullYear()}-${String(previousMonth.getUTCMonth() + 1).padStart(2, "0")}`;
   const primaryWeek = `${year}-W${String(week).padStart(2, "0")}`;
   return createPeriodSelection({ primaryWeek, aliceMonth: month, gsc: isoWeekPeriod(primaryWeek, timezone) }, timezone);
 }
