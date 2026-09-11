@@ -418,7 +418,7 @@ test("unified SEO queries use a labelled local scroll frame and grouped semantic
   assert.match(html, /site-seo-panel/);
   assert.match(html, /site-seo-table-frame/);
   assert.match(html, /aria-label="Объединённые поисковые запросы"/);
-  assert.match(html, /<th colSpan="4">Google<\/th><th colSpan="4">Яндекс Вебмастер<\/th><th colSpan="3">SEO OS<\/th>/);
+  assert.match(html, /<th colSpan="4" data-source-group="google">[^]*Google<\/th><th colSpan="4" data-source-group="yandex">[^]*Яндекс Вебмастер<\/th><th colSpan="3" data-source-group="seo-os">[^]*SEO OS<\/th>/);
 });
 
 test("standard sheets use the accepted Zaruku-style stack of focused panels", () => {

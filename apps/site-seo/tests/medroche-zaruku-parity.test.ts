@@ -8,6 +8,7 @@ import { Dashboard, dashboardTabs } from "../src/components/Dashboard.tsx";
 import { Overview } from "../src/components/Overview.tsx";
 import { PeriodSelector } from "../src/components/PeriodSelector.tsx";
 import { Search, aggregateWebmasterSections } from "../src/components/Search.tsx";
+import * as searchModule from "../src/components/Search.tsx";
 import { createAvailableMetrikaWeeksReadExecutor, createCanonicalReadExecutor } from "../src/lib/db.ts";
 import * as periods from "../src/lib/period-selection.ts";
 
@@ -263,6 +264,11 @@ test("SEO page renders Alice summary, longest-prefix sections, and the normalize
   assert.deepEqual(panels, ["seo.alice", "seo.sections", "seo.queries"]);
   assert.match(html, /ИИ-видимость в Алисе AI[^]*12,5%[^]*20%/);
   assert.match(html, /Позиции по разделам/);
+  const sectionPanel = html.slice(html.indexOf('data-panel-id="seo.sections"'), html.indexOf('data-panel-id="seo.queries"'));
+  assert.match(sectionPanel, /data-chart-kind="section-position-line"/);
+  assert.match(sectionPanel, /data-y-axis="reversed"/);
+  assert.match(sectionPanel, /<svg/);
+  assert.doesNotMatch(sectionPanel, /site-seo-table-frame/);
   assert.match(html, /Заболевания[^]*—/);
   assert.match(html, /Препараты[^]*8[^]*100[^]*3/);
   assert.match(html, /Инновации[^]*3[^]*220[^]*6/);
@@ -271,8 +277,34 @@ test("SEO page renders Alice summary, longest-prefix sections, and the normalize
   assert.match(html, /Google[^]*Показы[^]*Клики[^]*CTR[^]*Позиция/);
   assert.match(html, /Яндекс Вебмастер[^]*Показы[^]*Клики[^]*CTR[^]*Позиция/);
   assert.match(html, /SEO OS[^]*Позиция[^]*Дельта[^]*Статус/);
+  assert.match(html, /site-seo-query-controls/);
+  assert.match(html, /placeholder="Поиск по фразе"/);
+  assert.match(html, /aria-label="Сортировать: Показы Google/);
+  assert.match(html, /aria-label="Сортировать: Позиция Яндекс/);
+  assert.match(html, /data-source-group="google"/);
+  assert.match(html, /data-source-group="yandex"/);
+  assert.match(html, /data-source-group="seo-os"/);
   assert.equal(html.match(/<th scope="row" class="site-seo-wrap-cell">лечение<\/th>/g)?.length, 1);
   assert.match(html, /лечение[^]*—[^]*—[^]*—[^]*—[^]*120[^]*9[^]*7,5%[^]*3,92[^]*—[^]*—[^]*—/);
+});
+
+test("SEO query comparison toggles numeric sorting and keeps missing values last", () => {
+  const api = searchModule as unknown as {
+    sortUnifiedQueries?: (rows: readonly unknown[], sort: { key: string; direction: "asc" | "desc" }) => Array<{ phrase: string }>;
+    toggleQuerySort?: (current: { key: string; direction: "asc" | "desc" }, key: string) => { key: string; direction: "asc" | "desc" };
+  };
+  assert.equal(typeof api.sortUnifiedQueries, "function");
+  assert.equal(typeof api.toggleQuerySort, "function");
+  if (!api.sortUnifiedQueries || !api.toggleQuerySort) return;
+  const rows = [
+    { phrase: "нет данных", google: null, yandex: null },
+    { phrase: "десять", google: null, yandex: { impressions: 10, clicks: 2, ctrPct: 20, averagePosition: 4 } },
+    { phrase: "два", google: null, yandex: { impressions: 2, clicks: 1, ctrPct: 50, averagePosition: 8 } },
+  ];
+  assert.deepEqual(api.sortUnifiedQueries(rows, { key: "yandex_impressions", direction: "asc" }).map((row) => row.phrase), ["два", "десять", "нет данных"]);
+  assert.deepEqual(api.sortUnifiedQueries(rows, { key: "yandex_impressions", direction: "desc" }).map((row) => row.phrase), ["десять", "два", "нет данных"]);
+  assert.deepEqual(api.toggleQuerySort({ key: "yandex_impressions", direction: "asc" }, "yandex_impressions"), { key: "yandex_impressions", direction: "desc" });
+  assert.deepEqual(api.toggleQuerySort({ key: "google_clicks", direction: "desc" }, "yandex_position"), { key: "yandex_position", direction: "asc" });
 });
 
 test("section position uses only impressions that carry a position", () => {
