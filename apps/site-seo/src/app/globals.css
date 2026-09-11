@@ -837,6 +837,17 @@ body {
     padding-left: 16px;
   }
 
+  .site-seo-overview-panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .site-seo-source-badge {
+    max-width: 100%;
+    flex-wrap: wrap;
+    align-self: flex-start;
+  }
+
   .site-seo-health-grid {
     grid-template-columns: minmax(0, 1fr);
   }

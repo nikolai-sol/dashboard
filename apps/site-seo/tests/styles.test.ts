@@ -42,6 +42,8 @@ test("mobile header and content stay within the reference frame", () => {
   assert.match(css, /\.site-seo-header-row\s*\{[^}]*flex-wrap\s*:\s*wrap/);
   assert.match(mobileCss, /\.site-seo-exports\s*\{[^}]*width\s*:\s*auto/);
   assert.match(mobileCss, /\.site-seo-selected-tab\s*\{[^}]*padding\s*:\s*16px/);
+  assert.match(mobileCss, /\.site-seo-overview-panel-header\s*\{[^}]*flex-direction\s*:\s*column/);
+  assert.match(mobileCss, /\.site-seo-source-badge\s*\{[^}]*max-width\s*:\s*100%[^}]*flex-wrap\s*:\s*wrap/);
 });
 
 test("local stylesheet covers the shell controls, identity, exports, and login", () => {
