@@ -78,7 +78,7 @@ export function defaultPeriodSelection(timezone: string, now = new Date()) {
   const previousMonth = new Date(Date.UTC(Number(localDateParts.year), Number(localDateParts.month) - 2, 1));
   const month = `${previousMonth.getUTCFullYear()}-${String(previousMonth.getUTCMonth() + 1).padStart(2, "0")}`;
   const primaryWeek = `${year}-W${String(week).padStart(2, "0")}`;
-  return createPeriodSelection({ primaryWeek, aliceMonth: month, gsc: isoWeekPeriod(primaryWeek, timezone) }, timezone);
+  return createPeriodSelection({ primaryWeek, aliceMonth: month, gsc: calendarMonthPeriod(month, timezone) }, timezone);
 }
 
 function base64Url(value: Buffer): string { return value.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""); }

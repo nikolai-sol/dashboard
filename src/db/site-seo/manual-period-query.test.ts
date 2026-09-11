@@ -6,6 +6,7 @@ import {
   buildManualDailyReadQuery,
   buildManualDimensionsReadQuery,
   buildManualIndexingReadQuery,
+  buildLatestManualIndexingReadQuery,
   type ManualReadScope,
 } from "./manual-period-query";
 
@@ -86,6 +87,21 @@ test("indexing snapshot keeps totals and URL samples separate", () => {
   assert.match(query.urlSamples.sql, /u\.snapshot_date = \?/);
   assert.equal(query.totals.params.at(-1), "2026-08-31");
   assert.equal(query.urlSamples.params.at(-1), "2026-08-31");
+});
+
+test("latest indexing read is fully scoped and selects one published snapshot independently from Performance dates", () => {
+  const query = buildLatestManualIndexingReadQuery(scope);
+
+  assert.match(query.sql, /canonical_fact_gsc_manual_indexing\b/);
+  for (const column of ["client_id", "site_id", "dashboard_id", "source_key", "analytics_account_id", "resource_id", "filters_hash"]) {
+    assert.match(query.sql, new RegExp(`i\\.${column} = \\?`));
+  }
+  assert.match(query.sql, /i\.period_kind = 'snapshot'/);
+  assert.match(query.sql, /i\.status = 'published'/);
+  assert.match(query.sql, /ORDER BY i\.period_to DESC, i\.revision DESC, i\.id DESC/);
+  assert.match(query.sql, /LIMIT 1/);
+  assert.doesNotMatch(query.sql, /oauth|token|api\./i);
+  assert.deepEqual(query.params, [scope.clientId, scope.siteId, scope.dashboardId, scope.sourceKey, scope.analyticsAccountId, scope.resourceId, scope.filtersHash]);
 });
 
 test("coverage read is scoped and exposes evidence without inferring completeness", () => {

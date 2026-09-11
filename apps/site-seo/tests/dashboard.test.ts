@@ -37,6 +37,12 @@ test("passes the tab query from server search params into the dashboard", () => 
   assert.match(page, /activeTab=\{typeof values\.tab === "string" \? values\.tab : undefined\}/);
 });
 
+test("page keeps the default manual GSC month instead of replacing it with the traffic week", () => {
+  const page = readFileSync(new URL("../src/app/dashboard/[siteSlug]/page.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(page, /gsc:\s*resolvedWithMode\.traffic\.primary/);
+});
+
 test("hides disabled adapters while preserving the available source sections", () => {
   const labels = dashboardTabs(profile).map((tab) => tab.label);
   assert.ok(labels.includes("Обзор"));
@@ -421,6 +427,27 @@ test("unified SEO queries use a labelled local scroll frame and grouped semantic
   assert.match(html, /<th colSpan="4" data-source-group="google">[^]*Google<\/th><th colSpan="4" data-source-group="yandex">[^]*Яндекс Вебмастер<\/th><th colSpan="3" data-source-group="seo-os">[^]*SEO OS<\/th>/);
 });
 
+test("SEO renders every latest Google indexing reason with its snapshot date and keeps missing honest", () => {
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const snapshotPeriod = { kind: "snapshot" as const, key: "2026-09-05", from: "2026-09-05", to: "2026-09-05", sourceTimezone: "Europe/Moscow" };
+  const indexing = { ...missing, period: snapshotPeriod, state: "partial" as const, completeness: "unknown" as const, importId: "indexing-9", latestAttempt: "success" as const };
+  const base = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const html = renderToStaticMarkup(createElement(Search, { id: "search", model: { ...base, indexing, indexingRows: [
+    { snapshotDate: "2026-09-05", reason: "Просканировано, но не проиндексировано", affectedUrlCount: 12, validationState: "started" },
+    { snapshotDate: "2026-09-05", reason: "Обнаружено, но не проиндексировано", affectedUrlCount: 7, validationState: null },
+  ] }, showGsc: true } as never));
+
+  assert.deepEqual([...html.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo.alice", "seo.sections", "seo.queries", "seo.indexing"]);
+  assert.match(html, /Индексация Google[^]*Снимок от 2026-09-05[^]*Причина[^]*Страницы[^]*Проверка/);
+  assert.match(html, /Просканировано, но не проиндексировано[^]*12[^]*started/);
+  assert.match(html, /Обнаружено, но не проиндексировано[^]*7[^]*Неизвестно/);
+  assert.doesNotMatch(html, />19</);
+
+  const missingHtml = renderToStaticMarkup(createElement(Search, { id: "search", model: { ...base, indexing: missing, indexingRows: [] }, showGsc: true } as never));
+  assert.match(missingHtml, /Индексация Google[^]*Снимок индексации не опубликован/);
+  assert.doesNotMatch(missingHtml, /Данные готовы|Причина<\/th>/);
+});
+
 test("standard sheets use the accepted Zaruku-style stack of focused panels", () => {
   const selection = createPeriodSelection({ primaryWeek: "2026-W37", aliceMonth: "2026-09", gsc: calendarMonthPeriod("2026-09", "Europe/Moscow") }, "Europe/Moscow");
   const meta = { sourceKey: "yandex_metrika" as const, period: selection.traffic.primary, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "2474", exportedAt: null, loadedAt: "2026-09-11T06:55:01Z", freshness: "current" as const, latestAttempt: "success" as const };
@@ -449,7 +476,7 @@ test("standard sheets use the accepted Zaruku-style stack of focused panels", ()
 
   for (const html of [trafficHtml, searchHtml, wordstatHtml, aliceHtml, seoHtml, sourcesHtml]) assert.match(html, /site-seo-section-stack/);
   assert.deepEqual([...trafficHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["traffic.summary", "traffic.trend", "traffic.pages"]);
-  assert.deepEqual([...searchHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo.alice", "seo.sections", "seo.queries"]);
+  assert.deepEqual([...searchHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo.alice", "seo.sections", "seo.queries", "seo.indexing"]);
   assert.deepEqual([...wordstatHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["wordstat.summary", "wordstat.queries"]);
   assert.match(wordstatHtml, /Где есть медицинский спрос, что уже получает MedRoche и что стоит улучшить/);
   assert.match(wordstatHtml, /Wordstat показывает спрос, а не визиты, показы или долю сайта/);

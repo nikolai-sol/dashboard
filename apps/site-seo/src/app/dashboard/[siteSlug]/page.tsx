@@ -28,9 +28,7 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
       : resolvedSelection && (comparisonMode === "compare" || comparisonMode === "previous")
         ? { ...resolvedSelection, traffic: { ...resolvedSelection.traffic, comparison: resolveComparisonWeek(resolvedSelection.traffic.primary, resolvedSelection.traffic.comparison, availableWeeks, comparisonMode) } }
         : resolvedSelection;
-    const selection = resolvedWithMode
-      ? hasPeriodState ? resolvedWithMode : { ...resolvedWithMode, gsc: resolvedWithMode.traffic.primary }
-      : requested.selection;
+    const selection = resolvedWithMode ?? requested.selection;
     const request = { ...requested, selection };
     const model = await loadDashboardReadModel({ registration: runtime.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: runtime.execute });
     return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} availableWeeks={availableWeeks} activeTab={typeof values.tab === "string" ? values.tab : undefined} />;

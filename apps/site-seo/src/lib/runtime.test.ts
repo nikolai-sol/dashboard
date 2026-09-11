@@ -36,15 +36,15 @@ test("uses one explicit default GSC filter identity when a dashboard URL has non
   assert.deepEqual(request.filters, { country: "all", search_type: "web", device: "all" });
 });
 
-test("defaults traffic and manual Alice data to their previous completed periods", () => {
+test("defaults traffic to the previous complete week and manual GSC and Alice to the previous month", () => {
   const september = defaultPeriodSelection("Europe/Moscow", new Date("2026-09-11T12:00:00Z"));
   assert.equal(september.traffic.primary.key, "2026-W36");
-  assert.equal(september.gsc.key, "2026-W36");
+  assert.equal(september.gsc.key, "2026-08");
   assert.equal(september.alice.key, "2026-08");
 
   const january = defaultPeriodSelection("Europe/Moscow", new Date("2026-01-01T12:00:00Z"));
   assert.equal(january.traffic.primary.key, "2025-W52");
-  assert.equal(january.gsc.key, "2025-W52");
+  assert.equal(january.gsc.key, "2025-12");
   assert.equal(january.alice.key, "2025-12");
 });
 
@@ -52,8 +52,16 @@ test("uses the business-timezone calendar date when choosing the previous comple
   const selection = defaultPeriodSelection("Europe/Moscow", new Date("2026-09-13T22:00:00Z"));
 
   assert.equal(selection.traffic.primary.key, "2026-W37");
-  assert.equal(selection.gsc.key, "2026-W37");
+  assert.equal(selection.gsc.key, "2026-08");
   assert.equal(selection.alice.key, "2026-08");
+});
+
+test("preserves an explicit GSC week independently from traffic and Alice periods", () => {
+  const request = parseDashboardReadRequest(new URL("https://example.test/dashboard/fixture?traffic_week=2026-W36&gsc_period=2026-W35&alice_month=2026-08"), "fixture", "Europe/Moscow");
+
+  assert.equal(request.selection.traffic.primary.key, "2026-W36");
+  assert.equal(request.selection.gsc.key, "2026-W35");
+  assert.equal(request.selection.alice.key, "2026-08");
 });
 
 test("verifies the existing signed viewer-cookie shape for the exact dashboard", async () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { createAvailableMetrikaWeeksReadExecutor, createCanonicalReadExecutor } from "./db.ts";
@@ -72,8 +73,45 @@ test("canonical GSC executor reads only full scoped MySQL facts and preserves pr
   assert.equal("dimensionCoverage" in result && result.dimensionCoverage?.page?.state, "partial");
   assert.equal("dimensionCoverage" in result && result.dimensionCoverage?.page?.completeness, "unknown");
   assert.ok(calls.every(({ params }) => params.includes(scope.clientId) && params.includes(scope.siteId) && params.includes(41)));
-  assert.ok(calls.every(({ params }) => params.includes("publication-7")));
+  assert.ok(calls.filter(({ sql }) => !sql.includes("site-seo:gsc-indexing-latest")).every(({ params }) => params.includes("publication-7")));
+  assert.ok(calls.some(({ sql, params }) => sql.includes("site-seo:gsc-indexing-latest") && !params.includes("publication-7")));
   assert.ok(calls.every(({ sql }) => !/api\.|oauth|token/i.test(sql)));
+});
+
+test("canonical GSC executor maps the latest scoped indexing snapshot independently from the Performance month", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("site-seo:gsc-indexing-latest")) return [[
+      { ...importFields(), import_id: 9, import_uid: "indexing-9", period_kind: "snapshot", period_from: "2026-09-05", period_to: "2026-09-05", period_key: "2026-09-05", snapshot_date: "2026-09-05", reason: "Просканировано, но не проиндексировано", affected_url_count: "12", validation_state: "started", coverage_state: "unknown", row_count: 2, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+      { ...importFields(), import_id: 9, import_uid: "indexing-9", period_kind: "snapshot", period_from: "2026-09-05", period_to: "2026-09-05", period_key: "2026-09-05", snapshot_date: "2026-09-05", reason: "Обнаружено, но не проиндексировано", affected_url_count: "7", validation_state: null, coverage_state: "unknown", row_count: 2, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+    ], []];
+    if (sql.includes("canonical_seo_manual_coverage") || sql.includes("canonical_fact_gsc_manual_daily") || sql.includes("canonical_fact_gsc_manual_period_dimensions")) return [[], []];
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "gsc",
+    scope,
+    period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: { country: "all", search_type: "web", device: "all" },
+  });
+
+  assert.ok("indexing" in result);
+  assert.deepEqual(result.indexing.period, { kind: "snapshot", key: "2026-09-05", from: "2026-09-05", to: "2026-09-05", sourceTimezone: "Europe/Moscow" });
+  assert.equal(result.indexing.state, "partial");
+  assert.equal(result.indexing.completeness, "unknown");
+  assert.deepEqual(result.indexingRows, [
+    { snapshotDate: "2026-09-05", reason: "Просканировано, но не проиндексировано", affectedUrlCount: 12, validationState: "started" },
+    { snapshotDate: "2026-09-05", reason: "Обнаружено, но не проиндексировано", affectedUrlCount: 7, validationState: null },
+  ]);
+  const indexingCall = calls.find(({ sql }) => sql.includes("site-seo:gsc-indexing-latest"));
+  assert.deepEqual(indexingCall?.params, [
+    scope.clientId, scope.siteId, scope.dashboardId, scope.sourceKey, scope.analyticsAccountId, scope.resourceId,
+    createHash("sha256").update(JSON.stringify({ country: "all", device: "all", search_type: "web" }), "utf8").digest("hex"),
+  ]);
+  assert.doesNotMatch(indexingCall?.sql ?? "", /2026-08-31|oauth|token|api\./i);
 });
 
 test("Metrika reads exact account coverage from canonical MySQL", async () => {

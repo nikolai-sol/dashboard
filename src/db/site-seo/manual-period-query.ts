@@ -265,6 +265,39 @@ WHERE u.snapshot_date = ? ORDER BY u.reason, u.source_row_ordinal`,
   };
 }
 
+export function buildLatestManualIndexingReadQuery(scope: ManualReadScope): CanonicalReadQuery {
+  return {
+    sql: `/* site-seo:gsc-indexing-latest */
+WITH chosen_import AS (
+  SELECT i.id, c.coverage_state, c.row_count, c.evidence_json,
+    c.publication_priority, c.publication_revision
+  FROM canonical_seo_manual_imports i
+  JOIN canonical_seo_manual_coverage c
+    ON c.import_id = i.id AND c.layer_name = 'indexing'
+  WHERE ${SCOPE_WHERE}
+    AND i.period_kind = 'snapshot'
+    AND i.status = 'published'
+  ORDER BY i.period_to DESC, i.revision DESC, i.id DESC
+  LIMIT 1
+)
+SELECT
+  i.id AS import_id, i.import_uid, i.client_id, i.site_id, i.dashboard_id, i.source_key,
+  i.analytics_account_id, i.resource_id, i.period_kind, i.period_from,
+  i.period_to, i.period_key, i.source_timezone, i.filters_hash,
+  i.adapter_version, i.exported_at, i.revision,
+  'indexing' AS layer_name,
+  chosen.coverage_state, chosen.row_count, chosen.evidence_json,
+  chosen.publication_priority, chosen.publication_revision,
+  COALESCE(x.snapshot_date, i.period_to) AS snapshot_date,
+  x.reason, x.affected_url_count, x.validation_state
+FROM chosen_import chosen
+JOIN canonical_seo_manual_imports i ON i.id = chosen.id
+LEFT JOIN canonical_fact_gsc_manual_indexing x ON x.import_id = chosen.id
+ORDER BY x.reason`,
+    params: scopeParams(scope),
+  };
+}
+
 export function buildManualCoverageReadQuery(
   scope: ManualReadScope,
   period: ManualPeriodIdentity,

@@ -3,14 +3,13 @@ import type { DatasetMeta, ManualSheet, Metrics, Period, SourceScope } from "@re
 import mysql from "mysql2/promise";
 import type { GscReadRows } from "./gsc.ts";
 import {
+  buildLatestManualIndexingReadQuery,
   buildManualCoverageReadQuery,
   buildManualDailyReadQuery,
   buildManualDimensionsReadQuery,
-  buildManualIndexingReadQuery,
   type ManualCoverageRow,
   type ManualGscDailyRow,
   type ManualGscDimensionRow,
-  type ManualGscIndexingRow,
   type ManualImportRow,
   type ManualReadScope,
 } from "../../../../src/db/site-seo/manual-period-query.ts";
@@ -283,15 +282,27 @@ async function rowsFor<T>(database: CanonicalDatabase, query: { sql: string; par
   return result as T[];
 }
 
+type LatestGscIndexingRow = ManualImportRow & Readonly<{
+  snapshot_date: string;
+  reason: string | null;
+  affected_url_count: number | null;
+  validation_state: string | null;
+  layer_name: "indexing";
+  coverage_state: ManualCoverageRow["coverage_state"];
+  row_count: number;
+  evidence_json: string;
+  publication_priority: number;
+  publication_revision: number;
+}>;
+
 async function readManualGsc(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<GscReadRows> {
   const scope = manualScope(query.scope, query.filters);
   const period = { kind: query.period.kind, from: query.period.from, to: query.period.to, key: query.period.key };
-  const indexing = buildManualIndexingReadQuery(scope, query.period.to, query.publicationId);
   const [coverage, daily, dimensions, indexingRows] = await Promise.all([
     rowsFor<ManualCoverageRow>(database, buildManualCoverageReadQuery(scope, period, query.publicationId)),
     rowsFor<ManualGscDailyRow>(database, buildManualDailyReadQuery(scope, query.period.from, query.period.to, query.publicationId)),
     rowsFor<ManualGscDimensionRow>(database, buildManualDimensionsReadQuery(scope, period, query.publicationId)),
-    rowsFor<ManualGscIndexingRow>(database, indexing.totals),
+    rowsFor<LatestGscIndexingRow>(database, buildLatestManualIndexingReadQuery(scope)),
   ]);
   const representative = preferredCoverage(coverage) ?? daily[0] ?? dimensions[0];
   const meta = representative
@@ -323,9 +334,15 @@ async function readManualGsc(database: CanonicalDatabase, query: CanonicalDatase
       : null,
   };
   const indexingMeta = indexingRows[0]
-    ? metaFromRow(indexingRows[0], undefined, { kind: "snapshot", from: String(indexingRows[0].snapshot_date), to: String(indexingRows[0].snapshot_date), key: String(indexingRows[0].snapshot_date), sourceTimezone: indexingRows[0].source_timezone })
+    ? metaFromRow(indexingRows[0], indexingRows[0], { kind: "snapshot", from: String(indexingRows[0].snapshot_date), to: String(indexingRows[0].snapshot_date), key: String(indexingRows[0].snapshot_date), sourceTimezone: indexingRows[0].source_timezone })
     : missingMeta("google_search_console", "manual");
-  return { meta, summary, daily: dailyRows, dimensions: dimensionRows, dimensionCoverage, indexing: indexingMeta };
+  const indexingReasonRows = indexingRows.flatMap((row) => row.reason === null ? [] : [{
+    snapshotDate: String(row.snapshot_date),
+    reason: row.reason,
+    affectedUrlCount: numeric(row.affected_url_count),
+    validationState: row.validation_state === null ? null : String(row.validation_state),
+  }]);
+  return { meta, summary, daily: dailyRows, dimensions: dimensionRows, dimensionCoverage, indexing: indexingMeta, indexingRows: indexingReasonRows };
 }
 
 async function readMetrikaMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta> {

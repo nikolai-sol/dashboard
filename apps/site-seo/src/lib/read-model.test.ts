@@ -18,7 +18,7 @@ test("sends the complete server-resolved scope to the canonical reader", async (
   const queries: CanonicalReadQuery[] = [];
   const model = await loadDashboardReadModel({ registration, claim: { dashboardId: 42, siteId: "site-med" }, selection, publicationId: "publication-7", filters: { country: "RU" }, execute: async (query) => {
     queries.push(query);
-    return { meta: { sourceKey: "google_search_console", period, state: "complete_empty", collectionMode: "manual", completeness: "complete", importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current", latestAttempt: "success" }, summary: null, daily: [], dimensions: [], indexing: { sourceKey: "google_search_console", period: null, state: "missing", collectionMode: "manual", completeness: "unknown", importId: null, exportedAt: null, loadedAt: null, freshness: "unknown", latestAttempt: "none" } };
+    return { meta: { sourceKey: "google_search_console", period, state: "complete_empty", collectionMode: "manual", completeness: "complete", importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current", latestAttempt: "success" }, summary: null, daily: [], dimensions: [], indexing: { sourceKey: "google_search_console", period: null, state: "missing", collectionMode: "manual", completeness: "unknown", importId: null, exportedAt: null, loadedAt: null, freshness: "unknown", latestAttempt: "none" }, indexingRows: [{ snapshotDate: "2026-09-05", reason: "Исключено", affectedUrlCount: 4, validationState: "failed" }] };
   }});
 
   assert.equal(queries.length, 1);
@@ -27,6 +27,7 @@ test("sends the complete server-resolved scope to the canonical reader", async (
   assert.equal(queries[0]?.publicationId, "publication-7");
   assert.deepEqual(queries[0]?.filters, { country: "RU" });
   assert.equal(model.gsc.meta.state, "complete_empty");
+  assert.deepEqual(model.indexingRows, [{ snapshotDate: "2026-09-05", reason: "Исключено", affectedUrlCount: 4, validationState: "failed" }]);
 });
 
 test("reports a missing source instead of querying an invented account", async () => {

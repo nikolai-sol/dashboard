@@ -10,6 +10,13 @@ import type {
 type GscDailyRow = Readonly<{ date: string; metrics: Metrics; meta: DatasetMeta }>;
 type GscDimensionReadRow = GscDimensionRow & Readonly<{ meta: DatasetMeta }>;
 
+export type GscIndexingReasonRow = Readonly<{
+  snapshotDate: string;
+  reason: string;
+  affectedUrlCount: number;
+  validationState: string | null;
+}>;
+
 export type GscReadRows = Readonly<{
   meta: DatasetMeta;
   summary: Metrics | null;
@@ -17,6 +24,7 @@ export type GscReadRows = Readonly<{
   dimensions: readonly GscDimensionReadRow[];
   dimensionCoverage?: Readonly<Partial<Record<ManualSheet, DatasetMeta>>>;
   indexing: DatasetMeta;
+  indexingRows?: readonly GscIndexingReasonRow[];
 }>;
 
 function samePeriod(left: Period | null, right: Period): boolean {

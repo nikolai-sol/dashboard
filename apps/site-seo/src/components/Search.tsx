@@ -226,6 +226,7 @@ export function Search({ id, model, profile, showGsc, showWebmaster = true }: Re
   }, [queries, querySearch, querySort]);
   const changeSort = (key: QuerySortKey) => setQuerySort((current) => toggleQuerySort(current, key));
   const aliceMeta = model.alice ?? model.datasets.yandex_webmaster_alice_manual;
+  const indexingRows = model.indexingRows ?? [];
 
   return (
     <div id={id} className="site-seo-section-stack">
@@ -268,6 +269,17 @@ export function Search({ id, model, profile, showGsc, showWebmaster = true }: Re
             <tbody>{visibleQueries.length ? visibleQueries.map((row) => <tr key={row.phrase}><th scope="row" className="site-seo-wrap-cell">{row.phrase}</th><SourceCells metrics={row.google} /><SourceCells metrics={row.yandex} /><td>—</td><td>—</td><td>—</td></tr>) : <tr><td colSpan={12} className="site-seo-empty-row">{queries.length ? "Нет запросов, соответствующих поиску." : "Нет опубликованных запросов за выбранные периоды."}</td></tr>}</tbody>
           </table>
         </TableFrame>
+      </Panel>
+
+      <Panel panelId="seo.indexing" title="Индексация Google" subtitle={model.indexing.period ? `Снимок от ${model.indexing.period.to}` : undefined} state={model.indexing.state}>
+        {model.indexing.state === "missing" ? <EmptyNotice>Снимок индексации не опубликован.</EmptyNotice> : indexingRows.length ? (
+          <TableFrame label="Причины индексации Google">
+            <table className="site-seo-table site-seo-table-bounded">
+              <thead><tr><th>Причина</th><th>Страницы</th><th>Проверка</th></tr></thead>
+              <tbody>{indexingRows.map((row, index) => <tr key={`${row.snapshotDate}:${row.reason}:${index}`}><th scope="row" className="site-seo-wrap-cell">{row.reason}</th><td>{number.format(row.affectedUrlCount)}</td><td>{row.validationState ?? "Неизвестно"}</td></tr>)}</tbody>
+            </table>
+          </TableFrame>
+        ) : <EmptyNotice>Причины индексации в снимке не опубликованы.</EmptyNotice>}
       </Panel>
     </div>
   );

@@ -263,7 +263,7 @@ test("SEO page renders Alice summary, longest-prefix sections, and the normalize
   const html = renderToStaticMarkup(createElement(Search, { id: "search", model: model(), profile, showGsc: true } as never));
   const panels = [...html.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]);
 
-  assert.deepEqual(panels, ["seo.alice", "seo.sections", "seo.queries"]);
+  assert.deepEqual(panels, ["seo.alice", "seo.sections", "seo.queries", "seo.indexing"]);
   assert.match(html, /ИИ-видимость в Алисе AI[^]*12,5%[^]*20%/);
   assert.match(html, /Позиции по разделам/);
   const sectionPanel = html.slice(html.indexOf('data-panel-id="seo.sections"'), html.indexOf('data-panel-id="seo.queries"'));

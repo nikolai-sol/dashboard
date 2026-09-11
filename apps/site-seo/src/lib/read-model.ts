@@ -1,12 +1,13 @@
 import type { DatasetMeta, Period, SiteRegistration, SourceKey } from "@reportingdash/site-seo-contract";
 import { type AliceCanonicalData, type AvailableMetrikaWeeksReadExecutor, type CanonicalDatasetData, type CanonicalReadExecutor, type MetrikaCanonicalData, type SeoOsCanonicalData, type WebmasterCanonicalData, type WordstatCanonicalData } from "./db.ts";
-import { loadGscView } from "./gsc.ts";
+import { loadGscView, type GscIndexingReasonRow } from "./gsc.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 import { MissingSourceScopeError, resolveSourceScope, type SiteScopeClaim } from "./scope.ts";
 
 export type DashboardReadModel = Readonly<{
   gsc: ReturnType<typeof loadGscView>;
   indexing: DatasetMeta;
+  indexingRows?: readonly GscIndexingReasonRow[];
   datasets: Readonly<Partial<Record<SourceKey, DatasetMeta>>>;
   metrika: MetrikaCanonicalData | null;
   webmaster: WebmasterCanonicalData | null;
@@ -63,6 +64,7 @@ export async function loadDashboardReadModel(input: Readonly<{
   const missingGsc = missingMeta();
   let gsc = { meta: missingGsc, summary: null, daily: [], dimensions: [], dimensionMeta: {} } as ReturnType<typeof loadGscView>;
   let indexing = missingGsc;
+  let indexingRows: readonly GscIndexingReasonRow[] = [];
   const gscSource = input.registration.profile.sources.find((source) => source.sourceKey === "google_search_console");
   if (gscSource && gscSource.mode !== "disabled") {
     try {
@@ -70,6 +72,7 @@ export async function loadDashboardReadModel(input: Readonly<{
       const rows = await input.execute({ name: "gsc", scope, period: input.selection.gsc, publicationId: input.publicationId, filters: input.filters }) as import("./gsc.ts").GscReadRows;
       gsc = loadGscView(rows, input.selection.gsc);
       indexing = rows.indexing;
+      indexingRows = rows.indexingRows ?? [];
     } catch (error) {
       if (!(error instanceof MissingSourceScopeError)) throw error;
     }
@@ -106,5 +109,5 @@ export async function loadDashboardReadModel(input: Readonly<{
       datasets[source.sourceKey] = missingMetaFor(source.sourceKey, source.mode === "manual" ? "manual" : "automated");
     }
   }
-  return { gsc, indexing, datasets, metrika, webmaster, wordstat, alice, seoOs, trafficComparison };
+  return { gsc, indexing, indexingRows, datasets, metrika, webmaster, wordstat, alice, seoOs, trafficComparison };
 }
