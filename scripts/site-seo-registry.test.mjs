@@ -11,7 +11,7 @@ const registryFilename = path.resolve("config/sites/registry.json");
 const releaseFilename = path.resolve("deploy/medroche/release.json");
 const repositoryFilename = path.resolve("deploy/medroche/repository.json");
 
-test("MedRoche registry pins the confirmed Metrika, Webmaster, and Russia Wordstat scopes", () => {
+test("MedRoche registry pins the confirmed Yandex source scopes, including Alice", () => {
   assert.ok(existsSync(registryFilename), "config/sites/registry.json is required");
   const registry = assertSiteRegistry(JSON.parse(readFileSync(registryFilename, "utf8")));
   const profile = readSiteProfile(profileFilename);
@@ -46,6 +46,15 @@ test("MedRoche registry pins the confirmed Metrika, Webmaster, and Russia Wordst
       analyticsAccountId: "94927113",
       resourceId: "region:225",
     },
+    {
+      bindingId: "binding-alice-medroche",
+      clientId: "client-roche",
+      siteId: "site-medroche",
+      dashboardId: 41,
+      sourceKey: "yandex_webmaster_alice_manual",
+      analyticsAccountId: "94927113",
+      resourceId: "med.roche.ru",
+    },
   ]);
 
   const boundIds = new Set(registry[0].bindings.map((binding) => binding.bindingId));
@@ -56,7 +65,6 @@ test("MedRoche registry pins the confirmed Metrika, Webmaster, and Russia Wordst
   assert.deepEqual(unboundSourceKeys, [
     "google_search_console",
     "seo_os",
-    "yandex_webmaster_alice_manual",
   ]);
 
   for (const filename of [releaseFilename, repositoryFilename]) {
@@ -71,6 +79,12 @@ test("MedRoche registry pins the confirmed Metrika, Webmaster, and Russia Wordst
       sourceKey: "yandex_wordstat",
       analyticsAccountId: "94927113",
       resourceId: "region:225",
+      status: "configured",
+    });
+    assert.deepEqual(metadata.sourceBindings["binding-alice-medroche"], {
+      sourceKey: "yandex_webmaster_alice_manual",
+      analyticsAccountId: "94927113",
+      resourceId: "med.roche.ru",
       status: "configured",
     });
   }

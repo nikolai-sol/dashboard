@@ -19,7 +19,7 @@ test("preview validates MedRoche and reports its configured automated Yandex bin
   assert.equal(result.bindings.google_search_console.domain, "med.roche.ru");
   assert.equal(result.bindings.yandex_webmaster.status, "configured");
   assert.equal(result.bindings.yandex_wordstat.status, "configured");
-  assert.equal(result.bindings.yandex_webmaster_alice_manual.status, "missing");
+  assert.equal(result.bindings.yandex_webmaster_alice_manual.status, "configured");
   assert.equal(result.bindings.seo_os.status, "missing_inputs");
   assert.equal(result.registrationStatus, "proposed_local");
   assert.equal(result.proposedClientId, "client-roche");
