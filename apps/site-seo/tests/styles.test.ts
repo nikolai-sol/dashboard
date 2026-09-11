@@ -121,8 +121,11 @@ test("SEO chart and sortable comparison table match the reference visual languag
   assert.match(css, /\.site-seo-query-comparison th\[data-source-group="google"\][^{]*\{[^}]*background:/);
   assert.match(css, /\.site-seo-query-comparison th\[data-source-group="yandex"\][^{]*\{[^}]*background:/);
   assert.match(css, /\.site-seo-query-comparison th\[data-source-group="seo-os"\][^{]*\{[^}]*background:/);
-  assert.match(css, /\.site-seo-table-bounded\.site-seo-query-comparison\s*\{[^}]*table-layout:\s*auto/);
-  assert.match(css, /\.site-seo-query-comparison :is\(thead, tbody\) tr > :first-child\s*\{[^}]*min-width:\s*200px/);
+  assert.match(css, /\.site-seo-table-frame\s*\{[^}]*width:\s*100%[^}]*max-width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/);
+  assert.match(css, /\.site-seo-table-bounded\.site-seo-query-comparison\s*\{[^}]*min-width:\s*900px[^}]*table-layout:\s*fixed/);
+  assert.doesNotMatch(css, /\.site-seo-table-bounded\.site-seo-query-comparison\s*\{[^}]*table-layout:\s*auto/);
+  assert.match(css, /\.site-seo-query-comparison thead tr:first-child > :first-child,[^}]*\.site-seo-query-comparison tbody tr > :first-child\s*\{[^}]*min-width:\s*200px/);
+  assert.doesNotMatch(css, /\.site-seo-query-comparison :is\(thead, tbody\) tr > :first-child/);
   assert.match(css, /\.site-seo-sort-button\s*\{[^}]*cursor:\s*pointer/);
   assert.match(css, /\.site-seo-sort-button\[data-active="true"\]\s*\{[^}]*color:\s*white/);
 });

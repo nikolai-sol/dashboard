@@ -930,6 +930,8 @@ body {
 
 .site-seo-table-frame {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   max-height: min(34rem, 70vh);
   overflow-x: auto;
   overflow-y: auto;
@@ -1124,10 +1126,12 @@ body {
 }
 
 .site-seo-table-bounded.site-seo-query-comparison {
-  table-layout: auto;
+  min-width: 900px;
+  table-layout: fixed;
 }
 
-.site-seo-query-comparison :is(thead, tbody) tr > :first-child {
+.site-seo-query-comparison thead tr:first-child > :first-child,
+.site-seo-query-comparison tbody tr > :first-child {
   width: 200px;
   min-width: 200px;
 }
