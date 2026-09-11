@@ -875,8 +875,19 @@ function aliceSourcePeriod(row: DatasetMetaRow, sourceTimezone: string): Period 
   const from = String(row.source_period_from ?? "");
   const to = String(row.source_period_to ?? "");
   const supportedKinds: readonly string[] = ["iso_week", "calendar_month", "custom", "snapshot"];
-  if (!supportedKinds.includes(kind) || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null;
-  return sourcePeriod(kind as Period["kind"], from, to, sourceTimezone);
+  if (supportedKinds.includes(kind) && /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return sourcePeriod(kind as Period["kind"], from, to, sourceTimezone);
+  }
+  const reportingMonth = String(row.period_month ?? "").slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(reportingMonth)) return null;
+  const [year, month] = reportingMonth.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year!, month!, 0)).getUTCDate();
+  return sourcePeriod(
+    "calendar_month",
+    `${reportingMonth}-01`,
+    `${reportingMonth}-${String(lastDay).padStart(2, "0")}`,
+    sourceTimezone,
+  );
 }
 
 const aliceSelectedSnapshotSql = `SELECT id FROM canonical_alice_visibility_snapshots

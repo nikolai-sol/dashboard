@@ -412,6 +412,30 @@ test("Alice retains published per-query portal and ranked source facts without c
   ]);
 });
 
+test("Alice keeps legacy monthly writers readable when exact source columns are null", async () => {
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{
+      id: 94, row_count: 1, import_id: "alice-legacy-writer", loaded_at: "2026-09-02 01:00:00",
+      period_month: "2026-08-01", source_period_kind: null, source_period_from: null, source_period_to: null,
+    }], []];
+    if (sql.includes("site-seo:alice-summary")) return [[{ official_sov_pct: "43.91", sample_presence_pct: "57.4194" }], []];
+    if (sql.includes("site-seo:alice-sov-weekly") || sql.includes("site-seo:alice-competitors") || sql.includes("site-seo:alice-queries")) return [[], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_webmaster_alice_manual", analyticsAccountId: "alice-account", resourceId: "example.test" },
+    period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.deepEqual("period" in result && result.period, {
+    kind: "calendar_month", key: "2026-08", from: "2026-08-01", to: "2026-08-31", sourceTimezone: "Europe/Moscow",
+  });
+  assert.equal("officialSovPct" in result && result.officialSovPct, 43.91);
+});
+
 test("Alice exposes the exact source period and falls back to the latest weekly official SOV from the same scoped snapshot", async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {

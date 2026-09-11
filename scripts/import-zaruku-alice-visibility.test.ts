@@ -52,6 +52,7 @@ test("Alice period migration preserves monthly rows and adds exact weekly point 
   assert.match(sql, /UNIQUE KEY uniq_alice_sov_weekly \(snapshot_id, week_from, week_to\)/);
   assert.match(sql, /official_sov_pct DECIMAL\(7,4\) NOT NULL/);
   assert.match(sql, /UPDATE canonical_alice_visibility_snapshots[\s\S]*source_period_from = period_month/);
+  assert.doesNotMatch(sql, /MODIFY COLUMN source_period_(?:kind|from|to)[^,;]*NOT NULL/);
   assert.doesNotMatch(sql, /DELETE FROM canonical_alice_visibility/);
 });
 

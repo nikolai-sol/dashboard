@@ -1068,15 +1068,17 @@ body {
 
 .site-seo-sort-button {
   display: inline-flex;
+  width: 100%;
   align-items: center;
-  gap: 5px;
-  padding: 5px 7px;
+  justify-content: center;
+  gap: 2px;
+  padding: 5px 2px;
   border: 0;
   border-radius: 6px;
   color: var(--site-seo-slate-700);
   background: transparent;
   font: inherit;
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1128,6 +1130,10 @@ body {
 .site-seo-table-bounded.site-seo-query-comparison {
   min-width: 900px;
   table-layout: fixed;
+}
+
+.site-seo-query-comparison :is(th, td):not(:first-child) {
+  padding: 8px 4px;
 }
 
 .site-seo-query-comparison thead tr:first-child > :first-child,

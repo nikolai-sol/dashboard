@@ -50,9 +50,9 @@ WHERE source_period_kind IS NULL
    OR source_period_to IS NULL;
 
 ALTER TABLE canonical_alice_visibility_snapshots
-  MODIFY COLUMN source_period_kind ENUM('calendar_month', 'custom') NOT NULL,
-  MODIFY COLUMN source_period_from DATE NOT NULL,
-  MODIFY COLUMN source_period_to DATE NOT NULL,
+  MODIFY COLUMN source_period_kind ENUM('calendar_month', 'custom') NULL,
+  MODIFY COLUMN source_period_from DATE NULL,
+  MODIFY COLUMN source_period_to DATE NULL,
   MODIFY COLUMN official_sov_pct DECIMAL(7,4) NULL;
 
 CREATE TABLE IF NOT EXISTS canonical_alice_visibility_sov_weekly (
