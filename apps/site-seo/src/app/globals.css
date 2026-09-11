@@ -721,6 +721,10 @@ body {
   text-align: right;
 }
 
+.site-seo-engine-y-axis[data-single="true"] {
+  justify-content: flex-end;
+}
+
 .site-seo-engine-grid li {
   display: grid;
   min-width: 0;

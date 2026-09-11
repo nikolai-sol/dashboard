@@ -237,6 +237,9 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(searchEnginePanel, /site-seo-engine-bar[^>]*style="height:100%"/);
   assert.match(searchEnginePanel, /site-seo-engine-bar[^>]*style="height:50%"/);
   assert.doesNotMatch(searchEnginePanel, /site-seo-breakdown-track/);
+  assert.doesNotMatch(searchEnginePanel, /role="img"/);
+  assert.match(searchEnginePanel, /aria-label="Google: 20 визитов, 30 просмотров"/);
+  assert.match(searchEnginePanel, /aria-label="Яндекс: 10 визитов, 16 просмотров"/);
   assert.equal(html.match(/data-engine-slot=/g)?.length, 2);
   assert.match(html, /data-engine-slot="google"[^>]*data-bounce-rate="12.8"[^>]*data-avg-visit-duration-seconds="96"[^>]*data-page-depth="2.1"/);
   assert.match(html, /data-engine-slot="yandex"[^>]*data-bounce-rate="13"[^>]*data-avg-visit-duration-seconds="94"[^>]*data-page-depth="2.2"/);
@@ -249,6 +252,17 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(html, /Яндекс[^]*5/);
   assert.doesNotMatch(html, /данные неполные|данные готовы/);
   assert.doesNotMatch(html, /Пользователи за день|Пользователи за период|Доля России/);
+
+  const oddHtml = renderToStaticMarkup(createElement(Overview, {
+    id: "overview",
+    model: { ...model, metrika: { ...model.metrika, searchEngines: [
+      { id: "google", label: "Google", visits: 3, pageviews: 4, bounceRate: null, avgVisitDurationSeconds: null, pageDepth: null },
+      { id: "yandex", label: "Yandex", visits: 1, pageviews: 2, bounceRate: null, avgVisitDurationSeconds: null, pageDepth: null },
+    ] } },
+    showGsc: true,
+  }));
+  const oddPanel = oddHtml.slice(oddHtml.indexOf('data-panel-id="overview.search_engines"'), oddHtml.indexOf('data-panel-id="overview.organic_search"'));
+  assert.match(oddPanel, /site-seo-engine-y-axis[^]*>3<[^]*>1,5<[^]*>0</);
 });
 
 test("overview keeps all-traffic panels visible when search coverage is missing", () => {
@@ -285,6 +299,8 @@ test("overview keeps the accepted layout while unavailable metrics stay explicit
   assert.equal(html.match(/data-engine-slot=/g)?.length, 2);
   assert.match(html, /data-engine-slot="google"[^]*>Google<[^]*—[^]*нет строк за период/);
   assert.match(html, /data-engine-slot="yandex"[^]*>Яндекс<[^]*—[^]*нет строк за период/);
+  assert.match(html, /aria-label="Google: нет строк за период"/);
+  assert.doesNotMatch(html, /site-seo-engine-y-axis[^]*?>1<[^]*?>1</);
   assert.doesNotMatch(html, /data-engine-slot="(?:google|yandex)"[^]*?<strong>0<\/strong>/);
   assert.match(html, /Динамика: данные не опубликованы/);
   assert.match(html, /data-state="missing"/);
