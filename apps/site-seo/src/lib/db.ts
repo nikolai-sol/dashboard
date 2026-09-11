@@ -711,7 +711,7 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalRea
                 FROM canonical_fact_wordstat_requests_snapshot
                WHERE source_key = ? AND analytics_account_id = ? AND device_type = 'all'
                  AND window_from <= ? AND window_to >= ?
-               ORDER BY window_to DESC, snapshot_date DESC, registry_version DESC, ingestion_run_id DESC
+               ORDER BY window_to DESC, snapshot_date DESC, ingestion_run_id DESC, registry_version DESC
                LIMIT 1
             )
             SELECT fact.query_text, fact.count, fact.request_kind,
