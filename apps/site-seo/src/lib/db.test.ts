@@ -135,7 +135,7 @@ test("Metrika reads exact account coverage from canonical MySQL", async () => {
   assert.equal("completeness" in result && result.completeness, "complete");
   assert.equal("importId" in result && result.importId, "81");
   assert.equal("trafficMeta" in result && result.trafficMeta?.state, "missing");
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);
   assert.match(calls[0]!.sql, /canonical_metrika_breakdown_coverage_daily/i);
   assert.deepEqual(calls[0]!.params, ["yandex_metrika", "counter-account", "2026-08-03", "2026-08-09"]);
   assert.doesNotMatch(calls[0]!.sql, /api\.|oauth|token/i);
@@ -568,6 +568,10 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
       { report_date: "2026-08-04", visits: "12", pageviews: "18", users: "9" },
     ], []];
     if (sql.includes("site-seo:metrika-pages")) return [[{ page_url: "https://clinic.example.test/a", visits: "7", pageviews: "11" }], []];
+    if (sql.includes("site-seo:metrika-content-pages")) return [[{
+      page_url: "/products/a", page_title: "Препарат A", pageviews: "31", visits: "12",
+      bounce_rate: "25", avg_visit_duration_seconds: "90", page_depth: "2.5",
+    }], []];
     if (sql.includes("site-seo:metrika-traffic-health")) return [[{
       visits: "100", pageviews: "160", bounce_rate: "17.5",
       avg_visit_duration_seconds: "95", page_depth: "2.4",
@@ -613,16 +617,28 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
   ]);
   assert.equal("searchEngines" in result && result.searchEngines?.[0]?.label, "Google, search results");
   assert.equal("topPages" in result && result.topPages[0]?.page, "https://clinic.example.test/a");
+  assert.deepEqual("contentPages" in result && result.contentPages, [{
+    url: "/products/a", title: "Препарат A", pageviews: 31, visits: 12,
+    bounceRate: 25, avgVisitDurationSeconds: 90, pageDepth: 2.5,
+  }]);
   const facts = calls.filter((call) => call.sql.includes("canonical_fact_metrika_breakdowns_daily"));
   assert.equal(facts.length, 4);
   assert.ok(facts.every((call) => call.params.includes("yandex_metrika") && call.params.includes("counter-account") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
   assert.ok(facts.every((call) => !/api\.|oauth|token/i.test(call.sql)));
   const trafficFacts = calls.filter((call) => call.sql.includes("canonical_fact_site_analytics_daily"));
-  assert.equal(trafficFacts.length, 2);
-  assert.ok(trafficFacts.every((call) => /analytics_scope\s*=\s*'other'/i.test(call.sql)));
+  assert.equal(trafficFacts.length, 3);
+  assert.ok(trafficFacts.filter((call) => !call.sql.includes("site-seo:metrika-content-pages")).every((call) => /analytics_scope\s*=\s*'other'/i.test(call.sql)));
   assert.ok(trafficFacts.every((call) => call.params.includes("yandex_metrika") && call.params.includes("counter-account") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
   assert.ok(trafficFacts.every((call) => /bounce_rate[^]*visits/i.test(call.sql) && /avg_visit_duration_seconds[^]*visits/i.test(call.sql) && /page_depth[^]*visits/i.test(call.sql)));
   assert.match(trafficFacts.find((call) => call.sql.includes("site-seo:metrika-traffic-health"))!.sql, /COUNT\(\*\) AS row_count[^]*COUNT\(DISTINCT report_date\) AS covered_days[^]*MAX\(ingestion_run_id\) AS import_id[^]*MAX\(updated_at\) AS loaded_at/i);
+  const contentFacts = trafficFacts.find((call) => call.sql.includes("site-seo:metrika-content-pages"))!;
+  assert.match(contentFacts.sql, /analytics_scope\s+IN\s*\(\s*'page'\s*,\s*'entry_page'\s*\)/i);
+  assert.match(contentFacts.sql, /CASE WHEN analytics_scope = 'page' THEN COALESCE\(pageviews, 0\)/i);
+  assert.match(contentFacts.sql, /CASE WHEN analytics_scope = 'entry_page' THEN COALESCE\(visits, 0\)/i);
+  assert.match(contentFacts.sql, /bounce_rate[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
+  assert.match(contentFacts.sql, /avg_visit_duration_seconds[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
+  assert.match(contentFacts.sql, /page_depth[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
+  assert.doesNotMatch(contentFacts.sql, /\bLIMIT\b/i);
   const engineFacts = calls.filter((call) => call.sql.includes("site-seo:metrika-search-engines"));
   assert.equal(engineFacts.length, 1);
   assert.match(engineFacts[0]!.sql, /report_key\s*=\s*'search_engines'[^]*segment_key\s*=\s*'russia'[^]*row_kind\s*=\s*'detail'/i);
@@ -640,6 +656,7 @@ test("Metrika preserves all-traffic facts when search-engine coverage is missing
     if (sql.includes("site-seo:metrika-channels")) return [[{
       label: "Direct traffic", visits: "9", pageviews: "14", bounce_rate: "20", avg_visit_duration_seconds: "75", page_depth: "1.8",
     }], []];
+    if (sql.includes("site-seo:metrika-content-pages")) return [[], []];
     if (/site-seo:metrika-(summary|daily|pages|search-engines)/.test(sql)) return [[], []];
     throw new Error("unexpected query");
   } });
@@ -661,7 +678,7 @@ test("Metrika preserves all-traffic facts when search-engine coverage is missing
   assert.equal("summary" in result && result.summary, null);
   assert.equal("daily" in result && result.daily.length, 0);
   assert.equal("searchEngines" in result && result.searchEngines?.length, 0);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 4);
   assert.equal(calls.some((sql) => /site-seo:metrika-(summary|daily|pages|search-engines)/.test(sql)), false);
 });
 

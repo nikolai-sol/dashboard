@@ -1132,6 +1132,109 @@ body {
   table-layout: fixed;
 }
 
+.site-seo-content-table {
+  min-width: 860px;
+  table-layout: fixed;
+}
+
+.site-seo-content-table :is(th, td):first-child {
+  width: 36%;
+}
+
+.site-seo-content-table td:not(:first-child) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.site-seo-content-table .site-seo-url-cell a {
+  color: var(--site-seo-slate-700);
+  text-decoration: none;
+}
+
+.site-seo-content-table .site-seo-url-cell a:hover {
+  color: var(--site-seo-teal-700);
+}
+
+.site-seo-content-table .site-seo-url-cell small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--site-seo-slate-500);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-seo-content-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.site-seo-content-controls label {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 6px;
+  color: var(--site-seo-slate-500);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.site-seo-content-controls input {
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--site-seo-slate-300);
+  border-radius: 8px;
+  color: var(--site-seo-slate-900);
+  background: #fff;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+.site-seo-content-sort-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.site-seo-content-sort-button,
+.site-seo-content-pagination button {
+  padding: 6px 9px;
+  border: 1px solid var(--site-seo-slate-200);
+  border-radius: 6px;
+  color: var(--site-seo-slate-700);
+  background: #fff;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.site-seo-content-sort-button[data-active="true"] {
+  border-color: var(--site-seo-slate-900);
+  color: #fff;
+  background: var(--site-seo-slate-900);
+}
+
+.site-seo-content-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: var(--site-seo-slate-500);
+  font-size: 0.75rem;
+}
+
+.site-seo-content-pagination button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 .site-seo-query-comparison :is(th, td):not(:first-child) {
   padding: 8px 4px;
 }

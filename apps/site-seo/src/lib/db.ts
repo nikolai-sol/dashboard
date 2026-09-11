@@ -48,6 +48,11 @@ export type MetrikaBreakdownRow = MetrikaTrafficMetrics & Readonly<{
   label: string;
 }>;
 
+export type MetrikaContentPageRow = MetrikaTrafficMetrics & Readonly<{
+  url: string;
+  title: string | null;
+}>;
+
 export type MetrikaCanonicalData = DatasetMeta & Readonly<{
   kind: "metrika";
   /** Users are retained at their canonical daily grain and never period-summed. */
@@ -58,6 +63,7 @@ export type MetrikaCanonicalData = DatasetMeta & Readonly<{
   searchEngines?: readonly MetrikaBreakdownRow[];
   daily: readonly Readonly<{ date: string; visits: number; pageviews: number; users: number | null }>[];
   topPages: readonly Readonly<{ page: string; visits: number; pageviews: number }>[];
+  contentPages?: readonly MetrikaContentPageRow[];
 }>;
 
 export type WebmasterCanonicalMetrics = Readonly<{
@@ -384,6 +390,8 @@ type MetrikaTrafficRow = Readonly<{
   covered_days?: unknown;
   import_id?: unknown;
   loaded_at?: unknown;
+  page_url?: unknown;
+  page_title?: unknown;
 }>;
 
 function metrikaTrafficMetrics(row: MetrikaTrafficRow): MetrikaTrafficMetrics {
@@ -412,7 +420,7 @@ function metrikaBreakdownRow(row: MetrikaTrafficRow): MetrikaBreakdownRow {
  */
 async function readMetrikaData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | MetrikaCanonicalData> {
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to];
-  const [meta, [trafficHealthRows, channelRows]] = await Promise.all([
+  const [meta, [trafficHealthRows, channelRows, contentPageRows]] = await Promise.all([
     readMetrikaMeta(database, query),
     Promise.all([
       rowsFor<MetrikaTrafficRow>(database, {
@@ -456,6 +464,31 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalData
                ORDER BY visits DESC, pageviews DESC, label ASC`,
         params,
       }),
+      rowsFor<MetrikaTrafficRow>(database, {
+        sql: `/* site-seo:metrika-content-pages */
+              SELECT page_url,
+                     COALESCE(
+                       MAX(CASE WHEN analytics_scope = 'page' THEN NULLIF(TRIM(page_title), '') END),
+                       MAX(CASE WHEN analytics_scope = 'entry_page' THEN NULLIF(TRIM(page_title), '') END)
+                     ) AS page_title,
+                     SUM(CASE WHEN analytics_scope = 'page' THEN COALESCE(pageviews, 0) ELSE 0 END) AS pageviews,
+                     SUM(CASE WHEN analytics_scope = 'entry_page' THEN COALESCE(visits, 0) ELSE 0 END) AS visits,
+                     SUM(bounce_rate * CASE WHEN analytics_scope = 'entry_page' THEN COALESCE(visits, 0) ELSE 0 END) /
+                       NULLIF(SUM(CASE WHEN analytics_scope = 'entry_page' AND bounce_rate IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS bounce_rate,
+                     SUM(avg_visit_duration_seconds * CASE WHEN analytics_scope = 'entry_page' THEN COALESCE(visits, 0) ELSE 0 END) /
+                       NULLIF(SUM(CASE WHEN analytics_scope = 'entry_page' AND avg_visit_duration_seconds IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS avg_visit_duration_seconds,
+                     SUM(page_depth * CASE WHEN analytics_scope = 'entry_page' THEN COALESCE(visits, 0) ELSE 0 END) /
+                       NULLIF(SUM(CASE WHEN analytics_scope = 'entry_page' AND page_depth IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS page_depth
+                FROM canonical_fact_site_analytics_daily
+               WHERE source_key = ? AND analytics_account_id = ?
+                 AND analytics_scope IN ('page', 'entry_page')
+                 AND page_url IS NOT NULL AND page_url <> ''
+                 AND report_date BETWEEN ? AND ?
+               GROUP BY page_url
+              HAVING pageviews > 0 OR visits > 0
+               ORDER BY pageviews DESC, visits DESC, page_url ASC`,
+        params,
+      }),
     ]),
   ]);
   const trafficHealthRow = trafficHealthRows[0];
@@ -464,7 +497,7 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalData
   const trafficMeta = hasTrafficRows
     ? datasetMeta(query, trafficHealthRow, "automated", hasCompleteTrafficWeek ? "ready" : "partial", hasCompleteTrafficWeek ? "complete" : "unknown")
     : missingMeta(query.scope.sourceKey, "automated");
-  if (meta.state === "missing" && trafficMeta.state === "missing") return meta;
+  if (meta.state === "missing" && trafficMeta.state === "missing" && contentPageRows.length === 0) return meta;
 
   const [summaryRows, dailyRows, pageRows, searchEngineRows] = meta.state === "missing"
     ? [[], [], [], []] as const
@@ -542,6 +575,11 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalData
     searchEngines: searchEngineRows.map(metrikaBreakdownRow),
     daily: dailyRows.map((row) => ({ date: String(row.report_date), visits: numeric(row.visits), pageviews: numeric(row.pageviews), users: nullableNumeric(row.users) })),
     topPages: pageRows.map((row) => ({ page: String(row.page_url), visits: numeric(row.visits), pageviews: numeric(row.pageviews) })),
+    contentPages: contentPageRows.map((row) => ({
+      url: String(row.page_url),
+      title: row.page_title === null || row.page_title === undefined || String(row.page_title).trim() === "" ? null : String(row.page_title),
+      ...metrikaTrafficMetrics(row),
+    })),
   };
 }
 

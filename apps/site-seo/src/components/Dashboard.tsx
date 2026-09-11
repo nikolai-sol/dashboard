@@ -9,6 +9,7 @@ import { Sources } from "./Sources.tsx";
 import { PeriodSelector, buildDashboardQuery } from "./PeriodSelector.tsx";
 import type { PeriodSelection } from "../lib/period-selection.ts";
 import { SiteSeoShell } from "./SiteSeoShell.tsx";
+import { Content } from "./Content.tsx";
 
 export type DashboardTab = Readonly<{ id: string; label: string }>;
 
@@ -21,6 +22,7 @@ export function dashboardTabs(profile: SiteProfile): DashboardTab[] {
   if (enabled(profile, "yandex_webmaster") || enabled(profile, "google_search_console")) tabs.push({ id: "search", label: "SEO" });
   if (enabled(profile, "yandex_webmaster_alice_manual")) tabs.push({ id: "alice", label: "ИИ-видимость и конкуренты" });
   if (enabled(profile, "yandex_wordstat")) tabs.push({ id: "wordstat", label: "Спрос Wordstat" });
+  if (enabled(profile, "yandex_metrika")) tabs.push({ id: "content", label: "Контент" });
   if (enabled(profile, "seo_os")) tabs.push({ id: "seo-os", label: "Работы и задачи" });
   tabs.push({ id: "sources", label: "Источники" });
   return tabs;
@@ -39,13 +41,14 @@ export function Dashboard({ profile, model, selection, publicationId, filters, a
   const tabs = dashboardTabs(profile);
   const activeTab = resolveActiveTab(tabs, requestedTab);
   const tabHref = (id: string) => `?${query}&tab=${encodeURIComponent(id)}`;
-  const toolbar = activeTab === "overview" || activeTab === "search" ? <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} activeTab={activeTab} availableWeeks={availableWeeks} /> : null;
+  const toolbar = activeTab === "overview" || activeTab === "search" || activeTab === "content" ? <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} activeTab={activeTab} availableWeeks={availableWeeks} /> : null;
   const exports = <p><a href={`/api/dashboard/${profile.slug}?${query}`}>JSON</a>{" · "}<a href={`/api/dashboard/${profile.slug}/excel?${query}`}>Excel</a>{" · "}<a href={`/api/dashboard/${profile.slug}/pdf?${query}`}>PDF</a></p>;
 
   let section;
   if (activeTab === "overview") section = <Overview id="overview" model={model} showGsc={gscEnabled} showMetrika={metrikaEnabled} showWebmaster={webmasterEnabled} />;
   else if (activeTab === "search") section = <Search id="search" profile={profile} model={model} showGsc={gscEnabled} showWebmaster={webmasterEnabled} comparison={webmasterComparison} comparisonKey={selection.traffic.comparison?.key} />;
   else if (activeTab === "wordstat") section = <Wordstat id="wordstat" meta={model.datasets.yandex_wordstat} data={model.wordstat} />;
+  else if (activeTab === "content") section = <Content id="content" profile={profile} data={model.metrika} />;
   else if (activeTab === "alice") section = <Alice id="alice" meta={model.datasets.yandex_webmaster_alice_manual} data={model.alice} />;
   else if (activeTab === "seo-os") section = <SeoOs id="seo-os" meta={model.datasets.seo_os} data={model.seoOs} />;
   else section = <Sources id="sources" profile={profile} model={model} />;

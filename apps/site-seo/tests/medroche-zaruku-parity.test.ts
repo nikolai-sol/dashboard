@@ -98,15 +98,42 @@ function model() {
   };
 }
 
-test("uses the approved six-item navigation order and client-facing labels", () => {
+test("places content after Wordstat and before work for a Metrika-enabled profile", () => {
   assert.deepEqual(dashboardTabs(profile).map(({ id, label }) => [id, label]), [
     ["overview", "Обзор"],
     ["search", "SEO"],
     ["alice", "ИИ-видимость и конкуренты"],
     ["wordstat", "Спрос Wordstat"],
+    ["content", "Контент"],
     ["seo-os", "Работы и задачи"],
     ["sources", "Источники"],
   ]);
+});
+
+test("content navigation is controlled only by the enabled Metrika profile source", () => {
+  const onlyMetrika = { ...profile, sources: [{ sourceKey: "yandex_metrika", mode: "automated", bindingId: "metrika", importCadence: [] }] } as SiteProfile;
+  const disabledMetrika = { ...onlyMetrika, sources: [{ ...onlyMetrika.sources[0]!, mode: "disabled" }] } as SiteProfile;
+  assert.equal(dashboardTabs(onlyMetrika).some(({ id }) => id === "content"), true);
+  assert.equal(dashboardTabs(disabledMetrika).some(({ id }) => id === "content"), false);
+});
+
+test("content renders the selected full-week toolbar", () => {
+  const selection = periods.createPeriodSelection({ primaryWeek: "2026-W36", comparisonWeek: "2026-W35", aliceMonth: "2026-09", gsc: w35 }, timezone);
+  const html = renderToStaticMarkup(createElement(Dashboard, {
+    profile,
+    model: { ...model(), metrika: {
+      ...missing, sourceKey: "yandex_metrika", collectionMode: "automated", state: "ready", completeness: "complete", period: w36,
+      kind: "metrika", summary: null, daily: [], topPages: [], contentPages: [],
+    } },
+    selection,
+    publicationId: null,
+    filters: {},
+    activeTab: "content",
+    availableWeeks: [w36, w35],
+  }));
+  assert.match(html, /<h1>Контент<\/h1>/);
+  assert.match(html, /Отчётная SEO-неделя/);
+  assert.match(html, /id="content"/);
 });
 
 test("renders the compact SEO-week selector from canonical available weeks", () => {

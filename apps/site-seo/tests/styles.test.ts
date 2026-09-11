@@ -130,3 +130,11 @@ test("SEO chart and sortable comparison table match the reference visual languag
   assert.match(css, /\.site-seo-sort-button\s*\{[^}]*width:\s*100%[^}]*justify-content:\s*center[^}]*gap:\s*2px[^}]*padding:\s*5px\s+2px[^}]*font-size:\s*0\.65rem[^}]*cursor:\s*pointer/);
   assert.match(css, /\.site-seo-sort-button\[data-active="true"\]\s*\{[^}]*color:\s*white/);
 });
+
+test("content tables stay bounded by the shared scrolling frame", () => {
+  const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
+
+  assert.match(css, /\.site-seo-table-frame\s*\{[^}]*max-width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/);
+  assert.match(css, /\.site-seo-content-table\s*\{[^}]*min-width:\s*860px[^}]*table-layout:\s*fixed/);
+  assert.match(css, /\.site-seo-content-table :is\(th, td\):first-child\s*\{[^}]*width:\s*36%/);
+});
