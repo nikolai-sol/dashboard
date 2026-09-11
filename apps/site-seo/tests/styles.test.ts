@@ -116,10 +116,13 @@ test("SEO chart and sortable comparison table match the reference visual languag
   const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
 
   assert.match(css, /\.site-seo-section-position-chart\s*\{[^}]*min-width:\s*0/);
+  assert.match(css, /\.site-seo-section-position-chart svg\s*\{[^}]*min-width:\s*0/);
   assert.match(css, /\.site-seo-section-position-line\s*\{[^}]*stroke:\s*var\(--site-seo-teal-600\)/);
   assert.match(css, /\.site-seo-query-comparison th\[data-source-group="google"\][^{]*\{[^}]*background:/);
   assert.match(css, /\.site-seo-query-comparison th\[data-source-group="yandex"\][^{]*\{[^}]*background:/);
   assert.match(css, /\.site-seo-query-comparison th\[data-source-group="seo-os"\][^{]*\{[^}]*background:/);
+  assert.match(css, /\.site-seo-table-bounded\.site-seo-query-comparison\s*\{[^}]*table-layout:\s*auto/);
+  assert.match(css, /\.site-seo-query-comparison :is\(thead, tbody\) tr > :first-child\s*\{[^}]*min-width:\s*200px/);
   assert.match(css, /\.site-seo-sort-button\s*\{[^}]*cursor:\s*pointer/);
   assert.match(css, /\.site-seo-sort-button\[data-active="true"\]\s*\{[^}]*color:\s*white/);
 });

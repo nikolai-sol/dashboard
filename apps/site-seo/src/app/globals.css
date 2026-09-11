@@ -946,7 +946,7 @@ body {
 .site-seo-section-position-chart svg {
   display: block;
   width: 100%;
-  min-width: 620px;
+  min-width: 0;
   height: auto;
 }
 
@@ -1121,6 +1121,15 @@ body {
 .site-seo-table-bounded {
   min-width: 640px;
   table-layout: fixed;
+}
+
+.site-seo-table-bounded.site-seo-query-comparison {
+  table-layout: auto;
+}
+
+.site-seo-query-comparison :is(thead, tbody) tr > :first-child {
+  width: 200px;
+  min-width: 200px;
 }
 
 .site-seo-url-cell,
