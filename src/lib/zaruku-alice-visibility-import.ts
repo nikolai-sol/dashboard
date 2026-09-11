@@ -21,10 +21,24 @@ export type AliceVisibilityImportInput = {
   accountId: string;
   portalDomain: string;
   period: string;
-  officialSovPct: number;
+  officialSovPct: number | null;
+  sourcePeriod?: AliceVisibilitySourcePeriod;
+  officialSovPoints?: AliceVisibilityOfficialSovPoint[];
   capturedAt: string;
   sourceFilename: string;
   featuredSites: string[];
+};
+
+export type AliceVisibilitySourcePeriod = {
+  kind: "calendar_month" | "custom";
+  from: string;
+  to: string;
+};
+
+export type AliceVisibilityOfficialSovPoint = {
+  from: string;
+  to: string;
+  value: number;
 };
 
 export type ParsedAliceVisibilityQuery = {
@@ -56,7 +70,12 @@ async function loadAliceWorkbook(buffer: Buffer): Promise<ExcelJS.Workbook> {
   return workbook;
 }
 
-export type ParsedAliceVisibilitySnapshot = AliceVisibilityImportInput & {
+export type ParsedAliceVisibilitySnapshot = Omit<
+  AliceVisibilityImportInput,
+  "sourcePeriod" | "officialSovPoints"
+> & {
+  sourcePeriod: AliceVisibilitySourcePeriod;
+  officialSovPoints: AliceVisibilityOfficialSovPoint[];
   sourceSha256: string;
   exportedQueryCount: number;
   portalPresentQueryCount: number;
@@ -65,6 +84,99 @@ export type ParsedAliceVisibilitySnapshot = AliceVisibilityImportInput & {
   sources: ParsedAliceVisibilitySource[];
   featured: Array<{ displayOrder: number; siteUrl: string; siteDomain: string }>;
 };
+
+function isoDate(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${label} must be an ISO date`);
+  }
+  const date = new Date(`${value}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    throw new Error(`${label} must be a valid ISO date`);
+  }
+  return value;
+}
+
+function calendarMonthPeriod(period: string): AliceVisibilitySourcePeriod {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+    throw new Error("period должен иметь формат YYYY-MM");
+  }
+  const [year, month] = period.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year!, month!, 0)).getUTCDate();
+  return {
+    kind: "calendar_month",
+    from: `${period}-01`,
+    to: `${period}-${String(lastDay).padStart(2, "0")}`,
+  };
+}
+
+export function normalizeAliceVisibilityPeriod(input: Pick<
+  AliceVisibilityImportInput,
+  "period" | "officialSovPct" | "sourcePeriod" | "officialSovPoints"
+>): {
+  sourcePeriod: AliceVisibilitySourcePeriod;
+  officialSovPoints: AliceVisibilityOfficialSovPoint[];
+} {
+  const monthlyPeriod = calendarMonthPeriod(input.period);
+  const sourcePeriod = input.sourcePeriod ?? monthlyPeriod;
+  if (
+    !sourcePeriod ||
+    (sourcePeriod.kind !== "calendar_month" && sourcePeriod.kind !== "custom")
+  ) {
+    throw new Error("source period kind must be calendar_month or custom");
+  }
+  const from = isoDate(sourcePeriod.from, "source period from");
+  const to = isoDate(sourcePeriod.to, "source period to");
+  if (from > to) throw new Error("source period from must not be after source period to");
+  const officialSovPoints = input.officialSovPoints ?? [];
+  if (!Array.isArray(officialSovPoints)) throw new Error("official weekly points must be an array");
+
+  if (sourcePeriod.kind === "calendar_month") {
+    if (from !== monthlyPeriod.from || to !== monthlyPeriod.to) {
+      throw new Error("calendar_month source period must match the exact reporting month");
+    }
+    if (officialSovPoints.length !== 0) {
+      throw new Error("calendar_month snapshot must not contain official weekly points");
+    }
+    if (typeof input.officialSovPct !== "number" || !Number.isFinite(input.officialSovPct) || input.officialSovPct < 0 || input.officialSovPct > 100) {
+      throw new Error("Доля запросов должна быть от 0 до 100");
+    }
+    return { sourcePeriod: { kind: "calendar_month", from, to }, officialSovPoints: [] };
+  }
+
+  if (input.officialSovPct !== null) {
+    throw new Error("custom snapshot official SOV must be null when weekly points are supplied");
+  }
+  if (officialSovPoints.length === 0) {
+    throw new Error("custom snapshot requires nonempty official weekly points");
+  }
+  let previousTo: string | null = null;
+  const normalizedPoints = officialSovPoints.map((point, index) => {
+    if (!point || typeof point !== "object") throw new Error(`official weekly point ${index + 1} must be an object`);
+    const pointFrom = isoDate(point.from, `official weekly point ${index + 1} from`);
+    const pointTo = isoDate(point.to, `official weekly point ${index + 1} to`);
+    if (pointFrom < from || pointTo > to) {
+      throw new Error(`official weekly point ${index + 1} must be inside the source period`);
+    }
+    const pointFromDate = new Date(`${pointFrom}T00:00:00Z`);
+    const pointToDate = new Date(`${pointTo}T00:00:00Z`);
+    const inclusiveDays = (pointToDate.getTime() - pointFromDate.getTime()) / 86_400_000 + 1;
+    if (pointFromDate.getUTCDay() !== 1 || pointToDate.getUTCDay() !== 0 || inclusiveDays !== 7) {
+      throw new Error(`official weekly point ${index + 1} must cover Monday through Sunday (7 days)`);
+    }
+    if (previousTo !== null && pointFrom <= previousTo) {
+      throw new Error("official weekly points must be ordered and nonoverlapping");
+    }
+    if (typeof point.value !== "number" || !Number.isFinite(point.value) || point.value < 0 || point.value > 100) {
+      throw new Error(`official weekly point ${index + 1} value must be between 0 and 100`);
+    }
+    previousTo = pointTo;
+    return { from: pointFrom, to: pointTo, value: point.value };
+  });
+  return {
+    sourcePeriod: { kind: "custom", from, to },
+    officialSovPoints: normalizedPoints,
+  };
+}
 
 export function isPortalHostname(hostname: string, portalDomain: string): boolean {
   return isHostnameWithinDomain(hostname, portalDomain);
@@ -101,10 +213,7 @@ export async function parseAliceVisibilityWorkbook(
   input: AliceVisibilityImportInput,
   dependencies: { loadWorkbook?: AliceWorkbookLoader } = {},
 ): Promise<ParsedAliceVisibilitySnapshot> {
-  if (!/^\d{4}-\d{2}$/.test(input.period)) throw new Error("Период должен иметь формат YYYY-MM");
-  if (!Number.isFinite(input.officialSovPct) || input.officialSovPct < 0 || input.officialSovPct > 100) {
-    throw new Error("Доля запросов должна быть от 0 до 100");
-  }
+  const normalizedPeriod = normalizeAliceVisibilityPeriod(input);
   if (input.featuredSites.length > MAX_ALICE_FEATURED_SITES) {
     throw new Error("Допускается не более 100 отмеченных сайтов");
   }
@@ -177,7 +286,7 @@ export async function parseAliceVisibilityWorkbook(
     const parsed = requiredUrl(siteUrl, `Отмеченный сайт ${index + 1}`);
     return { displayOrder: index + 1, siteUrl: parsed.toString(), siteDomain: parsed.hostname.toLowerCase().replace(/^www\./, "") };
   });
-  return { ...input, sourceSha256: createHash("sha256").update(buffer).digest("hex"), exportedQueryCount: queries.length, portalPresentQueryCount, samplePresencePct: queries.length ? portalPresentQueryCount / queries.length * 100 : 0, queries, sources, featured };
+  return { ...input, ...normalizedPeriod, sourceSha256: createHash("sha256").update(buffer).digest("hex"), exportedQueryCount: queries.length, portalPresentQueryCount, samplePresencePct: queries.length ? portalPresentQueryCount / queries.length * 100 : 0, queries, sources, featured };
 }
 
 export async function parseAliceVisibilityWorkbookFile(

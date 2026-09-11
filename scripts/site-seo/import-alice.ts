@@ -12,7 +12,10 @@ import {
   type SiteRegistration,
 } from "../../packages/site-seo-contract/src/index";
 import {
+  normalizeAliceVisibilityPeriod,
   parseAliceVisibilityWorkbookFile,
+  type AliceVisibilityOfficialSovPoint,
+  type AliceVisibilitySourcePeriod,
   type ParsedAliceVisibilitySnapshot,
 } from "../../src/lib/zaruku-alice-visibility-import";
 import {
@@ -36,7 +39,10 @@ type AliceAdapterManifest = {
   importManifest: ImportManifest;
   alice: {
     xlsxPath: string;
-    officialSovPct: number;
+    reportingMonth: string;
+    officialSovPct: number | null;
+    sourcePeriod: AliceVisibilitySourcePeriod;
+    officialSovPoints: AliceVisibilityOfficialSovPoint[];
     capturedAt: string;
     featuredSites: string[];
   };
@@ -47,7 +53,11 @@ export type AliceImportPreview = {
   accountId: string;
   domain: string;
   period: string;
-  officialSovPct: number;
+  sourcePeriodKind: "calendar_month" | "custom";
+  sourcePeriodFrom: string;
+  sourcePeriodTo: string;
+  officialSovPct: number | null;
+  officialSovPointCount: number;
   samplePresencePct: number;
   exportedQueryCount: number;
   portalPresentQueryCount: number;
@@ -130,20 +140,66 @@ function parseAdapterManifest(value: unknown): AliceAdapterManifest {
   const alice = record(input.alice, "alice");
   const xlsxPath = String(alice.xlsxPath ?? "").trim();
   const capturedAt = String(alice.capturedAt ?? "").trim();
-  const officialSovPct = Number(alice.officialSovPct);
   if (!path.isAbsolute(xlsxPath)) throw new Error("alice.xlsxPath must be absolute");
   if (!capturedAt) throw new Error("alice.capturedAt is required");
-  if (!Number.isFinite(officialSovPct) || officialSovPct < 0 || officialSovPct > 100) {
-    throw new Error("alice.officialSovPct must be between 0 and 100");
-  }
   if (!Array.isArray(alice.featuredSites)) throw new Error("alice.featuredSites must be an array");
+  if (importManifest.period.kind !== "calendar_month" && importManifest.period.kind !== "custom") {
+    throw new Error("Alice import period kind must be calendar_month or custom");
+  }
+  const reportingMonth = importManifest.period.kind === "custom"
+    ? alice.reportingMonth
+    : importManifest.period.key;
+  if (typeof reportingMonth !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(reportingMonth)) {
+    throw new Error("alice.reportingMonth must be YYYY-MM for a custom period");
+  }
+  let officialSovPct: number | null;
+  let officialSovPoints: AliceVisibilityOfficialSovPoint[];
+  if (importManifest.period.kind === "custom") {
+    if (alice.officialSovPct !== null) {
+      throw new Error("alice.officialSovPct must be null for a custom period");
+    }
+    if (!Array.isArray(alice.officialSovPoints)) {
+      throw new Error("alice.officialSovPoints must be an array for a custom period");
+    }
+    officialSovPct = null;
+    officialSovPoints = alice.officialSovPoints.map((rawPoint, index) => {
+      const point = record(rawPoint, `alice.officialSovPoints[${index}]`);
+      if (typeof point.from !== "string" || typeof point.to !== "string" || typeof point.value !== "number") {
+        throw new Error(`alice.officialSovPoints[${index}] requires ISO from/to and numeric value`);
+      }
+      return { from: point.from, to: point.to, value: point.value };
+    });
+  } else {
+    if (typeof alice.officialSovPct !== "number") {
+      throw new Error("alice.officialSovPct must be between 0 and 100");
+    }
+    if (alice.officialSovPoints !== undefined && (!Array.isArray(alice.officialSovPoints) || alice.officialSovPoints.length > 0)) {
+      throw new Error("calendar-month Alice import must not contain officialSovPoints");
+    }
+    officialSovPct = alice.officialSovPct;
+    officialSovPoints = [];
+  }
+  const sourcePeriod: AliceVisibilitySourcePeriod = {
+    kind: importManifest.period.kind,
+    from: importManifest.period.from,
+    to: importManifest.period.to,
+  };
+  const normalized = normalizeAliceVisibilityPeriod({
+    period: reportingMonth,
+    officialSovPct,
+    sourcePeriod,
+    officialSovPoints,
+  });
   return {
     registry,
     importManifest,
     alice: {
       xlsxPath,
       capturedAt,
+      reportingMonth,
       officialSovPct,
+      sourcePeriod: normalized.sourcePeriod,
+      officialSovPoints: normalized.officialSovPoints,
       featuredSites: alice.featuredSites.map(String),
     },
   };
@@ -226,11 +282,17 @@ export function createAlicePreview(
 ): AliceImportPreview {
   const input = assertAliceManifestBinding(value, snapshot.accountId, snapshot.portalDomain);
   const manifest = input.importManifest;
-  if (manifest.period.kind !== "calendar_month" || manifest.period.key !== snapshot.period) {
+  if (input.alice.reportingMonth !== snapshot.period) {
     throw new Error("Alice snapshot month does not match the manifest period");
   }
   if (snapshot.officialSovPct !== input.alice.officialSovPct) {
     throw new Error("official SOV does not match the manifest");
+  }
+  if (
+    stableJson(snapshot.sourcePeriod) !== stableJson(input.alice.sourcePeriod) ||
+    stableJson(snapshot.officialSovPoints) !== stableJson(input.alice.officialSovPoints)
+  ) {
+    throw new Error("Alice exact source period or official weekly points do not match the manifest");
   }
   if (
     manifest.sourceFiles.length !== 1 ||
@@ -247,6 +309,10 @@ export function createAlicePreview(
         filters: manifest.filters,
         adapterVersion: manifest.adapterVersion,
         sourceSha256: snapshot.sourceSha256,
+        reportingMonth: snapshot.period,
+        sourcePeriod: snapshot.sourcePeriod,
+        officialSovPct: snapshot.officialSovPct,
+        officialSovPoints: snapshot.officialSovPoints,
       }),
     )
     .digest("hex");
@@ -255,7 +321,11 @@ export function createAlicePreview(
     accountId: snapshot.accountId,
     domain: snapshot.portalDomain,
     period: snapshot.period,
+    sourcePeriodKind: snapshot.sourcePeriod.kind,
+    sourcePeriodFrom: snapshot.sourcePeriod.from,
+    sourcePeriodTo: snapshot.sourcePeriod.to,
     officialSovPct: snapshot.officialSovPct,
+    officialSovPointCount: snapshot.officialSovPoints.length,
     samplePresencePct: snapshot.samplePresencePct,
     exportedQueryCount: snapshot.exportedQueryCount,
     portalPresentQueryCount: snapshot.portalPresentQueryCount,
@@ -296,8 +366,10 @@ export async function runAliceImportAdapterCli(
   const snapshot = await dependencies.parseWorkbook(input.alice.xlsxPath, {
     accountId: args.accountId,
     portalDomain: normalizedDomain(args.domain),
-    period: input.importManifest.period.key,
+    period: input.alice.reportingMonth,
     officialSovPct: input.alice.officialSovPct,
+    sourcePeriod: input.alice.sourcePeriod,
+    officialSovPoints: input.alice.officialSovPoints,
     capturedAt: input.alice.capturedAt,
     sourceFilename: path.basename(input.alice.xlsxPath),
     featuredSites: input.alice.featuredSites,
@@ -333,6 +405,9 @@ export async function runAliceImportAdapterCli(
           preview_id: preview.previewId,
           owner_decision_id: ownerDecisionId ?? null,
           scope: input.importManifest.scope,
+          reporting_month: snapshot.period,
+          source_period: snapshot.sourcePeriod,
+          official_sov_points: snapshot.officialSovPoints,
         },
       },
     });

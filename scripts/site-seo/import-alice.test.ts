@@ -91,12 +91,35 @@ function manifest(options: { clientId?: string; accountId?: string; month?: stri
   };
 }
 
+type MutableAliceManifest = Omit<ReturnType<typeof manifest>, "importManifest" | "alice"> & {
+  importManifest: Omit<ReturnType<typeof manifest>["importManifest"], "period"> & {
+    period: {
+      kind: "calendar_month" | "custom";
+      from: string;
+      to: string;
+      key: string;
+      sourceTimezone: string;
+    };
+  };
+  alice: Omit<ReturnType<typeof manifest>["alice"], "officialSovPct"> & {
+    reportingMonth?: string;
+    officialSovPct: number | null;
+    officialSovPoints?: Array<{ from: string; to: string; value: number | null }>;
+  };
+};
+
+function mutableManifest(): MutableAliceManifest {
+  return structuredClone(manifest()) as unknown as MutableAliceManifest;
+}
+
 function snapshot(overrides: Record<string, unknown> = {}): ParsedAliceVisibilitySnapshot {
   return {
     accountId: "fixture-alice-account",
     portalDomain: "fixture.example",
     period: "2026-08",
     officialSovPct: 17.5,
+    sourcePeriod: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31" },
+    officialSovPoints: [],
     capturedAt: "2026-08-31T12:00:00+02:00",
     sourceFilename: "alice.xlsx",
     featuredSites: [],
@@ -180,9 +203,106 @@ test("preview IDs keep clients and months independent", () => {
   const secondManifest = manifest({ clientId: "fixture-two", accountId: "fixture-two-account", month: "2026-09" });
   const second = createAlicePreview(
     secondManifest,
-    snapshot({ accountId: "fixture-two-account", period: "2026-09", capturedAt: "2026-09-30T12:00:00+02:00" }),
+    snapshot({
+      accountId: "fixture-two-account",
+      period: "2026-09",
+      sourcePeriod: { kind: "calendar_month", from: "2026-09-01", to: "2026-09-30" },
+      capturedAt: "2026-09-30T12:00:00+02:00",
+    }),
   );
   assert.notEqual(first.previewId, second.previewId);
+});
+
+test("custom manifest keeps reporting month separate and binds exact period and weekly points", async () => {
+  const input = mutableManifest();
+  input.importManifest.period = {
+    kind: "custom",
+    from: "2026-07-27",
+    to: "2026-08-09",
+    key: "2026-07-27--2026-08-09",
+    sourceTimezone: "Europe/Vienna",
+  };
+  input.alice.reportingMonth = "2026-08";
+  input.alice.officialSovPct = null;
+  input.alice.officialSovPoints = [
+    { from: "2026-07-27", to: "2026-08-02", value: 19.25 },
+    { from: "2026-08-03", to: "2026-08-09", value: 21.5 },
+  ];
+  const prepared = snapshot({
+    officialSovPct: null,
+    sourcePeriod: { kind: "custom", from: "2026-07-27", to: "2026-08-09" },
+    officialSovPoints: input.alice.officialSovPoints,
+  });
+  const preview = createAlicePreview(input, prepared);
+  assert.equal(preview.period, "2026-08");
+  assert.equal(preview.sourcePeriodKind, "custom");
+  assert.equal(preview.sourcePeriodFrom, "2026-07-27");
+  assert.equal(preview.sourcePeriodTo, "2026-08-09");
+  assert.equal(preview.officialSovPct, null);
+  assert.equal(preview.officialSovPointCount, 2);
+
+  const changed = structuredClone(input);
+  changed.alice.officialSovPoints![0]!.value = 19.26;
+  const changedSnapshot = structuredClone(prepared);
+  changedSnapshot.officialSovPoints[0].value = 19.26;
+  assert.notEqual(preview.previewId, createAlicePreview(changed, changedSnapshot).previewId);
+
+  let parserInput: unknown;
+  const dependencies: AliceAdapterDependencies = {
+    readManifest: async () => input,
+    parseWorkbook: async (_path, value) => {
+      parserInput = value;
+      return prepared;
+    },
+    connect: async () => { throw new Error("preview must not connect"); },
+    persist: async () => { throw new Error("preview must not persist"); },
+    write: () => undefined,
+  };
+  await runAliceImportAdapterCli([
+    "--manifest", "/tmp/manifest.json", "--account-id", "fixture-alice-account",
+    "--domain", "fixture.example", "--preview",
+  ], dependencies);
+  assert.deepEqual(parserInput, {
+    accountId: "fixture-alice-account",
+    portalDomain: "fixture.example",
+    period: "2026-08",
+    officialSovPct: null,
+    sourcePeriod: { kind: "custom", from: "2026-07-27", to: "2026-08-09" },
+    officialSovPoints: input.alice.officialSovPoints,
+    capturedAt: "2026-08-31T12:00:00+02:00",
+    sourceFilename: "alice.xlsx",
+    featuredSites: [],
+  });
+});
+
+test("custom manifest requires explicit null official SOV, reporting month, and non-null weekly values", () => {
+  const base = mutableManifest();
+  base.importManifest.period = {
+    kind: "custom",
+    from: "2026-07-27",
+    to: "2026-08-02",
+    key: "custom",
+    sourceTimezone: "Europe/Vienna",
+  };
+  base.alice.reportingMonth = "2026-08";
+  base.alice.officialSovPct = null;
+  base.alice.officialSovPoints = [{ from: "2026-07-27", to: "2026-08-02", value: 19.25 }];
+  assert.doesNotThrow(() => assertAliceManifestBinding(base, "fixture-alice-account", "fixture.example"));
+
+  const mutations: Array<(value: MutableAliceManifest) => void> = [
+    (value) => { delete value.alice.reportingMonth; },
+    (value) => { value.alice.officialSovPct = 0; },
+    (value) => { value.alice.officialSovPoints = []; },
+    (value) => { value.alice.officialSovPoints![0]!.value = null; },
+  ];
+  for (const mutate of mutations) {
+    const invalid = structuredClone(base);
+    mutate(invalid);
+    assert.throws(
+      () => assertAliceManifestBinding(invalid, "fixture-alice-account", "fixture.example"),
+      /reportingMonth|officialSovPct|officialSovPoints|weekly|value/i,
+    );
+  }
 });
 
 test("publish uses the existing writer once for the whole package and is idempotent", async () => {
@@ -191,7 +311,7 @@ test("publish uses the existing writer once for the whole package and is idempot
   const prepared = snapshot();
   const preview = createAlicePreview(input, prepared);
   const dependencies: AliceAdapterDependencies = {
-    readManifest: async (_path: string) => input,
+    readManifest: async () => input,
     parseWorkbook: async () => prepared,
     connect: async () => ({ end: async () => undefined }),
     persist: async (_connection: unknown, value: unknown) => {
