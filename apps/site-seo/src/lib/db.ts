@@ -726,6 +726,7 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalRea
                AND fact.ingestion_run_id <=> selected.ingestion_run_id
              WHERE fact.source_key = ? AND fact.analytics_account_id = ?
                AND fact.device_type = 'all'
+               AND fact.request_kind = 'popular'
              ORDER BY fact.count DESC, fact.query_text ASC
              LIMIT 20`, params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to, query.scope.sourceKey, query.scope.analyticsAccountId],
     }),

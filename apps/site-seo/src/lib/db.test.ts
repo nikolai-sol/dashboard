@@ -188,6 +188,7 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   assert.match(queryCall!.sql, /window_to >= \?/i);
   assert.match(queryCall!.sql, /ORDER BY window_to DESC/i);
   assert.match(queryCall!.sql, /snapshot_date DESC, ingestion_run_id DESC, registry_version DESC/i);
+  assert.match(queryCall!.sql, /fact\.request_kind = 'popular'/i);
   assert.doesNotMatch(queryCall!.sql, /SUM\(count\)/i);
   assert.deepEqual(queryCall!.params, ["yandex_wordstat", "wordstat-account", "2026-08-17", "2026-08-23", "yandex_wordstat", "wordstat-account"]);
   assert.deepEqual(
