@@ -542,6 +542,54 @@ body {
   line-height: 1.5;
 }
 
+.site-seo-breakdown-list {
+  display: grid;
+  gap: 13px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-seo-breakdown-list li {
+  display: grid;
+  gap: 5px;
+}
+
+.site-seo-breakdown-list li > div {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--site-seo-slate-700);
+  font-size: 0.8125rem;
+}
+
+.site-seo-breakdown-list li > div span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-seo-breakdown-list small {
+  color: var(--site-seo-slate-500);
+  font-size: 0.7rem;
+}
+
+.site-seo-breakdown-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--site-seo-slate-100);
+}
+
+.site-seo-breakdown-track > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: var(--site-seo-teal-600);
+}
+
 .site-seo-trend {
   display: grid;
   height: 100%;

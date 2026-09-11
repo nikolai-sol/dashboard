@@ -92,3 +92,11 @@ test("overview uses the accepted Zaruku panel geometry", () => {
   assert.match(css, /data-panel-id="overview\.search_engines"[^]*grid-column:\s*span\s*6/);
   assert.match(css, /data-panel-id="overview\.organic_search"[^]*grid-column:\s*1\s*\/\s*-1/);
 });
+
+test("overview canonical breakdowns render as compact factual bars", () => {
+  const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
+
+  assert.match(css, /\.site-seo-breakdown-list\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /\.site-seo-breakdown-track\s*\{[^}]*background:/);
+  assert.match(css, /\.site-seo-breakdown-track\s*>\s*span\s*\{[^}]*background:\s*var\(--site-seo-teal-600\)/);
+});

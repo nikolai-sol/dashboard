@@ -148,6 +148,15 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
     metrika: {
       ...ready, sourceKey: "yandex_metrika" as const, collectionMode: "automated" as const,
       kind: "metrika" as const, summary: { visits: 20, pageviews: 30 },
+      trafficHealth: { visits: 100, pageviews: 160, bounceRate: 17.5, avgVisitDurationSeconds: 95, pageDepth: 2.4 },
+      channels: [
+        { id: null, label: "Search engine traffic", visits: 60, pageviews: 100, bounceRate: 10, avgVisitDurationSeconds: 110, pageDepth: 2.8 },
+        { id: null, label: "Direct traffic", visits: 40, pageviews: 60, bounceRate: 28.75, avgVisitDurationSeconds: 72.5, pageDepth: 1.8 },
+      ],
+      searchEngines: [
+        { id: "google", label: "Google, search results", visits: 12, pageviews: 18, bounceRate: 8, avgVisitDurationSeconds: 120, pageDepth: 2.5 },
+        { id: "yandex", label: "Yandex, search results", visits: 8, pageviews: 12, bounceRate: 15, avgVisitDurationSeconds: 90, pageDepth: 2 },
+      ],
       daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [],
     },
     webmaster: {
@@ -173,13 +182,15 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(html, /Каналы привлечения/);
   assert.match(html, /Поисковые системы/);
   assert.match(html, /Органический поиск/);
-  assert.match(html, /Визиты[^]*20/);
+  assert.match(html, /Поисковые визиты[^]*20/);
+  assert.match(html, /Здоровье трафика[^]*Визиты[^]*100[^]*Просмотры[^]*160[^]*Отказы[^]*17,5%[^]*Ср\. время[^]*1:35[^]*Глубина[^]*2,4/);
+  assert.match(html, /Каналы привлечения[^]*Поиск[^]*60[^]*Прямые заходы[^]*40/);
+  assert.match(html, /Поисковые системы[^]*Google, search results[^]*12[^]*Yandex, search results[^]*8/);
   assert.match(html, /Google[^]*2/);
   assert.match(html, /Яндекс[^]*5/);
-  assert.match(html, /Пользователи за день[^]*3/);
   assert.match(html, /Яндекс[^]*данные неполные/);
   assert.match(html, /Google[^]*данные готовы/);
-  assert.doesNotMatch(html, /Пользователи за период/);
+  assert.doesNotMatch(html, /Пользователи за день|Пользователи за период|Доля России/);
 });
 
 test("overview keeps the accepted layout while unavailable metrics stay explicit", () => {
@@ -188,7 +199,8 @@ test("overview keeps the accepted layout while unavailable metrics stay explicit
   const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true }));
 
   assert.equal(html.match(/data-panel-id="overview\./g)?.length, 5);
-  assert.match(html, /Разбивка по каналам пока не опубликована/);
+  assert.match(html, /Нет опубликованных строк каналов за выбранный период/);
+  assert.match(html, /Нет опубликованных строк поисковых систем за выбранный период/);
   assert.match(html, /Динамика: данные не опубликованы/);
   assert.match(html, /data-state="missing"/);
   assert.doesNotMatch(html, />0<\/span>/);

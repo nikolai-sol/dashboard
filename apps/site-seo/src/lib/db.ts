@@ -23,10 +23,26 @@ export type CanonicalReadQuery = Readonly<{
   filters: Readonly<Record<string, string>>;
 }>;
 
+export type MetrikaTrafficMetrics = Readonly<{
+  visits: number;
+  pageviews: number;
+  bounceRate: number | null;
+  avgVisitDurationSeconds: number | null;
+  pageDepth: number | null;
+}>;
+
+export type MetrikaBreakdownRow = MetrikaTrafficMetrics & Readonly<{
+  id: string | null;
+  label: string;
+}>;
+
 export type MetrikaCanonicalData = DatasetMeta & Readonly<{
   kind: "metrika";
   /** Users are retained at their canonical daily grain and never period-summed. */
   summary: Readonly<{ visits: number; pageviews: number }> | null;
+  trafficHealth?: MetrikaTrafficMetrics | null;
+  channels?: readonly MetrikaBreakdownRow[];
+  searchEngines?: readonly MetrikaBreakdownRow[];
   daily: readonly Readonly<{ date: string; visits: number; pageviews: number; users: number | null }>[];
   topPages: readonly Readonly<{ page: string; visits: number; pageviews: number }>[];
 }>;
@@ -309,6 +325,33 @@ async function readMetrikaMeta(database: CanonicalDatabase, query: CanonicalRead
 type MetrikaSummaryRow = Readonly<{ visits?: unknown; pageviews?: unknown }>;
 type MetrikaDailyRow = Readonly<{ report_date: unknown; visits?: unknown; pageviews?: unknown; users?: unknown }>;
 type MetrikaPageRow = Readonly<{ page_url: unknown; visits?: unknown; pageviews?: unknown }>;
+type MetrikaTrafficRow = Readonly<{
+  id?: unknown;
+  label?: unknown;
+  visits?: unknown;
+  pageviews?: unknown;
+  bounce_rate?: unknown;
+  avg_visit_duration_seconds?: unknown;
+  page_depth?: unknown;
+}>;
+
+function metrikaTrafficMetrics(row: MetrikaTrafficRow): MetrikaTrafficMetrics {
+  return {
+    visits: numeric(row.visits),
+    pageviews: numeric(row.pageviews),
+    bounceRate: nullableNumeric(row.bounce_rate),
+    avgVisitDurationSeconds: nullableNumeric(row.avg_visit_duration_seconds),
+    pageDepth: nullableNumeric(row.page_depth),
+  };
+}
+
+function metrikaBreakdownRow(row: MetrikaTrafficRow): MetrikaBreakdownRow {
+  return {
+    id: row.id === null || row.id === undefined ? null : String(row.id),
+    label: String(row.label ?? ""),
+    ...metrikaTrafficMetrics(row),
+  };
+}
 
 /**
  * The Metrika fact schema is account-grained (there is no resource_id column).
@@ -320,7 +363,7 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalRead
   const meta = await readMetrikaMeta(database, query);
   if (meta.state === "missing") return meta;
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to];
-  const [summaryRows, dailyRows, pageRows] = await Promise.all([
+  const [summaryRows, dailyRows, pageRows, trafficHealthRows, channelRows, searchEngineRows] = await Promise.all([
     rowsFor<MetrikaSummaryRow>(database, {
       sql: `/* site-seo:metrika-summary */
             SELECT SUM(COALESCE(visits, 0)) AS visits,
@@ -360,13 +403,76 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalRead
              LIMIT 20`,
       params,
     }),
+    rowsFor<MetrikaTrafficRow>(database, {
+      sql: `/* site-seo:metrika-traffic-health */
+            SELECT SUM(COALESCE(visits, 0)) AS visits,
+                   SUM(COALESCE(pageviews, 0)) AS pageviews,
+                   SUM(bounce_rate * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN bounce_rate IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS bounce_rate,
+                   SUM(avg_visit_duration_seconds * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN avg_visit_duration_seconds IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS avg_visit_duration_seconds,
+                   SUM(page_depth * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN page_depth IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS page_depth
+              FROM canonical_fact_site_analytics_daily
+             WHERE source_key = ? AND analytics_account_id = ?
+               AND analytics_scope = 'other'
+               AND report_date BETWEEN ? AND ?`,
+      params,
+    }),
+    rowsFor<MetrikaTrafficRow>(database, {
+      sql: `/* site-seo:metrika-channels */
+            SELECT NULL AS id,
+                   COALESCE(traffic_source, 'Unknown') AS label,
+                   SUM(COALESCE(visits, 0)) AS visits,
+                   SUM(COALESCE(pageviews, 0)) AS pageviews,
+                   SUM(bounce_rate * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN bounce_rate IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS bounce_rate,
+                   SUM(avg_visit_duration_seconds * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN avg_visit_duration_seconds IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS avg_visit_duration_seconds,
+                   SUM(page_depth * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN page_depth IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS page_depth
+              FROM canonical_fact_site_analytics_daily
+             WHERE source_key = ? AND analytics_account_id = ?
+               AND analytics_scope = 'other'
+               AND report_date BETWEEN ? AND ?
+             GROUP BY COALESCE(traffic_source, 'Unknown')
+            HAVING SUM(COALESCE(visits, 0)) > 0 OR SUM(COALESCE(pageviews, 0)) > 0
+             ORDER BY visits DESC, pageviews DESC, label ASC`,
+      params,
+    }),
+    rowsFor<MetrikaTrafficRow>(database, {
+      sql: `/* site-seo:metrika-search-engines */
+            SELECT dimension_1_id AS id,
+                   COALESCE(dimension_1_value, dimension_1_id, 'Unknown') AS label,
+                   SUM(COALESCE(visits, 0)) AS visits,
+                   SUM(COALESCE(pageviews, 0)) AS pageviews,
+                   SUM(bounce_rate * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN bounce_rate IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS bounce_rate,
+                   SUM(avg_visit_duration_seconds * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN avg_visit_duration_seconds IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS avg_visit_duration_seconds,
+                   SUM(page_depth * COALESCE(visits, 0)) /
+                     NULLIF(SUM(CASE WHEN page_depth IS NOT NULL THEN COALESCE(visits, 0) ELSE 0 END), 0) AS page_depth
+              FROM canonical_fact_metrika_breakdowns_daily
+             WHERE source_key = ? AND analytics_account_id = ?
+               AND report_key = 'search_engines' AND segment_key = 'russia' AND row_kind = 'detail'
+               AND report_date BETWEEN ? AND ?
+             GROUP BY dimension_1_id, dimension_1_value
+            HAVING SUM(COALESCE(visits, 0)) > 0 OR SUM(COALESCE(pageviews, 0)) > 0
+             ORDER BY visits DESC, pageviews DESC, label ASC`,
+      params,
+    }),
   ]);
   const summaryRow = summaryRows[0];
   const hasSummary = summaryRow !== undefined && (summaryRow.visits !== null || summaryRow.pageviews !== null);
+  const trafficHealthRow = trafficHealthRows[0];
+  const hasTrafficHealth = trafficHealthRow !== undefined && (trafficHealthRow.visits !== null || trafficHealthRow.pageviews !== null);
   return {
     ...meta,
     kind: "metrika",
     summary: hasSummary ? { visits: numeric(summaryRow?.visits), pageviews: numeric(summaryRow?.pageviews) } : null,
+    trafficHealth: hasTrafficHealth ? metrikaTrafficMetrics(trafficHealthRow) : null,
+    channels: channelRows.map(metrikaBreakdownRow),
+    searchEngines: searchEngineRows.map(metrikaBreakdownRow),
     daily: dailyRows.map((row) => ({ date: String(row.report_date), visits: numeric(row.visits), pageviews: numeric(row.pageviews), users: nullableNumeric(row.users) })),
     topPages: pageRows.map((row) => ({ page: String(row.page_url), visits: numeric(row.visits), pageviews: numeric(row.pageviews) })),
   };

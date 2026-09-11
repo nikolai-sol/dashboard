@@ -1,5 +1,6 @@
 import type { DatasetMeta } from "@reportingdash/site-seo-contract";
 import type { ReactNode } from "react";
+import type { MetrikaBreakdownRow } from "../lib/db.ts";
 import type { DashboardReadModel } from "../lib/read-model.ts";
 
 type SourceState = DatasetMeta["state"];
@@ -11,6 +12,16 @@ function value(metric: number | null | undefined): string {
 
 function percent(metric: number | null | undefined): string {
   return metric == null || !Number.isFinite(metric) ? "—" : `${metric.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`;
+}
+
+function decimal(metric: number | null | undefined): string {
+  return metric == null || !Number.isFinite(metric) ? "—" : metric.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
+}
+
+function duration(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "—";
+  const total = Math.max(0, Math.round(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function sourceState(meta: DatasetMeta | null | undefined): SourceState {
@@ -82,6 +93,41 @@ function EmptyOverviewState({ children }: Readonly<{ children: ReactNode }>) {
   return <div className="site-seo-overview-empty">{children}</div>;
 }
 
+const trafficSourceLabels: Readonly<Record<string, string>> = {
+  "Search engine traffic": "Поиск",
+  "Direct traffic": "Прямые заходы",
+  "Link traffic": "Переходы по ссылкам",
+  "Social network traffic": "Соцсети",
+  "Messenger traffic": "Мессенджеры",
+  "Mailing traffic": "Рассылки",
+  "Ad traffic": "Реклама",
+  "Recommendation system traffic": "Рекомендации",
+  "Internal traffic": "Внутренний трафик",
+  "Cached page traffic": "Кешированные страницы",
+  Unknown: "Неизвестно",
+};
+
+function BreakdownList({ rows, translateTrafficSources = false }: Readonly<{
+  rows: readonly MetrikaBreakdownRow[];
+  translateTrafficSources?: boolean;
+}>) {
+  const maxVisits = Math.max(1, ...rows.map((row) => row.visits));
+  return (
+    <ol className="site-seo-breakdown-list">
+      {rows.map((row, index) => <li key={`${row.id ?? row.label}:${index}`}>
+        <div><span>{translateTrafficSources ? trafficSourceLabels[row.label] ?? row.label : row.label}</span><strong>{value(row.visits)}</strong></div>
+        <span className="site-seo-breakdown-track" aria-hidden="true"><span style={{ width: `${row.visits / maxVisits * 100}%` }} /></span>
+        <small>визиты · просмотры {value(row.pageviews)}</small>
+      </li>)}
+    </ol>
+  );
+}
+
+function breakdownState(rows: readonly MetrikaBreakdownRow[], metrikaState: SourceState): SourceState {
+  if (rows.length > 0) return metrikaState;
+  return metrikaState === "complete_empty" ? "complete_empty" : "missing";
+}
+
 type TrendRow = Readonly<{ date: string; visits: number }>;
 
 function SearchTrend({ rows, state }: Readonly<{ rows: readonly TrendRow[]; state: SourceState }>) {
@@ -129,7 +175,11 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
   const gscMeta = showGsc ? model.gsc.meta : null;
   const webmasterMeta = showWebmaster ? model.webmaster ?? model.datasets.yandex_webmaster : null;
   const metrikaState = sourceState(metrikaMeta);
-  const latestUsers = [...(model.metrika?.daily ?? [])].reverse().find((row) => row.users != null) ?? null;
+  const trafficHealth = model.metrika?.trafficHealth;
+  const channels = model.metrika?.channels ?? [];
+  const searchEngines = model.metrika?.searchEngines ?? [];
+  const channelsState = breakdownState(channels, metrikaState);
+  const searchEnginesState = breakdownState(searchEngines, metrikaState);
 
   return (
     <div id={id} className="site-seo-overview-grid">
@@ -145,26 +195,30 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
       </OverviewSlot>
 
       <OverviewSlot id="traffic_health">
-        <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Поисковый трафик в России" : "Источник отключён"} source="Метрика" state={metrikaState} statusText={showMetrika ? undefined : "источник отключён"}>
+        <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={metrikaState} statusText={showMetrika ? undefined : "источник отключён"}>
           <div className="site-seo-health-grid">
-            {showMetrika ? <HealthKpi label="Визиты" metric={value(model.metrika?.summary?.visits)} detail={sourceDetail("поисковые · Россия", metrikaMeta)} /> : null}
-            {showMetrika ? <HealthKpi label="Просмотры" metric={value(model.metrika?.summary?.pageviews)} detail={sourceDetail("поисковые · Россия", metrikaMeta)} /> : null}
-            {showMetrika ? <HealthKpi label="Пользователи за день" metric={value(latestUsers?.users)} detail={[latestUsers?.date, stateCopy(metrikaState)].filter(Boolean).join(" · ")} /> : null}
-            {showGsc ? <HealthKpi label="CTR Google" metric={percent(model.gsc.summary?.ctrPct)} detail={sourceDetail("GSC", gscMeta)} /> : null}
-            {showWebmaster ? <HealthKpi label="CTR Яндекс" metric={percent(model.webmaster?.summary?.ctrPct)} detail={sourceDetail("Вебмастер", webmasterMeta)} /> : null}
+            {showMetrika ? <HealthKpi label="Визиты" metric={value(trafficHealth?.visits)} detail={sourceDetail("весь трафик", metrikaMeta)} /> : null}
+            {showMetrika ? <HealthKpi label="Просмотры" metric={value(trafficHealth?.pageviews)} detail={sourceDetail("весь трафик", metrikaMeta)} /> : null}
+            {showMetrika ? <HealthKpi label="Отказы" metric={percent(trafficHealth?.bounceRate)} /> : null}
+            {showMetrika ? <HealthKpi label="Ср. время" metric={duration(trafficHealth?.avgVisitDurationSeconds)} /> : null}
+            {showMetrika ? <HealthKpi label="Глубина" metric={decimal(trafficHealth?.pageDepth)} /> : null}
           </div>
         </OverviewPanel>
       </OverviewSlot>
 
       <OverviewSlot id="channels">
-        <OverviewPanel title="Каналы привлечения" source="Метрика" state="missing" statusText={showMetrika ? "разбивка не опубликована" : "источник отключён"}>
-          <EmptyOverviewState>{showMetrika ? "Разбивка по каналам пока не опубликована в универсальном наборе данных." : "Источник Метрика отключён."}</EmptyOverviewState>
+        <OverviewPanel title="Каналы привлечения" source="Метрика" state={showMetrika ? channelsState : "missing"} statusText={showMetrika && channels.length === 0 ? "нет строк за период" : showMetrika ? undefined : "источник отключён"}>
+          {!showMetrika ? <EmptyOverviewState>Источник Метрика отключён.</EmptyOverviewState>
+            : channels.length > 0 ? <BreakdownList rows={channels} translateTrafficSources />
+              : <EmptyOverviewState>Нет опубликованных строк каналов за выбранный период.</EmptyOverviewState>}
         </OverviewPanel>
       </OverviewSlot>
 
       <OverviewSlot id="search_engines">
-        <OverviewPanel title="Поисковые системы" subtitle="Распределение визитов" source="Метрика" state="missing" statusText={showMetrika ? "разбивка не опубликована" : "источник отключён"}>
-          <EmptyOverviewState>{showMetrika ? "Разбивка по поисковым системам пока не опубликована." : "Источник Метрика отключён."}</EmptyOverviewState>
+        <OverviewPanel title="Поисковые системы" subtitle="Поисковые визиты · Россия" source="Метрика" state={showMetrika ? searchEnginesState : "missing"} statusText={showMetrika && searchEngines.length === 0 ? "нет строк за период" : showMetrika ? undefined : "источник отключён"}>
+          {!showMetrika ? <EmptyOverviewState>Источник Метрика отключён.</EmptyOverviewState>
+            : searchEngines.length > 0 ? <BreakdownList rows={searchEngines} />
+              : <EmptyOverviewState>Нет опубликованных строк поисковых систем за выбранный период.</EmptyOverviewState>}
         </OverviewPanel>
       </OverviewSlot>
 

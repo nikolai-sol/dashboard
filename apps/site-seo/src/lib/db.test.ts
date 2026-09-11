@@ -96,7 +96,7 @@ test("Metrika reads exact account coverage from canonical MySQL", async () => {
   assert.equal("state" in result && result.state, "ready");
   assert.equal("completeness" in result && result.completeness, "complete");
   assert.equal("importId" in result && result.importId, "81");
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 7);
   assert.match(calls[0]!.sql, /canonical_metrika_breakdown_coverage_daily/i);
   assert.deepEqual(calls[0]!.params, ["yandex_metrika", "counter-account", "2026-08-03", "2026-08-09"]);
   assert.doesNotMatch(calls[0]!.sql, /api\.|oauth|token/i);
@@ -338,6 +338,18 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
       { report_date: "2026-08-04", visits: "12", pageviews: "18", users: "9" },
     ], []];
     if (sql.includes("site-seo:metrika-pages")) return [[{ page_url: "https://clinic.example.test/a", visits: "7", pageviews: "11" }], []];
+    if (sql.includes("site-seo:metrika-traffic-health")) return [[{
+      visits: "100", pageviews: "160", bounce_rate: "17.5",
+      avg_visit_duration_seconds: "95", page_depth: "2.4",
+    }], []];
+    if (sql.includes("site-seo:metrika-channels")) return [[
+      { label: "Search engine traffic", visits: "60", pageviews: "100", bounce_rate: "10", avg_visit_duration_seconds: "110", page_depth: "2.8" },
+      { label: "Direct traffic", visits: "40", pageviews: "60", bounce_rate: "28.75", avg_visit_duration_seconds: "72.5", page_depth: "1.8" },
+    ], []];
+    if (sql.includes("site-seo:metrika-search-engines")) return [[
+      { id: "google", label: "Google, search results", visits: "12", pageviews: "18", bounce_rate: "8", avg_visit_duration_seconds: "120", page_depth: "2.5" },
+      { id: "yandex", label: "Yandex, search results", visits: "8", pageviews: "12", bounce_rate: "15", avg_visit_duration_seconds: "90", page_depth: "2" },
+    ], []];
     throw new Error("unexpected query");
   } });
   const result = await execute({
@@ -355,11 +367,27 @@ test("Metrika returns scoped visits and pageviews while keeping users daily-only
     { date: "2026-08-04", visits: 12, pageviews: 18, users: 9 },
   ]);
   assert.equal("summary" in result && "users" in (result.summary ?? {}), false);
+  assert.deepEqual("trafficHealth" in result && result.trafficHealth, {
+    visits: 100, pageviews: 160, bounceRate: 17.5, avgVisitDurationSeconds: 95, pageDepth: 2.4,
+  });
+  assert.deepEqual("channels" in result && result.channels, [
+    { id: null, label: "Search engine traffic", visits: 60, pageviews: 100, bounceRate: 10, avgVisitDurationSeconds: 110, pageDepth: 2.8 },
+    { id: null, label: "Direct traffic", visits: 40, pageviews: 60, bounceRate: 28.75, avgVisitDurationSeconds: 72.5, pageDepth: 1.8 },
+  ]);
+  assert.equal("searchEngines" in result && result.searchEngines?.[0]?.label, "Google, search results");
   assert.equal("topPages" in result && result.topPages[0]?.page, "https://clinic.example.test/a");
   const facts = calls.filter((call) => call.sql.includes("canonical_fact_metrika_breakdowns_daily"));
-  assert.equal(facts.length, 3);
+  assert.equal(facts.length, 4);
   assert.ok(facts.every((call) => call.params.includes("yandex_metrika") && call.params.includes("counter-account") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
   assert.ok(facts.every((call) => !/api\.|oauth|token/i.test(call.sql)));
+  const trafficFacts = calls.filter((call) => call.sql.includes("canonical_fact_site_analytics_daily"));
+  assert.equal(trafficFacts.length, 2);
+  assert.ok(trafficFacts.every((call) => /analytics_scope\s*=\s*'other'/i.test(call.sql)));
+  assert.ok(trafficFacts.every((call) => call.params.includes("yandex_metrika") && call.params.includes("counter-account") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
+  assert.ok(trafficFacts.every((call) => /bounce_rate[^]*visits/i.test(call.sql) && /avg_visit_duration_seconds[^]*visits/i.test(call.sql) && /page_depth[^]*visits/i.test(call.sql)));
+  const engineFacts = calls.filter((call) => call.sql.includes("site-seo:metrika-search-engines"));
+  assert.equal(engineFacts.length, 1);
+  assert.match(engineFacts[0]!.sql, /report_key\s*=\s*'search_engines'[^]*segment_key\s*=\s*'russia'[^]*row_kind\s*=\s*'detail'/i);
 });
 
 test("Webmaster aggregates scoped canonical facts with derived CTR and weighted position", async () => {
