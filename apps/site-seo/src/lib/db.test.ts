@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createCanonicalReadExecutor } from "./db.ts";
+import { createAvailableMetrikaWeeksReadExecutor, createCanonicalReadExecutor } from "./db.ts";
 
 const scope = {
   clientId: "client-roche",
@@ -101,6 +101,29 @@ test("Metrika reads exact account coverage from canonical MySQL", async () => {
   assert.match(calls[0]!.sql, /canonical_metrika_breakdown_coverage_daily/i);
   assert.deepEqual(calls[0]!.params, ["yandex_metrika", "counter-account", "2026-08-03", "2026-08-09"]);
   assert.doesNotMatch(calls[0]!.sql, /api\.|oauth|token/i);
+});
+
+test("completed Metrika weeks query is compatible with ONLY_FULL_GROUP_BY", async () => {
+  const execute = createAvailableMetrikaWeeksReadExecutor({ async execute(sql, params) {
+    if (!/FROM\s+\(\s*SELECT YEARWEEK\(report_date, 3\) AS iso_yearweek/i.test(sql)
+      || !/GROUP BY iso_yearweek/i.test(sql)) {
+      const error = new Error("Expression #1 of SELECT list is not in GROUP BY clause");
+      Object.assign(error, { code: "ER_WRONG_FIELD_WITH_GROUP" });
+      throw error;
+    }
+    assert.deepEqual(params, ["yandex_metrika", "counter-account"]);
+    return [[{ week_key: "2026-W36", period_from: "2026-08-31", period_to: "2026-09-06" }], []];
+  } });
+
+  const result = await execute({
+    name: "available_metrika_weeks",
+    scope: { ...scope, sourceKey: "yandex_metrika", analyticsAccountId: "counter-account", resourceId: "counter-resource" },
+    timezone: "Europe/Moscow",
+  });
+
+  assert.deepEqual(result.weeks, [{
+    kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow",
+  }]);
 });
 
 test("canonical source readers preserve empty, partial, and exact resource semantics", async () => {

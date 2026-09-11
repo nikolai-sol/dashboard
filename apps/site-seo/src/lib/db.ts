@@ -967,18 +967,23 @@ type AvailableWeekRow = Readonly<{ week_key: unknown; period_from: unknown; peri
 async function readAvailableMetrikaWeeks(database: CanonicalDatabase, query: AvailableMetrikaWeeksReadQuery): Promise<AvailableMetrikaWeeks> {
   const rows = await rowsFor<AvailableWeekRow>(database, {
     sql: `/* site-seo:available-metrika-weeks */
-          SELECT CONCAT(FLOOR(YEARWEEK(report_date, 3) / 100), '-W', LPAD(MOD(YEARWEEK(report_date, 3), 100), 2, '0')) AS week_key,
-                 MIN(report_date) AS period_from,
-                 MAX(report_date) AS period_to
-            FROM canonical_metrika_breakdown_coverage_daily
-           WHERE source_key = ? AND analytics_account_id = ?
-             AND report_key = 'search_engines' AND segment_key = 'russia'
-           GROUP BY YEARWEEK(report_date, 3)
-          HAVING COUNT(DISTINCT report_date) = 7
-             AND WEEKDAY(MIN(report_date)) = 0
-             AND WEEKDAY(MAX(report_date)) = 6
-             AND SUM(CASE WHEN status IN ('success', 'empty') THEN 0 ELSE 1 END) = 0
-             AND SUM(pagination_complete = 0) = 0
+          SELECT CONCAT(FLOOR(iso_yearweek / 100), '-W', LPAD(MOD(iso_yearweek, 100), 2, '0')) AS week_key,
+                 period_from,
+                 period_to
+            FROM (
+                  SELECT YEARWEEK(report_date, 3) AS iso_yearweek,
+                         MIN(report_date) AS period_from,
+                         MAX(report_date) AS period_to
+                    FROM canonical_metrika_breakdown_coverage_daily
+                   WHERE source_key = ? AND analytics_account_id = ?
+                     AND report_key = 'search_engines' AND segment_key = 'russia'
+                   GROUP BY iso_yearweek
+                  HAVING COUNT(DISTINCT report_date) = 7
+                     AND WEEKDAY(MIN(report_date)) = 0
+                     AND WEEKDAY(MAX(report_date)) = 6
+                     AND SUM(CASE WHEN status IN ('success', 'empty') THEN 0 ELSE 1 END) = 0
+                     AND SUM(pagination_complete = 0) = 0
+                 ) AS completed_weeks
            ORDER BY period_from DESC`,
     params: [query.scope.sourceKey, query.scope.analyticsAccountId],
   });
