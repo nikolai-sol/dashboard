@@ -19,7 +19,7 @@ export function PeriodSelector({ selection, publicationId, filters, activeTab, a
   return <form className="site-seo-period-selector" method="get" aria-label="Периоды отчёта">
     <strong className="site-seo-period-heading">Отчётная SEO-неделя</strong>
     <div className="site-seo-period-mode" role="group" aria-label="Режим сравнения">
-      <button className="site-seo-period-mode-button" type="submit" name="comparison_mode" value="single" aria-pressed={!comparisonEnabled}>Одна неделя</button>
+      <button className="site-seo-period-mode-button" type="submit" name="comparison_mode" value="single" aria-pressed={!comparisonEnabled} disabled={!hasWeeks}>Одна неделя</button>
       <button className="site-seo-period-mode-button" type="submit" name="comparison_mode" value="compare" aria-pressed={comparisonEnabled && comparisonAvailable} disabled={!comparisonAvailable}>Сравнить</button>
     </div>
     <label className="site-seo-field"><span>A · Основная неделя</span><select className="site-seo-input" name="traffic_week" defaultValue={hasWeeks ? selection.traffic.primary.key : ""} required disabled={!hasWeeks}>{!hasWeeks ? <option value="">Нет доступных недель</option> : null}{availableWeeks.map((week) => <option value={week.key} key={week.key}>{week.key} · {week.from} — {week.to}</option>)}</select></label>
@@ -30,6 +30,6 @@ export function PeriodSelector({ selection, publicationId, filters, activeTab, a
     {publicationId && <input type="hidden" name="publication" value={publicationId} />}
     {Object.entries(filters).map(([key, value]) => <input key={key} type="hidden" name={`filter_${key}`} value={value} />)}
     <input type="hidden" name="tab" value={activeTab} />
-    <button className="site-seo-button" type="submit">Применить</button>
+    <button className="site-seo-button" type="submit" disabled={!hasWeeks}>Применить</button>
   </form>;
 }

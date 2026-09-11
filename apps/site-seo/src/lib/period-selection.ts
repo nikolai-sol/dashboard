@@ -76,3 +76,20 @@ export function resolveAvailableWeekSelection(
     : null;
   return { ...selection, traffic: { primary, comparison } };
 }
+
+export function resolveComparisonWeek(
+  primary: Period,
+  comparison: Period | null,
+  availableWeeks: readonly Period[],
+  mode: "compare" | "previous",
+): Period | null {
+  const weeks = [...new Map(availableWeeks.filter((period) => period.kind === "iso_week").map((period) => [period.key, period])).values()]
+    .sort((left, right) => left.key.localeCompare(right.key));
+  const primaryIndex = weeks.findIndex((week) => week.key === primary.key);
+  if (primaryIndex < 0) return null;
+  if (mode === "compare") {
+    const selected = comparison && weeks.find((week) => week.key === comparison.key && week.key !== primary.key);
+    if (selected) return selected;
+  }
+  return weeks[primaryIndex - 1] ?? (mode === "compare" ? weeks[primaryIndex + 1] ?? null : null);
+}

@@ -150,7 +150,9 @@ test("period selector disables comparison in single mode and renders an explicit
   assert.match(single, /aria-pressed="true"[^>]*>Одна неделя<\/button>/);
   assert.match(single, /<select(?=[^>]*name="traffic_compare")(?=[^>]*disabled="")[^>]*>/);
   assert.match(empty, /<select(?=[^>]*name="traffic_week")(?=[^>]*disabled="")[^>]*>[^]*Нет доступных недель/);
+  assert.match(empty, /<button(?=[^>]*name="comparison_mode")(?=[^>]*value="single")(?=[^>]*disabled="")[^>]*>/);
   assert.match(empty, /<button(?=[^>]*aria-label="Сравнить с предыдущей доступной неделей")(?=[^>]*disabled="")[^>]*>/);
+  assert.match(empty, /<button(?=[^>]*class="site-seo-button")(?=[^>]*type="submit")(?=[^>]*disabled="")[^>]*>Применить<\/button>/);
 });
 
 test("falls back from incomplete W37 to latest fully covered W36", () => {

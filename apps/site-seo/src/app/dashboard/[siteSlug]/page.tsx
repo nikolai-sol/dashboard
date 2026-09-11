@@ -4,7 +4,7 @@ import { Dashboard } from "../../../components/Dashboard.tsx";
 import { LoginForm } from "../../../components/LoginForm.tsx";
 import { loadAvailableMetrikaWeeks, loadDashboardReadModel } from "../../../lib/read-model.ts";
 import { defaultPeriodSelection, getSiteSeoRuntime, parseDashboardReadRequest } from "../../../lib/runtime.ts";
-import { gscFilters, resolveAvailableWeekSelection } from "../../../lib/period-selection.ts";
+import { gscFilters, resolveAvailableWeekSelection, resolveComparisonWeek } from "../../../lib/period-selection.ts";
 
 export default async function SiteSeoDashboardPage({ params, searchParams }: Readonly<{ params: Promise<{ siteSlug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }>) {
   const runtime = await getSiteSeoRuntime();
@@ -23,14 +23,10 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
     const availableWeeks = await loadAvailableMetrikaWeeks({ registration: runtime.registration, claim: session, execute: runtime.executeAvailableMetrikaWeeks });
     const resolvedSelection = resolveAvailableWeekSelection(requested.selection, availableWeeks);
     const comparisonMode = typeof values.comparison_mode === "string" ? values.comparison_mode : null;
-    const primary = resolvedSelection?.traffic.primary;
-    const previous = primary
-      ? [...availableWeeks].filter((week) => week.kind === "iso_week" && week.key < primary.key).sort((left, right) => right.key.localeCompare(left.key))[0] ?? null
-      : null;
     const resolvedWithMode = resolvedSelection && comparisonMode === "single"
       ? { ...resolvedSelection, traffic: { ...resolvedSelection.traffic, comparison: null } }
       : resolvedSelection && (comparisonMode === "compare" || comparisonMode === "previous")
-        ? { ...resolvedSelection, traffic: { ...resolvedSelection.traffic, comparison: previous } }
+        ? { ...resolvedSelection, traffic: { ...resolvedSelection.traffic, comparison: resolveComparisonWeek(resolvedSelection.traffic.primary, resolvedSelection.traffic.comparison, availableWeeks, comparisonMode) } }
         : resolvedSelection;
     const selection = resolvedWithMode
       ? hasPeriodState ? resolvedWithMode : { ...resolvedWithMode, gsc: resolvedWithMode.traffic.primary }

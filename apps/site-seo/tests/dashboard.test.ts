@@ -341,13 +341,13 @@ test("one-visit weekly trend renders unique ticks at the same coordinates as its
   assert.match(html, /data-week="2026-W01"[^>]*cy="25"/);
 });
 
-test("overview names a disabled Metrika source consistently", () => {
+test("overview omits Metrika-only panels when the source cannot render a full week", () => {
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
   const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: false, showWebmaster: false }));
 
-  assert.match(html, /Органический поиск[^]*Источник отключён[^]*Источник Метрика отключён/);
-  assert.doesNotMatch(html, /Органический поиск[^]*Динамика: данные не опубликованы/);
+  assert.doesNotMatch(html, /Здоровье трафика|Каналы привлечения|Поисковые системы|Органический поиск|Источник отключён|Источник Метрика отключён/);
+  assert.match(html, /Цель: рост целевого органического трафика/);
 });
 
 test("Wordstat distinguishes an unconfigured source, failed collection, partial data, and confirmed empty", () => {

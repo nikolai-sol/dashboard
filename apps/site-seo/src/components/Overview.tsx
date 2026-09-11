@@ -273,6 +273,7 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
         </section>
       </OverviewSlot>
 
+      {showMetrika ? <>
       <OverviewSlot id="traffic_health">
         <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={trafficState} statusText={!showMetrika ? "источник отключён" : trafficHealth ? undefined : stateCopy(trafficState)}>
           <div className="site-seo-health-grid">
@@ -304,6 +305,7 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
           {showMetrika ? <SearchTrend rows={model.metrika?.daily ?? []} state={metrikaState} /> : <EmptyOverviewState>Источник Метрика отключён.</EmptyOverviewState>}
         </OverviewPanel>
       </OverviewSlot>
+      </> : null}
     </div>
   );
 }
