@@ -201,7 +201,7 @@ class FakeConnection implements AliceVisibilityImportConnection {
     if (sql.trimStart().startsWith("SELECT week_from") && sql.includes("FROM canonical_alice_visibility_sov_weekly")) {
       return [[], undefined] as const;
     }
-    if (sql.includes("WHERE analytics_account_id = ? AND period_month = ? AND publication_status = 'published'")) {
+    if (sql.includes("WHERE source_key = ? AND analytics_account_id = ? AND domain = ?") && sql.includes("publication_status = 'published'")) {
       if (this.mode === "same") return [[{ id: 9, source_sha256: "a".repeat(64) }], undefined] as const;
       return [this.mode === "other" ? [{ id: 7, source_sha256: "b".repeat(64) }] : [], undefined] as const;
     }
@@ -228,6 +228,28 @@ test("persists a complete Alice snapshot transactionally and reconciles its chil
   assert.equal(connection.calls.filter(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_featured_sites")).length, 10);
   assert.equal(connection.calls.filter(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_sov_weekly")).length, 0);
   assert.equal(connection.calls.filter(({ sql }) => sql.includes("AS query_count")).length, 1);
+});
+
+test("published predecessor selection is scoped to source account domain and month", async () => {
+  const connection = new FakeConnection("new");
+  const snapshot = parsedSnapshot();
+  await persistAliceVisibilitySnapshot(connection, snapshot, {
+    sourceKey: "yandex_webmaster_alice_manual",
+  });
+  const publishedSelection = connection.calls.find(({ sql }) =>
+    sql.includes("publication_status = 'published'") && sql.includes("FOR UPDATE") &&
+    !sql.includes("source_sha256 = ?"));
+  assert.ok(publishedSelection);
+  assert.match(
+    publishedSelection.sql,
+    /source_key = \? AND analytics_account_id = \? AND domain = \?\s+AND period_month = \?/,
+  );
+  assert.deepEqual(publishedSelection.params, [
+    "yandex_webmaster_alice_manual",
+    snapshot.accountId,
+    snapshot.portalDomain,
+    "2026-08-01",
+  ]);
 });
 
 test("persists custom exact period and weekly official points and reconciles their count", async () => {

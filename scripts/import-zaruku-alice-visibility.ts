@@ -311,8 +311,9 @@ export async function persistAliceVisibilitySnapshot(
 
     const publishedForMonth = rows(await connection.execute(
       `SELECT id, source_sha256 FROM canonical_alice_visibility_snapshots
-       WHERE analytics_account_id = ? AND period_month = ? AND publication_status = 'published' FOR UPDATE`,
-      [snapshot.accountId, periodMonth(snapshot.period)],
+       WHERE source_key = ? AND analytics_account_id = ? AND domain = ?
+         AND period_month = ? AND publication_status = 'published' FOR UPDATE`,
+      [sourceKey, snapshot.accountId, snapshot.portalDomain, periodMonth(snapshot.period)],
     ));
     if (publishedForMonth.length > 1) throw new Error("Для периода найдено несколько опубликованных snapshots");
     const currentPublished = publishedForMonth[0];
