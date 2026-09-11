@@ -20,6 +20,13 @@
     {"sourceKey": "yandex_webmaster_alice_manual", "mode": "manual", "bindingId": "binding-alice-medroche", "importCadence": ["previous_month"]},
     {"sourceKey": "seo_os", "mode": "automated", "bindingId": "binding-seo-os-medroche", "importCadence": ["previous_iso_week"]}
   ],
+  "seoSections": [
+    {"id": "diseases", "label": "Заболевания", "pathPrefixes": ["/diseases/", "/oncology/diseases/"]},
+    {"id": "products", "label": "Препараты", "pathPrefixes": ["/products/"]},
+    {"id": "events", "label": "Мероприятия", "pathPrefixes": ["/events/", "/offline-event/"]},
+    {"id": "innovations", "label": "Инновации", "pathPrefixes": ["/innovations/"]},
+    {"id": "inno-puls", "label": "INNO-ПУЛЬС", "pathPrefixes": ["/innovations/inno-puls/"]}
+  ],
   "taxonomyVersion": "medroche-taxonomy-v1",
   "seoRulesVersion": "site-seo-rules-v1",
   "authPolicyRef": "dashboard-access:medroche",

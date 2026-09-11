@@ -26,6 +26,12 @@ export type RuntimeProfile = Readonly<{
   deployLockPath: string;
 }>;
 
+export type SeoSectionProfile = Readonly<{
+  id: string;
+  label: string;
+  pathPrefixes: readonly string[];
+}>;
+
 export type SiteProfile = Readonly<{
   schemaVersion: 1;
   profileVersion: string;
@@ -46,6 +52,7 @@ export type SiteProfile = Readonly<{
     bindingId: string | null;
     importCadence: readonly ("previous_month" | "previous_iso_week")[];
   }[];
+  seoSections?: readonly SeoSectionProfile[];
   taxonomyVersion: string;
   seoRulesVersion: string;
   authPolicyRef: string;

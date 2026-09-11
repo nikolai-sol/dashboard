@@ -21,6 +21,7 @@ const PROFILE_FIELDS = new Set([
   "businessTimezone",
   "templateVersion",
   "sources",
+  "seoSections",
   "taxonomyVersion",
   "seoRulesVersion",
   "authPolicyRef",
@@ -32,6 +33,7 @@ const SOURCE_FIELDS = new Set([
   "bindingId",
   "importCadence",
 ]);
+const SEO_SECTION_FIELDS = new Set(["id", "label", "pathPrefixes"]);
 const RUNTIME_FIELDS = new Set([
   "route",
   "assetPrefix",
@@ -158,6 +160,28 @@ export function assertSiteProfile(value: unknown): SiteProfile {
         );
     } else {
       nonEmpty(source.bindingId, `${sourceKey}.bindingId`);
+    }
+  }
+
+  if (profile.seoSections !== undefined) {
+    if (!Array.isArray(profile.seoSections))
+      throw new TypeError("seoSections must be an array");
+    const sectionIds = new Set<string>();
+    const pathPrefixes = new Set<string>();
+    for (const [index, rawSection] of profile.seoSections.entries()) {
+      const section = object(rawSection, `seoSections[${index}]`);
+      exactFields(section, SEO_SECTION_FIELDS, `seoSections[${index}]`);
+      const id = safeValue(section.id, `seoSections[${index}].id`, /^[a-z0-9][a-z0-9-]*$/);
+      nonEmpty(section.label, `seoSections[${index}].label`);
+      if (sectionIds.has(id)) throw new TypeError(`duplicate seoSections id: ${id}`);
+      sectionIds.add(id);
+      if (!Array.isArray(section.pathPrefixes) || section.pathPrefixes.length === 0)
+        throw new TypeError(`seoSections[${index}].pathPrefixes must not be empty`);
+      for (const [prefixIndex, rawPrefix] of section.pathPrefixes.entries()) {
+        const prefix = safeValue(rawPrefix, `seoSections[${index}].pathPrefixes[${prefixIndex}]`, /^\/[A-Za-z0-9._~!$'()*+,;=:@%/-]+\/$/);
+        if (pathPrefixes.has(prefix)) throw new TypeError(`duplicate seoSections path prefix: ${prefix}`);
+        pathPrefixes.add(prefix);
+      }
     }
   }
 

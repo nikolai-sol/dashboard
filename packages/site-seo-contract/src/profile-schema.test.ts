@@ -75,6 +75,32 @@ test("profile schema accepts supported manual GSC and disabled sources", () => {
   assert.deepEqual(assertSiteProfile(profile()), profile());
 });
 
+test("profile schema accepts data-only SEO section path rules", () => {
+  const configured = {
+    ...profile(),
+    seoSections: [
+      { id: "diseases", label: "Заболевания", pathPrefixes: ["/diseases/", "/oncology/diseases/"] },
+      { id: "inno-puls", label: "INNO-ПУЛЬС", pathPrefixes: ["/innovations/inno-puls/"] },
+    ],
+  };
+
+  assert.deepEqual(assertSiteProfile(configured), configured);
+});
+
+test("profile schema rejects executable or ambiguous SEO section rules", () => {
+  assert.throws(
+    () => assertSiteProfile({ ...profile(), seoSections: [{ id: "bad", label: "Bad", pathPrefixes: ["https://evil.test/"] }] }),
+    /seoSections|pathPrefixes/i,
+  );
+  assert.throws(
+    () => assertSiteProfile({ ...profile(), seoSections: [
+      { id: "duplicate", label: "One", pathPrefixes: ["/one/"] },
+      { id: "duplicate", label: "Two", pathPrefixes: ["/two/"] },
+    ] }),
+    /seoSections|duplicate/i,
+  );
+});
+
 test("profile schema rejects unknown fields and secret-bearing keys", () => {
   assert.throws(
     () => assertSiteProfile({ ...profile(), surprise: true }),
