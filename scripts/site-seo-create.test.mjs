@@ -21,6 +21,8 @@ test("preview validates MedRoche and reports its configured source bindings with
   assert.equal(result.bindings.yandex_wordstat.status, "configured");
   assert.equal(result.bindings.yandex_webmaster_alice_manual.status, "configured");
   assert.equal(result.bindings.seo_os.status, "missing_inputs");
+  assert.deepEqual(result.profile.hiddenTabs, ["seo-os"]);
+  assert.equal(result.profile.sources.find((source) => source.sourceKey === "seo_os")?.mode, "automated");
   assert.equal(result.registrationStatus, "proposed_local");
   assert.equal(result.proposedClientId, "client-roche");
   assert.equal(result.proposedSiteId, "site-medroche");

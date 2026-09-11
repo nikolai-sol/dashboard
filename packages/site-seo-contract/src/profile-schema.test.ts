@@ -75,6 +75,23 @@ test("profile schema accepts supported manual GSC and disabled sources", () => {
   assert.deepEqual(assertSiteProfile(profile()), profile());
 });
 
+test("profile schema accepts supported hidden navigation tabs", () => {
+  const hidden = profile({ hiddenTabs: ["seo-os"] });
+
+  assert.deepEqual(assertSiteProfile(hidden), hidden);
+});
+
+test("profile schema rejects hiding overview or duplicate tabs", () => {
+  assert.throws(
+    () => assertSiteProfile(profile({ hiddenTabs: ["overview"] })),
+    /hiddenTabs/i,
+  );
+  assert.throws(
+    () => assertSiteProfile(profile({ hiddenTabs: ["seo-os", "seo-os"] })),
+    /duplicate/i,
+  );
+});
+
 test("profile schema accepts data-only SEO section path rules", () => {
   const configured = {
     ...profile(),

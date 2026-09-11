@@ -14,11 +14,12 @@ const MODES = {
   yandex_webmaster_alice_manual: new Set(["manual", "disabled"]),
   seo_os: new Set(["automated", "disabled"]),
 };
+const HIDEABLE_TABS = new Set(["search", "alice", "wordstat", "content", "seo-os", "sources"]);
 
 const PROFILE_FIELDS = new Set([
   "schemaVersion", "profileVersion", "siteId", "clientId", "dashboardId", "slug",
   "domain", "allowedDomains", "title", "logoAsset", "locale", "businessTimezone",
-  "templateVersion", "sources", "seoSections", "taxonomyVersion", "seoRulesVersion", "authPolicyRef", "runtime",
+  "templateVersion", "sources", "seoSections", "hiddenTabs", "taxonomyVersion", "seoRulesVersion", "authPolicyRef", "runtime",
 ]);
 const SOURCE_FIELDS = new Set(["sourceKey", "mode", "bindingId", "importCadence"]);
 const SEO_SECTION_FIELDS = new Set(["id", "label", "pathPrefixes"]);
@@ -87,6 +88,15 @@ export function validateSiteProfile(value) {
         if (pathPrefixes.has(prefix)) throw new TypeError(`duplicate seoSections path prefix: ${prefix}`);
         pathPrefixes.add(prefix);
       }
+    }
+  }
+  if (profile.hiddenTabs !== undefined) {
+    if (!Array.isArray(profile.hiddenTabs)) throw new TypeError("hiddenTabs must be an array");
+    const hiddenTabs = new Set();
+    for (const [index, tab] of profile.hiddenTabs.entries()) {
+      if (!HIDEABLE_TABS.has(tab)) throw new TypeError(`hiddenTabs[${index}] is unsupported`);
+      if (hiddenTabs.has(tab)) throw new TypeError(`duplicate hiddenTabs entry: ${tab}`);
+      hiddenTabs.add(tab);
     }
   }
   const runtime = object(profile.runtime, "runtime");

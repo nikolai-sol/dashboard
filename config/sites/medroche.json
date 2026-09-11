@@ -20,6 +20,7 @@
     {"sourceKey": "yandex_webmaster_alice_manual", "mode": "manual", "bindingId": "binding-alice-medroche", "importCadence": ["previous_month"]},
     {"sourceKey": "seo_os", "mode": "automated", "bindingId": "binding-seo-os-medroche", "importCadence": ["previous_iso_week"]}
   ],
+  "hiddenTabs": ["seo-os"],
   "seoSections": [
     {"id": "diseases", "label": "Заболевания", "pathPrefixes": ["/diseases/", "/oncology/diseases/"]},
     {"id": "products", "label": "Препараты", "pathPrefixes": ["/products/"]},

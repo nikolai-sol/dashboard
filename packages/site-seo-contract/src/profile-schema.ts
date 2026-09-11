@@ -1,6 +1,8 @@
 import {
+  SITE_SEO_DASHBOARD_TAB_IDS,
   assertSourceScope,
   type SiteBinding,
+  type SiteSeoDashboardTabId,
   type SiteProfile,
   type SiteRegistration,
   type SourceKey,
@@ -22,6 +24,7 @@ const PROFILE_FIELDS = new Set([
   "templateVersion",
   "sources",
   "seoSections",
+  "hiddenTabs",
   "taxonomyVersion",
   "seoRulesVersion",
   "authPolicyRef",
@@ -182,6 +185,23 @@ export function assertSiteProfile(value: unknown): SiteProfile {
         if (pathPrefixes.has(prefix)) throw new TypeError(`duplicate seoSections path prefix: ${prefix}`);
         pathPrefixes.add(prefix);
       }
+    }
+  }
+
+  if (profile.hiddenTabs !== undefined) {
+    if (!Array.isArray(profile.hiddenTabs))
+      throw new TypeError("hiddenTabs must be an array");
+    const hiddenTabs = new Set<SiteSeoDashboardTabId>();
+    for (const [index, rawTab] of profile.hiddenTabs.entries()) {
+      if (
+        rawTab === "overview" ||
+        !SITE_SEO_DASHBOARD_TAB_IDS.includes(rawTab as SiteSeoDashboardTabId)
+      )
+        throw new TypeError(`hiddenTabs[${index}] is unsupported`);
+      const tab = rawTab as SiteSeoDashboardTabId;
+      if (hiddenTabs.has(tab))
+        throw new TypeError(`duplicate hiddenTabs entry: ${tab}`);
+      hiddenTabs.add(tab);
     }
   }
 

@@ -53,6 +53,17 @@ test("hides disabled adapters while preserving the available source sections", (
   assert.ok(!labels.includes("Посещаемость и страницы"));
 });
 
+test("profile-hidden tabs are omitted from navigation and requested hidden tabs fall back", () => {
+  const tabs = dashboardTabs({ ...profile, hiddenTabs: ["seo-os"] });
+
+  assert.equal(tabs.some((tab) => tab.id === "seo-os"), false);
+  assert.equal(resolveActiveTab(tabs, "seo-os"), "overview");
+});
+
+test("profiles without hiddenTabs preserve enabled navigation tabs", () => {
+  assert.equal(dashboardTabs(profile).some((tab) => tab.id === "seo-os"), true);
+});
+
 test("falls back from an unknown or disabled tab to overview", () => {
   assert.equal(resolveActiveTab(dashboardTabs(profile), "wordstat"), "overview");
   assert.equal(resolveActiveTab(dashboardTabs(profile), "unknown"), "overview");

@@ -1,4 +1,4 @@
-import type { SiteProfile } from "@reportingdash/site-seo-contract";
+import type { SiteProfile, SiteSeoDashboardTabId } from "@reportingdash/site-seo-contract";
 import type { DashboardReadModel } from "../lib/read-model.ts";
 import { Overview } from "./Overview.tsx";
 import { Search } from "./Search.tsx";
@@ -11,7 +11,7 @@ import type { PeriodSelection } from "../lib/period-selection.ts";
 import { SiteSeoShell } from "./SiteSeoShell.tsx";
 import { Content } from "./Content.tsx";
 
-export type DashboardTab = Readonly<{ id: string; label: string }>;
+export type DashboardTab = Readonly<{ id: SiteSeoDashboardTabId; label: string }>;
 
 function enabled(profile: SiteProfile, sourceKey: SiteProfile["sources"][number]["sourceKey"]): boolean {
   return profile.sources.some((source) => source.sourceKey === sourceKey && source.mode !== "disabled");
@@ -25,7 +25,8 @@ export function dashboardTabs(profile: SiteProfile): DashboardTab[] {
   if (enabled(profile, "yandex_metrika")) tabs.push({ id: "content", label: "Контент" });
   if (enabled(profile, "seo_os")) tabs.push({ id: "seo-os", label: "Работы и задачи" });
   tabs.push({ id: "sources", label: "Источники" });
-  return tabs;
+  const hidden = new Set<SiteSeoDashboardTabId>(profile.hiddenTabs ?? []);
+  return tabs.filter((tab) => !hidden.has(tab.id));
 }
 
 export function resolveActiveTab(tabs: readonly DashboardTab[], requested?: string): string {

@@ -6,6 +6,18 @@ export type SourceKey =
   | "yandex_webmaster_alice_manual"
   | "seo_os";
 
+export const SITE_SEO_DASHBOARD_TAB_IDS = [
+  "overview",
+  "search",
+  "alice",
+  "wordstat",
+  "content",
+  "seo-os",
+  "sources",
+] as const;
+export type SiteSeoDashboardTabId =
+  (typeof SITE_SEO_DASHBOARD_TAB_IDS)[number];
+
 export type SourceScope = Readonly<{
   clientId: string;
   siteId: string;
@@ -53,6 +65,7 @@ export type SiteProfile = Readonly<{
     importCadence: readonly ("previous_month" | "previous_iso_week")[];
   }[];
   seoSections?: readonly SeoSectionProfile[];
+  hiddenTabs?: readonly Exclude<SiteSeoDashboardTabId, "overview">[];
   taxonomyVersion: string;
   seoRulesVersion: string;
   authPolicyRef: string;
