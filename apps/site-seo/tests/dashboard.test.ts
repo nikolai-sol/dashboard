@@ -359,16 +359,27 @@ test("Wordstat distinguishes an unconfigured source, failed collection, partial 
     partial: "Неполные данные",
     complete_empty: "Подтверждённо пусто",
   } as const;
+  const expectedEmptyCopy = {
+    missing: "Текущие запросы Wordstat пока не опубликованы",
+    failed: "Текущие запросы Wordstat недоступны: последний сбор завершился ошибкой",
+    partial: "Текущие запросы Wordstat пока не опубликованы",
+    complete_empty: "Сбор завершился успешно, но текущих запросов нет",
+  } as const;
 
   for (const state of ["missing", "failed", "partial", "complete_empty"] as const) {
     const html = renderState(state);
     assert.match(html, /site-seo-panel/);
     assert.match(html, new RegExp(`data-state="${state}"`));
     assert.match(html, new RegExp(expectedStateCopy[state]));
+    assert.match(html, new RegExp(expectedEmptyCopy[state]));
   }
 
   const staleAfterFailure = renderToStaticMarkup(createElement(Wordstat, { id: "wordstat", meta: { ...base, state: "partial", latestAttempt: "failed" }, data: null }));
   assert.match(staleAfterFailure, /Последняя попытка сбора завершилась ошибкой/);
+  assert.doesNotMatch(staleAfterFailure, /показаны ранее опубликованные данные/);
+  assert.match(staleAfterFailure, /Последний успешный сбор пока не подтверждён/);
+  assert.match(staleAfterFailure, /Текущие запросы Wordstat пока не опубликованы/);
+  assert.doesNotMatch(staleAfterFailure, /Спрос за выбранную ISO-неделю|Недельный спрос не опубликован/);
 });
 
 test("unified SEO queries use a labelled local scroll frame and grouped semantic headings", () => {
@@ -414,6 +425,15 @@ test("standard sheets use the accepted Zaruku-style stack of focused panels", ()
   assert.deepEqual([...trafficHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["traffic.summary", "traffic.trend", "traffic.pages"]);
   assert.deepEqual([...searchHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo.alice", "seo.sections", "seo.queries"]);
   assert.deepEqual([...wordstatHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["wordstat.summary", "wordstat.queries"]);
+  assert.match(wordstatHtml, /Где есть медицинский спрос, что уже получает MedRoche и что стоит улучшить/);
+  assert.match(wordstatHtml, /Wordstat показывает спрос, а не визиты, показы или долю сайта/);
+  assert.match(wordstatHtml, /Последние 30 дней · 2026-08-13 — 2026-09-11/);
+  assert.match(wordstatHtml, /Последний успешный сбор: 2026-09-11T06:55:01Z/);
+  assert.match(wordstatHtml, /Текущие запросы Wordstat/);
+  assert.match(wordstatHtml, /бевацизумаб[^]*14982[^]*2026-08-13 — 2026-09-11/);
+  assert.match(wordstatHtml, /Частотности пересекающихся запросов нельзя складывать/);
+  assert.doesNotMatch(wordstatHtml, /Спрос за выбранную ISO-неделю|Недельный спрос не опубликован/);
+  assert.doesNotMatch(wordstatHtml, /Классификация|Региональные возможности|SEO OS/);
   assert.deepEqual([...aliceHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["alice.summary", "alice.competitors", "alice.queries"]);
   assert.deepEqual([...seoHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo-os.summary", "seo-os.recommendations", "seo-os.tasks"]);
   assert.deepEqual([...sourcesHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["sources.summary", "sources.list"]);
