@@ -36,5 +36,22 @@ for the full build so the internal disk does not fill again.
 
 ## Completion evidence
 
-Implementation review, browser verification and live publication are pending.
-Do not treat this preflight note as proof of deployment.
+Task 1 implementation: `91d30e4`; 22 focused tests pass, targeted ESLint clean.
+Independent task review approved: no Critical/Important findings. Minor: two
+points are 128 px apart rather than the approximate 100–120 px target; they are
+compact and their full labels are visible. Carry this to final review.
+
+Browser fixture checks passed all 16 combinations of 430/768/1024/1440 px and
+1/2/3/12 months: exact label counts, zero labels clipped by the chart canvas,
+zero links outside their cells, and document width equal to viewport width.
+Long unbroken query text and expanded source lists were included. Search,
+presence filter and second-page navigation also passed. The fixture is explicitly
+labelled as local test data and is never added to production routes or facts.
+
+Local dependencies were also moved recoverably to the same backup directory's
+`local-node-modules` child after further system-disk pressure. Dependencies for
+the release are installed in the external build workspace, not shared with others.
+
+Build verification and live publication are pending. Do not treat this note as
+proof of deployment. The previous generic tracked task report is preserved byte
+for byte; this task's report has a distinct dated operations filename.
