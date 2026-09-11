@@ -54,6 +54,15 @@
         "resourceId": "94927113"
       },
       {
+        "bindingId": "binding-gsc-medroche",
+        "clientId": "client-roche",
+        "siteId": "site-medroche",
+        "dashboardId": 41,
+        "sourceKey": "google_search_console",
+        "analyticsAccountId": "94927113",
+        "resourceId": "https://med.roche.ru/"
+      },
+      {
         "bindingId": "binding-webmaster-medroche",
         "clientId": "client-roche",
         "siteId": "site-medroche",

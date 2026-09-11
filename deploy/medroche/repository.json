@@ -7,7 +7,7 @@
   "approvedPredecessor": null,
   "sourceBindings": {
     "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "94927113", "status": "configured"},
-    "binding-gsc-medroche": {"sourceKey": "google_search_console", "status": "unconfigured"},
+    "binding-gsc-medroche": {"sourceKey": "google_search_console", "analyticsAccountId": "94927113", "resourceId": "https://med.roche.ru/", "status": "configured"},
     "binding-webmaster-medroche": {"sourceKey": "yandex_webmaster", "analyticsAccountId": "94927113", "resourceId": "https:med.roche.ru:443", "status": "configured"},
     "binding-wordstat-medroche": {"sourceKey": "yandex_wordstat", "analyticsAccountId": "94927113", "resourceId": "region:225", "status": "configured"},
     "binding-alice-medroche": {"sourceKey": "yandex_webmaster_alice_manual", "analyticsAccountId": "94927113", "resourceId": "med.roche.ru", "status": "configured"},

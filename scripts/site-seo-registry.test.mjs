@@ -11,7 +11,7 @@ const registryFilename = path.resolve("config/sites/registry.json");
 const releaseFilename = path.resolve("deploy/medroche/release.json");
 const repositoryFilename = path.resolve("deploy/medroche/repository.json");
 
-test("MedRoche registry pins the confirmed Yandex source scopes, including Alice", () => {
+test("MedRoche registry pins the confirmed canonical source scopes", () => {
   assert.ok(existsSync(registryFilename), "config/sites/registry.json is required");
   const registry = assertSiteRegistry(JSON.parse(readFileSync(registryFilename, "utf8")));
   const profile = readSiteProfile(profileFilename);
@@ -27,6 +27,15 @@ test("MedRoche registry pins the confirmed Yandex source scopes, including Alice
       sourceKey: "yandex_metrika",
       analyticsAccountId: "94927113",
       resourceId: "94927113",
+    },
+    {
+      bindingId: "binding-gsc-medroche",
+      clientId: "client-roche",
+      siteId: "site-medroche",
+      dashboardId: 41,
+      sourceKey: "google_search_console",
+      analyticsAccountId: "94927113",
+      resourceId: "https://med.roche.ru/",
     },
     {
       bindingId: "binding-webmaster-medroche",
@@ -63,12 +72,17 @@ test("MedRoche registry pins the confirmed Yandex source scopes, including Alice
     .map((source) => source.sourceKey)
     .sort();
   assert.deepEqual(unboundSourceKeys, [
-    "google_search_console",
     "seo_os",
   ]);
 
   for (const filename of [releaseFilename, repositoryFilename]) {
     const metadata = JSON.parse(readFileSync(filename, "utf8"));
+    assert.deepEqual(metadata.sourceBindings["binding-gsc-medroche"], {
+      sourceKey: "google_search_console",
+      analyticsAccountId: "94927113",
+      resourceId: "https://med.roche.ru/",
+      status: "configured",
+    });
     assert.deepEqual(metadata.sourceBindings["binding-webmaster-medroche"], {
       sourceKey: "yandex_webmaster",
       analyticsAccountId: "94927113",
