@@ -142,8 +142,8 @@ test("canonical source readers preserve empty, partial, and exact resource seman
     if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
     if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
     if (/site-seo:webmaster-(summary|daily|pages|queries)/.test(sql)) return [[], []];
-    if (/site-seo:alice-(summary|competitors|queries)/.test(sql)) return [[], []];
-    if (sql.includes("canonical_alice_visibility_snapshots")) return [[{ row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
+    if (/site-seo:alice-(summary|sov-weekly|competitors|queries)/.test(sql)) return [[], []];
+    if (sql.includes("canonical_alice_visibility_snapshots")) return [[{ id: 93, row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
     throw new Error("unexpected query");
   } });
   const week = { kind: "iso_week" as const, from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" };
@@ -156,7 +156,7 @@ test("canonical source readers preserve empty, partial, and exact resource seman
   assert.equal("state" in alice && alice.state, "ready");
   assert.match(calls[0]!.sql, /canonical_wordstat_coverage/i);
   assert.deepEqual(calls.find((call) => call.sql.includes("site-seo:webmaster-meta"))?.params, ["yandex_webmaster", "webmaster-account", "https:example.test:443", "2026-08-03", "2026-08-09"]);
-  assert.deepEqual(calls.at(-1)?.params, ["yandex_webmaster_alice_manual", "alice-account", "example.test", "2026-08-01", "2026-08-31"]);
+  assert.deepEqual(calls.at(-1)?.params, ["93", "yandex_webmaster_alice_manual", "alice-account", "example.test", "2026-08-01", "2026-08-31"]);
 });
 
 test("derived SEO OS without a canonical materialization stays honestly missing", async () => {
@@ -383,8 +383,12 @@ test("Wordstat remains missing when neither scoped coverage nor an attempt exist
 
 test("Alice retains published per-query portal and ranked source facts without conflating official SOV", async () => {
   const execute = createCanonicalReadExecutor({ async execute(sql) {
-    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{ row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
+    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{
+      id: 93, row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00",
+      source_period_kind: "calendar_month", source_period_from: "2026-08-01", source_period_to: "2026-08-31",
+    }], []];
     if (sql.includes("site-seo:alice-summary")) return [[{ official_sov_pct: "43.91", sample_presence_pct: "43.87" }], []];
+    if (sql.includes("site-seo:alice-sov-weekly")) return [[], []];
     if (sql.includes("site-seo:alice-competitors")) return [[{ site_domain: "competitor.test" }], []];
     if (sql.includes("site-seo:alice-queries")) return [[
       { query_id: 7, query_text: "лечение", portal_present: 1, portal_position: 2, portal_url: "https://portal.test/a", source_rank: 1, source_domain: "one.test", source_url: "https://one.test/a" },
@@ -397,11 +401,72 @@ test("Alice retains published per-query portal and ranked source facts without c
 
   assert.equal("kind" in result && result.kind, "alice");
   assert.equal("officialSovPct" in result && result.officialSovPct, 43.91);
+  assert.deepEqual("officialSovPeriod" in result && result.officialSovPeriod, {
+    kind: "calendar_month", key: "2026-08", from: "2026-08-01", to: "2026-08-31", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("officialSovHistory" in result && result.officialSovHistory, []);
   assert.equal("samplePresencePct" in result && result.samplePresencePct, 43.87);
   assert.deepEqual("queries" in result && result.queries, [
     { query: "лечение", portalPresent: true, portalPosition: 2, portalUrl: "https://portal.test/a", sources: [{ rank: 1, domain: "one.test", url: "https://one.test/a" }, { rank: 2, domain: "two.test", url: "https://two.test/a" }] },
     { query: "диагностика", portalPresent: false, portalPosition: null, portalUrl: null, sources: [{ rank: 1, domain: "three.test", url: "https://three.test/a" }] },
   ]);
+});
+
+test("Alice exposes the exact source period and falls back to the latest weekly official SOV from the same scoped snapshot", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{
+      id: 108,
+      row_count: 1,
+      import_id: "alice-weekly-8",
+      loaded_at: "2026-09-02 01:00:00",
+      source_period_kind: "custom",
+      source_period_from: "2026-07-27",
+      source_period_to: "2026-09-06",
+      period_month: "2026-08-01",
+    }], []];
+    if (sql.includes("site-seo:alice-summary")) return [[{
+      official_sov_pct: null,
+      sample_presence_pct: "43.87",
+    }], []];
+    if (sql.includes("site-seo:alice-sov-weekly")) return [[
+      { week_from: "2026-08-24", week_to: "2026-08-30", official_sov_pct: "2.9" },
+      { week_from: "2026-08-31", week_to: "2026-09-06", official_sov_pct: "3.2" },
+    ], []];
+    if (sql.includes("site-seo:alice-competitors") || sql.includes("site-seo:alice-queries")) return [[], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_webmaster_alice_manual", analyticsAccountId: "alice-account", resourceId: "example.test" },
+    period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "alice");
+  assert.deepEqual("period" in result && result.period, {
+    kind: "custom", key: "custom:2026-07-27:2026-09-06", from: "2026-07-27", to: "2026-09-06", sourceTimezone: "Europe/Moscow",
+  });
+  assert.equal("officialSovPct" in result && result.officialSovPct, 3.2);
+  assert.deepEqual("officialSovPeriod" in result && result.officialSovPeriod, {
+    kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("officialSovHistory" in result && result.officialSovHistory, [
+    { period: { kind: "iso_week", key: "2026-W35", from: "2026-08-24", to: "2026-08-30", sourceTimezone: "Europe/Moscow" }, officialSovPct: 2.9 },
+    { period: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" }, officialSovPct: 3.2 },
+  ]);
+  assert.equal("samplePresencePct" in result && result.samplePresencePct, 43.87);
+  for (const call of calls.filter(({ sql }) => sql.includes("site-seo:alice-"))) {
+    assert.match(call.sql, /source_key = \?/);
+    assert.match(call.sql, /analytics_account_id = \?/);
+    assert.match(call.sql, /domain = \?/);
+    assert.match(call.sql, /period_month BETWEEN \? AND \?/);
+    assert.match(call.sql, /publication_status = 'published'/);
+    assert.match(call.sql, /ORDER BY period_month DESC, id DESC/);
+    assert.deepEqual(call.params, ["108", "yandex_webmaster_alice_manual", "alice-account", "example.test", "2026-08-01", "2026-08-31"]);
+  }
 });
 
 test("SEO OS reads published recommendation evidence and task statuses, not a deprecated AI visibility table", async () => {

@@ -95,6 +95,8 @@ export type WordstatCanonicalData = DatasetMeta & Readonly<{
 export type AliceCanonicalData = DatasetMeta & Readonly<{
   kind: "alice";
   officialSovPct: number | null;
+  officialSovPeriod: Period | null;
+  officialSovHistory: readonly Readonly<{ period: Period; officialSovPct: number }>[];
   samplePresencePct: number | null;
   competitors: readonly string[];
   sources: readonly string[];
@@ -198,6 +200,7 @@ function missingMeta(sourceKey: SourceScope["sourceKey"], collectionMode: Datase
 }
 
 type DatasetMetaRow = Readonly<{
+  id?: unknown;
   coverage_rows?: unknown;
   current_coverage_rows?: unknown;
   current_success_rows?: unknown;
@@ -213,6 +216,10 @@ type DatasetMetaRow = Readonly<{
   job_key?: unknown;
   import_id?: unknown;
   loaded_at?: unknown;
+  period_month?: unknown;
+  source_period_kind?: unknown;
+  source_period_from?: unknown;
+  source_period_to?: unknown;
 }>;
 
 function periodDays(period: Period): number {
@@ -805,21 +812,29 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalDat
     } })) : [] };
 }
 
-async function readAliceMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta> {
+async function readAliceMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<Readonly<{ meta: DatasetMeta; snapshotId: string | null }>> {
   const rows = await rowsFor<DatasetMetaRow>(database, {
-    sql: `SELECT COUNT(*) AS row_count,
-                 MAX(ingestion_run_id) AS import_id,
-                 MAX(updated_at) AS loaded_at
+    sql: `SELECT id,
+                 1 AS row_count,
+                 ingestion_run_id AS import_id,
+                 updated_at AS loaded_at,
+                 period_month,
+                 source_period_kind,
+                 source_period_from,
+                 source_period_to
             FROM canonical_alice_visibility_snapshots
            WHERE source_key = ? AND analytics_account_id = ? AND domain = ?
              AND period_month BETWEEN ? AND ?
-             AND publication_status = 'published'`,
+             AND publication_status = 'published'
+           ORDER BY period_month DESC, id DESC
+           LIMIT 1`,
     params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to],
   });
   const row = rows[0];
-  return numeric(row?.row_count) > 0
-    ? datasetMeta(query, row, "manual", "ready", "complete")
-    : missingMeta(query.scope.sourceKey, "manual");
+  if (numeric(row?.row_count) <= 0 || row?.id == null) return { meta: missingMeta(query.scope.sourceKey, "manual"), snapshotId: null };
+  const meta = datasetMeta(query, row, "manual", "ready", "complete");
+  const exactPeriod = aliceSourcePeriod(row, query.period.sourceTimezone);
+  return { meta: { ...meta, period: exactPeriod }, snapshotId: String(row.id) };
 }
 
 type AliceRow = Readonly<{
@@ -834,31 +849,66 @@ type AliceRow = Readonly<{
   source_rank?: unknown;
   source_domain?: unknown;
   source_url?: unknown;
+  week_from?: unknown;
+  week_to?: unknown;
 }>;
 
+function isoWeekKey(dateText: string): string {
+  const date = new Date(`${dateText}T00:00:00Z`);
+  const isoDay = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - isoDay);
+  const isoYear = date.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(isoYear, 0, 1));
+  const week = Math.ceil((((date.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7);
+  return `${isoYear}-W${String(week).padStart(2, "0")}`;
+}
+
+function sourcePeriod(kind: Period["kind"], from: string, to: string, sourceTimezone: string): Period {
+  const key = kind === "iso_week" ? isoWeekKey(from)
+    : kind === "calendar_month" ? from.slice(0, 7)
+    : `${kind}:${from}:${to}`;
+  return { kind, key, from, to, sourceTimezone };
+}
+
+function aliceSourcePeriod(row: DatasetMetaRow, sourceTimezone: string): Period | null {
+  const kind = String(row.source_period_kind ?? "");
+  const from = String(row.source_period_from ?? "");
+  const to = String(row.source_period_to ?? "");
+  const supportedKinds: readonly string[] = ["iso_week", "calendar_month", "custom", "snapshot"];
+  if (!supportedKinds.includes(kind) || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null;
+  return sourcePeriod(kind as Period["kind"], from, to, sourceTimezone);
+}
+
+const aliceSelectedSnapshotSql = `SELECT id FROM canonical_alice_visibility_snapshots
+         WHERE id = ? AND source_key = ? AND analytics_account_id = ? AND domain = ?
+           AND period_month BETWEEN ? AND ? AND publication_status = 'published'
+         ORDER BY period_month DESC, id DESC LIMIT 1`;
+
 async function readAliceData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | AliceCanonicalData> {
-  const meta = await readAliceMeta(database, query);
-  if (meta.state === "missing") return meta;
-  const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
-  const [snapshotRows, competitorRows, queryRows] = await Promise.all([
+  const selection = await readAliceMeta(database, query);
+  if (selection.meta.state === "missing" || selection.snapshotId === null) return selection.meta;
+  const meta = selection.meta;
+  const params = [selection.snapshotId, query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
+  const [snapshotRows, weeklyRows, competitorRows, queryRows] = await Promise.all([
     rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-summary */
-      SELECT official_sov_pct, sample_presence_pct
-      FROM canonical_alice_visibility_snapshots
-      WHERE source_key = ? AND analytics_account_id = ? AND domain = ? AND period_month BETWEEN ? AND ? AND publication_status = 'published'
-      ORDER BY period_month DESC, id DESC LIMIT 1`, params }),
+      WITH selected_snapshot AS (${aliceSelectedSnapshotSql})
+      SELECT snapshot.official_sov_pct, snapshot.sample_presence_pct
+      FROM canonical_alice_visibility_snapshots snapshot
+      JOIN selected_snapshot selected ON selected.id = snapshot.id`, params }),
+    rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-sov-weekly */
+      WITH selected_snapshot AS (${aliceSelectedSnapshotSql})
+      SELECT weekly.week_from, weekly.week_to, weekly.official_sov_pct
+      FROM canonical_alice_visibility_sov_weekly weekly
+      JOIN selected_snapshot selected ON selected.id = weekly.snapshot_id
+      ORDER BY weekly.week_from ASC, weekly.week_to ASC`, params }),
     rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-competitors */
+      WITH selected_snapshot AS (${aliceSelectedSnapshotSql})
       SELECT featured.site_domain
       FROM canonical_alice_visibility_featured_sites featured
-      JOIN canonical_alice_visibility_snapshots snapshot ON snapshot.id = featured.snapshot_id
-      WHERE snapshot.source_key = ? AND snapshot.analytics_account_id = ? AND snapshot.domain = ? AND snapshot.period_month BETWEEN ? AND ? AND snapshot.publication_status = 'published'
-      ORDER BY snapshot.period_month DESC, featured.display_order ASC LIMIT 20`, params }),
+      JOIN selected_snapshot selected ON selected.id = featured.snapshot_id
+      ORDER BY featured.display_order ASC LIMIT 20`, params }),
     rowsFor<AliceRow>(database, { sql: `/* site-seo:alice-queries */
-      WITH selected_snapshot AS (
-        SELECT id FROM canonical_alice_visibility_snapshots
-         WHERE source_key = ? AND analytics_account_id = ? AND domain = ?
-           AND period_month BETWEEN ? AND ? AND publication_status = 'published'
-         ORDER BY period_month DESC, id DESC LIMIT 1
-      )
+      WITH selected_snapshot AS (${aliceSelectedSnapshotSql})
       SELECT query_row.id AS query_id, query_row.query_text, query_row.portal_present,
              query_row.portal_position, query_row.portal_url, source.source_rank,
              source.source_domain, source.source_url
@@ -888,7 +938,20 @@ async function readAliceData(database: CanonicalDatabase, query: CanonicalDatase
     }
   }
   const queryList = [...queries.values()];
-  return { ...meta, kind: "alice", officialSovPct: snapshot ? nullableNumeric(snapshot.official_sov_pct) : null,
+  const officialSovHistory = weeklyRows.flatMap((row) => {
+    if (row.week_from == null || row.week_to == null || row.official_sov_pct == null) return [];
+    return [{
+      period: sourcePeriod("iso_week", String(row.week_from), String(row.week_to), query.period.sourceTimezone),
+      officialSovPct: numeric(row.official_sov_pct),
+    }];
+  });
+  const monthlyOfficialSovPct = snapshot ? nullableNumeric(snapshot.official_sov_pct) : null;
+  const latestWeeklySov = officialSovHistory.at(-1) ?? null;
+  const officialSovPct = monthlyOfficialSovPct ?? latestWeeklySov?.officialSovPct ?? null;
+  const officialSovPeriod = monthlyOfficialSovPct !== null
+    ? meta.period?.kind === "calendar_month" ? meta.period : null
+    : latestWeeklySov?.period ?? null;
+  return { ...meta, kind: "alice", officialSovPct, officialSovPeriod, officialSovHistory,
     samplePresencePct: snapshot ? nullableNumeric(snapshot.sample_presence_pct) : null,
     competitors: competitorRows.map((row) => String(row.site_domain)),
     sources: [...new Set(queryList.flatMap((item) => item.sources.map((source) => source.domain)))],

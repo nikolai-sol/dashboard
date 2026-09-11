@@ -433,13 +433,15 @@ test("standard sheets use the accepted Zaruku-style stack of focused panels", ()
     webmaster: { ...webmasterMeta, kind: "webmaster" as const, summary: { clicks: 48, impressions: 1661, ctrPct: 2.9, averagePosition: 8.4 }, daily: [{ date: "2026-09-10", metrics: { clicks: 12, impressions: 400, ctrPct: 3, averagePosition: 8 } }], topPages: [{ page: "/page", metrics: { clicks: 8, impressions: 300, ctrPct: 2.7, averagePosition: 7 } }] },
   };
   const wordstat = { ...meta, sourceKey: "yandex_wordstat" as const, period: selection.traffic.primary, snapshotPeriod: { kind: "custom" as const, key: "rolling", from: "2026-08-13", to: "2026-09-11", sourceTimezone: "Europe/Moscow" }, kind: "wordstat" as const, demand: null, queries: [{ query: "бевацизумаб", count: 14982, kind: "popular", window: { from: "2026-08-13", to: "2026-09-11", snapshotDate: "2026-09-11", registryVersion: "core-v1", importId: "2474" } }] };
-  const aliceMeta = { ...meta, sourceKey: "yandex_webmaster_alice_manual" as const, collectionMode: "manual" as const };
-  const alice = { ...aliceMeta, kind: "alice" as const, officialSovPct: 12.5, samplePresencePct: 20, competitors: ["example.ru"], sources: ["alice.ru"], queries: [{ query: "лечение", portalPresent: true, portalPosition: 1, portalUrl: "https://med.roche.ru/page", sources: [{ rank: 1, domain: "med.roche.ru", url: "https://med.roche.ru/page" }] }] };
+  const aliceSourcePeriod = { kind: "custom" as const, key: "custom:2026-07-27:2026-09-06", from: "2026-07-27", to: "2026-09-06", sourceTimezone: "Europe/Moscow" };
+  const aliceSovPeriod = { kind: "iso_week" as const, key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" };
+  const aliceMeta = { ...meta, sourceKey: "yandex_webmaster_alice_manual" as const, collectionMode: "manual" as const, period: aliceSourcePeriod };
+  const alice = { ...aliceMeta, kind: "alice" as const, officialSovPct: 12.5, officialSovPeriod: aliceSovPeriod, officialSovHistory: [{ period: aliceSovPeriod, officialSovPct: 12.5 }], samplePresencePct: 20, competitors: ["example.ru"], sources: ["alice.ru"], queries: [{ query: "лечение", portalPresent: true, portalPosition: 1, portalUrl: "https://med.roche.ru/page", sources: [{ rank: 1, domain: "med.roche.ru", url: "https://med.roche.ru/page" }] }] };
   const seoMeta = { ...meta, sourceKey: "seo_os" as const, collectionMode: "derived" as const };
   const seoOs = { ...seoMeta, kind: "seo_os" as const, rows: [], recommendations: [{ kind: "content", topic: "Онкология", pageUrl: "/page", action: "Обновить", sourceIds: ["webmaster"], sourcePeriods: ["2026-W37"], ruleVersion: "v1", publicationStatus: "published" }], tasks: [{ id: "task-1", status: "open" }] };
 
   const trafficHtml = renderToStaticMarkup(createElement(Traffic, { id: "traffic", model, selection }));
-  const searchHtml = renderToStaticMarkup(createElement(Search, { id: "search", model, showGsc: true }));
+  const searchHtml = renderToStaticMarkup(createElement(Search, { id: "search", model: { ...model, alice }, showGsc: true }));
   const wordstatHtml = renderToStaticMarkup(createElement(Wordstat, { id: "wordstat", meta: wordstat, data: wordstat }));
   const aliceHtml = renderToStaticMarkup(createElement(Alice, { id: "alice", meta: aliceMeta, data: alice }));
   const seoHtml = renderToStaticMarkup(createElement(SeoOs, { id: "seo-os", meta: seoMeta, data: seoOs }));
@@ -459,6 +461,9 @@ test("standard sheets use the accepted Zaruku-style stack of focused panels", ()
   assert.doesNotMatch(wordstatHtml, /Спрос за выбранную ISO-неделю|Недельный спрос не опубликован/);
   assert.doesNotMatch(wordstatHtml, /Классификация|Региональные возможности|SEO OS/);
   assert.deepEqual([...aliceHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["alice.summary", "alice.competitors", "alice.queries"]);
+  assert.match(searchHtml, /ИИ-видимость в Алисе AI[^]*2026-07-27 — 2026-09-06[^]*Официальный SOV[^]*12,5%[^]*Неделя 31\.08–06\.09\.2026[^]*Присутствие[^]*20%/);
+  assert.match(aliceHtml, /2026-07-27 — 2026-09-06[^]*Официальный SOV[^]*12\.5%[^]*Неделя 31\.08–06\.09\.2026[^]*Присутствие в выборке[^]*20%/);
+  assert.doesNotMatch(`${searchHtml}${aliceHtml}`, /SOV[^<]*месяц|месячный SOV/i);
   assert.deepEqual([...seoHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo-os.summary", "seo-os.recommendations", "seo-os.tasks"]);
   assert.deepEqual([...sourcesHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["sources.summary", "sources.list"]);
 });

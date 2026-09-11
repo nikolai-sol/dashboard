@@ -86,6 +86,8 @@ function model() {
       state: "ready" as const,
       kind: "alice" as const,
       officialSovPct: 12.5,
+      officialSovPeriod: w36,
+      officialSovHistory: [],
       samplePresencePct: 20,
       competitors: [],
       sources: [],

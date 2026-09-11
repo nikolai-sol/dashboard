@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { WebmasterCanonicalMetrics } from "../lib/db.ts";
 import type { DashboardReadModel } from "../lib/read-model.ts";
 import { EmptyNotice, Kpi, KpiStrip, Panel, TableFrame } from "./DashboardPrimitives.tsx";
+import { aliceOfficialSovPeriodLabel, aliceSourceRange } from "./alice-period.ts";
 
 const number = new Intl.NumberFormat("ru-RU");
 
@@ -224,13 +225,14 @@ export function Search({ id, model, profile, showGsc, showWebmaster = true }: Re
     return sortUnifiedQueries(filtered, querySort);
   }, [queries, querySearch, querySort]);
   const changeSort = (key: QuerySortKey) => setQuerySort((current) => toggleQuerySort(current, key));
+  const aliceMeta = model.alice ?? model.datasets.yandex_webmaster_alice_manual;
 
   return (
     <div id={id} className="site-seo-section-stack">
       <div className="site-seo-seo-summary-grid">
-        <Panel panelId="seo.alice" title="ИИ-видимость в Алисе AI">
+        <Panel panelId="seo.alice" title="ИИ-видимость в Алисе AI" subtitle={aliceSourceRange(aliceMeta?.period)}>
           <KpiStrip>
-            <Kpi label="Официальный SOV" value={model.alice?.officialSovPct == null ? "—" : percent(model.alice.officialSovPct)} />
+            <Kpi label="Официальный SOV" value={model.alice?.officialSovPct == null ? "—" : percent(model.alice.officialSovPct)} detail={aliceOfficialSovPeriodLabel(model.alice?.officialSovPeriod)} />
             <Kpi label="Присутствие" value={model.alice?.samplePresencePct == null ? "—" : percent(model.alice.samplePresencePct)} />
           </KpiStrip>
           {!model.alice ? <EmptyNotice>Нет опубликованной выгрузки за выбранный месяц.</EmptyNotice> : null}
