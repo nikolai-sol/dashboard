@@ -19,6 +19,7 @@ const modeLabels: Readonly<Record<string, string>> = {
 
 export function sourceStatusLabel(meta: DatasetMeta | undefined): string {
   if (!meta || meta.state === "missing") return "Нужна выгрузка";
+  if (meta.latestAttempt === "failed") return "Последняя попытка сбора завершилась ошибкой; показаны ранее опубликованные данные";
   if (meta.state === "partial") return "Неполные данные";
   if (meta.state === "complete_empty") return "Подтверждённо пусто";
   if (meta.state === "failed") return "Последняя загрузка с ошибкой";

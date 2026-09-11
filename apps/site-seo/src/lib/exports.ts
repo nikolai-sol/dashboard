@@ -6,7 +6,9 @@ import type { PeriodSelection } from "./period-selection.ts";
 export type ExportRow = Readonly<{ field: string; value: string }>;
 
 export function buildExportRows(input: Readonly<{ title: string; period: Period; source: DatasetMeta }>): ExportRow[] {
-  const limitation = input.source.state === "missing"
+  const limitation = input.source.latestAttempt === "failed" && input.source.state !== "failed"
+    ? "Последняя попытка сбора завершилась ошибкой; показаны ранее опубликованные данные"
+    : input.source.state === "missing"
     ? "Нужна выгрузка"
     : input.source.state === "partial"
       ? "Источник содержит неполные данные"

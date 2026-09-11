@@ -18,6 +18,11 @@ test("exports actual period and the missing-data limitation instead of a zero re
   assert.doesNotMatch(csv, /0,00/);
 });
 
+test("exports a failed latest attempt while preserving older published facts", () => {
+  const rows = buildExportRows({ period, source: { ...meta, state: "partial", completeness: "limited", latestAttempt: "failed" }, title: "Wordstat" });
+  assert.match(toCsv(rows), /Последняя попытка сбора завершилась ошибкой; показаны ранее опубликованные данные/);
+});
+
 test("exports canonical GSC summary, daily facts, and exact dimension rows", () => {
   const rows = buildGscExportRows({ period, source: { ...meta, state: "ready", period }, summary: { clicks: 7, impressions: 100, ctrPct: 7, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 2, impressions: 10, ctrPct: 20, averagePosition: 2 } }], dimensions: [{ dimension: "query", value: "онкология", metrics: { clicks: 2, impressions: 10, ctrPct: 20, averagePosition: 2 } }] });
   assert.match(toCsv(rows), /онкология/);

@@ -55,6 +55,10 @@ test("labels manual data with its actual loaded period rather than calling it cu
   assert.match(sourceStatusLabel({ sourceKey: "google_search_console", period: { kind: "calendar_month", key: "2026-01", from: "2026-01-01", to: "2026-01-31", sourceTimezone: "Europe/Moscow" }, state: "ready", collectionMode: "manual", completeness: "complete", importId: "fixture", exportedAt: null, loadedAt: "2026-02-01T00:00:00Z", freshness: "delayed", latestAttempt: "success" }), /2026-01-01/);
 });
 
+test("sources disclose a failed latest attempt even when older partial facts remain visible", () => {
+  assert.match(sourceStatusLabel({ sourceKey: "yandex_wordstat", period: { kind: "custom", key: "rolling", from: "2026-08-13", to: "2026-09-11", sourceTimezone: "Europe/Moscow" }, state: "partial", collectionMode: "automated", completeness: "limited", importId: "2474", exportedAt: null, loadedAt: "2026-09-11T06:55:01Z", freshness: "current", latestAttempt: "failed" }), /Последняя попытка сбора завершилась ошибкой/);
+});
+
 test("preserves validated periods, comparison, publication, and filters in controls and exports", () => {
   const query = buildDashboardQuery(createPeriodSelection({ primaryWeek: "2026-W01", comparisonWeek: "2025-W52", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow"), "publication-7", { country: "RU" });
   assert.match(query, /traffic_compare=2025-W52/);
@@ -337,6 +341,9 @@ test("Wordstat distinguishes an unconfigured source, failed collection, partial 
     assert.match(html, new RegExp(`data-state="${state}"`));
     assert.match(html, new RegExp(expectedStateCopy[state]));
   }
+
+  const staleAfterFailure = renderToStaticMarkup(createElement(Wordstat, { id: "wordstat", meta: { ...base, state: "partial", latestAttempt: "failed" }, data: null }));
+  assert.match(staleAfterFailure, /Последняя попытка сбора завершилась ошибкой/);
 });
 
 test("wide factual tables use a labelled local scroll frame and semantic headings", () => {

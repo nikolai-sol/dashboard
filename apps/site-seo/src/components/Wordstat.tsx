@@ -4,6 +4,7 @@ import { EmptyNotice, Kpi, KpiStrip, Panel, StatusBadge, TableFrame } from "./Da
 
 function wordstatStatus(meta?: DatasetMeta): string {
   if (!meta || meta.state === "missing") return "Источник не настроен или сбор ещё не выполнен";
+  if (meta.latestAttempt === "failed" && meta.state !== "failed") return "Последняя попытка сбора завершилась ошибкой; показаны ранее опубликованные данные";
   if (meta.state === "failed") return "Последний сбор завершился ошибкой";
   if (meta.state === "partial") return "Неполные данные";
   if (meta.state === "complete_empty") return "Подтверждённо пусто";
