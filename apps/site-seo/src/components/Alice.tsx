@@ -1,15 +1,17 @@
 import type { DatasetMeta } from "@reportingdash/site-seo-contract";
 import type { AliceCanonicalData } from "../lib/db.ts";
 import { EmptyNotice, Kpi, KpiStrip, Panel, StatusBadge, TableFrame } from "./DashboardPrimitives.tsx";
+import { aliceOfficialSovPeriodLabel, aliceSourceRange } from "./alice-period.ts";
 
 export function Alice({ id, meta, data }: Readonly<{ id: string; meta?: DatasetMeta; data: AliceCanonicalData | null }>) {
   const state = meta?.state ?? "missing";
+  const sourcePeriod = data?.period ?? meta?.period;
 
   return (
     <div id={id} className="site-seo-section-stack">
-      <Panel panelId="alice.summary" title="AI-видимость" subtitle={meta?.period ? `${meta.period.from} — ${meta.period.to}` : "Месячная выгрузка Яндекс Алисы"} state={state}>
+      <Panel panelId="alice.summary" title="AI-видимость" subtitle={aliceSourceRange(sourcePeriod) ?? "Опубликованная выгрузка Яндекс Алисы"} state={state}>
         <KpiStrip>
-          <Kpi label="Официальный SOV" value={data?.officialSovPct == null ? "—" : `${data.officialSovPct}%`} />
+          <Kpi label="Официальный SOV" value={data?.officialSovPct == null ? "—" : `${data.officialSovPct}%`} detail={aliceOfficialSovPeriodLabel(data?.officialSovPeriod)} />
           <Kpi label="Присутствие в выборке" value={data?.samplePresencePct == null ? "—" : `${data.samplePresencePct}%`} />
           <Kpi label="Состояние" value={<StatusBadge state={state} />} />
         </KpiStrip>

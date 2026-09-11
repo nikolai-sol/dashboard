@@ -97,7 +97,7 @@ test("exports actual Wordstat snapshot windows, Alice query sources, and publish
         queries: [{ query: "лечение", kind: "popular", count: 100, window: { from: "2026-07-27", to: "2026-08-25", snapshotDate: "2026-08-25", registryVersion: "registry-2", importId: "run-2" } }],
       },
       alice: {
-        ...meta, sourceKey: "yandex_webmaster_alice_manual", period: selection.alice, state: "ready", completeness: "complete", kind: "alice", officialSovPct: 43.91, samplePresencePct: 43.87, competitors: [], sources: ["one.test"],
+        ...meta, sourceKey: "yandex_webmaster_alice_manual", period: selection.alice, state: "ready", completeness: "complete", kind: "alice", officialSovPct: 43.91, officialSovPeriod: selection.alice, officialSovHistory: [], samplePresencePct: 43.87, competitors: [], sources: ["one.test"],
         queries: [{ query: "лечение", portalPresent: true, portalPosition: 2, portalUrl: "https://portal.test/a", sources: [{ rank: 1, domain: "one.test", url: "https://one.test/a" }] }],
       },
       seoOs: {
