@@ -363,6 +363,243 @@ body {
   line-height: 1.1;
 }
 
+.site-seo-overview-grid {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.site-seo-overview-grid > [data-panel-id] {
+  min-width: 0;
+}
+
+.site-seo-overview-grid .site-seo-panel {
+  height: 100%;
+  margin: 0;
+}
+
+.site-seo-goal-panel {
+  display: flex;
+  min-height: 96px;
+  align-items: center;
+  gap: 28px;
+  padding: 16px 20px;
+  border-top-color: var(--site-seo-slate-300);
+  background: #f7f9fa;
+}
+
+.site-seo-goal-panel h2 {
+  width: 360px;
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--site-seo-slate-900);
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.site-seo-goal-kpis {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.site-seo-goal-kpi {
+  min-width: 0;
+}
+
+.site-seo-goal-kpi > span,
+.site-seo-health-kpi > span,
+.site-seo-health-kpi small,
+.site-seo-goal-kpi small {
+  color: var(--site-seo-slate-500);
+  font-size: 0.75rem;
+}
+
+.site-seo-goal-kpi > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-top: 4px;
+}
+
+.site-seo-goal-kpi strong {
+  font-size: 1.875rem;
+}
+
+.site-seo-overview-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.site-seo-overview-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--site-seo-slate-100);
+}
+
+.site-seo-overview-panel-header h2 {
+  margin: 0;
+  color: var(--site-seo-slate-900);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.site-seo-overview-panel-header p {
+  margin: 4px 0 0;
+  color: var(--site-seo-slate-400, #94a3b8);
+  font-size: 0.75rem;
+}
+
+.site-seo-overview-panel-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 16px 20px;
+}
+
+.site-seo-source-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--site-seo-slate-200);
+  border-radius: 6px;
+  color: var(--site-seo-slate-500);
+  background: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.site-seo-source-badge > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--site-seo-slate-300);
+}
+
+.site-seo-source-badge[data-state="ready"] > span,
+.site-seo-source-badge[data-state="complete_empty"] > span {
+  background: var(--site-seo-teal-600);
+}
+
+.site-seo-source-badge[data-state="partial"] > span {
+  background: var(--site-seo-status-warning);
+}
+
+.site-seo-source-badge[data-state="failed"] > span {
+  background: var(--site-seo-status-critical);
+}
+
+.site-seo-health-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.site-seo-health-kpi {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding-left: 20px;
+  border-left: 1px solid var(--site-seo-slate-200);
+}
+
+.site-seo-health-kpi:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.site-seo-health-kpi strong {
+  font-size: 1.5rem;
+}
+
+.site-seo-overview-empty {
+  display: grid;
+  min-height: 150px;
+  place-items: center;
+  padding: 20px;
+  color: var(--site-seo-slate-500);
+  background: var(--site-seo-slate-50);
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.site-seo-trend {
+  display: grid;
+  height: 100%;
+  min-height: 205px;
+  grid-template-rows: auto 1fr auto;
+}
+
+.site-seo-trend-legend {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--site-seo-slate-500);
+  font-size: 0.75rem;
+}
+
+.site-seo-trend-legend > span {
+  width: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--site-seo-teal-600);
+}
+
+.site-seo-trend svg {
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
+  overflow: visible;
+}
+
+.site-seo-trend line {
+  stroke: var(--site-seo-slate-200);
+  stroke-dasharray: 4 4;
+}
+
+.site-seo-trend polyline {
+  fill: none;
+  stroke: var(--site-seo-teal-600);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.site-seo-trend circle {
+  fill: var(--site-seo-teal-600);
+}
+
+.site-seo-trend-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--site-seo-slate-500);
+  font-size: 0.7rem;
+}
+
+@media (min-width: 1280px) {
+  .site-seo-overview-grid {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-template-rows: 96px minmax(129px, auto) minmax(260px, auto) minmax(280px, auto);
+  }
+
+  .site-seo-overview-grid > [data-panel-id="overview.north_star"],
+  .site-seo-overview-grid > [data-panel-id="overview.traffic_health"],
+  .site-seo-overview-grid > [data-panel-id="overview.organic_search"] {
+    grid-column: 1 / -1;
+  }
+
+  .site-seo-overview-grid > [data-panel-id="overview.channels"],
+  .site-seo-overview-grid > [data-panel-id="overview.search_engines"] {
+    grid-column: span 6;
+  }
+}
+
 .site-seo-table-frame {
   width: 100%;
   overflow-x: auto;
@@ -459,6 +696,29 @@ body {
   .site-seo-button {
     grid-column: 1 / -1;
   }
+
+  .site-seo-goal-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .site-seo-goal-panel h2 {
+    width: auto;
+  }
+
+  .site-seo-goal-kpis {
+    width: 100%;
+  }
+
+  .site-seo-health-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 0;
+  }
+
+  .site-seo-health-kpi:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 
 @media (max-width: 767px) {
@@ -536,6 +796,37 @@ body {
   .site-seo-panel-body {
     padding-right: 16px;
     padding-left: 16px;
+  }
+
+  .site-seo-goal-panel {
+    gap: 18px;
+    padding: 16px;
+  }
+
+  .site-seo-goal-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .site-seo-overview-panel-header,
+  .site-seo-overview-panel-body {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .site-seo-health-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-seo-health-kpi {
+    padding: 0 0 12px;
+    border-bottom: 1px solid var(--site-seo-slate-100);
+    border-left: 0;
+  }
+
+  .site-seo-health-kpi:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
   }
 }
 

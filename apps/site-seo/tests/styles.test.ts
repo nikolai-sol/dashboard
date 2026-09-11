@@ -79,3 +79,14 @@ test("canonical dataset states use distinct semantic status colours", () => {
   assert.match(css, /\.site-seo-panel\[data-state="partial"\][^{]*\{[^}]*var\(--site-seo-status-warning\)/);
   assert.match(css, /\.site-seo-panel\[data-state="failed"\][^{]*\{[^}]*var\(--site-seo-status-critical\)/);
 });
+
+test("overview uses the accepted Zaruku panel geometry", () => {
+  const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
+
+  assert.match(css, /\.site-seo-overview-grid\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /@media \(min-width:\s*1280px\)[^]*\.site-seo-overview-grid\s*\{[^}]*grid-template-columns:\s*repeat\(12,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /data-panel-id="overview\.north_star"[^]*grid-column:\s*1\s*\/\s*-1/);
+  assert.match(css, /data-panel-id="overview\.channels"[^]*grid-column:\s*span\s*6/);
+  assert.match(css, /data-panel-id="overview\.search_engines"[^]*grid-column:\s*span\s*6/);
+  assert.match(css, /data-panel-id="overview\.organic_search"[^]*grid-column:\s*1\s*\/\s*-1/);
+});

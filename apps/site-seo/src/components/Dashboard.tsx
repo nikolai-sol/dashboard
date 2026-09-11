@@ -35,6 +35,8 @@ export function resolveActiveTab(tabs: readonly DashboardTab[], requested?: stri
 export function Dashboard({ profile, model, selection, publicationId, filters, activeTab: requestedTab }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>>; activeTab?: string }>) {
   const query = buildDashboardQuery(selection, publicationId, filters);
   const gscEnabled = enabled(profile, "google_search_console");
+  const metrikaEnabled = enabled(profile, "yandex_metrika");
+  const webmasterEnabled = enabled(profile, "yandex_webmaster");
   const webmasterComparison = model.trafficComparison.yandex_webmaster;
   const tabs = dashboardTabs(profile);
   const activeTab = resolveActiveTab(tabs, requestedTab);
@@ -43,7 +45,7 @@ export function Dashboard({ profile, model, selection, publicationId, filters, a
   const exports = <p><a href={`/api/dashboard/${profile.slug}?${query}`}>JSON</a>{" · "}<a href={`/api/dashboard/${profile.slug}/excel?${query}`}>Excel</a>{" · "}<a href={`/api/dashboard/${profile.slug}/pdf?${query}`}>PDF</a></p>;
 
   let section;
-  if (activeTab === "overview") section = <Overview id="overview" model={model} showGsc={gscEnabled} />;
+  if (activeTab === "overview") section = <Overview id="overview" model={model} showGsc={gscEnabled} showMetrika={metrikaEnabled} showWebmaster={webmasterEnabled} />;
   else if (activeTab === "traffic") section = <Traffic id="traffic" model={model} selection={selection} />;
   else if (activeTab === "search") section = <><Search id="search" model={model} showGsc={gscEnabled} />
     {selection.traffic.comparison && webmasterComparison && "kind" in webmasterComparison && webmasterComparison.kind === "webmaster" && <p>Сравнение Webmaster {selection.traffic.comparison.key}: клики {webmasterComparison.summary?.clicks ?? "нет данных"}; показы {webmasterComparison.summary?.impressions ?? "нет данных"}</p>}</>;

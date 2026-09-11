@@ -10,6 +10,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { Wordstat } from "../src/components/Wordstat.tsx";
 import { Search } from "../src/components/Search.tsx";
+import { Overview } from "../src/components/Overview.tsx";
 import { siteLoginPath } from "../src/components/LoginForm.tsx";
 import { readFileSync } from "node:fs";
 
@@ -127,6 +128,68 @@ test("renders canonical Metrika and Webmaster facts without treating daily users
   assert.match(trafficHtml, /Пользователи за день: 3/);
   assert.match(searchHtml, /Webmaster: partial; клики: 5; показы: 50/);
   assert.doesNotMatch(trafficHtml, /Пользователи за период/);
+});
+
+test("overview follows the accepted five-panel Zaruku composition with canonical facts", () => {
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const ready = { ...missing, state: "ready" as const, completeness: "complete" as const, latestAttempt: "success" as const };
+  const model = {
+    gsc: {
+      meta: ready,
+      summary: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 },
+      daily: [
+        { date: "2026-01-01", metrics: { clicks: 1, impressions: 8, ctrPct: 12.5, averagePosition: 3 } },
+        { date: "2026-01-02", metrics: { clicks: 1, impressions: 12, ctrPct: 8.33, averagePosition: 3 } },
+      ],
+      dimensions: [], dimensionMeta: {},
+    },
+    indexing: missing,
+    datasets: {}, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+    metrika: {
+      ...ready, sourceKey: "yandex_metrika" as const, collectionMode: "automated" as const,
+      kind: "metrika" as const, summary: { visits: 20, pageviews: 30 },
+      daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [],
+    },
+    webmaster: {
+      ...ready, sourceKey: "yandex_webmaster" as const, collectionMode: "automated" as const,
+      kind: "webmaster" as const,
+      summary: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 },
+      daily: [{ date: "2026-01-02", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }], topPages: [],
+    },
+  };
+
+  const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true }));
+  const panelIds = [...html.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]);
+
+  assert.deepEqual(panelIds, [
+    "overview.north_star",
+    "overview.traffic_health",
+    "overview.channels",
+    "overview.search_engines",
+    "overview.organic_search",
+  ]);
+  assert.match(html, /Цель: рост целевого органического трафика/);
+  assert.match(html, /Здоровье трафика/);
+  assert.match(html, /Каналы привлечения/);
+  assert.match(html, /Поисковые системы/);
+  assert.match(html, /Органический поиск/);
+  assert.match(html, /Визиты[^]*20/);
+  assert.match(html, /Google[^]*2/);
+  assert.match(html, /Яндекс[^]*5/);
+  assert.match(html, /Пользователи за день[^]*3/);
+  assert.doesNotMatch(html, /Пользователи за период/);
+});
+
+test("overview keeps the accepted layout while unavailable metrics stay explicit", () => {
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true }));
+
+  assert.equal(html.match(/data-panel-id="overview\./g)?.length, 5);
+  assert.match(html, /Разбивка по каналам пока не опубликована/);
+  assert.match(html, /Нет опубликованной динамики органического поиска/);
+  assert.match(html, /data-state="missing"/);
+  assert.doesNotMatch(html, />0<\/span>/);
 });
 
 test("Wordstat distinguishes an unconfigured source, failed collection, partial data, and confirmed empty", () => {
