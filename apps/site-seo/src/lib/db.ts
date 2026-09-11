@@ -15,12 +15,25 @@ import {
   type ManualReadScope,
 } from "../../../../src/db/site-seo/manual-period-query.ts";
 
-export type CanonicalReadQuery = Readonly<{
+export type CanonicalDatasetReadQuery = Readonly<{
   name: "gsc" | "dataset";
   scope: SourceScope;
   period: Period;
   publicationId: string | null;
   filters: Readonly<Record<string, string>>;
+}>;
+
+export type AvailableMetrikaWeeksReadQuery = Readonly<{
+  name: "available_metrika_weeks";
+  scope: SourceScope;
+  timezone: string;
+}>;
+
+export type CanonicalReadQuery = CanonicalDatasetReadQuery;
+
+export type AvailableMetrikaWeeks = Readonly<{
+  kind: "available_metrika_weeks";
+  weeks: readonly Period[];
 }>;
 
 export type MetrikaTrafficMetrics = Readonly<{
@@ -60,6 +73,7 @@ export type WebmasterCanonicalData = DatasetMeta & Readonly<{
   summary: WebmasterCanonicalMetrics | null;
   daily: readonly Readonly<{ date: string; metrics: WebmasterCanonicalMetrics }>[];
   topPages: readonly Readonly<{ page: string; metrics: WebmasterCanonicalMetrics }>[];
+  queryFacts?: readonly Readonly<{ query: string; metrics: WebmasterCanonicalMetrics }>[];
 }>;
 
 export type WordstatCanonicalData = DatasetMeta & Readonly<{
@@ -117,6 +131,10 @@ export type CanonicalDatasetData = MetrikaCanonicalData | WebmasterCanonicalData
 export type CanonicalReadExecutor = (
   query: CanonicalReadQuery,
 ) => Promise<GscReadRows | DatasetMeta | CanonicalDatasetData>;
+
+export type AvailableMetrikaWeeksReadExecutor = (
+  query: AvailableMetrikaWeeksReadQuery,
+) => Promise<AvailableMetrikaWeeks>;
 
 export class MissingCanonicalReadMappingError extends Error {
   constructor() {
@@ -204,7 +222,7 @@ function periodDays(period: Period): number {
 }
 
 function datasetMeta(
-  query: CanonicalReadQuery,
+  query: CanonicalDatasetReadQuery,
   row: DatasetMetaRow | undefined,
   collectionMode: DatasetMeta["collectionMode"],
   state: DatasetMeta["state"],
@@ -256,7 +274,7 @@ async function rowsFor<T>(database: CanonicalDatabase, query: { sql: string; par
   return result as T[];
 }
 
-async function readManualGsc(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<GscReadRows> {
+async function readManualGsc(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<GscReadRows> {
   const scope = manualScope(query.scope, query.filters);
   const period = { kind: query.period.kind, from: query.period.from, to: query.period.to, key: query.period.key };
   const indexing = buildManualIndexingReadQuery(scope, query.period.to, query.publicationId);
@@ -301,7 +319,7 @@ async function readManualGsc(database: CanonicalDatabase, query: CanonicalReadQu
   return { meta, summary, daily: dailyRows, dimensions: dimensionRows, dimensionCoverage, indexing: indexingMeta };
 }
 
-async function readMetrikaMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta> {
+async function readMetrikaMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta> {
   const rows = await rowsFor<DatasetMetaRow>(database, {
     sql: `SELECT COUNT(*) AS coverage_rows,
                  COUNT(DISTINCT report_date) AS covered_days,
@@ -366,7 +384,7 @@ function metrikaBreakdownRow(row: MetrikaTrafficRow): MetrikaBreakdownRow {
  * uses the full fact grain available in canonical MySQL: source, account, report,
  * segment, row kind and date.
  */
-async function readMetrikaData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | MetrikaCanonicalData> {
+async function readMetrikaData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | MetrikaCanonicalData> {
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to];
   const [meta, [trafficHealthRows, channelRows]] = await Promise.all([
     readMetrikaMeta(database, query),
@@ -501,7 +519,7 @@ async function readMetrikaData(database: CanonicalDatabase, query: CanonicalRead
   };
 }
 
-async function readWebmasterMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta> {
+async function readWebmasterMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta> {
   const rows = await rowsFor<DatasetMetaRow>(database, {
     sql: `/* site-seo:webmaster-meta */
            SELECT COUNT(*) AS row_count,
@@ -524,6 +542,7 @@ async function readWebmasterMeta(database: CanonicalDatabase, query: CanonicalRe
 type WebmasterFactRow = Readonly<{
   report_date?: unknown;
   page_url?: unknown;
+  query_text?: unknown;
   clicks?: unknown;
   impressions?: unknown;
   ctr_pct?: unknown;
@@ -545,13 +564,13 @@ const webmasterMetricsSql = `SUM(COALESCE(clicks, 0)) AS clicks,
                    SUM(CASE WHEN average_position IS NOT NULL THEN average_position * COALESCE(impressions, 0) END)
                      / NULLIF(SUM(CASE WHEN average_position IS NOT NULL THEN COALESCE(impressions, 0) END), 0) AS average_position`;
 
-async function readWebmasterData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | WebmasterCanonicalData> {
+async function readWebmasterData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | WebmasterCanonicalData> {
   const meta = await readWebmasterMeta(database, query);
   if (meta.state === "missing") return meta;
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
   const where = `source_key = ? AND analytics_account_id = ? AND host_id = ?
                AND device_type = 'ALL' AND report_date BETWEEN ? AND ?`;
-  const [summaryRows, dailyRows, pageRows] = await Promise.all([
+  const [summaryRows, dailyRows, pageRows, queryRows] = await Promise.all([
     rowsFor<WebmasterFactRow>(database, {
       sql: `/* site-seo:webmaster-summary */
             SELECT ${webmasterMetricsSql}
@@ -574,8 +593,16 @@ async function readWebmasterData(database: CanonicalDatabase, query: CanonicalRe
               FROM canonical_fact_webmaster_pages_daily
              WHERE ${where}
              GROUP BY page_url
-             ORDER BY impressions DESC, clicks DESC, page_url ASC
-             LIMIT 20`,
+             ORDER BY impressions DESC, clicks DESC, page_url ASC`,
+      params,
+    }),
+    rowsFor<WebmasterFactRow>(database, {
+      sql: `/* site-seo:webmaster-queries */
+            SELECT query_text, ${webmasterMetricsSql}
+              FROM canonical_fact_webmaster_queries_daily
+             WHERE ${where}
+             GROUP BY query_text
+             ORDER BY impressions DESC, clicks DESC, query_text ASC`,
       params,
     }),
   ]);
@@ -587,10 +614,11 @@ async function readWebmasterData(database: CanonicalDatabase, query: CanonicalRe
     summary: hasSummary ? webmasterMetrics(summaryRow!) : null,
     daily: dailyRows.map((row) => ({ date: String(row.report_date), metrics: webmasterMetrics(row) })),
     topPages: pageRows.map((row) => ({ page: String(row.page_url), metrics: webmasterMetrics(row) })),
+    queryFacts: queryRows.map((row) => ({ query: String(row.query_text), metrics: webmasterMetrics(row) })),
   };
 }
 
-async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<Readonly<{ meta: DatasetMeta; hasCoverage: boolean }>> {
+async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<Readonly<{ meta: DatasetMeta; hasCoverage: boolean }>> {
   const currentJob = `yandex_wordstat:${query.scope.analyticsAccountId}:current`;
   const historicalJob = `yandex_wordstat:${query.scope.analyticsAccountId}:historical`;
   const allJob = `yandex_wordstat:${query.scope.analyticsAccountId}:all`;
@@ -717,7 +745,7 @@ function wordstatRegionScope(resourceId: string) {
   return resourceId.startsWith("region:") ? resourceId.slice("region:".length) : resourceId;
 }
 
-async function readWordstatData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | WordstatCanonicalData> {
+async function readWordstatData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | WordstatCanonicalData> {
   const { meta, hasCoverage } = await readWordstatMeta(database, query);
   if (!hasCoverage) return meta;
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, wordstatRegionScope(query.scope.resourceId), query.period.from, query.period.to];
@@ -770,7 +798,7 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalRea
     } })) : [] };
 }
 
-async function readAliceMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta> {
+async function readAliceMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta> {
   const rows = await rowsFor<DatasetMetaRow>(database, {
     sql: `SELECT COUNT(*) AS row_count,
                  MAX(ingestion_run_id) AS import_id,
@@ -801,7 +829,7 @@ type AliceRow = Readonly<{
   source_url?: unknown;
 }>;
 
-async function readAliceData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | AliceCanonicalData> {
+async function readAliceData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | AliceCanonicalData> {
   const meta = await readAliceMeta(database, query);
   if (meta.state === "missing") return meta;
   const params = [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.resourceId, query.period.from, query.period.to];
@@ -893,7 +921,7 @@ function seoOsRecommendations(stages: unknown, publicationStatus: string | null)
   });
 }
 
-async function readSeoOsData(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | SeoOsCanonicalData> {
+async function readSeoOsData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | SeoOsCanonicalData> {
   const [runRows, taskRows] = await Promise.all([
     rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-run */
       SELECT id AS run_id, status, stages_json AS stages, finished_at AS loaded_at
@@ -916,7 +944,7 @@ async function readSeoOsData(database: CanonicalDatabase, query: CanonicalReadQu
   };
 }
 
-async function readDatasetMeta(database: CanonicalDatabase, query: CanonicalReadQuery): Promise<DatasetMeta | CanonicalDatasetData> {
+async function readDatasetMeta(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | CanonicalDatasetData> {
   switch (query.scope.sourceKey) {
     case "yandex_metrika": return readMetrikaData(database, query);
     case "yandex_webmaster": return readWebmasterData(database, query);
@@ -927,12 +955,48 @@ async function readDatasetMeta(database: CanonicalDatabase, query: CanonicalRead
   }
 }
 
+type AvailableWeekRow = Readonly<{ week_key: unknown; period_from: unknown; period_to: unknown }>;
+
+async function readAvailableMetrikaWeeks(database: CanonicalDatabase, query: AvailableMetrikaWeeksReadQuery): Promise<AvailableMetrikaWeeks> {
+  const rows = await rowsFor<AvailableWeekRow>(database, {
+    sql: `/* site-seo:available-metrika-weeks */
+          SELECT CONCAT(FLOOR(YEARWEEK(report_date, 3) / 100), '-W', LPAD(MOD(YEARWEEK(report_date, 3), 100), 2, '0')) AS week_key,
+                 MIN(report_date) AS period_from,
+                 MAX(report_date) AS period_to
+            FROM canonical_metrika_breakdown_coverage_daily
+           WHERE source_key = ? AND analytics_account_id = ?
+             AND report_key = 'search_engines' AND segment_key = 'russia'
+           GROUP BY YEARWEEK(report_date, 3)
+          HAVING COUNT(DISTINCT report_date) = 7
+             AND WEEKDAY(MIN(report_date)) = 0
+             AND WEEKDAY(MAX(report_date)) = 6
+             AND SUM(status <> 'success') = 0
+             AND SUM(pagination_complete = 0) = 0
+           ORDER BY period_from DESC`,
+    params: [query.scope.sourceKey, query.scope.analyticsAccountId],
+  });
+  return {
+    kind: "available_metrika_weeks",
+    weeks: rows.map((row) => ({
+      kind: "iso_week",
+      key: String(row.week_key),
+      from: String(row.period_from),
+      to: String(row.period_to),
+      sourceTimezone: query.timezone,
+    })),
+  };
+}
+
 /** Canonical MySQL is the sole request-time data plane; source APIs and import files are never read here. */
 export function createCanonicalReadExecutor(database: CanonicalDatabase): CanonicalReadExecutor {
   return async (query) => {
     if (query.name === "gsc") return readManualGsc(database, query);
     return readDatasetMeta(database, query);
   };
+}
+
+export function createAvailableMetrikaWeeksReadExecutor(database: CanonicalDatabase): AvailableMetrikaWeeksReadExecutor {
+  return (query) => readAvailableMetrikaWeeks(database, query);
 }
 
 function mysqlPool() {
@@ -954,6 +1018,10 @@ function defaultMysqlPool(): mysql.Pool {
 }
 
 export const canonicalReadExecutor: CanonicalReadExecutor = async (query) => createCanonicalReadExecutor({
+  execute: async (sql, params) => defaultMysqlPool().execute(sql, params as never[]),
+})(query);
+
+export const availableMetrikaWeeksReadExecutor: AvailableMetrikaWeeksReadExecutor = async (query) => createAvailableMetrikaWeeksReadExecutor({
   execute: async (sql, params) => defaultMysqlPool().execute(sql, params as never[]),
 })(query);
 

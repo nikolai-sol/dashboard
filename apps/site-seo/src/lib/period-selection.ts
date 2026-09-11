@@ -63,3 +63,16 @@ export function createPeriodSelection(
     gsc: input.gsc,
   } as const;
 }
+
+export function resolveAvailableWeekSelection(
+  selection: PeriodSelection,
+  availableWeeks: readonly Period[],
+): PeriodSelection {
+  const fullWeeks = availableWeeks.filter((period) => period.kind === "iso_week");
+  const primary = fullWeeks.find((period) => period.key === selection.traffic.primary.key) ?? fullWeeks[0];
+  if (!primary) throw new Error("No fully covered Metrika week is available");
+  const comparison = selection.traffic.comparison
+    ? fullWeeks.find((period) => period.key === selection.traffic.comparison?.key && period.key !== primary.key) ?? null
+    : null;
+  return { ...selection, traffic: { primary, comparison } };
+}

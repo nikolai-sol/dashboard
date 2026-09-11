@@ -1,5 +1,5 @@
-import type { DatasetMeta, SiteRegistration, SourceKey } from "@reportingdash/site-seo-contract";
-import { type AliceCanonicalData, type CanonicalDatasetData, type CanonicalReadExecutor, type MetrikaCanonicalData, type SeoOsCanonicalData, type WebmasterCanonicalData, type WordstatCanonicalData } from "./db.ts";
+import type { DatasetMeta, Period, SiteRegistration, SourceKey } from "@reportingdash/site-seo-contract";
+import { type AliceCanonicalData, type AvailableMetrikaWeeksReadExecutor, type CanonicalDatasetData, type CanonicalReadExecutor, type MetrikaCanonicalData, type SeoOsCanonicalData, type WebmasterCanonicalData, type WordstatCanonicalData } from "./db.ts";
 import { loadGscView } from "./gsc.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 import { MissingSourceScopeError, resolveSourceScope, type SiteScopeClaim } from "./scope.ts";
@@ -38,6 +38,19 @@ function isWebmasterData(value: DatasetMeta | CanonicalDatasetData): value is We
 function isWordstatData(value: DatasetMeta | CanonicalDatasetData): value is WordstatCanonicalData { return "kind" in value && value.kind === "wordstat"; }
 function isAliceData(value: DatasetMeta | CanonicalDatasetData): value is AliceCanonicalData { return "kind" in value && value.kind === "alice"; }
 function isSeoOsData(value: DatasetMeta | CanonicalDatasetData): value is SeoOsCanonicalData { return "kind" in value && value.kind === "seo_os"; }
+
+export async function loadAvailableMetrikaWeeks(input: Readonly<{
+  registration: SiteRegistration;
+  claim: SiteScopeClaim;
+  execute: AvailableMetrikaWeeksReadExecutor;
+}>): Promise<readonly Period[]> {
+  const source = input.registration.profile.sources.find((candidate) => candidate.sourceKey === "yandex_metrika" && candidate.mode !== "disabled");
+  if (!source) return [];
+  const scope = await resolveSourceScope(input.registration, input.claim, "yandex_metrika");
+  const result = await input.execute({ name: "available_metrika_weeks", scope, timezone: input.registration.profile.businessTimezone });
+  if (result.kind !== "available_metrika_weeks") throw new Error("Canonical Metrika period read returned an invalid result");
+  return result.weeks;
+}
 
 export async function loadDashboardReadModel(input: Readonly<{
   registration: SiteRegistration;

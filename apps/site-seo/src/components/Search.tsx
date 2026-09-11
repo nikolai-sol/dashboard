@@ -1,109 +1,134 @@
+import type { SiteProfile } from "@reportingdash/site-seo-contract";
+import type { WebmasterCanonicalMetrics } from "../lib/db.ts";
 import type { DashboardReadModel } from "../lib/read-model.ts";
-import { datasetStateLabel, EmptyNotice, Kpi, KpiStrip, Panel, StatusBadge, TableFrame } from "./DashboardPrimitives.tsx";
+import { EmptyNotice, Kpi, KpiStrip, Panel, TableFrame } from "./DashboardPrimitives.tsx";
 
-type WebmasterComparison = DashboardReadModel["trafficComparison"]["yandex_webmaster"];
+const number = new Intl.NumberFormat("ru-RU");
+
+function metric(value: number | null | undefined, maximumFractionDigits = 2): string {
+  return value == null || !Number.isFinite(value) ? "—" : value.toLocaleString("ru-RU", { maximumFractionDigits });
+}
 
 function percent(value: number | null | undefined): string {
-  return value == null ? "—" : `${value.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}%`;
+  return value == null || !Number.isFinite(value) ? "—" : `${metric(value)}%`;
 }
 
-function decimal(value: number | null | undefined): string {
-  return value == null ? "—" : value.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+type SectionAggregate = Readonly<{
+  id: string;
+  label: string;
+  metrics: WebmasterCanonicalMetrics | null;
+}>;
+
+function pathname(value: string): string {
+  try { return new URL(value, "https://site-seo.local").pathname; }
+  catch { return value.split(/[?#]/, 1)[0] ?? value; }
 }
 
-const dimensionLabels: Readonly<Record<string, string>> = {
-  query: "Запрос",
-  country: "Страна",
-  device: "Устройство",
-  appearance: "Вид в поиске",
-};
-
-function emptySourceCopy(source: string, state: string, subject: string): string {
-  if (state === "disabled") return `Источник ${source} отключён для этого сайта.`;
-  if (state === "failed") return `${subject}: последний сбор завершился ошибкой.`;
-  if (state === "partial") return `${subject}: опубликованные данные неполные.`;
-  if (state === "complete_empty") return `${subject}: сбор завершён, строк нет.`;
-  return `${subject}: данные не опубликованы.`;
+export function aggregateWebmasterSections(
+  sections: NonNullable<SiteProfile["seoSections"]>,
+  pages: NonNullable<DashboardReadModel["webmaster"]>["topPages"],
+): SectionAggregate[] {
+  const prefixes = sections.flatMap((section) => section.pathPrefixes.map((prefix) => ({ section, prefix })))
+    .sort((left, right) => right.prefix.length - left.prefix.length);
+  const grouped = new Map<string, typeof pages>();
+  for (const page of pages) {
+    const path = pathname(page.page);
+    const match = prefixes.find(({ prefix }) => path === prefix.slice(0, -1) || path.startsWith(prefix));
+    if (match) grouped.set(match.section.id, [...(grouped.get(match.section.id) ?? []), page]);
+  }
+  return sections.map((section) => {
+    const rows = grouped.get(section.id) ?? [];
+    if (rows.length === 0) return { id: section.id, label: section.label, metrics: null };
+    const clicks = rows.reduce((sum, row) => sum + row.metrics.clicks, 0);
+    const impressions = rows.reduce((sum, row) => sum + row.metrics.impressions, 0);
+    const positioned = rows.filter((row) => row.metrics.averagePosition !== null && row.metrics.impressions > 0);
+    const positionedImpressions = positioned.reduce((sum, row) => sum + row.metrics.impressions, 0);
+    return {
+      id: section.id,
+      label: section.label,
+      metrics: {
+        clicks,
+        impressions,
+        ctrPct: impressions > 0 ? clicks / impressions * 100 : null,
+        averagePosition: positionedImpressions > 0
+          ? positioned.reduce((sum, row) => sum + row.metrics.averagePosition! * row.metrics.impressions, 0) / positionedImpressions
+          : null,
+      },
+    };
+  });
 }
 
-export function Search({ id, model, showGsc, showWebmaster = true, comparison, comparisonKey }: Readonly<{
+type UnifiedQuery = Readonly<{
+  phrase: string;
+  google: WebmasterCanonicalMetrics | null;
+  yandex: WebmasterCanonicalMetrics | null;
+}>;
+
+function unifiedQueries(model: DashboardReadModel, showGsc: boolean, showWebmaster: boolean): UnifiedQuery[] {
+  const rows = new Map<string, UnifiedQuery>();
+  const add = (phrase: string, source: "google" | "yandex", metrics: WebmasterCanonicalMetrics) => {
+    const normalized = phrase.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
+    if (!normalized) return;
+    const current = rows.get(normalized) ?? { phrase: phrase.trim().replace(/\s+/g, " "), google: null, yandex: null };
+    rows.set(normalized, { ...current, [source]: metrics });
+  };
+  if (showGsc) {
+    for (const row of model.gsc.dimensions) if (row.dimension === "query") add(row.value, "google", row.metrics);
+  }
+  if (showWebmaster) {
+    for (const row of model.webmaster?.queryFacts ?? []) add(row.query, "yandex", row.metrics);
+  }
+  // Server HTML intentionally renders a deterministic top 100 by maximum source impressions.
+  return [...rows.values()]
+    .sort((left, right) => Math.max(right.google?.impressions ?? 0, right.yandex?.impressions ?? 0) - Math.max(left.google?.impressions ?? 0, left.yandex?.impressions ?? 0) || left.phrase.localeCompare(right.phrase, "ru"))
+    .slice(0, 100);
+}
+
+function SourceCells({ metrics }: Readonly<{ metrics: WebmasterCanonicalMetrics | null }>) {
+  return <><td>{metrics ? number.format(metrics.impressions) : "—"}</td><td>{metrics ? number.format(metrics.clicks) : "—"}</td><td>{percent(metrics?.ctrPct)}</td><td>{metric(metrics?.averagePosition)}</td></>;
+}
+
+export function Search({ id, model, profile, showGsc, showWebmaster = true }: Readonly<{
   id: string;
   model: DashboardReadModel;
+  profile?: SiteProfile;
   showGsc: boolean;
   showWebmaster?: boolean;
-  comparison?: WebmasterComparison;
+  comparison?: DashboardReadModel["trafficComparison"]["yandex_webmaster"];
   comparisonKey?: string;
 }>) {
-  const gscState = showGsc ? model.gsc.meta.state : "disabled";
-  const webmasterState = showWebmaster ? model.webmaster?.state ?? model.datasets.yandex_webmaster?.state ?? "missing" : "disabled";
-  const indexingState = showGsc ? model.indexing.state : "disabled";
-  const gscPages = showGsc ? model.gsc.dimensions.filter((row) => row.dimension === "page") : [];
-  const gscDimensions = showGsc ? model.gsc.dimensions.filter((row) => row.dimension !== "page") : [];
-  const webmasterPages = showWebmaster ? model.webmaster?.topPages ?? [] : [];
+  const sections = aggregateWebmasterSections(profile?.seoSections ?? [], showWebmaster ? model.webmaster?.topPages ?? [] : []);
+  const queries = unifiedQueries(model, showGsc, showWebmaster);
 
   return (
     <div id={id} className="site-seo-section-stack">
-      <Panel panelId="search.summary" title="Поиск и индексация" subtitle="Канонические данные Google и Яндекса">
-        <KpiStrip>
-          {showGsc ? <Kpi label="Google" value={<StatusBadge state={gscState} />} detail={model.gsc.meta.period ? `${model.gsc.meta.period.from} — ${model.gsc.meta.period.to}` : "Период не опубликован"} /> : null}
-          {showWebmaster ? <Kpi label="Яндекс" value={<StatusBadge state={webmasterState} />} detail={model.webmaster?.period ? `${model.webmaster.period.from} — ${model.webmaster.period.to}` : "Период не опубликован"} /> : null}
-          <Kpi label="Индексация" value={<StatusBadge state={indexingState} />} detail={showGsc ? datasetStateLabel(indexingState) : "Источник GSC отключён"} />
-        </KpiStrip>
-      </Panel>
-
-      <Panel panelId="search.gsc" title="Динамика GSC" subtitle={showGsc && model.gsc.meta.period ? `${model.gsc.meta.period.from} — ${model.gsc.meta.period.to}` : showGsc ? "Период не опубликован" : "Источник отключён"} state={gscState}>
-        {showGsc ? <>
+      <div className="site-seo-seo-summary-grid">
+        <Panel panelId="seo.alice" title="ИИ-видимость в Алисе AI">
           <KpiStrip>
-            <Kpi label="Клики" value={model.gsc.summary?.clicks ?? "—"} />
-            <Kpi label="Показы" value={model.gsc.summary?.impressions ?? "—"} />
-            <Kpi label="CTR" value={percent(model.gsc.summary?.ctrPct)} />
-            <Kpi label="Средняя позиция" value={decimal(model.gsc.summary?.averagePosition)} />
-            <Kpi label="Состояние" value={<StatusBadge state={gscState} />} />
+            <Kpi label="Официальный SOV" value={model.alice?.officialSovPct == null ? "—" : percent(model.alice.officialSovPct)} />
+            <Kpi label="Присутствие" value={model.alice?.samplePresencePct == null ? "—" : percent(model.alice.samplePresencePct)} />
           </KpiStrip>
-          {!model.gsc.summary ? <EmptyNotice>{emptySourceCopy("GSC", gscState, "Итоги GSC за выбранный период")}</EmptyNotice> : null}
-          <TableFrame label="Динамика GSC">
-            <table className="site-seo-table">
-              <thead><tr><th>Дата</th><th>Клики</th><th>Показы</th></tr></thead>
-              <tbody>{model.gsc.daily.length ? model.gsc.daily.map((row) => <tr key={row.date}><th scope="row">{row.date}</th><td>{row.metrics.clicks}</td><td>{row.metrics.impressions}</td></tr>) : <tr><td colSpan={3} className="site-seo-empty-row">Нет опубликованных дневных строк GSC за выбранный период.</td></tr>}</tbody>
-            </table>
-          </TableFrame>
-          <TableFrame label="Разрезы GSC">
-            <table className="site-seo-table site-seo-table-bounded">
-              <thead><tr><th>Разрез</th><th>Значение</th><th>Клики</th><th>Показы</th><th>CTR</th><th>Позиция</th></tr></thead>
-              <tbody>{gscDimensions.length ? gscDimensions.map((row) => <tr key={`${row.dimension}:${row.value}`}><th scope="row">{dimensionLabels[row.dimension] ?? row.dimension}</th><td className="site-seo-wrap-cell">{row.value}</td><td>{row.metrics.clicks}</td><td>{row.metrics.impressions}</td><td>{percent(row.metrics.ctrPct)}</td><td>{decimal(row.metrics.averagePosition)}</td></tr>) : <tr><td colSpan={6} className="site-seo-empty-row">Нет опубликованных строк разрезов GSC за выбранный период.</td></tr>}</tbody>
-            </table>
-          </TableFrame>
-        </> : <EmptyNotice>{emptySourceCopy("Google Search Console", gscState, "Данные GSC")}</EmptyNotice>}
-      </Panel>
+          {!model.alice ? <EmptyNotice>Нет опубликованной выгрузки за выбранный месяц.</EmptyNotice> : null}
+        </Panel>
 
-      <Panel panelId="search.webmaster" title="Динамика Webmaster" subtitle={model.webmaster?.period ? `${model.webmaster.period.from} — ${model.webmaster.period.to}` : showWebmaster ? "Период не опубликован" : "Источник отключён"} state={webmasterState}>
-        {showWebmaster ? <>
-          <KpiStrip>
-            <Kpi label="Клики" value={model.webmaster?.summary?.clicks ?? "—"} />
-            <Kpi label="Показы" value={model.webmaster?.summary?.impressions ?? "—"} />
-            <Kpi label="CTR" value={percent(model.webmaster?.summary?.ctrPct)} />
-            <Kpi label="Средняя позиция" value={decimal(model.webmaster?.summary?.averagePosition)} />
-            <Kpi label="Состояние" value={<StatusBadge state={webmasterState} />} />
-          </KpiStrip>
-          {model.webmaster ? <p className="site-seo-panel-note">Webmaster: {model.webmaster.state}; клики: {model.webmaster.summary?.clicks ?? "нет данных"}; показы: {model.webmaster.summary?.impressions ?? "нет данных"}. {datasetStateLabel(webmasterState)}.</p> : <EmptyNotice>{emptySourceCopy("Яндекс Вебмастер", webmasterState, "Итоги Webmaster за выбранную неделю")}</EmptyNotice>}
-          {comparisonKey && comparison && "kind" in comparison && comparison.kind === "webmaster" ? <p className="site-seo-panel-note">Сравнение Webmaster {comparisonKey}: клики {comparison.summary?.clicks ?? "нет данных"}; показы {comparison.summary?.impressions ?? "нет данных"}</p> : null}
-          <TableFrame label="Динамика Webmaster">
+        <Panel panelId="seo.sections" title="Позиции по разделам">
+          <TableFrame label="Позиции разделов">
             <table className="site-seo-table">
-              <thead><tr><th>Дата</th><th>Клики</th><th>Показы</th><th>CTR</th><th>Позиция</th></tr></thead>
-              <tbody>{model.webmaster?.daily.length ? model.webmaster.daily.map((row) => <tr key={row.date}><th scope="row">{row.date}</th><td>{row.metrics.clicks}</td><td>{row.metrics.impressions}</td><td>{percent(row.metrics.ctrPct)}</td><td>{decimal(row.metrics.averagePosition)}</td></tr>) : <tr><td colSpan={5} className="site-seo-empty-row">Нет опубликованных дневных строк Webmaster за выбранную неделю.</td></tr>}</tbody>
+              <thead><tr><th>Раздел</th><th>Клики</th><th>Показы</th><th>Позиция</th></tr></thead>
+              <tbody>{sections.length ? sections.map((section) => <tr key={section.id}><th scope="row">{section.label}</th><td>{section.metrics ? number.format(section.metrics.clicks) : "—"}</td><td>{section.metrics ? number.format(section.metrics.impressions) : "—"}</td><td>{metric(section.metrics?.averagePosition)}</td></tr>) : <tr><td colSpan={4} className="site-seo-empty-row">Разделы не настроены.</td></tr>}</tbody>
             </table>
           </TableFrame>
-        </> : <EmptyNotice>{emptySourceCopy("Яндекс Вебмастер", webmasterState, "Данные Webmaster")}</EmptyNotice>}
-      </Panel>
+        </Panel>
+      </div>
 
-      <Panel panelId="search.pages" title="Страницы" subtitle="Страницы из доступных поисковых источников">
-        <TableFrame label="Страницы поиска">
+      <Panel panelId="seo.queries" title="Запросы: Google, Яндекс и SEO OS" subtitle="Топ-100 фраз по показам в доступных поисковых источниках">
+        <TableFrame label="Объединённые поисковые запросы">
           <table className="site-seo-table site-seo-table-bounded">
-            <thead><tr><th>Источник</th><th>Страница</th><th>Клики</th><th>Показы</th></tr></thead>
-            <tbody>{gscPages.length || webmasterPages.length ? <>
-              {gscPages.map((row) => <tr key={`gsc:${row.value}`}><td>Google</td><th scope="row" className="site-seo-url-cell">{row.value}</th><td>{row.metrics.clicks}</td><td>{row.metrics.impressions}</td></tr>)}
-              {webmasterPages.map((row) => <tr key={`webmaster:${row.page}`}><td>Яндекс</td><th scope="row" className="site-seo-url-cell">{row.page}</th><td>{row.metrics.clicks}</td><td>{row.metrics.impressions}</td></tr>)}
-            </> : <tr><td colSpan={4} className="site-seo-empty-row">Нет опубликованных строк страниц за выбранные периоды.</td></tr>}</tbody>
+            <thead>
+              <tr><th rowSpan={2}>Запрос</th><th colSpan={4}>Google</th><th colSpan={4}>Яндекс Вебмастер</th><th colSpan={3}>SEO OS</th></tr>
+              <tr><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Позиция</th><th>Позиция</th><th>Дельта</th><th>Статус</th></tr>
+            </thead>
+            <tbody>{queries.length ? queries.map((row) => <tr key={row.phrase}><th scope="row" className="site-seo-wrap-cell">{row.phrase}</th><SourceCells metrics={row.google} /><SourceCells metrics={row.yandex} /><td>—</td><td>—</td><td>—</td></tr>) : <tr><td colSpan={12} className="site-seo-empty-row">Нет опубликованных запросов за выбранные периоды.</td></tr>}</tbody>
           </table>
         </TableFrame>
       </Panel>

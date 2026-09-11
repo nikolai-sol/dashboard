@@ -2,9 +2,9 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { Dashboard } from "../../../components/Dashboard.tsx";
 import { LoginForm } from "../../../components/LoginForm.tsx";
-import { loadDashboardReadModel } from "../../../lib/read-model.ts";
+import { loadAvailableMetrikaWeeks, loadDashboardReadModel } from "../../../lib/read-model.ts";
 import { defaultPeriodSelection, getSiteSeoRuntime, parseDashboardReadRequest } from "../../../lib/runtime.ts";
-import { gscFilters } from "../../../lib/period-selection.ts";
+import { gscFilters, resolveAvailableWeekSelection } from "../../../lib/period-selection.ts";
 
 export default async function SiteSeoDashboardPage({ params, searchParams }: Readonly<{ params: Promise<{ siteSlug: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }>) {
   const runtime = await getSiteSeoRuntime();
@@ -17,11 +17,15 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
     const url = new URL("https://site-seo.local/dashboard");
     for (const [key, value] of Object.entries(values)) if (typeof value === "string") url.searchParams.set(key, value);
     const hasPeriodState = ["traffic_week", "gsc_period", "alice_month"].some((key) => url.searchParams.has(key));
-    const request = hasPeriodState
+    const requested = hasPeriodState
       ? parseDashboardReadRequest(url, siteSlug, runtime.registration.profile.businessTimezone)
       : { slug: siteSlug, selection: defaultPeriodSelection(runtime.registration.profile.businessTimezone), publicationId: null, filters: gscFilters() };
+    const availableWeeks = await loadAvailableMetrikaWeeks({ registration: runtime.registration, claim: session, execute: runtime.executeAvailableMetrikaWeeks });
+    const resolvedSelection = resolveAvailableWeekSelection(requested.selection, availableWeeks);
+    const selection = hasPeriodState ? resolvedSelection : { ...resolvedSelection, gsc: resolvedSelection.traffic.primary };
+    const request = { ...requested, selection };
     const model = await loadDashboardReadModel({ registration: runtime.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: runtime.execute });
-    return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} activeTab={typeof values.tab === "string" ? values.tab : undefined} />;
+    return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} availableWeeks={availableWeeks} activeTab={typeof values.tab === "string" ? values.tab : undefined} />;
   } catch {
     return <main className="site-seo-state-page" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}><section className="site-seo-state-card" style={{ width: "min(100%, 440px)", padding: 24, border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff" }}><h1>{runtime.registration.profile.title}</h1><p>Данные пока недоступны: не установлен canonical read model.</p></section></main>;
   }

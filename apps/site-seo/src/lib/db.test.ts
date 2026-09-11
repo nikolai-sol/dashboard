@@ -118,7 +118,7 @@ test("canonical source readers preserve empty, partial, and exact resource seman
     ], []];
     if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
     if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
-    if (/site-seo:webmaster-(summary|daily|pages)/.test(sql)) return [[], []];
+    if (/site-seo:webmaster-(summary|daily|pages|queries)/.test(sql)) return [[], []];
     if (/site-seo:alice-(summary|competitors|queries)/.test(sql)) return [[], []];
     if (sql.includes("canonical_alice_visibility_snapshots")) return [[{ row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
     throw new Error("unexpected query");
@@ -523,6 +523,7 @@ test("Webmaster aggregates scoped canonical facts with derived CTR and weighted 
     if (sql.includes("site-seo:webmaster-summary")) return [[{ clicks: "10", impressions: "100", ctr_pct: "10", average_position: "4.2" }], []];
     if (sql.includes("site-seo:webmaster-daily")) return [[{ report_date: "2026-08-03", clicks: "3", impressions: "20", ctr_pct: "15", average_position: "2" }], []];
     if (sql.includes("site-seo:webmaster-pages")) return [[{ page_url: "https://clinic.example.test/a", clicks: "5", impressions: "50", ctr_pct: "10", average_position: "3" }], []];
+    if (sql.includes("site-seo:webmaster-queries")) return [[{ query_text: "лечение", clicks: "4", impressions: "40", ctr_pct: "10", average_position: "3.5" }], []];
     throw new Error("unexpected query");
   } });
   const result = await execute({
@@ -536,8 +537,9 @@ test("Webmaster aggregates scoped canonical facts with derived CTR and weighted 
   assert.equal("kind" in result && result.kind, "webmaster");
   assert.deepEqual("summary" in result && result.summary, { clicks: 10, impressions: 100, ctrPct: 10, averagePosition: 4.2 });
   assert.equal("state" in result && result.state, "partial");
-  const facts = calls.filter((call) => /canonical_fact_webmaster_(summary|pages)_daily/i.test(call.sql));
-  assert.equal(facts.length, 4);
+  assert.equal("queryFacts" in result && result.queryFacts?.[0]?.query, "лечение");
+  const facts = calls.filter((call) => /canonical_fact_webmaster_(summary|pages|queries)_daily/i.test(call.sql));
+  assert.equal(facts.length, 5);
   assert.ok(facts.every((call) => call.params.includes("yandex_webmaster") && call.params.includes("webmaster-account") && call.params.includes("https:clinic.example.test:443") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
   assert.ok(facts.every((call) => /device_type\s*=\s*'ALL'/i.test(call.sql)));
 });

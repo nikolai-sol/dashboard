@@ -18,9 +18,10 @@ const MODES = {
 const PROFILE_FIELDS = new Set([
   "schemaVersion", "profileVersion", "siteId", "clientId", "dashboardId", "slug",
   "domain", "allowedDomains", "title", "logoAsset", "locale", "businessTimezone",
-  "templateVersion", "sources", "taxonomyVersion", "seoRulesVersion", "authPolicyRef", "runtime",
+  "templateVersion", "sources", "seoSections", "taxonomyVersion", "seoRulesVersion", "authPolicyRef", "runtime",
 ]);
 const SOURCE_FIELDS = new Set(["sourceKey", "mode", "bindingId", "importCadence"]);
+const SEO_SECTION_FIELDS = new Set(["id", "label", "pathPrefixes"]);
 const RUNTIME_FIELDS = new Set(["route", "assetPrefix", "buildOutputDir", "processName", "port", "deployPath", "releaseBranch", "deployLockPath"]);
 
 function object(value, label) {
@@ -68,6 +69,25 @@ export function validateSiteProfile(value) {
     if (source.mode === "disabled") {
       if (source.bindingId !== null || source.importCadence.length !== 0) throw new TypeError(`disabled ${source.sourceKey} must not have bindingId or cadence`);
     } else text(source.bindingId, `${source.sourceKey}.bindingId`);
+  }
+  if (profile.seoSections !== undefined) {
+    if (!Array.isArray(profile.seoSections)) throw new TypeError("seoSections must be an array");
+    const sectionIds = new Set();
+    const pathPrefixes = new Set();
+    for (const [index, sectionValue] of profile.seoSections.entries()) {
+      const section = object(sectionValue, `seoSections[${index}]`);
+      fields(section, SEO_SECTION_FIELDS, `seoSections[${index}]`);
+      const id = safe(section.id, `seoSections[${index}].id`, /^[a-z0-9][a-z0-9-]*$/);
+      text(section.label, `seoSections[${index}].label`);
+      if (sectionIds.has(id)) throw new TypeError(`duplicate seoSections id: ${id}`);
+      sectionIds.add(id);
+      if (!Array.isArray(section.pathPrefixes) || section.pathPrefixes.length === 0) throw new TypeError(`seoSections[${index}].pathPrefixes must not be empty`);
+      for (const [prefixIndex, prefixValue] of section.pathPrefixes.entries()) {
+        const prefix = safe(prefixValue, `seoSections[${index}].pathPrefixes[${prefixIndex}]`, /^\/[A-Za-z0-9._~!$'()*+,;=:@%/-]+\/$/);
+        if (pathPrefixes.has(prefix)) throw new TypeError(`duplicate seoSections path prefix: ${prefix}`);
+        pathPrefixes.add(prefix);
+      }
+    }
   }
   const runtime = object(profile.runtime, "runtime");
   fields(runtime, RUNTIME_FIELDS, "runtime");

@@ -209,9 +209,15 @@ body {
 
 .site-seo-period-selector {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr)) auto;
+  grid-template-columns: minmax(170px, auto) repeat(2, minmax(170px, 1fr)) auto;
   gap: 12px;
   align-items: end;
+}
+
+.site-seo-period-heading {
+  align-self: center;
+  color: var(--site-seo-slate-900);
+  font-size: 0.875rem;
 }
 
 .site-seo-field {
@@ -346,7 +352,8 @@ body {
 }
 
 .site-seo-two-column-grid,
-.site-seo-source-card-grid {
+.site-seo-source-card-grid,
+.site-seo-seo-summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -1028,7 +1035,8 @@ body {
   }
 
   .site-seo-two-column-grid,
-  .site-seo-source-card-grid {
+  .site-seo-source-card-grid,
+  .site-seo-seo-summary-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 

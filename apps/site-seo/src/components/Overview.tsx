@@ -29,9 +29,7 @@ function sourceState(meta: DatasetMeta | null | undefined): SourceState {
 }
 
 function stateCopy(state: SourceState): string {
-  if (state === "ready") return "данные готовы";
-  if (state === "complete_empty") return "подтверждённо пусто";
-  if (state === "partial") return "данные неполные";
+  if (state === "ready" || state === "complete_empty" || state === "partial") return "нет строк за период";
   if (state === "failed") return "ошибка последнего сбора";
   return "данные не опубликованы";
 }
@@ -41,11 +39,11 @@ function periodCopy(meta: DatasetMeta | null | undefined): string | null {
 }
 
 function sourceDetail(label: string, meta: DatasetMeta | null | undefined): string {
-  return [label, periodCopy(meta), stateCopy(sourceState(meta))].filter(Boolean).join(" · ");
+  return [label, periodCopy(meta)].filter(Boolean).join(" · ");
 }
 
 function SourceBadge({ label, state, statusText }: Readonly<{ label: string; state: SourceState; statusText?: string }>) {
-  return <span className="site-seo-source-badge" data-state={state}><span className="site-seo-source-dot" aria-hidden="true" /><strong>{label}</strong><em>{statusText ?? stateCopy(state)}</em></span>;
+  return <span className="site-seo-source-badge" data-state={state}><span className="site-seo-source-dot" aria-hidden="true" /><strong>{label}</strong>{statusText ? <em>{statusText}</em> : null}</span>;
 }
 
 function OverviewSlot({ id, children }: Readonly<{ id: string; children: ReactNode }>) {
@@ -181,7 +179,6 @@ function SearchTrend({ rows, state }: Readonly<{ rows: readonly TrendRow[]; stat
   }
   return (
     <div className="site-seo-trend">
-      <div className="site-seo-trend-legend"><span aria-hidden="true" />Поисковые визиты · Метрика · Россия</div>
       <div className="site-seo-trend-chart">
         <div className="site-seo-trend-y-axis" aria-hidden="true">{ticks.map((tick) => <span data-axis-tick={tick.value} style={{ top: `${tick.y / 180 * 100}%` }} key={tick.value}>{value(tick.value)}</span>)}</div>
         <svg viewBox="0 0 800 180" preserveAspectRatio="none" role="img" aria-label="Еженедельная динамика поисковых визитов в России">
@@ -277,7 +274,7 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
       </OverviewSlot>
 
       <OverviewSlot id="traffic_health">
-        <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={trafficState} statusText={showMetrika ? undefined : "источник отключён"}>
+        <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={trafficState} statusText={!showMetrika ? "источник отключён" : trafficHealth ? undefined : stateCopy(trafficState)}>
           <div className="site-seo-health-grid">
             {showMetrika ? <HealthKpi label="Визиты" metric={value(trafficHealth?.visits)} detail={sourceDetail("весь трафик", trafficMeta)} /> : null}
             {showMetrika ? <HealthKpi label="Просмотры" metric={value(trafficHealth?.pageviews)} detail={sourceDetail("весь трафик", trafficMeta)} /> : null}
@@ -297,13 +294,13 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
       </OverviewSlot>
 
       <OverviewSlot id="search_engines">
-        <OverviewPanel title="Поисковые системы" subtitle="Поисковые визиты · Россия" source="Метрика" state={showMetrika ? searchEnginesState : "missing"} statusText={showMetrika && !hasSearchEngineRows ? "нет строк Google/Яндекс за период" : showMetrika ? undefined : "источник отключён"}>
+        <OverviewPanel title="Поисковые системы" source="Метрика" state={showMetrika ? searchEnginesState : "missing"} statusText={showMetrika && !hasSearchEngineRows ? "нет строк Google/Яндекс за период" : showMetrika ? undefined : "источник отключён"}>
           <SearchEngineGrid engines={searchEngines} missingCopy={showMetrika ? "нет строк за период" : "источник отключён"} />
         </OverviewPanel>
       </OverviewSlot>
 
       <OverviewSlot id="organic_search">
-        <OverviewPanel title="Органический поиск" subtitle={showMetrika ? "Поисковые визиты · Россия" : "Источник отключён"} source="Метрика" state={metrikaState} statusText={showMetrika ? undefined : "источник отключён"}>
+        <OverviewPanel title="Органический поиск" subtitle={showMetrika ? undefined : "Источник отключён"} source="Метрика" state={metrikaState} statusText={!showMetrika ? "источник отключён" : model.metrika?.daily.length ? undefined : stateCopy(metrikaState)}>
           {showMetrika ? <SearchTrend rows={model.metrika?.daily ?? []} state={metrikaState} /> : <EmptyOverviewState>Источник Метрика отключён.</EmptyOverviewState>}
         </OverviewPanel>
       </OverviewSlot>

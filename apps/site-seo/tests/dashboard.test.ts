@@ -40,10 +40,11 @@ test("passes the tab query from server search params into the dashboard", () => 
 test("hides disabled adapters while preserving the available source sections", () => {
   const labels = dashboardTabs(profile).map((tab) => tab.label);
   assert.ok(labels.includes("Обзор"));
-  assert.ok(labels.includes("Поиск и индексация"));
-  assert.ok(labels.includes("AI-видимость и конкуренты"));
-  assert.ok(labels.includes("SEO OS"));
-  assert.ok(!labels.includes("Wordstat"));
+  assert.ok(labels.includes("SEO"));
+  assert.ok(labels.includes("ИИ-видимость и конкуренты"));
+  assert.ok(labels.includes("Работы и задачи"));
+  assert.ok(!labels.includes("Спрос Wordstat"));
+  assert.ok(!labels.includes("Посещаемость и страницы"));
 });
 
 test("falls back from an unknown or disabled tab to overview", () => {
@@ -82,32 +83,17 @@ test("period form preserves only the active display tab while export queries omi
   assert.equal(new URLSearchParams(buildDashboardQuery(selection, "publication-7", { country: "RU" })).has("tab"), false);
 });
 
-test("period controls follow the active sheet while preserving hidden scope parameters", () => {
+test("compact period controls preserve hidden independent source periods", () => {
   const selection = createPeriodSelection({ primaryWeek: "2026-W37", comparisonWeek: "2026-W36", aliceMonth: "2026-09", gsc: calendarMonthPeriod("2026-09", "Europe/Moscow") }, "Europe/Moscow");
-  const traffic = renderToStaticMarkup(createElement(PeriodSelector, { selection, publicationId: null, filters: {}, activeTab: "traffic" }));
   const search = renderToStaticMarkup(createElement(PeriodSelector, { selection, publicationId: null, filters: {}, activeTab: "search" }));
-  const alice = renderToStaticMarkup(createElement(PeriodSelector, { selection, publicationId: null, filters: {}, activeTab: "alice" }));
 
-  assert.match(traffic, />Неделя <input/);
-  assert.match(traffic, />Сравнение</);
-  assert.doesNotMatch(traffic, />GSC</);
-  assert.doesNotMatch(traffic, />Алиса</);
-  assert.match(traffic, /type="hidden" name="gsc_period" value="2026-09"/);
-  assert.match(traffic, /type="hidden" name="alice_month" value="2026-09"/);
-
-  assert.match(search, />Неделя <input/);
-  assert.match(search, />GSC</);
-  assert.doesNotMatch(search, />Сравнение</);
-  assert.doesNotMatch(search, />Алиса</);
-  assert.match(search, /type="hidden" name="traffic_compare" value="2026-W36"/);
+  assert.match(search, /Отчётная SEO-неделя/);
+  assert.match(search, /A · Основная неделя[^]*name="traffic_week"/);
+  assert.match(search, /B · Сравнение[^]*name="traffic_compare"/);
+  assert.doesNotMatch(search, />GSC<|>Алиса</);
+  assert.match(search, /<option value="2026-W36" selected="">/);
+  assert.match(search, /type="hidden" name="gsc_period" value="2026-09"/);
   assert.match(search, /type="hidden" name="alice_month" value="2026-09"/);
-
-  assert.match(alice, />Алиса</);
-  assert.doesNotMatch(alice, />Неделя <input/);
-  assert.doesNotMatch(alice, />Сравнение</);
-  assert.doesNotMatch(alice, />GSC</);
-  assert.match(alice, /type="hidden" name="traffic_week" value="2026-W37"/);
-  assert.match(alice, /type="hidden" name="gsc_period" value="2026-09"/);
 });
 
 test("renders period controls and export links without emitting disabled GSC content", () => {
@@ -161,7 +147,7 @@ test("rolling Wordstat and source quality sheets do not claim the traffic calend
   }
 });
 
-test("renders canonical Metrika and Webmaster facts without treating daily users as a period total", () => {
+test("keeps canonical Metrika facts on overview after removing the standalone traffic navigation", () => {
   const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
   const sourceProfile = { ...profile, title: "Тест", slug: "fixture", sources: [
     { sourceKey: "google_search_console" as const, mode: "disabled" as const, bindingId: null, importCadence: [] },
@@ -177,10 +163,9 @@ test("renders canonical Metrika and Webmaster facts without treating daily users
   };
   const trafficHtml = renderToStaticMarkup(createElement(Dashboard, { profile: sourceProfile, selection, publicationId: null, filters: {}, model, activeTab: "traffic" }));
   const searchHtml = renderToStaticMarkup(createElement(Dashboard, { profile: sourceProfile, selection, publicationId: null, filters: {}, model, activeTab: "search" }));
-  assert.match(trafficHtml, /site-seo-kpi-label[^>]*>Визиты<\/span><span class="site-seo-kpi-value">20/);
-  assert.match(trafficHtml, /Пользователи за день: 3/);
-  assert.match(searchHtml, /Webmaster: partial; клики: 5; показы: 50/);
-  assert.doesNotMatch(trafficHtml, /Пользователи за период/);
+  assert.match(trafficHtml, /id="overview"[^]*Поисковые визиты[^]*20/);
+  assert.doesNotMatch(trafficHtml, /id="traffic"/);
+  assert.match(searchHtml, /id="search"[^]*Позиции по разделам[^]*Запросы: Google, Яндекс и SEO OS/);
 });
 
 test("overview follows the accepted five-panel Zaruku composition with canonical facts", () => {
@@ -254,8 +239,7 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(html, /data-panel-id="overview\.organic_search"[^]*?<section[^>]*data-state="ready"/);
   assert.match(html, /Google[^]*2/);
   assert.match(html, /Яндекс[^]*5/);
-  assert.match(html, /Яндекс[^]*данные неполные/);
-  assert.match(html, /Google[^]*данные готовы/);
+  assert.doesNotMatch(html, /данные неполные|данные готовы/);
   assert.doesNotMatch(html, /Пользователи за день|Пользователи за период|Доля России/);
 });
 
@@ -299,13 +283,13 @@ test("overview keeps the accepted layout while unavailable metrics stay explicit
   assert.doesNotMatch(html, />0<\/span>/);
 });
 
-test("overview distinguishes missing, failed, partial, and confirmed-empty source states", () => {
+test("overview preserves missing and failed empties without exposing completeness prose", () => {
   const base = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const expected = {
     missing: "данные не опубликованы",
     failed: "ошибка последнего сбора",
-    partial: "данные неполные",
-    complete_empty: "подтверждённо пусто",
+    partial: "нет строк за период",
+    complete_empty: "нет строк за период",
   } as const;
 
   for (const state of Object.keys(expected) as Array<keyof typeof expected>) {
@@ -314,6 +298,7 @@ test("overview distinguishes missing, failed, partial, and confirmed-empty sourc
     const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true, showMetrika: true, showWebmaster: false }));
     assert.match(html, new RegExp(expected[state]));
     assert.match(html, new RegExp(`Динамика[^]*${expected[state]}`));
+    assert.doesNotMatch(html, /данные неполные|данные готовы|подтверждённо пусто/);
   }
 });
 
@@ -386,10 +371,10 @@ test("Wordstat distinguishes an unconfigured source, failed collection, partial 
   assert.match(staleAfterFailure, /Последняя попытка сбора завершилась ошибкой/);
 });
 
-test("wide factual tables use a labelled local scroll frame and semantic headings", () => {
+test("unified SEO queries use a labelled local scroll frame and grouped semantic headings", () => {
   const base = { sourceKey: "google_search_console" as const, period: null, state: "ready" as const, collectionMode: "manual" as const, completeness: "complete" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
   const model = {
-    gsc: { meta: base, summary: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 } }], dimensions: [], dimensionMeta: {} },
+    gsc: { meta: base, summary: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 } }], dimensions: [{ dimension: "query" as const, value: "лечение", metrics: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 }, meta: base }], dimensionMeta: {} },
     indexing: base, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
   };
 
@@ -397,8 +382,8 @@ test("wide factual tables use a labelled local scroll frame and semantic heading
 
   assert.match(html, /site-seo-panel/);
   assert.match(html, /site-seo-table-frame/);
-  assert.match(html, /aria-label="Динамика GSC"/);
-  assert.match(html, /<thead><tr><th>Дата<\/th><th>Клики<\/th><th>Показы<\/th><\/tr><\/thead><tbody>/);
+  assert.match(html, /aria-label="Объединённые поисковые запросы"/);
+  assert.match(html, /<th colSpan="4">Google<\/th><th colSpan="4">Яндекс Вебмастер<\/th><th colSpan="3">SEO OS<\/th>/);
 });
 
 test("standard sheets use the accepted Zaruku-style stack of focused panels", () => {
@@ -427,7 +412,7 @@ test("standard sheets use the accepted Zaruku-style stack of focused panels", ()
 
   for (const html of [trafficHtml, searchHtml, wordstatHtml, aliceHtml, seoHtml, sourcesHtml]) assert.match(html, /site-seo-section-stack/);
   assert.deepEqual([...trafficHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["traffic.summary", "traffic.trend", "traffic.pages"]);
-  assert.deepEqual([...searchHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["search.summary", "search.gsc", "search.webmaster", "search.pages"]);
+  assert.deepEqual([...searchHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo.alice", "seo.sections", "seo.queries"]);
   assert.deepEqual([...wordstatHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["wordstat.summary", "wordstat.queries"]);
   assert.deepEqual([...aliceHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["alice.summary", "alice.competitors", "alice.queries"]);
   assert.deepEqual([...seoHtml.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]), ["seo-os.summary", "seo-os.recommendations", "seo-os.tasks"]);

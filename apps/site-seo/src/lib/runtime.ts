@@ -4,7 +4,7 @@ import type { SiteRegistration } from "@reportingdash/site-seo-contract";
 import { calendarMonthPeriod, createPeriodSelection, gscFilters, isoWeekPeriod } from "./period-selection.ts";
 import type { DashboardReadRequest } from "./route-handlers.ts";
 import type { SiteSeoSession } from "./auth.ts";
-import { canonicalReadExecutor, loadCurrentCredentialVersion } from "./db.ts";
+import { availableMetrikaWeeksReadExecutor, canonicalReadExecutor, loadCurrentCredentialVersion } from "./db.ts";
 
 type RuntimeFileDependencies = Readonly<{ registrationPath: string; readFile: (path: string, encoding: "utf8") => Promise<string>; validateRegistrations: (value: unknown) => readonly SiteRegistration[] }>;
 type ViewerCookiePayload = Readonly<{ dashboardId: number; credentialVersion: number | undefined; expiresAt: string }>;
@@ -77,7 +77,8 @@ export function defaultPeriodSelection(timezone: string, now = new Date()) {
   firstThursday.setUTCDate(firstThursday.getUTCDate() + 3 - ((firstThursday.getUTCDay() + 6) % 7));
   const week = 1 + Math.round((thursday.getTime() - firstThursday.getTime()) / 604800000);
   const month = `${utc.getUTCFullYear()}-${String(utc.getUTCMonth() + 1).padStart(2, "0")}`;
-  return createPeriodSelection({ primaryWeek: `${year}-W${String(week).padStart(2, "0")}`, aliceMonth: month, gsc: calendarMonthPeriod(month, timezone) }, timezone);
+  const primaryWeek = `${year}-W${String(week).padStart(2, "0")}`;
+  return createPeriodSelection({ primaryWeek, aliceMonth: month, gsc: isoWeekPeriod(primaryWeek, timezone) }, timezone);
 }
 
 function base64Url(value: Buffer): string { return value.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""); }
@@ -112,5 +113,6 @@ export async function getSiteSeoRuntime() {
     registration,
     resolveSession: createSiteSeoSessionResolver({ verifyViewerCookie: createSignedViewerCookieVerifier(), loadCredentialVersion: loadCurrentCredentialVersion }),
     execute: canonicalReadExecutor,
+    executeAvailableMetrikaWeeks: availableMetrikaWeeksReadExecutor,
   } as const;
 }
