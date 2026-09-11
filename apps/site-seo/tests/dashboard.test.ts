@@ -151,7 +151,7 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
       daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [],
     },
     webmaster: {
-      ...ready, sourceKey: "yandex_webmaster" as const, collectionMode: "automated" as const,
+      ...ready, sourceKey: "yandex_webmaster" as const, state: "partial" as const, completeness: "unknown" as const, collectionMode: "automated" as const,
       kind: "webmaster" as const,
       summary: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 },
       daily: [{ date: "2026-01-02", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }], topPages: [],
@@ -177,6 +177,8 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(html, /Google[^]*2/);
   assert.match(html, /Яндекс[^]*5/);
   assert.match(html, /Пользователи за день[^]*3/);
+  assert.match(html, /Яндекс[^]*данные неполные/);
+  assert.match(html, /Google[^]*данные готовы/);
   assert.doesNotMatch(html, /Пользователи за период/);
 });
 
@@ -187,9 +189,37 @@ test("overview keeps the accepted layout while unavailable metrics stay explicit
 
   assert.equal(html.match(/data-panel-id="overview\./g)?.length, 5);
   assert.match(html, /Разбивка по каналам пока не опубликована/);
-  assert.match(html, /Нет опубликованной динамики органического поиска/);
+  assert.match(html, /Динамика: данные не опубликованы/);
   assert.match(html, /data-state="missing"/);
   assert.doesNotMatch(html, />0<\/span>/);
+});
+
+test("overview distinguishes missing, failed, partial, and confirmed-empty source states", () => {
+  const base = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const expected = {
+    missing: "данные не опубликованы",
+    failed: "ошибка последнего сбора",
+    partial: "данные неполные",
+    complete_empty: "подтверждённо пусто",
+  } as const;
+
+  for (const state of Object.keys(expected) as Array<keyof typeof expected>) {
+    const meta = { ...base, state, latestAttempt: state === "failed" ? "failed" as const : "none" as const };
+    const model = { gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: base, datasets: { yandex_metrika: { ...meta, sourceKey: "yandex_metrika" as const } }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+    const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true, showMetrika: true, showWebmaster: false }));
+    assert.match(html, new RegExp(expected[state]));
+    assert.match(html, new RegExp(`Динамика[^]*${expected[state]}`));
+  }
+});
+
+test("overview trend preserves calendar gaps and exposes the daily values", () => {
+  const meta = { sourceKey: "yandex_metrika" as const, period: { kind: "iso_week" as const, key: "2026-W01", from: "2026-01-01", to: "2026-01-07", sourceTimezone: "Europe/Moscow" }, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "success" as const };
+  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, metrika: { ...meta, kind: "metrika" as const, summary: { visits: 9, pageviews: 12 }, daily: [{ date: "2026-01-01", visits: 2, pageviews: 3, users: 2 }, { date: "2026-01-02", visits: 3, pageviews: 4, users: 3 }, { date: "2026-01-07", visits: 4, pageviews: 5, users: 4 }], topPages: [] } };
+  const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: true, showWebmaster: false }));
+
+  assert.equal(html.match(/data-series-segment=/g)?.length, 2);
+  assert.match(html, /<caption>Ежедневные поисковые визиты<\/caption>/);
+  assert.match(html, /2026-01-01[^]*2[^]*2026-01-07[^]*4/);
 });
 
 test("Wordstat distinguishes an unconfigured source, failed collection, partial data, and confirmed empty", () => {

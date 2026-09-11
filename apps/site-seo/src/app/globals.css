@@ -476,23 +476,35 @@ body {
   font-weight: 600;
 }
 
-.site-seo-source-badge > span {
+.site-seo-source-dot {
   width: 6px;
   height: 6px;
+  flex: 0 0 auto;
   border-radius: 999px;
   background: var(--site-seo-slate-300);
 }
 
-.site-seo-source-badge[data-state="ready"] > span,
-.site-seo-source-badge[data-state="complete_empty"] > span {
+.site-seo-source-badge strong {
+  color: var(--site-seo-slate-700);
+  font-size: inherit;
+}
+
+.site-seo-source-badge em {
+  color: var(--site-seo-slate-500);
+  font-style: normal;
+  font-weight: 400;
+}
+
+.site-seo-source-badge[data-state="ready"] .site-seo-source-dot,
+.site-seo-source-badge[data-state="complete_empty"] .site-seo-source-dot {
   background: var(--site-seo-teal-600);
 }
 
-.site-seo-source-badge[data-state="partial"] > span {
+.site-seo-source-badge[data-state="partial"] .site-seo-source-dot {
   background: var(--site-seo-status-warning);
 }
 
-.site-seo-source-badge[data-state="failed"] > span {
+.site-seo-source-badge[data-state="failed"] .site-seo-source-dot {
   background: var(--site-seo-status-critical);
 }
 
@@ -580,6 +592,17 @@ body {
   justify-content: space-between;
   color: var(--site-seo-slate-500);
   font-size: 0.7rem;
+}
+
+.site-seo-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @media (min-width: 1280px) {
