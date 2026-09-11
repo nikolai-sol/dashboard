@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "node ../../scripts/site-seo-build.mjs",
+    "build": "node --import tsx ../../scripts/site-seo-build.mjs",
     "start": "node .next-medroche/standalone/apps/site-seo/server.js"
   },
   "dependencies": {
