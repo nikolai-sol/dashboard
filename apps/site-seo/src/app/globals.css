@@ -120,6 +120,7 @@ body {
 
 .site-seo-header-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -507,7 +508,7 @@ body {
   }
 
   .site-seo-exports {
-    width: 100%;
+    width: auto;
   }
 
   .site-seo-exports p {
@@ -520,6 +521,10 @@ body {
 
   .site-seo-period-selector {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-seo-selected-tab {
+    padding: 16px;
   }
 
   .site-seo-button {

@@ -35,6 +35,15 @@ test("shell geometry and typography match the reference dashboard", () => {
   assert.match(css, /\.site-seo-mobile-tabs\s*\{[^}]*display\s*:\s*none/);
 });
 
+test("mobile header and content stay within the reference frame", () => {
+  const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
+  const mobileCss = css.slice(css.indexOf("@media (max-width: 767px)"));
+
+  assert.match(css, /\.site-seo-header-row\s*\{[^}]*flex-wrap\s*:\s*wrap/);
+  assert.match(mobileCss, /\.site-seo-exports\s*\{[^}]*width\s*:\s*auto/);
+  assert.match(mobileCss, /\.site-seo-selected-tab\s*\{[^}]*padding\s*:\s*16px/);
+});
+
 test("local stylesheet covers the shell controls, identity, exports, and login", () => {
   const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
 
