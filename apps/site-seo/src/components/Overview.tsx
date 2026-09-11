@@ -170,7 +170,7 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
 
       <OverviewSlot id="organic_search">
         <OverviewPanel title="Органический поиск" subtitle={showMetrika ? "Поисковые визиты · Россия" : "Источник отключён"} source="Метрика" state={metrikaState} statusText={showMetrika ? undefined : "источник отключён"}>
-          <SearchTrend rows={showMetrika ? model.metrika?.daily ?? [] : []} state={metrikaState} />
+          {showMetrika ? <SearchTrend rows={model.metrika?.daily ?? []} state={metrikaState} /> : <EmptyOverviewState>Источник Метрика отключён.</EmptyOverviewState>}
         </OverviewPanel>
       </OverviewSlot>
     </div>

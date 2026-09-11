@@ -222,6 +222,15 @@ test("overview trend preserves calendar gaps and exposes the daily values", () =
   assert.match(html, /2026-01-01[^]*2[^]*2026-01-07[^]*4/);
 });
 
+test("overview names a disabled Metrika source consistently", () => {
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: false, showWebmaster: false }));
+
+  assert.match(html, /Органический поиск[^]*Источник отключён[^]*Источник Метрика отключён/);
+  assert.doesNotMatch(html, /Органический поиск[^]*Динамика: данные не опубликованы/);
+});
+
 test("Wordstat distinguishes an unconfigured source, failed collection, partial data, and confirmed empty", () => {
   const base = { sourceKey: "yandex_wordstat" as const, period: null, collectionMode: "automated" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const renderState = (state: "missing" | "failed" | "partial" | "complete_empty") => renderToStaticMarkup(createElement(Wordstat, { id: "wordstat", meta: { ...base, state, latestAttempt: state === "failed" ? "failed" : "none" }, data: null }));
