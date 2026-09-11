@@ -65,6 +65,8 @@ export type WebmasterCanonicalData = DatasetMeta & Readonly<{
 export type WordstatCanonicalData = DatasetMeta & Readonly<{
   kind: "wordstat";
   demand: number | null;
+  /** Latest current-demand snapshot; independent from the selected traffic week. */
+  snapshotPeriod: Period | null;
   queries: readonly Readonly<{
     query: string;
     count: number;
@@ -591,7 +593,7 @@ async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalRea
   const currentJob = `yandex_wordstat:${query.scope.analyticsAccountId}:current`;
   const historicalJob = `yandex_wordstat:${query.scope.analyticsAccountId}:historical`;
   const allJob = `yandex_wordstat:${query.scope.analyticsAccountId}:all`;
-  const [rows, attempts] = await Promise.all([
+  const [rows, currentAttempts, historicalAttempts] = await Promise.all([
     rowsFor<DatasetMetaRow>(database, {
       sql: `SELECT COUNT(*) AS coverage_rows,
                    SUM(endpoint = 'top_requests') AS current_coverage_rows,
@@ -602,14 +604,17 @@ async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalRea
                    MAX(CASE WHEN endpoint = 'dynamics' THEN ingestion_run_id END) AS historical_import_id,
                    MAX(ingestion_run_id) AS import_id,
                    MAX(updated_at) AS loaded_at
-              FROM canonical_wordstat_coverage
+             FROM canonical_wordstat_coverage
              WHERE source_key = ? AND analytics_account_id = ?
-               AND endpoint IN ('top_requests', 'dynamics')
-               AND requested_from <= ? AND requested_to >= ?`,
+               AND (
+                 endpoint = 'top_requests'
+                 OR (endpoint = 'dynamics' AND requested_from <= ? AND requested_to >= ?)
+               )`,
       params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to],
     }),
     rowsFor<DatasetMetaRow>(database, {
-      sql: `WITH ranked_runs AS (
+      sql: `/* site-seo:wordstat-current-attempts */
+            WITH ranked_runs AS (
               SELECT job_key, status, id AS import_id,
                      COALESCE(finished_at, started_at) AS loaded_at,
                      ROW_NUMBER() OVER (
@@ -618,22 +623,41 @@ async function readWordstatMeta(database: CanonicalDatabase, query: CanonicalRea
                      ) AS dedup_rank
                 FROM canonical_collector_runs
                WHERE source_key = ?
-                 AND job_key IN (?, ?, ?)
+                 AND job_key IN (?, ?)
+                 AND status IN ('success', 'failed', 'partial')
+            )
+            SELECT job_key, status, import_id, loaded_at
+              FROM ranked_runs
+             WHERE dedup_rank = 1`,
+      params: [query.scope.sourceKey, currentJob, allJob],
+    }),
+    rowsFor<DatasetMetaRow>(database, {
+      sql: `/* site-seo:wordstat-historical-attempts */
+            WITH ranked_runs AS (
+              SELECT job_key, status, id AS import_id,
+                     COALESCE(finished_at, started_at) AS loaded_at,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY job_key
+                       ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
+                     ) AS dedup_rank
+                FROM canonical_collector_runs
+               WHERE source_key = ?
+                 AND job_key IN (?, ?)
                  AND date_from <= ? AND date_to >= ?
                  AND status IN ('success', 'failed', 'partial')
             )
             SELECT job_key, status, import_id, loaded_at
               FROM ranked_runs
              WHERE dedup_rank = 1`,
-      params: [query.scope.sourceKey, currentJob, historicalJob, allJob, query.period.from, query.period.to],
+      params: [query.scope.sourceKey, historicalJob, allJob, query.period.from, query.period.to],
     }),
   ]);
   const row = rows[0];
-  const newest = (jobKeys: readonly string[]): DatasetMetaRow | undefined => attempts
+  const newest = (attempts: readonly DatasetMetaRow[], jobKeys: readonly string[]): DatasetMetaRow | undefined => attempts
     .filter((attempt) => jobKeys.includes(String(attempt.job_key)))
     .sort((left, right) => numeric(right.import_id) - numeric(left.import_id))[0];
-  const currentAttempt = newest([currentJob, allJob]);
-  const historicalAttempt = newest([historicalJob, allJob]);
+  const currentAttempt = newest(currentAttempts, [currentJob, allJob]);
+  const historicalAttempt = newest(historicalAttempts, [historicalJob, allJob]);
   const failed = (attempt: DatasetMetaRow | undefined, coverageRun: unknown): boolean => (
     attempt?.status === "failed" || attempt?.status === "partial"
   ) && (numeric(coverageRun) === 0 || numeric(attempt.import_id) >= numeric(coverageRun));
@@ -710,7 +734,6 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalRea
               SELECT snapshot_date, window_from, window_to, registry_version, ingestion_run_id
                 FROM canonical_fact_wordstat_requests_snapshot
                WHERE source_key = ? AND analytics_account_id = ? AND device_type = 'all'
-                 AND window_from <= ? AND window_to >= ?
                ORDER BY window_to DESC, snapshot_date DESC, ingestion_run_id DESC, registry_version DESC
                LIMIT 1
             )
@@ -728,7 +751,7 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalRea
                AND fact.device_type = 'all'
                AND fact.request_kind = 'popular'
              ORDER BY fact.count DESC, fact.query_text ASC
-             LIMIT 20`, params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.period.from, query.period.to, query.scope.sourceKey, query.scope.analyticsAccountId],
+             LIMIT 20`, params: [query.scope.sourceKey, query.scope.analyticsAccountId, query.scope.sourceKey, query.scope.analyticsAccountId],
     }),
   ]);
   const summary = summaryRows[0];
@@ -737,15 +760,10 @@ async function readWordstatData(database: CanonicalDatabase, query: CanonicalRea
     snapshotDate: String(queryRows[0].snapshot_date), registryVersion: String(queryRows[0].registry_version),
     importId: queryRows[0].ingestion_run_id == null ? null : String(queryRows[0].ingestion_run_id),
   };
-  const rollingMeta: DatasetMeta = window
-    ? {
-      ...meta,
-      period: { kind: "custom", key: `rolling:${window.from}:${window.to}`, from: window.from, to: window.to, sourceTimezone: query.period.sourceTimezone },
-      state: "partial",
-      completeness: "unknown",
-    }
-    : meta;
-  return { ...rollingMeta, kind: "wordstat", demand: summary && summary.demand !== null ? numeric(summary.demand) : null,
+  const snapshotPeriod: Period | null = window
+    ? { kind: "custom", key: `rolling:${window.from}:${window.to}`, from: window.from, to: window.to, sourceTimezone: query.period.sourceTimezone }
+    : null;
+  return { ...meta, kind: "wordstat", demand: summary && summary.demand !== null ? numeric(summary.demand) : null, snapshotPeriod,
     queries: window ? queryRows.map((row) => ({ query: String(row.query_text), count: numeric(row.count), kind: String(row.request_kind), window: {
       from: String(row.window_from), to: String(row.window_to), snapshotDate: String(row.snapshot_date), registryVersion: String(row.registry_version), importId: row.ingestion_run_id == null ? null : String(row.ingestion_run_id),
     } })) : [] };

@@ -88,7 +88,7 @@ test("exports actual Wordstat snapshot windows, Alice query sources, and publish
       gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} },
       datasets: {},
       wordstat: {
-        ...meta, sourceKey: "yandex_wordstat", period: { kind: "custom", key: "rolling:2026-07-27:2026-08-25", from: "2026-07-27", to: "2026-08-25", sourceTimezone: "Europe/Moscow" }, state: "partial", completeness: "unknown", kind: "wordstat", demand: null,
+        ...meta, sourceKey: "yandex_wordstat", period: selection.traffic.primary, snapshotPeriod: { kind: "custom", key: "rolling:2026-07-27:2026-08-25", from: "2026-07-27", to: "2026-08-25", sourceTimezone: "Europe/Moscow" }, state: "partial", completeness: "unknown", kind: "wordstat", demand: 35,
         queries: [{ query: "лечение", kind: "popular", count: 100, window: { from: "2026-07-27", to: "2026-08-25", snapshotDate: "2026-08-25", registryVersion: "registry-2", importId: "run-2" } }],
       },
       alice: {
@@ -103,7 +103,9 @@ test("exports actual Wordstat snapshot windows, Alice query sources, and publish
     },
   } as never);
   const csv = toCsv(rows);
-  assert.match(csv, /2026-07-27.*2026-08-25/);
+  assert.match(csv, /Период от.*2025-12-29/);
+  assert.match(csv, /Спрос Wordstat.*35/);
+  assert.match(csv, /Окно snapshot Wordstat.*2026-07-27.*2026-08-25/);
   assert.match(csv, /snapshot 2026-08-25/);
   assert.match(csv, /Официальный SOV Алиса.*43\.91/);
   assert.match(csv, /Sample presence Алиса.*43\.87/);

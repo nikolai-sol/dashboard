@@ -172,8 +172,11 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   });
 
   assert.equal("kind" in result && result.kind, "wordstat");
-  assert.equal("state" in result && result.state, "partial");
+  assert.equal("state" in result && result.state, "ready");
   assert.deepEqual("period" in result && result.period, {
+    kind: "iso_week", key: "2026-W34", from: "2026-08-17", to: "2026-08-23", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("snapshotPeriod" in result && result.snapshotPeriod, {
     kind: "custom", key: "rolling:2026-07-27:2026-08-25", from: "2026-07-27", to: "2026-08-25", sourceTimezone: "Europe/Moscow",
   });
   assert.deepEqual("queries" in result && result.queries, [{
@@ -183,18 +186,81 @@ test("Wordstat pins one latest rolling snapshot and exposes its actual window", 
   const queryCall = calls.find((call) => call.sql.includes("site-seo:wordstat-queries"));
   assert.match(calls[0]!.sql, /current_success_rows/i);
   assert.doesNotMatch(calls[0]!.sql, /ORDER BY[\s\S]*LIMIT 1/i);
+  assert.match(calls[0]!.sql, /endpoint = 'top_requests'\s+OR/i);
+  assert.match(calls[0]!.sql, /endpoint = 'dynamics' AND requested_from <= \?/i);
   assert.match(queryCall!.sql, /WITH selected_snapshot/i);
-  assert.match(queryCall!.sql, /window_from <= \?/i);
-  assert.match(queryCall!.sql, /window_to >= \?/i);
+  assert.doesNotMatch(queryCall!.sql, /window_from <= \?/i);
+  assert.doesNotMatch(queryCall!.sql, /window_to >= \?/i);
   assert.match(queryCall!.sql, /ORDER BY window_to DESC/i);
   assert.match(queryCall!.sql, /snapshot_date DESC, ingestion_run_id DESC, registry_version DESC/i);
   assert.match(queryCall!.sql, /fact\.request_kind = 'popular'/i);
   assert.doesNotMatch(queryCall!.sql, /SUM\(count\)/i);
-  assert.deepEqual(queryCall!.params, ["yandex_wordstat", "wordstat-account", "2026-08-17", "2026-08-23", "yandex_wordstat", "wordstat-account"]);
+  assert.deepEqual(queryCall!.params, ["yandex_wordstat", "wordstat-account", "yandex_wordstat", "wordstat-account"]);
   assert.deepEqual(
     calls.find((call) => call.sql.includes("site-seo:wordstat-demand"))?.params,
     ["yandex_wordstat", "wordstat-account", "225", "2026-08-17", "2026-08-23"],
   );
+});
+
+test("Wordstat keeps the latest rolling snapshot visible when the selected week ends later", async () => {
+  let snapshotSql = "";
+  const attemptSql: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_wordstat_coverage")) {
+      const currentSnapshotIsPeriodIndependent = /endpoint = 'top_requests'\s+OR/i.test(sql)
+        && /endpoint = 'dynamics' AND requested_from <= \?/i.test(sql);
+      return [[currentSnapshotIsPeriodIndependent ? {
+        coverage_rows: 1, current_coverage_rows: 1, current_success_rows: 1, current_import_id: 2474,
+        historical_coverage_rows: 0, historical_success_rows: 0, historical_import_id: null,
+        import_id: 2474, loaded_at: "2026-09-11 06:55:01",
+      } : {
+        coverage_rows: 0, current_coverage_rows: 0, current_success_rows: 0, current_import_id: null,
+        historical_coverage_rows: 0, historical_success_rows: 0, historical_import_id: null,
+        import_id: null, loaded_at: null,
+      }], []];
+    }
+    if (sql.includes("canonical_collector_runs")) {
+      attemptSql.push(sql);
+      if (sql.includes("site-seo:wordstat-current-attempts")) return [[{
+        job_key: "yandex_wordstat:94927113:current", status: "failed", import_id: 2475, loaded_at: "2026-09-12 06:55:01",
+      }], []];
+      return [[], []];
+    }
+    if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: null }], []];
+    if (sql.includes("site-seo:wordstat-queries")) {
+      snapshotSql = sql;
+      if (/window_from <= \?/i.test(sql)) return [[], []];
+      return [[{
+        query_text: "бевацизумаб", count: "14982", request_kind: "popular",
+        snapshot_date: "2026-09-11", window_from: "2026-08-13", window_to: "2026-09-11",
+        registry_version: "medroche-core-webmaster-w36-v1", ingestion_run_id: "2474",
+      }], []];
+    }
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "94927113", resourceId: "region:225" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "wordstat");
+  assert.equal("latestAttempt" in result && result.latestAttempt, "failed");
+  assert.deepEqual("period" in result && result.period, {
+    kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("snapshotPeriod" in result && result.snapshotPeriod, {
+    kind: "custom", key: "rolling:2026-08-13:2026-09-11", from: "2026-08-13", to: "2026-09-11", sourceTimezone: "Europe/Moscow",
+  });
+  assert.equal("queries" in result && result.queries[0]?.query, "бевацизумаб");
+  assert.doesNotMatch(snapshotSql, /window_from <= \?/i);
+  assert.doesNotMatch(snapshotSql, /window_to >= \?/i);
+  assert.equal(attemptSql.length, 2);
+  assert.doesNotMatch(attemptSql.find((sql) => sql.includes("wordstat-current-attempts")) ?? "", /date_from <= \?/i);
+  assert.match(attemptSql.find((sql) => sql.includes("wordstat-historical-attempts")) ?? "", /date_from <= \?/i);
 });
 
 test("Wordstat reports a failed scoped collection instead of inventing zero demand", async () => {
@@ -202,9 +268,10 @@ test("Wordstat reports a failed scoped collection instead of inventing zero dema
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
     if (sql.includes("canonical_wordstat_coverage")) return [[], []];
-    if (sql.includes("canonical_collector_runs")) return [[{
+    if (sql.includes("wordstat-current-attempts")) return [[{
       job_key: "yandex_wordstat:medroche-wordstat:current", status: "failed", import_id: 117, loaded_at: "2026-09-10 08:00:00",
     }], []];
+    if (sql.includes("wordstat-historical-attempts")) return [[], []];
     throw new Error("facts must not be read after a failed collection");
   } });
 
@@ -218,11 +285,15 @@ test("Wordstat reports a failed scoped collection instead of inventing zero dema
 
   assert.equal("state" in result && result.state, "failed");
   assert.equal("latestAttempt" in result && result.latestAttempt, "failed");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.match(calls[1]!.sql, /canonical_collector_runs/i);
   assert.deepEqual(calls[1]!.params, [
     "yandex_wordstat",
     "yandex_wordstat:medroche-wordstat:current",
+    "yandex_wordstat:medroche-wordstat:all",
+  ]);
+  assert.deepEqual(calls[2]!.params, [
+    "yandex_wordstat",
     "yandex_wordstat:medroche-wordstat:historical",
     "yandex_wordstat:medroche-wordstat:all",
     "2026-09-07",
@@ -239,10 +310,12 @@ test("Wordstat keeps covered facts visible and an unrelated newer regions succes
       historical_coverage_rows: 1, historical_success_rows: 1, historical_import_id: 117,
       import_id: 118, loaded_at: "2026-09-10 08:00:00",
     }], []];
-    if (sql.includes("canonical_collector_runs")) return [[
+    if (sql.includes("wordstat-current-attempts")) return [[
       { job_key: "yandex_wordstat:medroche-wordstat:current", status: "partial", import_id: 118, loaded_at: "2026-09-10 08:01:00" },
-      { job_key: "yandex_wordstat:medroche-wordstat:historical", status: "success", import_id: 117, loaded_at: "2026-09-10 08:00:00" },
       { job_key: "yandex_wordstat:medroche-wordstat:regions", status: "success", import_id: 119, loaded_at: "2026-09-10 08:02:00" },
+    ], []];
+    if (sql.includes("wordstat-historical-attempts")) return [[
+      { job_key: "yandex_wordstat:medroche-wordstat:historical", status: "success", import_id: 117, loaded_at: "2026-09-10 08:00:00" },
     ], []];
     if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
     if (sql.includes("site-seo:wordstat-queries")) return [[{

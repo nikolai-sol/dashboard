@@ -72,6 +72,10 @@ function buildWebmasterExportRows(input: Readonly<{ period: Period; data: Webmas
 
 function buildWordstatExportRows(input: Readonly<{ period: Period; data: WordstatCanonicalData }>): ExportRow[] {
   const rows = buildExportRows({ title: "Wordstat", period: input.data.period ?? input.period, source: input.data });
+  if (input.data.snapshotPeriod) rows.push({
+    field: "Окно snapshot Wordstat",
+    value: `${input.data.snapshotPeriod.from} — ${input.data.snapshotPeriod.to}`,
+  });
   if (input.data.demand !== null) rows.push({ field: "Спрос Wordstat", value: String(input.data.demand) });
   for (const row of input.data.queries) rows.push({
     field: `Wordstat ${row.kind}: ${row.query}`,
