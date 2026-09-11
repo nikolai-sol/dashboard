@@ -229,6 +229,14 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(html, /Каналы привлечения[^]*Поиск[^]*60[^]*Прямые заходы[^]*40/);
   assert.match(html, /Поисковые системы[^]*>Google<[^]*20[^]*просмотры 30[^]*>Яндекс<[^]*10[^]*просмотры 16/);
   assert.match(html, /site-seo-engine-grid/);
+  const searchEnginePanel = html.slice(
+    html.indexOf('data-panel-id="overview.search_engines"'),
+    html.indexOf('data-panel-id="overview.organic_search"'),
+  );
+  assert.match(searchEnginePanel, /data-chart-kind="vertical-bars"/);
+  assert.match(searchEnginePanel, /site-seo-engine-bar[^>]*style="height:100%"/);
+  assert.match(searchEnginePanel, /site-seo-engine-bar[^>]*style="height:50%"/);
+  assert.doesNotMatch(searchEnginePanel, /site-seo-breakdown-track/);
   assert.equal(html.match(/data-engine-slot=/g)?.length, 2);
   assert.match(html, /data-engine-slot="google"[^>]*data-bounce-rate="12.8"[^>]*data-avg-visit-duration-seconds="96"[^>]*data-page-depth="2.1"/);
   assert.match(html, /data-engine-slot="yandex"[^>]*data-bounce-rate="13"[^>]*data-avg-visit-duration-seconds="94"[^>]*data-page-depth="2.2"/);

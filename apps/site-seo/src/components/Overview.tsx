@@ -223,21 +223,29 @@ function overviewSearchEngines(rows: readonly MetrikaBreakdownRow[]): OverviewSe
 }
 
 function SearchEngineGrid({ engines, missingCopy }: Readonly<{ engines: readonly OverviewSearchEngine[]; missingCopy: string }>) {
+  const hasMetrics = engines.some((engine) => engine.metrics !== null);
   const maxVisits = Math.max(1, ...engines.flatMap((engine) => engine.metrics ? [engine.metrics.visits] : []));
-  return <ol className="site-seo-breakdown-list site-seo-engine-grid">
-    {engines.map(({ id, label, metrics }) => <li
-      key={id}
-      data-engine-slot={id}
-      data-bounce-rate={metrics?.bounceRate ?? undefined}
-      data-avg-visit-duration-seconds={metrics?.avgVisitDurationSeconds ?? undefined}
-      data-page-depth={metrics?.pageDepth ?? undefined}
-      data-state={metrics ? "ready" : "missing"}
-    >
-      <div><span>{label}</span><strong>{metrics ? value(metrics.visits) : "—"}</strong></div>
-      <span className="site-seo-breakdown-track" aria-hidden="true">{metrics ? <span style={{ width: `${metrics.visits / maxVisits * 100}%` }} /> : null}</span>
-      <small>{metrics ? `визиты · просмотры ${value(metrics.pageviews)}` : missingCopy}</small>
-    </li>)}
-  </ol>;
+  return <div className="site-seo-engine-chart" role="img" aria-label="Визиты из поисковых систем">
+    <div className="site-seo-engine-y-axis" aria-hidden="true">
+      {hasMetrics ? <><span>{value(maxVisits)}</span><span>{value(Math.round(maxVisits / 2))}</span><span>0</span></> : null}
+    </div>
+    <ol className="site-seo-engine-grid" data-chart-kind="vertical-bars">
+      {engines.map(({ id, label, metrics }) => <li
+        key={id}
+        data-engine-slot={id}
+        data-bounce-rate={metrics?.bounceRate ?? undefined}
+        data-avg-visit-duration-seconds={metrics?.avgVisitDurationSeconds ?? undefined}
+        data-page-depth={metrics?.pageDepth ?? undefined}
+        data-state={metrics ? "ready" : "missing"}
+      >
+        <span className="site-seo-engine-label">{label}</span>
+        <div className="site-seo-engine-bar-stage">
+          {metrics ? <span className="site-seo-engine-bar" style={{ height: `${metrics.visits / maxVisits * 100}%` }}><strong>{value(metrics.visits)}</strong></span> : <em>—</em>}
+        </div>
+        <small>{metrics ? `визиты · просмотры ${value(metrics.pageviews)}` : missingCopy}</small>
+      </li>)}
+    </ol>
+  </div>;
 }
 
 export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster = true }: Readonly<{
