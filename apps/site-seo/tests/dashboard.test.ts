@@ -97,8 +97,8 @@ test("renders one enabled active tab in the neutral shell and preserves scope qu
 
   const html = renderToStaticMarkup(createElement(Dashboard, { profile: searchProfile, selection, publicationId: "publication-7", filters: { country: "RU" }, model, activeTab: "search" }));
 
-  assert.match(html, /site-seo-shell/);
-  assert.equal(html.match(/aria-current="page"/g)?.length, 1);
+  assert.match(html, /site-seo-dashboard/);
+  assert.equal(html.match(/aria-current="page"/g)?.length, 2);
   assert.match(html, /tab=search/);
   assert.match(html, /traffic_week=2026-W01/);
   assert.match(html, /filter_country=RU/);
