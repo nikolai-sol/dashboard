@@ -48,9 +48,11 @@ Long unbroken query text and expanded source lists were included. Search,
 presence filter and second-page navigation also passed. The fixture is explicitly
 labelled as local test data and is never added to production routes or facts.
 
-Local dependencies were also moved recoverably to the same backup directory's
-`local-node-modules` child after further system-disk pressure. Dependencies for
-the release are installed in the external build workspace, not shared with others.
+An additional attempt to move local dependencies to the same backup directory's
+`local-node-modules` child was interrupted during copying. The original local
+`node_modules` remains; that backup copy is incomplete and must not be used.
+Dependencies for the release were independently installed successfully in the
+external build workspace (932 packages), not shared with other projects.
 
 Build verification and live publication are pending. Do not treat this note as
 proof of deployment. The previous generic tracked task report is preserved byte
