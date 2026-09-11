@@ -7,7 +7,7 @@ import type { SiteProfile } from "@reportingdash/site-seo-contract";
 import { Dashboard, dashboardTabs } from "../src/components/Dashboard.tsx";
 import { Overview } from "../src/components/Overview.tsx";
 import { PeriodSelector } from "../src/components/PeriodSelector.tsx";
-import { Search } from "../src/components/Search.tsx";
+import { Search, aggregateWebmasterSections } from "../src/components/Search.tsx";
 import { createAvailableMetrikaWeeksReadExecutor, createCanonicalReadExecutor } from "../src/lib/db.ts";
 import * as periods from "../src/lib/period-selection.ts";
 
@@ -67,12 +67,14 @@ function model() {
       daily: [],
       topPages: [
         { page: "https://clinic.example/innovations/?utm=x#part", metrics: { clicks: 2, impressions: 100, ctrPct: 2, averagePosition: 6 } },
+        { page: "https://clinic.example/innovations/no-position", metrics: { clicks: 1, impressions: 120, ctrPct: 0.83, averagePosition: null } },
         { page: "https://clinic.example/innovations/inno-puls/story?x=1", metrics: { clicks: 3, impressions: 50, ctrPct: 6, averagePosition: 2 } },
         { page: "/innovations/inno-puls/second", metrics: { clicks: 4, impressions: 50, ctrPct: 8, averagePosition: 4 } },
         { page: "/products/a", metrics: { clicks: 8, impressions: 100, ctrPct: 8, averagePosition: 3 } },
       ],
       queryFacts: [
         { query: "лечение", metrics: { clicks: 7, impressions: 100, ctrPct: 7, averagePosition: 3.5 } },
+        { query: "  ЛЕЧЕНИЕ  ", metrics: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 6 } },
       ],
     },
     wordstat: null,
@@ -115,12 +117,40 @@ test("renders the compact SEO-week selector from canonical available weeks", () 
   } as never));
 
   assert.match(html, /Отчётная SEO-неделя/);
+  assert.match(html, /role="group" aria-label="Режим сравнения"/);
+  assert.match(html, /aria-pressed="false"[^>]*>Одна неделя<\/button>/);
+  assert.match(html, /aria-pressed="true"[^>]*>Сравнить<\/button>/);
   assert.match(html, /A · Основная неделя[^]*<select[^]*name="traffic_week"/);
   assert.match(html, /B · Сравнение[^]*<select[^]*name="traffic_compare"/);
+  assert.doesNotMatch(html, /<select(?=[^>]*name="traffic_compare")(?=[^>]*disabled="")/);
+  assert.match(html, /data-week="2026-W35"[^>]*aria-label="Сравнить с предыдущей доступной неделей"/);
   assert.match(html, /<option value="2026-W36" selected="">2026-W36/);
   assert.doesNotMatch(html, />GSC<|>Алиса</);
   assert.match(html, /type="hidden" name="gsc_period" value="2026-W35"/);
   assert.match(html, /type="hidden" name="alice_month" value="2026-09"/);
+});
+
+test("period selector disables comparison in single mode and renders an explicit empty state", () => {
+  const selection = periods.createPeriodSelection({ primaryWeek: "2026-W36", aliceMonth: "2026-09", gsc: w35 }, timezone);
+  const single = renderToStaticMarkup(createElement(PeriodSelector, {
+    selection,
+    publicationId: null,
+    filters: {},
+    activeTab: "search",
+    availableWeeks: [w36, w35],
+  } as never));
+  const empty = renderToStaticMarkup(createElement(PeriodSelector, {
+    selection,
+    publicationId: null,
+    filters: {},
+    activeTab: "search",
+    availableWeeks: [],
+  } as never));
+
+  assert.match(single, /aria-pressed="true"[^>]*>Одна неделя<\/button>/);
+  assert.match(single, /<select(?=[^>]*name="traffic_compare")(?=[^>]*disabled="")[^>]*>/);
+  assert.match(empty, /<select(?=[^>]*name="traffic_week")(?=[^>]*disabled="")[^>]*>[^]*Нет доступных недель/);
+  assert.match(empty, /<button(?=[^>]*aria-label="Сравнить с предыдущей доступной неделей")(?=[^>]*disabled="")[^>]*>/);
 });
 
 test("falls back from incomplete W37 to latest fully covered W36", () => {
@@ -134,14 +164,51 @@ test("falls back from incomplete W37 to latest fully covered W36", () => {
   assert.equal(resolved.gsc.key, "2026-08", "an explicit monthly GSC period remains independent");
 });
 
-test("canonical Metrika coverage returns only complete ISO weeks in descending order", async () => {
+test("returns no primary selection when Metrika has no fully covered week", () => {
+  const selection = periods.createPeriodSelection({ primaryWeek: "2026-W37", aliceMonth: "2026-09", gsc: w36 }, timezone);
+
+  assert.equal(periods.resolveAvailableWeekSelection(selection, []), null);
+});
+
+test("keeps independent tabs available but suppresses incomplete Metrika facts when no full week exists", () => {
+  const selection = periods.createPeriodSelection({ primaryWeek: "2026-W37", aliceMonth: "2026-09", gsc: w36 }, timezone);
+  const view = model();
+  const html = renderToStaticMarkup(createElement(Dashboard, {
+    profile,
+    model: { ...view, metrika: { ...missing, sourceKey: "yandex_metrika", collectionMode: "automated", period: selection.traffic.primary, state: "partial", kind: "metrika", summary: { visits: 999, pageviews: 999 }, daily: [{ date: "2026-09-07", visits: 999, pageviews: 999, users: 999 }], topPages: [], channels: [], searchEngines: [] } },
+    selection,
+    publicationId: null,
+    filters: {},
+    activeTab: "overview",
+    availableWeeks: [],
+  }));
+  const seoHtml = renderToStaticMarkup(createElement(Dashboard, {
+    profile,
+    model: view,
+    selection,
+    publicationId: null,
+    filters: {},
+    activeTab: "search",
+    availableWeeks: [],
+  }));
+
+  assert.match(html, /id="overview"/);
+  assert.match(html, />SEO<[^]*>Источники</);
+  assert.doesNotMatch(html, /999/);
+  assert.match(seoHtml, /id="search"[^]*ИИ-видимость в Алисе AI/);
+  assert.match(seoHtml, /Нет доступных недель/);
+});
+
+test("canonical Metrika coverage accepts successful empty days while excluding failed and incomplete weeks", async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const execute = createAvailableMetrikaWeeksReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
-    return [[
+    const acceptsSuccessfulEmpty = /CASE WHEN status IN \('success', 'empty'\) THEN 0 ELSE 1 END/.test(sql);
+    const excludesIncomplete = /SUM\(pagination_complete = 0\) = 0/.test(sql);
+    return [acceptsSuccessfulEmpty && excludesIncomplete ? [
       { week_key: "2026-W36", period_from: "2026-08-31", period_to: "2026-09-06" },
       { week_key: "2026-W35", period_from: "2026-08-24", period_to: "2026-08-30" },
-    ], []];
+    ] : [], []];
   } });
   const result = await execute({
     name: "available_metrika_weeks",
@@ -155,6 +222,9 @@ test("canonical Metrika coverage returns only complete ISO weeks in descending o
   assert.match(calls[0]!.sql, /report_key = 'search_engines'/);
   assert.match(calls[0]!.sql, /segment_key = 'russia'/);
   assert.match(calls[0]!.sql, /HAVING COUNT\(DISTINCT report_date\) = 7/);
+  assert.match(calls[0]!.sql, /CASE WHEN status IN \('success', 'empty'\) THEN 0 ELSE 1 END/);
+  assert.doesNotMatch(calls[0]!.sql, /status IN \([^)]*'failed'/);
+  assert.match(calls[0]!.sql, /SUM\(pagination_complete = 0\) = 0/);
   assert.deepEqual(calls[0]!.params, ["yandex_metrika", "counter"]);
 });
 
@@ -181,6 +251,7 @@ test("Webmaster query facts use the exact scope, week, ALL device and unbounded 
   assert.deepEqual(queryCall.params, ["yandex_webmaster", "webmaster", "host", "2026-08-31", "2026-09-06"]);
   const pageCall = calls.find(({ sql }) => sql.includes("site-seo:webmaster-pages"))!;
   assert.doesNotMatch(pageCall.sql, /LIMIT 20/);
+  assert.match(pageCall.sql, /AS positioned_impressions/);
 });
 
 test("SEO page renders Alice summary, longest-prefix sections, and the normalized Yandex query union", () => {
@@ -192,13 +263,23 @@ test("SEO page renders Alice summary, longest-prefix sections, and the normalize
   assert.match(html, /Позиции по разделам/);
   assert.match(html, /Заболевания[^]*—/);
   assert.match(html, /Препараты[^]*8[^]*100[^]*3/);
-  assert.match(html, /Инновации[^]*2[^]*100[^]*6/);
+  assert.match(html, /Инновации[^]*3[^]*220[^]*6/);
   assert.match(html, /INNO-ПУЛЬС[^]*7[^]*100[^]*3/);
   assert.match(html, /Запросы: Google, Яндекс и SEO OS/);
   assert.match(html, /Google[^]*Показы[^]*Клики[^]*CTR[^]*Позиция/);
   assert.match(html, /Яндекс Вебмастер[^]*Показы[^]*Клики[^]*CTR[^]*Позиция/);
   assert.match(html, /SEO OS[^]*Позиция[^]*Дельта[^]*Статус/);
-  assert.match(html, /лечение[^]*—[^]*—[^]*—[^]*—[^]*100[^]*7[^]*7%[^]*3,5[^]*—[^]*—[^]*—/);
+  assert.equal(html.match(/<th scope="row" class="site-seo-wrap-cell">лечение<\/th>/g)?.length, 1);
+  assert.match(html, /лечение[^]*—[^]*—[^]*—[^]*—[^]*120[^]*9[^]*7,5%[^]*3,92[^]*—[^]*—[^]*—/);
+});
+
+test("section position uses only impressions that carry a position", () => {
+  const sections = aggregateWebmasterSections(profile.seoSections!, [
+    { page: "/innovations/mixed", metrics: { clicks: 2, impressions: 220, ctrPct: 0.91, averagePosition: 10, positionedImpressions: 100 } },
+    { page: "/innovations/positioned", metrics: { clicks: 1, impressions: 100, ctrPct: 1, averagePosition: 2, positionedImpressions: 100 } },
+  ]);
+
+  assert.equal(sections.find((section) => section.id === "innovations")?.metrics?.averagePosition, 6);
 });
 
 test("overview keeps missing states but omits completeness prose and repeated organic copy", () => {

@@ -33,7 +33,7 @@ export function resolveActiveTab(tabs: readonly DashboardTab[], requested?: stri
 export function Dashboard({ profile, model, selection, publicationId, filters, availableWeeks = [selection.traffic.primary], activeTab: requestedTab }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>>; availableWeeks?: readonly PeriodSelection["traffic"]["primary"][]; activeTab?: string }>) {
   const query = buildDashboardQuery(selection, publicationId, filters);
   const gscEnabled = enabled(profile, "google_search_console");
-  const metrikaEnabled = enabled(profile, "yandex_metrika");
+  const metrikaEnabled = enabled(profile, "yandex_metrika") && availableWeeks.length > 0;
   const webmasterEnabled = enabled(profile, "yandex_webmaster");
   const webmasterComparison = model.trafficComparison.yandex_webmaster;
   const tabs = dashboardTabs(profile);

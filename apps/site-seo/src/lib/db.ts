@@ -66,6 +66,8 @@ export type WebmasterCanonicalMetrics = Readonly<{
   impressions: number;
   ctrPct: number | null;
   averagePosition: number | null;
+  /** Impressions represented by averagePosition; excludes rows where position is null. */
+  positionedImpressions?: number;
 }>;
 
 export type WebmasterCanonicalData = DatasetMeta & Readonly<{
@@ -547,6 +549,7 @@ type WebmasterFactRow = Readonly<{
   impressions?: unknown;
   ctr_pct?: unknown;
   average_position?: unknown;
+  positioned_impressions?: unknown;
 }>;
 
 function webmasterMetrics(row: WebmasterFactRow): WebmasterCanonicalMetrics {
@@ -555,12 +558,16 @@ function webmasterMetrics(row: WebmasterFactRow): WebmasterCanonicalMetrics {
     impressions: numeric(row.impressions),
     ctrPct: nullableNumeric(row.ctr_pct),
     averagePosition: nullableNumeric(row.average_position),
+    ...(row.positioned_impressions === null || row.positioned_impressions === undefined
+      ? {}
+      : { positionedImpressions: numeric(row.positioned_impressions) }),
   };
 }
 
 const webmasterMetricsSql = `SUM(COALESCE(clicks, 0)) AS clicks,
                    SUM(COALESCE(impressions, 0)) AS impressions,
                    SUM(COALESCE(clicks, 0)) / NULLIF(SUM(COALESCE(impressions, 0)), 0) * 100 AS ctr_pct,
+                   SUM(CASE WHEN average_position IS NOT NULL THEN COALESCE(impressions, 0) ELSE 0 END) AS positioned_impressions,
                    SUM(CASE WHEN average_position IS NOT NULL THEN average_position * COALESCE(impressions, 0) END)
                      / NULLIF(SUM(CASE WHEN average_position IS NOT NULL THEN COALESCE(impressions, 0) END), 0) AS average_position`;
 
@@ -970,7 +977,7 @@ async function readAvailableMetrikaWeeks(database: CanonicalDatabase, query: Ava
           HAVING COUNT(DISTINCT report_date) = 7
              AND WEEKDAY(MIN(report_date)) = 0
              AND WEEKDAY(MAX(report_date)) = 6
-             AND SUM(status <> 'success') = 0
+             AND SUM(CASE WHEN status IN ('success', 'empty') THEN 0 ELSE 1 END) = 0
              AND SUM(pagination_complete = 0) = 0
            ORDER BY period_from DESC`,
     params: [query.scope.sourceKey, query.scope.analyticsAccountId],

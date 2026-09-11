@@ -41,8 +41,8 @@ export function aggregateWebmasterSections(
     if (rows.length === 0) return { id: section.id, label: section.label, metrics: null };
     const clicks = rows.reduce((sum, row) => sum + row.metrics.clicks, 0);
     const impressions = rows.reduce((sum, row) => sum + row.metrics.impressions, 0);
-    const positioned = rows.filter((row) => row.metrics.averagePosition !== null && row.metrics.impressions > 0);
-    const positionedImpressions = positioned.reduce((sum, row) => sum + row.metrics.impressions, 0);
+    const positioned = rows.filter((row) => row.metrics.averagePosition !== null && (row.metrics.positionedImpressions ?? row.metrics.impressions) > 0);
+    const positionedImpressions = positioned.reduce((sum, row) => sum + (row.metrics.positionedImpressions ?? row.metrics.impressions), 0);
     return {
       id: section.id,
       label: section.label,
@@ -51,8 +51,9 @@ export function aggregateWebmasterSections(
         impressions,
         ctrPct: impressions > 0 ? clicks / impressions * 100 : null,
         averagePosition: positionedImpressions > 0
-          ? positioned.reduce((sum, row) => sum + row.metrics.averagePosition! * row.metrics.impressions, 0) / positionedImpressions
+          ? positioned.reduce((sum, row) => sum + row.metrics.averagePosition! * (row.metrics.positionedImpressions ?? row.metrics.impressions), 0) / positionedImpressions
           : null,
+        positionedImpressions,
       },
     };
   });
@@ -64,13 +65,30 @@ type UnifiedQuery = Readonly<{
   yandex: WebmasterCanonicalMetrics | null;
 }>;
 
+function mergeQueryMetrics(current: WebmasterCanonicalMetrics | null, next: WebmasterCanonicalMetrics): WebmasterCanonicalMetrics {
+  if (!current) return next;
+  const clicks = current.clicks + next.clicks;
+  const impressions = current.impressions + next.impressions;
+  const positioned = [current, next].filter((metrics) => metrics.averagePosition !== null && (metrics.positionedImpressions ?? metrics.impressions) > 0);
+  const positionedImpressions = positioned.reduce((sum, metrics) => sum + (metrics.positionedImpressions ?? metrics.impressions), 0);
+  return {
+    clicks,
+    impressions,
+    ctrPct: impressions > 0 ? clicks / impressions * 100 : null,
+    averagePosition: positionedImpressions > 0
+      ? positioned.reduce((sum, metrics) => sum + metrics.averagePosition! * (metrics.positionedImpressions ?? metrics.impressions), 0) / positionedImpressions
+      : null,
+    positionedImpressions,
+  };
+}
+
 function unifiedQueries(model: DashboardReadModel, showGsc: boolean, showWebmaster: boolean): UnifiedQuery[] {
   const rows = new Map<string, UnifiedQuery>();
   const add = (phrase: string, source: "google" | "yandex", metrics: WebmasterCanonicalMetrics) => {
     const normalized = phrase.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
     if (!normalized) return;
     const current = rows.get(normalized) ?? { phrase: phrase.trim().replace(/\s+/g, " "), google: null, yandex: null };
-    rows.set(normalized, { ...current, [source]: metrics });
+    rows.set(normalized, { ...current, [source]: mergeQueryMetrics(current[source], metrics) });
   };
   if (showGsc) {
     for (const row of model.gsc.dimensions) if (row.dimension === "query") add(row.value, "google", row.metrics);

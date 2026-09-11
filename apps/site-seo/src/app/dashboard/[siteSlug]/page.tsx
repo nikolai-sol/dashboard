@@ -22,7 +22,19 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
       : { slug: siteSlug, selection: defaultPeriodSelection(runtime.registration.profile.businessTimezone), publicationId: null, filters: gscFilters() };
     const availableWeeks = await loadAvailableMetrikaWeeks({ registration: runtime.registration, claim: session, execute: runtime.executeAvailableMetrikaWeeks });
     const resolvedSelection = resolveAvailableWeekSelection(requested.selection, availableWeeks);
-    const selection = hasPeriodState ? resolvedSelection : { ...resolvedSelection, gsc: resolvedSelection.traffic.primary };
+    const comparisonMode = typeof values.comparison_mode === "string" ? values.comparison_mode : null;
+    const primary = resolvedSelection?.traffic.primary;
+    const previous = primary
+      ? [...availableWeeks].filter((week) => week.kind === "iso_week" && week.key < primary.key).sort((left, right) => right.key.localeCompare(left.key))[0] ?? null
+      : null;
+    const resolvedWithMode = resolvedSelection && comparisonMode === "single"
+      ? { ...resolvedSelection, traffic: { ...resolvedSelection.traffic, comparison: null } }
+      : resolvedSelection && (comparisonMode === "compare" || comparisonMode === "previous")
+        ? { ...resolvedSelection, traffic: { ...resolvedSelection.traffic, comparison: previous } }
+        : resolvedSelection;
+    const selection = resolvedWithMode
+      ? hasPeriodState ? resolvedWithMode : { ...resolvedWithMode, gsc: resolvedWithMode.traffic.primary }
+      : requested.selection;
     const request = { ...requested, selection };
     const model = await loadDashboardReadModel({ registration: runtime.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: runtime.execute });
     return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} availableWeeks={availableWeeks} activeTab={typeof values.tab === "string" ? values.tab : undefined} />;

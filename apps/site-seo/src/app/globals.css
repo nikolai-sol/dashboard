@@ -209,15 +209,62 @@ body {
 
 .site-seo-period-selector {
   display: grid;
-  grid-template-columns: minmax(170px, auto) repeat(2, minmax(170px, 1fr)) auto;
+  grid-template-columns: auto repeat(2, minmax(170px, 1fr)) 40px auto;
   gap: 12px;
   align-items: end;
 }
 
 .site-seo-period-heading {
-  align-self: center;
+  grid-column: 1 / -1;
   color: var(--site-seo-slate-900);
   font-size: 0.875rem;
+}
+
+.site-seo-period-mode {
+  display: inline-flex;
+  min-height: 40px;
+  padding: 3px;
+  border: 1px solid var(--site-seo-slate-300);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.site-seo-period-mode-button,
+.site-seo-period-previous {
+  border: 0;
+  border-radius: 6px;
+  color: var(--site-seo-slate-500);
+  background: transparent;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.site-seo-period-mode-button {
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.site-seo-period-mode-button[aria-pressed="true"] {
+  color: #fff;
+  background: var(--site-seo-slate-900);
+  font-weight: 700;
+}
+
+.site-seo-period-previous {
+  width: 40px;
+  min-height: 40px;
+  border: 1px solid var(--site-seo-slate-300);
+  background: #fff;
+  font-size: 1rem;
+}
+
+.site-seo-period-mode-button:disabled,
+.site-seo-period-previous:disabled,
+.site-seo-input:disabled {
+  color: var(--site-seo-slate-300);
+  background: var(--site-seo-slate-100);
+  cursor: not-allowed;
 }
 
 .site-seo-field {
@@ -917,6 +964,8 @@ body {
 .site-seo-table-frame:focus-visible,
 .site-seo-exports a:focus-visible,
 .site-seo-input:focus-visible,
+.site-seo-period-mode-button:focus-visible,
+.site-seo-period-previous:focus-visible,
 .site-seo-button:focus-visible,
 .site-seo-login-form input:focus-visible,
 .site-seo-login-form button:focus-visible {
