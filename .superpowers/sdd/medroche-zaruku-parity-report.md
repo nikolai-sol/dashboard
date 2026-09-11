@@ -136,9 +136,37 @@ source assertions because the MedRoche profile intentionally remains pinned to
 updating the MedRoche template pins; the coordinator must pin the reviewed
 implementation commit before those four assertions can pass.
 
-## Remaining concern
+## Pre-closure concern
 
-Only the intentional coordinator-owned template pin remains. Until it is
-updated, MedRoche build preview correctly refuses to package an unpinned
-template tree. No functional, typecheck, scope, isolation, or whitespace
-failure remains in task-owned code.
+At the end of the implementation-agent turn, only the intentional
+coordinator-owned template pin remained. Before that pin was updated,
+MedRoche build preview correctly refused to package an unpinned template tree.
+
+## Coordinator closure
+
+Independent review of the first implementation found four important edge
+cases: successful-empty Metrika coverage, the no-full-week state, normalized
+query collisions, and position weighting when some facts have no position.
+Commit `934d7d0f63d11cee3060e5858052fdf28fce7b7c` closes all four with regression
+tests. A second review found two server-form edge cases; commit
+`ff09f6dd24667cc9f8be4b0aba5a898dfeae3517` separates comparison mode from the
+previous-week action, disables submission when no full week exists, and omits
+Metrika-only panels rather than labelling a configured source as disabled.
+
+The final independent verdict for `ff09f6d` is PASS for both specification
+compliance and code quality, with no Critical, Important, or Minor findings.
+The reviewer independently ran 60 focused tests. The coordinator then pinned
+the MedRoche profile, registry, and release manifest to that exact source in
+commit `46aa763e97d54580021f3adf62fbaeaa3826ad6b`.
+
+Fresh post-pin verification passed 140 functional tests, 27 release/isolation
+tests, TypeScript checking, and diff checking. A clean detached worktree also
+produced an optimized standalone Next build with 100 manifest files; its
+artifact-manifest SHA-256 is
+`d5cb0f92e767c07b2658e4458302c71d0e07c17675a50d30a36f8bae6a744801` and it
+pins template source `ff09f6dd24667cc9f8be4b0aba5a898dfeae3517`.
+
+Canonical inspection showed that MedRoche W36 (`2026-08-31..2026-09-06`) is
+already fully collected, so no backfill was required. No source API call,
+database write, schema or cron change, production deployment, secret change,
+or Zaruku activation was performed in this closure.
