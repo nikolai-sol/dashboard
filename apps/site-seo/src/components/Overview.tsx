@@ -132,6 +132,7 @@ function breakdownState(rows: readonly MetrikaBreakdownRow[], metrikaState: Sour
 type TrendRow = Readonly<{ date: string; visits: number }>;
 
 type WeeklyTrendRow = Readonly<{ week: string; start: number; visits: number }>;
+type TrendTick = Readonly<{ value: number; y: number }>;
 
 function isoWeek(date: string): Readonly<{ key: string; start: number }> {
   const value = new Date(`${date}T00:00:00Z`);
@@ -163,8 +164,14 @@ function SearchTrend({ rows, state }: Readonly<{ rows: readonly TrendRow[]; stat
   const first = sorted[0]!.start;
   const last = sorted.at(-1)!.start;
   const dateRange = Math.max(604_800_000, last - first);
-  const max = Math.max(1, ...sorted.map((row) => row.visits));
-  const coordinates = sorted.map((row) => ({ row, x: sorted.length === 1 ? 400 : 20 + (row.start - first) / dateRange * 760, y: 160 - row.visits / max * 135 }));
+  const max = Math.max(0, ...sorted.map((row) => row.visits));
+  const scaleMax = Math.max(1, max);
+  const ticks: readonly TrendTick[] = max === 0
+    ? [{ value: 0, y: 160 }]
+    : max === 1
+      ? [{ value: 1, y: 25 }, { value: 0, y: 160 }]
+      : [{ value: max, y: 25 }, { value: max / 2, y: 92.5 }, { value: 0, y: 160 }];
+  const coordinates = sorted.map((row) => ({ row, x: sorted.length === 1 ? 400 : 20 + (row.start - first) / dateRange * 760, y: 160 - row.visits / scaleMax * 135 }));
   const segments: Array<typeof coordinates> = [];
   for (const point of coordinates) {
     const segment = segments.at(-1);
@@ -176,31 +183,64 @@ function SearchTrend({ rows, state }: Readonly<{ rows: readonly TrendRow[]; stat
     <div className="site-seo-trend">
       <div className="site-seo-trend-legend"><span aria-hidden="true" />Поисковые визиты · Метрика · Россия</div>
       <div className="site-seo-trend-chart">
-        <div className="site-seo-trend-y-axis" aria-label="Визиты"><strong>Визиты</strong><span>{value(max)}</span><span>{value(Math.round(max / 2))}</span><span>0</span></div>
+        <div className="site-seo-trend-y-axis" aria-hidden="true">{ticks.map((tick) => <span data-axis-tick={tick.value} style={{ top: `${tick.y / 180 * 100}%` }} key={tick.value}>{value(tick.value)}</span>)}</div>
         <svg viewBox="0 0 800 180" preserveAspectRatio="none" role="img" aria-label="Еженедельная динамика поисковых визитов в России">
-          <line x1="20" y1="25" x2="780" y2="25" />
-          <line x1="20" y1="92" x2="780" y2="92" />
-          <line x1="20" y1="160" x2="780" y2="160" />
+          {ticks.map((tick) => <line data-grid-tick={tick.value} x1="20" y1={tick.y} x2="780" y2={tick.y} key={tick.value} />)}
           {segments.map((segment, index) => <g data-series-segment={index} key={segment[0]!.row.week}>
             {segment.length > 1 ? <polyline points={segment.map((point) => `${point.x},${point.y}`).join(" ")} /> : null}
             {segment.map((point) => <circle data-week={point.row.week} key={point.row.week} cx={point.x} cy={point.y} r="3.5" />)}
           </g>)}
         </svg>
       </div>
-      <div className="site-seo-trend-axis"><span>{sorted[0]!.week}</span>{sorted.length > 1 ? <span>{sorted.at(-1)!.week}</span> : null}</div>
+      <div className="site-seo-trend-axis" data-single={sorted.length === 1}><span>{sorted[0]!.week}</span>{sorted.length > 1 ? <span>{sorted.at(-1)!.week}</span> : null}</div>
       <table className="site-seo-sr-only"><caption>Еженедельные поисковые визиты</caption><thead><tr><th>ISO-неделя</th><th>Визиты</th></tr></thead><tbody>{sorted.map((row) => <tr key={row.week}><td>{row.week}</td><td>{row.visits}</td></tr>)}</tbody></table>
     </div>
   );
 }
 
-function overviewSearchEngines(rows: readonly MetrikaBreakdownRow[]): MetrikaBreakdownRow[] {
-  return [
-    { pattern: /google/i, label: "Google" },
-    { pattern: /yandex|яндекс/i, label: "Яндекс" },
-  ].flatMap(({ pattern, label }) => {
-    const row = rows.find((candidate) => pattern.test(`${candidate.id ?? ""} ${candidate.label}`));
-    return row ? [{ ...row, label }] : [];
+type OverviewSearchEngine = Readonly<{ id: "google" | "yandex"; label: string; metrics: MetrikaBreakdownRow | null }>;
+
+function weightedEngineMetric(rows: readonly MetrikaBreakdownRow[], key: "bounceRate" | "avgVisitDurationSeconds" | "pageDepth"): number | null {
+  const measured = rows.filter((row) => row[key] !== null);
+  const visits = measured.reduce((sum, row) => sum + row.visits, 0);
+  return visits > 0 ? measured.reduce((sum, row) => sum + row[key]! * row.visits, 0) / visits : null;
+}
+
+function overviewSearchEngines(rows: readonly MetrikaBreakdownRow[]): OverviewSearchEngine[] {
+  return ([
+    { id: "google", pattern: /google/i, label: "Google" },
+    { id: "yandex", pattern: /yandex|яндекс/i, label: "Яндекс" },
+  ] as const).map(({ id, pattern, label }) => {
+    const matches = rows.filter((candidate) => pattern.test(`${candidate.id ?? ""} ${candidate.label}`));
+    if (matches.length === 0) return { id, label, metrics: null };
+    return { id, label, metrics: {
+      id,
+      label,
+      visits: matches.reduce((sum, row) => sum + row.visits, 0),
+      pageviews: matches.reduce((sum, row) => sum + row.pageviews, 0),
+      bounceRate: weightedEngineMetric(matches, "bounceRate"),
+      avgVisitDurationSeconds: weightedEngineMetric(matches, "avgVisitDurationSeconds"),
+      pageDepth: weightedEngineMetric(matches, "pageDepth"),
+    } };
   });
+}
+
+function SearchEngineGrid({ engines, missingCopy }: Readonly<{ engines: readonly OverviewSearchEngine[]; missingCopy: string }>) {
+  const maxVisits = Math.max(1, ...engines.flatMap((engine) => engine.metrics ? [engine.metrics.visits] : []));
+  return <ol className="site-seo-breakdown-list site-seo-engine-grid">
+    {engines.map(({ id, label, metrics }) => <li
+      key={id}
+      data-engine-slot={id}
+      data-bounce-rate={metrics?.bounceRate ?? undefined}
+      data-avg-visit-duration-seconds={metrics?.avgVisitDurationSeconds ?? undefined}
+      data-page-depth={metrics?.pageDepth ?? undefined}
+      data-state={metrics ? "ready" : "missing"}
+    >
+      <div><span>{label}</span><strong>{metrics ? value(metrics.visits) : "—"}</strong></div>
+      <span className="site-seo-breakdown-track" aria-hidden="true">{metrics ? <span style={{ width: `${metrics.visits / maxVisits * 100}%` }} /> : null}</span>
+      <small>{metrics ? `визиты · просмотры ${value(metrics.pageviews)}` : missingCopy}</small>
+    </li>)}
+  </ol>;
 }
 
 export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster = true }: Readonly<{
@@ -219,8 +259,9 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
   const trafficHealth = model.metrika?.trafficHealth;
   const channels = model.metrika?.channels ?? [];
   const searchEngines = overviewSearchEngines(model.metrika?.searchEngines ?? []);
+  const hasSearchEngineRows = searchEngines.some((engine) => engine.metrics !== null);
   const channelsState = breakdownState(channels, trafficState);
-  const searchEnginesState = breakdownState(searchEngines, metrikaState);
+  const searchEnginesState = hasSearchEngineRows ? metrikaState : metrikaState === "complete_empty" ? "complete_empty" : "missing";
 
   return (
     <div id={id} className="site-seo-overview-grid">
@@ -256,10 +297,8 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
       </OverviewSlot>
 
       <OverviewSlot id="search_engines">
-        <OverviewPanel title="Поисковые системы" subtitle="Поисковые визиты · Россия" source="Метрика" state={showMetrika ? searchEnginesState : "missing"} statusText={showMetrika && searchEngines.length === 0 ? "нет строк за период" : showMetrika ? undefined : "источник отключён"}>
-          {!showMetrika ? <EmptyOverviewState>Источник Метрика отключён.</EmptyOverviewState>
-            : searchEngines.length > 0 ? <BreakdownList rows={searchEngines} className="site-seo-breakdown-list site-seo-engine-grid" />
-              : <EmptyOverviewState>Нет опубликованных строк поисковых систем за выбранный период.</EmptyOverviewState>}
+        <OverviewPanel title="Поисковые системы" subtitle="Поисковые визиты · Россия" source="Метрика" state={showMetrika ? searchEnginesState : "missing"} statusText={showMetrika && !hasSearchEngineRows ? "нет строк Google/Яндекс за период" : showMetrika ? undefined : "источник отключён"}>
+          <SearchEngineGrid engines={searchEngines} missingCopy={showMetrika ? "нет строк за период" : "источник отключён"} />
         </OverviewPanel>
       </OverviewSlot>
 

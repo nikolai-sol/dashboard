@@ -107,4 +107,5 @@ test("overview search engines and weekly trend expose their two-column and label
   assert.match(css, /\.site-seo-engine-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /\.site-seo-trend-chart\s*\{[^}]*grid-template-columns:/);
   assert.match(css, /\.site-seo-trend-y-axis\s*\{/);
+  assert.match(css, /\.site-seo-trend-axis\[data-single="true"\]\s*\{[^}]*justify-content:\s*center/);
 });

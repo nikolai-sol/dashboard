@@ -209,7 +209,9 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
       ],
       searchEngines: [
         { id: "google", label: "Google, search results", visits: 12, pageviews: 18, bounceRate: 8, avgVisitDurationSeconds: 120, pageDepth: 2.5 },
+        { id: "google-mobile", label: "Google mobile", visits: 8, pageviews: 12, bounceRate: 20, avgVisitDurationSeconds: 60, pageDepth: 1.5 },
         { id: "yandex", label: "Yandex, search results", visits: 8, pageviews: 12, bounceRate: 15, avgVisitDurationSeconds: 90, pageDepth: 2 },
+        { id: "yandex-mobile", label: "Яндекс mobile", visits: 2, pageviews: 4, bounceRate: 5, avgVisitDurationSeconds: 110, pageDepth: 3 },
         { id: "bing", label: "Bing, search results", visits: 3, pageviews: 5, bounceRate: 12, avgVisitDurationSeconds: 80, pageDepth: 1.8 },
       ],
       daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [],
@@ -240,8 +242,11 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
   assert.match(html, /Поисковые визиты[^]*20/);
   assert.match(html, /Здоровье трафика[^]*Визиты[^]*100[^]*Просмотры[^]*160[^]*Отказы[^]*17,5%[^]*Ср\. время[^]*1:35[^]*Глубина[^]*2,4/);
   assert.match(html, /Каналы привлечения[^]*Поиск[^]*60[^]*Прямые заходы[^]*40/);
-  assert.match(html, /Поисковые системы[^]*>Google<[^]*12[^]*>Яндекс<[^]*8/);
+  assert.match(html, /Поисковые системы[^]*>Google<[^]*20[^]*просмотры 30[^]*>Яндекс<[^]*10[^]*просмотры 16/);
   assert.match(html, /site-seo-engine-grid/);
+  assert.equal(html.match(/data-engine-slot=/g)?.length, 2);
+  assert.match(html, /data-engine-slot="google"[^>]*data-bounce-rate="12.8"[^>]*data-avg-visit-duration-seconds="96"[^>]*data-page-depth="2.1"/);
+  assert.match(html, /data-engine-slot="yandex"[^>]*data-bounce-rate="13"[^>]*data-avg-visit-duration-seconds="94"[^>]*data-page-depth="2.2"/);
   assert.doesNotMatch(html, /Bing, search results/);
   assert.match(html, /data-panel-id="overview\.traffic_health"[^]*?<section[^>]*data-state="partial"/);
   assert.match(html, /data-panel-id="overview\.channels"[^]*?<section[^>]*data-state="partial"/);
@@ -273,7 +278,7 @@ test("overview keeps all-traffic panels visible when search coverage is missing"
 
   assert.match(html, /data-panel-id="overview\.traffic_health"[^]*?<section[^>]*data-state="partial"[^]*?Визиты[^]*?9/);
   assert.match(html, /data-panel-id="overview\.channels"[^]*?<section[^>]*data-state="partial"[^]*?Прямые заходы[^]*?9/);
-  assert.match(html, /data-panel-id="overview\.search_engines"[^]*?<section[^>]*data-state="missing"[^]*?Нет опубликованных строк поисковых систем/);
+  assert.match(html, /data-panel-id="overview\.search_engines"[^]*?<section[^>]*data-state="missing"[^]*?data-engine-slot="google"[^]*?data-engine-slot="yandex"/);
   assert.match(html, /data-panel-id="overview\.organic_search"[^]*?<section[^>]*data-state="missing"[^]*?Динамика: данные не опубликованы/);
   assert.match(html, /Поисковые визиты[^]*?<strong class="site-seo-kpi-value">—<\/strong>/);
 });
@@ -285,7 +290,10 @@ test("overview keeps the accepted layout while unavailable metrics stay explicit
 
   assert.equal(html.match(/data-panel-id="overview\./g)?.length, 5);
   assert.match(html, /Нет опубликованных строк каналов за выбранный период/);
-  assert.match(html, /Нет опубликованных строк поисковых систем за выбранный период/);
+  assert.equal(html.match(/data-engine-slot=/g)?.length, 2);
+  assert.match(html, /data-engine-slot="google"[^]*>Google<[^]*—[^]*нет строк за период/);
+  assert.match(html, /data-engine-slot="yandex"[^]*>Яндекс<[^]*—[^]*нет строк за период/);
+  assert.doesNotMatch(html, /data-engine-slot="(?:google|yandex)"[^]*?<strong>0<\/strong>/);
   assert.match(html, /Динамика: данные не опубликованы/);
   assert.match(html, /data-state="missing"/);
   assert.doesNotMatch(html, />0<\/span>/);
@@ -320,6 +328,32 @@ test("overview trend aggregates observed dates into one ISO-week point and expos
   assert.match(html, /<th>ISO-неделя<\/th><th>Визиты<\/th>/);
   assert.match(html, /<td>2026-W01<\/td><td>9<\/td>/);
   assert.doesNotMatch(html, /<th>Дата<\/th>|<td>2026-01-0[124]<\/td>/);
+});
+
+function renderSingleWeekTrend(visits: number): string {
+  const meta = { sourceKey: "yandex_metrika" as const, period: { kind: "iso_week" as const, key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" }, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "success" as const };
+  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, metrika: { ...meta, kind: "metrika" as const, summary: { visits, pageviews: visits }, daily: [{ date: "2026-01-01", visits, pageviews: visits, users: null }], topPages: [] } };
+  return renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: true, showWebmaster: false }));
+}
+
+test("zero-visit weekly trend renders one zero tick and aligns its single X label with the point", () => {
+  const html = renderSingleWeekTrend(0);
+
+  assert.equal(html.match(/data-axis-tick="0"/g)?.length, 1);
+  assert.equal(html.match(/data-grid-tick="0"/g)?.length, 1);
+  assert.doesNotMatch(html, /data-axis-tick="1"/);
+  assert.match(html, /data-grid-tick="0"[^>]*y1="160"[^>]*y2="160"/);
+  assert.match(html, /site-seo-trend-axis" data-single="true"><span>2026-W01<\/span>/);
+});
+
+test("one-visit weekly trend renders unique ticks at the same coordinates as its grid lines", () => {
+  const html = renderSingleWeekTrend(1);
+
+  assert.equal(html.match(/data-axis-tick="1"/g)?.length, 1);
+  assert.equal(html.match(/data-axis-tick="0"/g)?.length, 1);
+  assert.match(html, /data-grid-tick="1"[^>]*y1="25"[^>]*y2="25"/);
+  assert.match(html, /data-grid-tick="0"[^>]*y1="160"[^>]*y2="160"/);
+  assert.match(html, /data-week="2026-W01"[^>]*cy="25"/);
 });
 
 test("overview names a disabled Metrika source consistently", () => {

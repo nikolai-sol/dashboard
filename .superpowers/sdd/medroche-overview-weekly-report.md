@@ -57,3 +57,49 @@ Passed with exit code 0 before commit.
 
 - The four immutable-template build tests cannot be green inside this dirty integration worktree until the separately owned template/profile release contract is advanced. This task intentionally did not edit profile or release metadata.
 - Pre-existing dirty files `.superpowers/sdd/task-1-report.md`, `.superpowers/sdd/task-3-report.md`, and untracked `apps/site-seo/.next-medroche/` were preserved and excluded from the commit.
+
+## Independent-review fix cycle
+
+### Result
+
+- Google and Яндекс overview rows now aggregate every matching canonical read-model row. Visits and pageviews are summed; bounce rate, average visit duration, and page depth use the same visit-weighted treatment as the canonical SQL read. Bing and other engines remain present in the generic read model/export path and are omitted only in this overview projection.
+- The search-engine panel always renders exactly two visible slots in stable Google/Яндекс order. A missing engine uses `—`, an empty track, and explicit `нет строк за период` copy; it is not presented as a collected zero.
+- Weekly Y ticks are derived once and reused by the visible axis and SVG grid. A zero maximum renders only the zero baseline; a maximum of one renders unique `1` and `0` ticks. The single ISO-week X label is centred with the single point.
+- Traffic default-week calculation now derives its calendar date in the configured business timezone. At `2026-09-13T22:00:00Z` in `Europe/Moscow`, the previous completed week is `2026-W37`; GSC and Alice retain the existing UTC calendar-month default behaviour.
+
+### TDD evidence
+
+RED command:
+
+```sh
+node --import tsx --test apps/site-seo/src/lib/runtime.test.ts apps/site-seo/tests/dashboard.test.ts apps/site-seo/tests/styles.test.ts
+```
+
+Observed RED: 40 tests, 34 passed, 6 failed for the intended missing behaviours: business-timezone boundary, multi-row engine aggregation and metric weighting, two always-visible missing slots, zero/one unique tick geometry, and centred single X label.
+
+GREEN command:
+
+```sh
+node --import tsx --test apps/site-seo/src/lib/runtime.test.ts apps/site-seo/src/lib/db.test.ts apps/site-seo/tests/dashboard.test.ts apps/site-seo/tests/styles.test.ts
+```
+
+Observed GREEN: 54 tests, 54 passed, 0 failed.
+
+### Verification
+
+```sh
+npm run typecheck:site-seo
+git diff --check
+```
+
+Both passed with exit code 0.
+
+```sh
+npm run test:site-seo
+```
+
+The complete unit/read/UI phase passed 125/125. The release/isolation phase passed 23/27; the same four immutable-template build tests stopped at `template source tree has uncommitted files` before their product assertions. Advancing the profile template pin is independently owned and explicitly outside this fix cycle.
+
+### Remaining concern
+
+- The four immutable-template build cases stay gated until the separately owned profile/release pin is advanced. No pin, profile, deployment, database, or canonical fact change was made.

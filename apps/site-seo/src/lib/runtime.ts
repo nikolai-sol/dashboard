@@ -65,7 +65,10 @@ export function parseDashboardReadRequest(url: URL, slug: string, timezone: stri
 
 export function defaultPeriodSelection(timezone: string, now = new Date()) {
   const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const previousWeek = new Date(utc);
+  const localDateParts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  const previousWeek = new Date(Date.UTC(Number(localDateParts.year), Number(localDateParts.month) - 1, Number(localDateParts.day)));
   previousWeek.setUTCDate(previousWeek.getUTCDate() - 7);
   const thursday = new Date(previousWeek);
   thursday.setUTCDate(previousWeek.getUTCDate() + 3 - ((previousWeek.getUTCDay() + 6) % 7));

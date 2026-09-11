@@ -722,18 +722,18 @@ body {
 }
 
 .site-seo-trend-y-axis {
-  display: grid;
+  position: relative;
   min-width: 38px;
-  grid-template-rows: auto repeat(3, 1fr);
+  min-height: 160px;
   color: var(--site-seo-slate-500);
   font-size: 0.7rem;
   text-align: right;
 }
 
-.site-seo-trend-y-axis strong {
-  color: var(--site-seo-slate-700);
-  font-size: 0.7rem;
-  font-weight: 600;
+.site-seo-trend-y-axis span {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
 }
 
 .site-seo-trend line {
@@ -758,6 +758,10 @@ body {
   color: var(--site-seo-slate-500);
   font-size: 0.7rem;
   margin-left: 46px;
+}
+
+.site-seo-trend-axis[data-single="true"] {
+  justify-content: center;
 }
 
 .site-seo-sr-only {

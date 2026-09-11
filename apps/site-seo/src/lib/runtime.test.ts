@@ -48,6 +48,14 @@ test("defaults traffic to the previous completed ISO week across calendar and IS
   assert.equal(january.alice.key, "2026-01");
 });
 
+test("uses the business-timezone calendar date when choosing the previous completed traffic week", () => {
+  const selection = defaultPeriodSelection("Europe/Moscow", new Date("2026-09-13T22:00:00Z"));
+
+  assert.equal(selection.traffic.primary.key, "2026-W37");
+  assert.equal(selection.gsc.key, "2026-09");
+  assert.equal(selection.alice.key, "2026-09");
+});
+
 test("verifies the existing signed viewer-cookie shape for the exact dashboard", async () => {
   const encode = (value: Buffer) => value.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
   const payload = encode(Buffer.from(JSON.stringify({ type: "viewer", dashboard_id: 42, audience: "manager", credential_version: 7, exp: Math.floor(Date.now() / 1000) + 60 })));
