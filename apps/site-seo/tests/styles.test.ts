@@ -17,11 +17,22 @@ test("local stylesheet defines the responsive neutral shell contract", () => {
   const stylesheet = path.join(appRoot, "src/app/globals.css");
   const css = readFileSync(stylesheet, "utf8");
 
-  assert.match(css, /\.site-seo-shell\s*\{/);
+  assert.match(css, /\.site-seo-page\s*\{/);
   assert.match(css, /\.site-seo-rail\s*\{/);
   assert.match(css, /\.site-seo-table-frame\s*\{/);
   assert.match(css, /@media\s*\(max-width:\s*767px\)/);
   assert.doesNotMatch(css, /zaruku/i);
+});
+
+test("shell geometry and typography match the reference dashboard", () => {
+  const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
+
+  assert.match(css, /body\s*\{[^}]*radial-gradient/);
+  assert.match(css, /\.site-seo-dashboard\s*\{[^}]*display\s*:\s*flex[^}]*border\s*:[^}]*border-radius\s*:\s*12px/);
+  assert.match(css, /\.site-seo-rail\s*\{[^}]*width\s*:\s*240px[^}]*border-right/);
+  assert.match(css, /\.site-seo-rail a\[aria-current="page"\]\s*\{[^}]*background\s*:\s*var\(--site-seo-slate-100\)/);
+  assert.match(css, /\.site-seo-dashboard :is\(h1, h2, h3, h4\)\s*\{[^}]*Georgia/);
+  assert.match(css, /\.site-seo-mobile-tabs\s*\{[^}]*display\s*:\s*none/);
 });
 
 test("local stylesheet covers the shell controls, identity, exports, and login", () => {

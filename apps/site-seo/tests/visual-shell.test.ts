@@ -58,7 +58,7 @@ test("neutral primitives retain numeric zero copy", () => {
   assert.match(kpi, /site-seo-kpi-detail[^>]*>0</);
 });
 
-test("neutral shell renders profile identity, server links, toolbar, exports, and selected content", () => {
+test("site shell uses the same single-frame composition as the reference dashboard", () => {
   const html = renderToStaticMarkup(createElement(SiteSeoShell, {
     title: "Клиника",
     domain: "clinic.example",
@@ -70,7 +70,10 @@ test("neutral shell renders profile identity, server links, toolbar, exports, an
     exports: createElement("a", { href: "/export" }, "Экспорт"),
   }, createElement("section", { id: "search" }, "Содержимое")));
 
-  assert.match(html, /site-seo-shell/);
+  assert.match(html, /<main class="site-seo-page"[^>]*><div class="site-seo-dashboard"><aside class="site-seo-rail">/);
+  assert.match(html, /site-seo-identity[\s\S]*aria-label="Разделы"/);
+  assert.match(html, /site-seo-content[\s\S]*site-seo-header[\s\S]*<h1>Поиск<\/h1>/);
+  assert.match(html, /site-seo-mobile-tabs/);
   assert.match(html, /Клиника/);
   assert.match(html, /clinic\.example/);
   assert.match(html, /src="\/logo\.svg"/);
