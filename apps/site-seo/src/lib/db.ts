@@ -1059,6 +1059,7 @@ type SeoOsRow = Readonly<{
   run_week_key?: unknown;
   tracking_set_checksum?: unknown;
   tracking_set_item_count?: unknown;
+  tracking_set_snapshot?: unknown;
   status?: unknown;
   stages?: unknown;
   loaded_at?: unknown;
@@ -1118,7 +1119,105 @@ function seoOsEvidencePeriod(value: unknown): Period | null {
   return period.key === key && periodDays(period) === 7 && fromDate.getUTCDay() === 1 ? period : null;
 }
 
-function seoOsPosition(row: SeoOsRow, observationWeek: string, ingestionRunId: string): SeoOsCanonicalData["positions"][number] | null {
+const seoOsSha256 = /^[a-f0-9]{64}$/i;
+
+function seoOsCanonicalCheckedAt(value: unknown): string | null {
+  const timestamp = stringValue(value);
+  if (!timestamp || !/(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp)) return null;
+  const parsed = new Date(timestamp);
+  return Number.isFinite(parsed.getTime()) ? parsed.toISOString().slice(0, 19).replace("T", " ") : null;
+}
+
+function seoOsResourceHost(resourceId: string): string | null {
+  const value = resourceId.replace(/^sc-domain:/, "");
+  try {
+    return new URL(value.includes("://") ? value : `https://${value}`).hostname.toLowerCase().replace(/\.$/, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+function seoOsMatchedHostIsAllowed(value: string, resourceId: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
+      && url.hostname.toLowerCase().replace(/\.$/, "") === seoOsResourceHost(resourceId);
+  } catch {
+    return false;
+  }
+}
+
+type SeoOsPublicationEvidence = Readonly<{
+  checkedAt: string;
+  checkedAtIso: string;
+  queryHashes: ReadonlySet<string>;
+  statuses: ReadonlyMap<string, string>;
+}>;
+
+function seoOsPublicationEvidence(
+  run: SeoOsRow,
+  stages: Readonly<Record<string, unknown>>,
+  query: CanonicalDatasetReadQuery,
+  observationPeriod: Period,
+  selectionPeriod: Period,
+  trackingSetChecksum: string,
+  trackingSetItemCount: number,
+  ingestionRunId: string,
+): SeoOsPublicationEvidence | null {
+  const scope = objectValue(stages.scope);
+  const provider = objectValue(stages.provider);
+  const validation = objectValue(stages.validation);
+  const snapshot = objectValue(jsonValue(run.tracking_set_snapshot));
+  const items = snapshot?.items;
+  const evidenceRows = stages.positions;
+  const checkedAtIso = stringValue(provider?.generatedAt);
+  const checkedAt = seoOsCanonicalCheckedAt(checkedAtIso);
+  const digestKeys = ["requestPreviewId", "requestFileSha256", "responseSha256", "responseFileSha256", "publicationPreviewId"];
+  if (!scope || !provider || !validation || !snapshot || !Array.isArray(items) || !Array.isArray(evidenceRows) || !checkedAt || !checkedAtIso
+    || stages.contractVersion !== 1 || digestKeys.some((key) => !seoOsSha256.test(stringValue(stages[key]) ?? ""))
+    || stages.requestPreviewId !== trackingSetChecksum || stages.canonicalIngestionRunId !== ingestionRunId
+    || scope.clientId !== query.scope.clientId || scope.siteId !== query.scope.siteId || Number(scope.dashboardId) !== query.scope.dashboardId
+    || scope.sourceKey !== "seo_os" || String(scope.analyticsAccountId) !== query.scope.analyticsAccountId
+    || scope.resourceId !== query.scope.resourceId || scope.region !== "225"
+    || !stringValue(scope.bindingId) || !stringValue(scope.language) || !stringValue(scope.device)
+    || provider.providerKey !== "yandex-serp" || !stringValue(provider.providerRunId)
+    || snapshot.schemaVersion !== "site_seo_tracking_set_v1" || snapshot.sourceKey !== "seo_os"
+    || snapshot.bindingId !== scope.bindingId || String(snapshot.analyticsAccountId) !== query.scope.analyticsAccountId
+    || snapshot.resourceId !== query.scope.resourceId || snapshot.selectionWeek !== selectionPeriod.key
+    || snapshot.observationWeek !== observationPeriod.key || snapshot.observedAt !== checkedAtIso
+    || snapshot.region !== "225" || snapshot.language !== scope.language || snapshot.device !== scope.device
+    || snapshot.checksum !== trackingSetChecksum || Number(snapshot.itemCount) !== trackingSetItemCount
+    || validation.status !== "passed" || Number(validation.expectedCount) !== trackingSetItemCount
+    || Number(validation.resultCount) !== trackingSetItemCount || items.length !== trackingSetItemCount
+    || evidenceRows.length !== trackingSetItemCount) return null;
+
+  const hashes = new Set<string>();
+  for (const value of items) {
+    const item = objectValue(value);
+    const queryHash = stringValue(item?.queryHash);
+    if (!item || !queryHash || !seoOsSha256.test(queryHash) || item.clusterId !== queryHash
+      || item.source !== "approved_response" || item.region !== "225" || hashes.has(queryHash)) return null;
+    hashes.add(queryHash);
+  }
+  const statuses = new Map<string, string>();
+  for (const value of evidenceRows) {
+    const row = objectValue(value);
+    const queryHash = stringValue(row?.queryHash);
+    const status = stringValue(row?.status);
+    if (!row || !queryHash || !hashes.has(queryHash) || (status !== "found" && status !== "no_data")
+      || row.checkedAt !== checkedAtIso || statuses.has(queryHash)) return null;
+    statuses.set(queryHash, status);
+  }
+  return statuses.size === hashes.size ? { checkedAt, checkedAtIso, queryHashes: hashes, statuses } : null;
+}
+
+function seoOsPosition(
+  row: SeoOsRow,
+  observationWeek: string,
+  ingestionRunId: string,
+  resourceId: string,
+  evidence: SeoOsPublicationEvidence,
+): SeoOsCanonicalData["positions"][number] | null {
   const status = stringValue(row.status);
   const week = stringValue(row.week_key);
   const section = stringValue(row.section);
@@ -1128,11 +1227,14 @@ function seoOsPosition(row: SeoOsRow, observationWeek: string, ingestionRunId: s
   const serpPosition = row.serp_position === null || row.serp_position === undefined ? null : Number(row.serp_position);
   const deltaPrev = row.delta_prev === null || row.delta_prev === undefined ? null : Number(row.delta_prev);
   const matchedUrl = stringValue(row.matched_url);
+  const checkedAt = stringValue(row.checked_at);
   if ((status !== "found" && status !== "no_data") || !week || !section || !clusterId || !query || !rowIngestionRunId
     || week !== observationWeek || rowIngestionRunId !== ingestionRunId
+    || !seoOsSha256.test(clusterId) || createHash("sha256").update(query, "utf8").digest("hex") !== clusterId
+    || !evidence.queryHashes.has(clusterId) || evidence.statuses.get(clusterId) !== status || checkedAt !== evidence.checkedAt
     || (serpPosition !== null && !Number.isFinite(serpPosition)) || (deltaPrev !== null && !Number.isFinite(deltaPrev))
-    || (status === "found" && (!(serpPosition! > 0) || !matchedUrl))
-    || (status === "no_data" && (row.serp_position !== null || row.matched_url !== null))) return null;
+    || (status === "found" && (!(serpPosition! > 0) || !matchedUrl || !seoOsMatchedHostIsAllowed(matchedUrl, resourceId)))
+    || (status === "no_data" && (row.serp_position !== null || row.delta_prev !== null || row.matched_url !== null))) return null;
   return {
     week,
     section,
@@ -1142,7 +1244,7 @@ function seoOsPosition(row: SeoOsRow, observationWeek: string, ingestionRunId: s
     deltaPrev,
     matchedUrl,
     status,
-    checkedAt: stringValue(row.checked_at),
+    checkedAt,
     ingestionRunId: stringValue(row.ingestion_run_id),
   };
 }
@@ -1150,7 +1252,7 @@ function seoOsPosition(row: SeoOsRow, observationWeek: string, ingestionRunId: s
 async function readSeoOsData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | SeoOsCanonicalData> {
   const runRows = await rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-run */
     SELECT id AS run_id, week_key, run_week_key, tracking_set_checksum,
-           tracking_set_item_count, status, stages_json AS stages,
+           tracking_set_item_count, tracking_set_snapshot, status, stages_json AS stages,
            finished_at AS loaded_at, ingestion_run_id
     FROM seo_weekly_runs
     WHERE source_key = 'seo_os' AND analytics_account_id = ? AND status = 'completed'
@@ -1173,10 +1275,14 @@ async function readSeoOsData(database: CanonicalDatabase, query: CanonicalDatase
     || !Number.isSafeInteger(trackingSetItemCount) || trackingSetItemCount < 1 || trackingSetItemCount > 50) {
     return missingMeta("seo_os", "derived");
   }
+  const evidence = seoOsPublicationEvidence(
+    run, stages ?? {}, query, observationPeriod, selectionPeriod, trackingSetChecksum, trackingSetItemCount, ingestionRunId,
+  );
+  if (!evidence) return missingMeta("seo_os", "derived");
   const [positionRows, taskRows] = await Promise.all([
     rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-positions */
       SELECT week_key, section, cluster_id, query, serp_position, delta_prev,
-             matched_url, status, checked_at, ingestion_run_id
+             matched_url, status, DATE_FORMAT(checked_at, '%Y-%m-%d %H:%i:%s') AS checked_at, ingestion_run_id
       FROM seo_positions_weekly
       WHERE source_key = 'seo_os' AND analytics_account_id = ?
         AND week_key = ? AND region = '225'
@@ -1187,7 +1293,9 @@ async function readSeoOsData(database: CanonicalDatabase, query: CanonicalDatase
       WHERE source_key = 'seo_os' AND analytics_account_id = ? AND week_key = ?
       ORDER BY task_id ASC LIMIT 20`, params: [query.scope.analyticsAccountId, observationPeriod.key] }),
   ]);
-  const positions = positionRows.map((row) => seoOsPosition(row, observationPeriod.key, ingestionRunId));
+  const positions = positionRows.map((row) => seoOsPosition(
+    row, observationPeriod.key, ingestionRunId, query.scope.resourceId, evidence,
+  ));
   const clusterIds = positions.flatMap((position) => position ? [position.clusterId] : []);
   if (positions.some((position) => position === null) || positions.length !== trackingSetItemCount
     || new Set(clusterIds).size !== clusterIds.length) return missingMeta("seo_os", "derived");

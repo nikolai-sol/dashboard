@@ -580,24 +580,62 @@ test("Alice exposes the exact source period and falls back to the latest weekly 
   }
 });
 
+const seoOsObservationGeneratedAt = "2026-09-11T09:20:00.000Z";
+const seoOsCheckedAt = "2026-09-11 09:20:00";
+
+function seoOsFixturePositions() {
+  return Array.from({ length: 28 }, (_, index) => {
+    const query = index === 0 ? "Лечение рака" : index === 1 ? "Бевацизумаб" : `Запрос ${index + 1}`;
+    const clusterId = createHash("sha256").update(query, "utf8").digest("hex");
+    const found = index === 0;
+    return {
+      week_key: "2026-W37", section: found ? "diseases" : "unassigned", cluster_id: clusterId, query,
+      serp_position: found ? "4.50" : null, delta_prev: found ? "-2.00" : null,
+      matched_url: found ? "https://med.roche.ru/diseases/cancer/" : null,
+      status: found ? "found" : "no_data", checked_at: seoOsCheckedAt, ingestion_run_id: "seo-os-medroche-1",
+    };
+  });
+}
+
+function seoOsFixtureRun(positions = seoOsFixturePositions()) {
+  const queryHashes = positions.map((position) => position.cluster_id).sort();
+  return {
+    run_id: 71, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed",
+    loaded_at: seoOsCheckedAt, ingestion_run_id: "seo-os-medroche-1",
+    tracking_set_item_count: positions.length, tracking_set_checksum: "a".repeat(64),
+    tracking_set_snapshot: JSON.stringify({
+      schemaVersion: "site_seo_tracking_set_v1", sourceKey: "seo_os", bindingId: "binding-seo-os-medroche",
+      analyticsAccountId: "94927113", resourceId: "med.roche.ru", selectionWeek: "2026-W36",
+      observationWeek: "2026-W37", observedAt: seoOsObservationGeneratedAt, region: "225", language: "ru",
+      device: "desktop", checksum: "a".repeat(64), itemCount: positions.length,
+      items: queryHashes.map((queryHash) => ({ clusterId: queryHash, queryHash, source: "approved_response", region: "225" })),
+    }),
+    stages: JSON.stringify({
+      contractVersion: 1,
+      scope: { clientId: "client-roche", siteId: "site-medroche", dashboardId: 41, sourceKey: "seo_os",
+        bindingId: "binding-seo-os-medroche", analyticsAccountId: "94927113", resourceId: "med.roche.ru",
+        region: "225", language: "ru", device: "desktop" },
+      selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+      observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+      requestPreviewId: "a".repeat(64), requestFileSha256: "b".repeat(64), responseSha256: "c".repeat(64),
+      responseFileSha256: "d".repeat(64), publicationPreviewId: "e".repeat(64), canonicalIngestionRunId: "seo-os-medroche-1",
+      provider: { providerKey: "yandex-serp", providerRunId: "provider-run-1", generatedAt: seoOsObservationGeneratedAt },
+      validation: { status: "passed", expectedCount: positions.length, resultCount: positions.length },
+      positions: positions.map((position) => ({ queryHash: position.cluster_id, status: position.status,
+        checkedAt: seoOsObservationGeneratedAt, previousWeek: null, previousPosition: null, deltaPrev: position.delta_prev,
+        deltaConvention: "current-minus-previous", providerEvidence: {} })),
+      recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W36"], evidence: { ruleVersion: "v3" } }],
+    }),
+  };
+}
+
 test("SEO OS reads the latest exact-account observation and its region-225 positions independently from the selected traffic week", async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const fixturePositions = seoOsFixturePositions();
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
-    if (sql.includes("site-seo:seo-os-run")) return [[{
-      run_id: 71, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed", loaded_at: "2026-09-11 09:30:00", ingestion_run_id: "seo-os-medroche-1",
-      tracking_set_item_count: 28, tracking_set_checksum: "a".repeat(64),
-      stages: JSON.stringify({
-        selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
-        observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
-        recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W36"], evidence: { ruleVersion: "v3" } }],
-      }),
-    }], []];
-    if (sql.includes("site-seo:seo-os-positions")) return [[
-      { week_key: "2026-W37", section: "diseases", cluster_id: "cluster-1", query: "Лечение рака", serp_position: "4.50", delta_prev: "-2.00", matched_url: "https://med.roche.ru/diseases/cancer/", status: "found", checked_at: "2026-09-11 09:20:00", ingestion_run_id: "seo-os-medroche-1" },
-      { week_key: "2026-W37", section: "products", cluster_id: "cluster-2", query: "Бевацизумаб", serp_position: null, delta_prev: null, matched_url: null, status: "no_data", checked_at: "2026-09-11 09:21:00", ingestion_run_id: "seo-os-medroche-1" },
-      ...Array.from({ length: 26 }, (_, index) => ({ week_key: "2026-W37", section: "other", cluster_id: `cluster-${index + 3}`, query: `Запрос ${index + 3}`, serp_position: null, delta_prev: null, matched_url: null, status: "no_data", checked_at: "2026-09-11 09:22:00", ingestion_run_id: "seo-os-medroche-1" })),
-    ], []];
+    if (sql.includes("site-seo:seo-os-run")) return [[seoOsFixtureRun(fixturePositions)], []];
+    if (sql.includes("site-seo:seo-os-positions")) return [fixturePositions, []];
     if (sql.includes("site-seo:seo-os-tasks")) return [[{ task_id: "task-1", status: "open" }], []];
     throw new Error("unexpected query");
   } });
@@ -612,8 +650,8 @@ test("SEO OS reads the latest exact-account observation and its region-225 posit
   assert.equal("completeness" in result && result.completeness, "complete");
   assert.equal("positions" in result && result.positions.length, 28);
   assert.deepEqual("positions" in result && result.positions.slice(0, 2), [
-    { week: "2026-W37", section: "diseases", clusterId: "cluster-1", query: "Лечение рака", serpPosition: 4.5, deltaPrev: -2, matchedUrl: "https://med.roche.ru/diseases/cancer/", status: "found", checkedAt: "2026-09-11 09:20:00", ingestionRunId: "seo-os-medroche-1" },
-    { week: "2026-W37", section: "products", clusterId: "cluster-2", query: "Бевацизумаб", serpPosition: null, deltaPrev: null, matchedUrl: null, status: "no_data", checkedAt: "2026-09-11 09:21:00", ingestionRunId: "seo-os-medroche-1" },
+    { week: "2026-W37", section: "diseases", clusterId: fixturePositions[0]!.cluster_id, query: "Лечение рака", serpPosition: 4.5, deltaPrev: -2, matchedUrl: "https://med.roche.ru/diseases/cancer/", status: "found", checkedAt: seoOsCheckedAt, ingestionRunId: "seo-os-medroche-1" },
+    { week: "2026-W37", section: "unassigned", clusterId: fixturePositions[1]!.cluster_id, query: "Бевацизумаб", serpPosition: null, deltaPrev: null, matchedUrl: null, status: "no_data", checkedAt: seoOsCheckedAt, ingestionRunId: "seo-os-medroche-1" },
   ]);
   assert.deepEqual("recommendations" in result && result.recommendations, [{
     kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел",
@@ -626,6 +664,7 @@ test("SEO OS reads the latest exact-account observation and its region-225 posit
   assert.match(runCall.sql, /ORDER BY run_week_key DESC/);
   assert.match(runCall.sql, /tracking_set_item_count/);
   assert.match(runCall.sql, /tracking_set_checksum/);
+  assert.match(runCall.sql, /tracking_set_snapshot/);
   assert.deepEqual(runCall.params, ["94927113"]);
   assert.doesNotMatch(runCall.sql, /2026-W36|api\.|oauth|token/i);
   const positionCall = calls.find((call) => call.sql.includes("site-seo:seo-os-positions"))!;
@@ -639,27 +678,44 @@ test("SEO OS reads the latest exact-account observation and its region-225 posit
   assert.ok(calls.every((call) => !/seo_ai_visibility_weekly|api\.|oauth|token/i.test(call.sql)));
 });
 
-test("SEO OS fails closed on incomplete, mismatched, or duplicate canonical position rows", async () => {
-  const valid = { week_key: "2026-W37", section: "diseases", cluster_id: "cluster-1", query: "Лечение рака", serp_position: "4.50", delta_prev: "-2.00", matched_url: "https://med.roche.ru/diseases/cancer/", status: "found", checked_at: "2026-09-11 09:20:00", ingestion_run_id: "seo-os-medroche-1" };
+test("SEO OS fails closed when canonical facts diverge from signed publication evidence", async () => {
+  const valid = seoOsFixturePositions();
   const cases = [
-    [{ ...valid, serp_position: null }],
-    [{ ...valid, matched_url: null }],
-    [{ ...valid, status: "no_data", serp_position: "4.50", matched_url: null }],
-    [{ ...valid, status: "no_data", serp_position: null, matched_url: "https://med.roche.ru/diseases/cancer/" }],
-    [{ ...valid, week_key: "2026-W36" }],
-    [{ ...valid, ingestion_run_id: "another-run" }],
-    [valid, { ...valid, query: "Повтор", section: "products" }],
+    valid.map((row, index) => index === 0 ? { ...row, serp_position: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, matched_url: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, status: "no_data", serp_position: null, delta_prev: null, matched_url: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, matched_url: "https://foreign.example/unapproved" } : row),
+    valid.map((row, index) => index === 0 ? { ...row, query: "Подменённый запрос" } : row),
+    valid.map((row, index) => index === 0 ? { ...row, checked_at: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, week_key: "2026-W36" } : row),
+    valid.map((row, index) => index === 0 ? { ...row, ingestion_run_id: "another-run" } : row),
+    valid.map((row, index) => index === 1 ? { ...row, cluster_id: valid[0]!.cluster_id } : row),
   ];
   for (const positions of cases) {
     const execute = createCanonicalReadExecutor({ async execute(sql) {
-      if (sql.includes("site-seo:seo-os-run")) return [[{
-        run_id: 71, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed", loaded_at: "2026-09-11 09:30:00", ingestion_run_id: "seo-os-medroche-1",
-        tracking_set_item_count: positions.length, tracking_set_checksum: "a".repeat(64),
-        stages: JSON.stringify({
-          selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
-          observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
-        }),
-      }], []];
+      if (sql.includes("site-seo:seo-os-run")) return [[seoOsFixtureRun(valid)], []];
+      if (sql.includes("site-seo:seo-os-positions")) return [positions, []];
+      if (sql.includes("site-seo:seo-os-tasks")) return [[], []];
+      throw new Error("unexpected query");
+    } });
+    const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+    assert.equal("state" in result && result.state, "missing");
+  }
+});
+
+test("SEO OS fails closed when run scope, digests, tracking set, or provider time evidence is invalid", async () => {
+  const positions = seoOsFixturePositions();
+  const mutations = [
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, tracking_set_checksum: "f".repeat(64) }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, tracking_set_snapshot: "{}" }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, stages: JSON.stringify({ ...JSON.parse(run.stages), responseSha256: "invalid" }) }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, stages: JSON.stringify({ ...JSON.parse(run.stages), scope: { ...JSON.parse(run.stages).scope, siteId: "site-other" } }) }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, stages: JSON.stringify({ ...JSON.parse(run.stages), provider: { ...JSON.parse(run.stages).provider, generatedAt: "2026-09-11T10:00:00.000Z" } }) }),
+  ];
+  for (const mutate of mutations) {
+    const run = mutate(seoOsFixtureRun(positions));
+    const execute = createCanonicalReadExecutor({ async execute(sql) {
+      if (sql.includes("site-seo:seo-os-run")) return [[run], []];
       if (sql.includes("site-seo:seo-os-positions")) return [positions, []];
       if (sql.includes("site-seo:seo-os-tasks")) return [[], []];
       throw new Error("unexpected query");
