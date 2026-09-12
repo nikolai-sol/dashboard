@@ -112,5 +112,11 @@ test("MedRoche registry pins the confirmed canonical source scopes", () => {
       resourceId: "med.roche.ru",
       status: "configured",
     });
+    assert.deepEqual(metadata.sourceBindings["binding-seo-os-medroche"], {
+      sourceKey: "seo_os",
+      analyticsAccountId: "94927113",
+      resourceId: "med.roche.ru",
+      status: "configured",
+    });
   }
 });

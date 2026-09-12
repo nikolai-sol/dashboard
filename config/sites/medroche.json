@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "profileVersion": "2026.09.11-4",
+  "profileVersion": "2026.09.12-1",
   "siteId": "site-medroche",
   "clientId": "client-roche",
   "dashboardId": 41,
@@ -11,7 +11,7 @@
   "logoAsset": null,
   "locale": "ru-RU",
   "businessTimezone": "Europe/Moscow",
-  "templateVersion": "8ecaebed9b4a3cd57b245374e77bbc5e00b4f74f",
+  "templateVersion": "0d62b68c344f78061ca3680e74b39074c40ca3ae",
   "sources": [
     {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-medroche", "importCadence": ["previous_iso_week"]},
     {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-medroche", "importCadence": ["previous_month", "previous_iso_week"]},
