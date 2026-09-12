@@ -197,10 +197,59 @@ test("canonical source readers preserve empty, partial, and exact resource seman
   assert.deepEqual(calls.at(-1)?.params, ["93", "yandex_webmaster_alice_manual", "alice-account", "example.test", "2026-08-01", "2026-08-31"]);
 });
 
-test("derived SEO OS without a canonical materialization stays honestly missing", async () => {
-  const execute = createCanonicalReadExecutor({ async execute() { return [[], []]; } });
+test("derived SEO OS without a scoped canonical run stays honestly missing without reading positions", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) { calls.push(sql); return [[], []]; } });
   const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os" }, period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
   assert.equal("state" in result && result.state, "missing");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, /site-seo:seo-os-run/);
+});
+
+test("SEO OS rejects non-Monday observation evidence before reading position facts", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    calls.push(sql);
+    return [[{
+      run_id: 72,
+      week_key: "2026-W37",
+      run_week_key: "2026-W37",
+      status: "completed",
+      loaded_at: "2026-09-11 09:30:00",
+      stages: JSON.stringify({
+        selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+        observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-08", to: "2026-09-14", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+      }),
+    }], []];
+  } });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+  assert.equal("state" in result && result.state, "missing");
+  assert.equal(calls.length, 1);
+});
+
+test("SEO OS rejects incomplete tracking-set evidence before reading position facts", async () => {
+  for (const tracking of [
+    { tracking_set_item_count: 0, tracking_set_checksum: "a".repeat(64) },
+    { tracking_set_item_count: 28, tracking_set_checksum: "not-a-sha256" },
+  ]) {
+    const calls: string[] = [];
+    const execute = createCanonicalReadExecutor({ async execute(sql) {
+      calls.push(sql);
+      return [[{
+        run_id: 72, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed", ingestion_run_id: "seo-os-medroche-1", loaded_at: "2026-09-11 09:30:00",
+        stages: JSON.stringify({
+          selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+          observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+        }),
+        ...tracking,
+      }], []];
+    } });
+    const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+    assert.equal("state" in result && result.state, "missing");
+    assert.equal(calls.length, 1);
+  }
 });
 
 test("Wordstat pins one latest rolling snapshot and exposes its actual window", async () => {
@@ -531,27 +580,93 @@ test("Alice exposes the exact source period and falls back to the latest weekly 
   }
 });
 
-test("SEO OS reads published recommendation evidence and task statuses, not a deprecated AI visibility table", async () => {
+test("SEO OS reads the latest exact-account observation and its region-225 positions independently from the selected traffic week", async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const execute = createCanonicalReadExecutor({ async execute(sql, params) {
     calls.push({ sql, params });
     if (sql.includes("site-seo:seo-os-run")) return [[{
-      run_id: 71, status: "published", loaded_at: "2026-08-10 09:00:00",
-      stages: JSON.stringify({ recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W32"], evidence: { ruleVersion: "v3" } }] }),
+      run_id: 71, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed", loaded_at: "2026-09-11 09:30:00", ingestion_run_id: "seo-os-medroche-1",
+      tracking_set_item_count: 28, tracking_set_checksum: "a".repeat(64),
+      stages: JSON.stringify({
+        selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+        observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+        recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W36"], evidence: { ruleVersion: "v3" } }],
+      }),
     }], []];
+    if (sql.includes("site-seo:seo-os-positions")) return [[
+      { week_key: "2026-W37", section: "diseases", cluster_id: "cluster-1", query: "Лечение рака", serp_position: "4.50", delta_prev: "-2.00", matched_url: "https://med.roche.ru/diseases/cancer/", status: "found", checked_at: "2026-09-11 09:20:00", ingestion_run_id: "seo-os-medroche-1" },
+      { week_key: "2026-W37", section: "products", cluster_id: "cluster-2", query: "Бевацизумаб", serp_position: null, delta_prev: null, matched_url: null, status: "no_data", checked_at: "2026-09-11 09:21:00", ingestion_run_id: "seo-os-medroche-1" },
+      ...Array.from({ length: 26 }, (_, index) => ({ week_key: "2026-W37", section: "other", cluster_id: `cluster-${index + 3}`, query: `Запрос ${index + 3}`, serp_position: null, delta_prev: null, matched_url: null, status: "no_data", checked_at: "2026-09-11 09:22:00", ingestion_run_id: "seo-os-medroche-1" })),
+    ], []];
     if (sql.includes("site-seo:seo-os-tasks")) return [[{ task_id: "task-1", status: "open" }], []];
     throw new Error("unexpected query");
   } });
-  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "seo-account" }, period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
 
   assert.equal("kind" in result && result.kind, "seo_os");
+  assert.deepEqual("period" in result && result.period, { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", sourceTimezone: "Europe/Moscow" });
+  assert.deepEqual("observationPeriod" in result && result.observationPeriod, { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", sourceTimezone: "Europe/Moscow" });
+  assert.equal("observationDate" in result && result.observationDate, "2026-09-11");
+  assert.deepEqual("selectionPeriod" in result && result.selectionPeriod, { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" });
+  assert.equal("state" in result && result.state, "ready");
+  assert.equal("completeness" in result && result.completeness, "complete");
+  assert.equal("positions" in result && result.positions.length, 28);
+  assert.deepEqual("positions" in result && result.positions.slice(0, 2), [
+    { week: "2026-W37", section: "diseases", clusterId: "cluster-1", query: "Лечение рака", serpPosition: 4.5, deltaPrev: -2, matchedUrl: "https://med.roche.ru/diseases/cancer/", status: "found", checkedAt: "2026-09-11 09:20:00", ingestionRunId: "seo-os-medroche-1" },
+    { week: "2026-W37", section: "products", clusterId: "cluster-2", query: "Бевацизумаб", serpPosition: null, deltaPrev: null, matchedUrl: null, status: "no_data", checkedAt: "2026-09-11 09:21:00", ingestionRunId: "seo-os-medroche-1" },
+  ]);
   assert.deepEqual("recommendations" in result && result.recommendations, [{
     kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел",
-    sourceIds: ["opp-1"], sourcePeriods: ["2026-W32"], ruleVersion: "v3", publicationStatus: "published",
+    sourceIds: ["opp-1"], sourcePeriods: ["2026-W36"], ruleVersion: "v3", publicationStatus: "completed",
   }]);
   assert.deepEqual("tasks" in result && result.tasks, [{ id: "task-1", status: "open" }]);
-  assert.ok(calls.some((call) => /seo_weekly_runs/i.test(call.sql)));
-  assert.ok(calls.every((call) => !/seo_ai_visibility_weekly/i.test(call.sql)));
+  const runCall = calls.find((call) => call.sql.includes("site-seo:seo-os-run"))!;
+  assert.match(runCall.sql, /source_key = 'seo_os'/);
+  assert.match(runCall.sql, /status = 'completed'/);
+  assert.match(runCall.sql, /ORDER BY run_week_key DESC/);
+  assert.match(runCall.sql, /tracking_set_item_count/);
+  assert.match(runCall.sql, /tracking_set_checksum/);
+  assert.deepEqual(runCall.params, ["94927113"]);
+  assert.doesNotMatch(runCall.sql, /2026-W36|api\.|oauth|token/i);
+  const positionCall = calls.find((call) => call.sql.includes("site-seo:seo-os-positions"))!;
+  assert.match(positionCall.sql, /FROM seo_positions_weekly/);
+  assert.match(positionCall.sql, /source_key = 'seo_os'/);
+  assert.match(positionCall.sql, /region = '225'/);
+  assert.deepEqual(positionCall.params, ["94927113", "2026-W37"]);
+  const taskCall = calls.find((call) => call.sql.includes("site-seo:seo-os-tasks"))!;
+  assert.match(taskCall.sql, /source_key = 'seo_os'/);
+  assert.deepEqual(taskCall.params, ["94927113", "2026-W37"]);
+  assert.ok(calls.every((call) => !/seo_ai_visibility_weekly|api\.|oauth|token/i.test(call.sql)));
+});
+
+test("SEO OS fails closed on incomplete, mismatched, or duplicate canonical position rows", async () => {
+  const valid = { week_key: "2026-W37", section: "diseases", cluster_id: "cluster-1", query: "Лечение рака", serp_position: "4.50", delta_prev: "-2.00", matched_url: "https://med.roche.ru/diseases/cancer/", status: "found", checked_at: "2026-09-11 09:20:00", ingestion_run_id: "seo-os-medroche-1" };
+  const cases = [
+    [{ ...valid, serp_position: null }],
+    [{ ...valid, matched_url: null }],
+    [{ ...valid, status: "no_data", serp_position: "4.50", matched_url: null }],
+    [{ ...valid, status: "no_data", serp_position: null, matched_url: "https://med.roche.ru/diseases/cancer/" }],
+    [{ ...valid, week_key: "2026-W36" }],
+    [{ ...valid, ingestion_run_id: "another-run" }],
+    [valid, { ...valid, query: "Повтор", section: "products" }],
+  ];
+  for (const positions of cases) {
+    const execute = createCanonicalReadExecutor({ async execute(sql) {
+      if (sql.includes("site-seo:seo-os-run")) return [[{
+        run_id: 71, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed", loaded_at: "2026-09-11 09:30:00", ingestion_run_id: "seo-os-medroche-1",
+        tracking_set_item_count: positions.length, tracking_set_checksum: "a".repeat(64),
+        stages: JSON.stringify({
+          selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+          observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+        }),
+      }], []];
+      if (sql.includes("site-seo:seo-os-positions")) return [positions, []];
+      if (sql.includes("site-seo:seo-os-tasks")) return [[], []];
+      throw new Error("unexpected query");
+    } });
+    const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+    assert.equal("state" in result && result.state, "missing");
+  }
 });
 
 test("Metrika returns scoped visits and pageviews while keeping users daily-only", async () => {

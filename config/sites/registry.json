@@ -89,6 +89,15 @@
         "sourceKey": "yandex_webmaster_alice_manual",
         "analyticsAccountId": "94927113",
         "resourceId": "med.roche.ru"
+      },
+      {
+        "bindingId": "binding-seo-os-medroche",
+        "clientId": "client-roche",
+        "siteId": "site-medroche",
+        "dashboardId": 41,
+        "sourceKey": "seo_os",
+        "analyticsAccountId": "94927113",
+        "resourceId": "med.roche.ru"
       }
     ]
   }

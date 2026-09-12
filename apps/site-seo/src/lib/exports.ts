@@ -100,7 +100,15 @@ function buildAliceExportRows(input: Readonly<{ period: Period; data: AliceCanon
 }
 
 function buildSeoOsExportRows(input: Readonly<{ period: Period; data: SeoOsCanonicalData }>): ExportRow[] {
-  const rows = buildExportRows({ title: "SEO OS", period: input.period, source: input.data });
+  const rows = buildExportRows({ title: "SEO OS", period: input.data.observationPeriod, source: input.data });
+  rows.push(
+    { field: "Период наблюдения SEO OS", value: `${input.data.observationPeriod.key}; ${input.data.observationPeriod.from} — ${input.data.observationPeriod.to}; дата ${input.data.observationDate}` },
+    { field: "Период выбора SEO OS", value: `${input.data.selectionPeriod.key}; ${input.data.selectionPeriod.from} — ${input.data.selectionPeriod.to}` },
+  );
+  for (const position of input.data.positions) rows.push({
+    field: `Позиция SEO OS: ${position.query}`,
+    value: `позиция ${position.serpPosition ?? "нет"}; дельта ${position.deltaPrev ?? "нет"}; статус ${position.status}; URL ${position.matchedUrl ?? "нет"}; checked ${position.checkedAt ?? "неизвестно"}; import ${position.ingestionRunId ?? "неизвестно"}`,
+  });
   for (const row of input.data.rows) rows.push({ field: `SEO OS ${row.engine}`, value: `упоминания ${row.mentions}; цитаты ${row.citations}; evidence ${row.evidence ?? "нет"}` });
   for (const recommendation of input.data.recommendations) rows.push({
     field: `Рекомендация SEO OS: ${recommendation.topic ?? recommendation.kind ?? "без темы"}`,

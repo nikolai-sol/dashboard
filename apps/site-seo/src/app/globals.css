@@ -1101,6 +1101,28 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.site-seo-query-url {
+  display: block;
+  margin-top: 4px;
+  color: var(--site-seo-slate-500);
+  font-size: 0.7rem;
+  font-weight: 400;
+}
+
+.site-seo-position-delta[data-tone="improved"] {
+  color: #047857;
+  font-weight: 600;
+}
+
+.site-seo-position-delta[data-tone="declined"] {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+.site-seo-position-delta[data-tone="neutral"] {
+  color: var(--site-seo-slate-500);
+}
+
 .site-seo-table-frame table {
   width: 100%;
   border-collapse: collapse;

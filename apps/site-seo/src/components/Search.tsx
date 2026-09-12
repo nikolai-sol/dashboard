@@ -2,7 +2,7 @@
 
 import type { SiteProfile } from "@reportingdash/site-seo-contract";
 import { useMemo, useState } from "react";
-import type { WebmasterCanonicalMetrics } from "../lib/db.ts";
+import type { SeoOsCanonicalData, WebmasterCanonicalMetrics } from "../lib/db.ts";
 import type { DashboardReadModel } from "../lib/read-model.ts";
 import { EmptyNotice, Kpi, KpiStrip, Panel, TableFrame } from "./DashboardPrimitives.tsx";
 import { aliceOfficialSovPeriodLabel, aliceSourceRange } from "./alice-period.ts";
@@ -21,6 +21,12 @@ type SectionAggregate = Readonly<{
   id: string;
   label: string;
   metrics: WebmasterCanonicalMetrics | null;
+}>;
+
+type SeoOsSectionAggregate = Readonly<{
+  id: string;
+  label: string;
+  position: number | null;
 }>;
 
 function pathname(value: string): string {
@@ -63,10 +69,38 @@ export function aggregateWebmasterSections(
   });
 }
 
+export function aggregateSeoOsSections(
+  sections: NonNullable<SiteProfile["seoSections"]>,
+  positions: SeoOsCanonicalData["positions"],
+): SeoOsSectionAggregate[] {
+  const prefixes = sections.flatMap((section) => section.pathPrefixes.map((prefix) => ({ section, prefix })))
+    .sort((left, right) => right.prefix.length - left.prefix.length);
+  const grouped = new Map<string, number[]>();
+  for (const row of positions) {
+    if (row.status !== "found" || row.serpPosition === null || !row.matchedUrl) continue;
+    const path = pathname(row.matchedUrl);
+    const match = prefixes.find(({ prefix }) => path === prefix.slice(0, -1) || path.startsWith(prefix));
+    if (match) grouped.set(match.section.id, [...(grouped.get(match.section.id) ?? []), row.serpPosition]);
+  }
+  return sections.map((section) => {
+    const values = grouped.get(section.id) ?? [];
+    return {
+      id: section.id,
+      label: section.label,
+      position: values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null,
+    };
+  });
+}
+
+export function normalizeQueryPhrase(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("ru-RU").replaceAll("ё", "е").trim().replace(/\s+/g, " ");
+}
+
 export type UnifiedQuery = Readonly<{
   phrase: string;
   google: WebmasterCanonicalMetrics | null;
   yandex: WebmasterCanonicalMetrics | null;
+  seoOs: SeoOsCanonicalData["positions"][number] | null;
 }>;
 
 export type QuerySortKey =
@@ -78,7 +112,7 @@ export type QuerySort = Readonly<{ key: QuerySortKey; direction: "asc" | "desc" 
 
 function querySortValue(row: UnifiedQuery, key: QuerySortKey): number | null {
   const [source, field] = key.split("_") as ["google" | "yandex" | "seo", string];
-  if (source === "seo") return null;
+  if (source === "seo") return row.seoOs?.serpPosition ?? null;
   const metrics = row[source];
   if (!metrics) return null;
   if (field === "impressions") return metrics.impressions;
@@ -124,10 +158,17 @@ function mergeQueryMetrics(current: WebmasterCanonicalMetrics | null, next: Webm
 function unifiedQueries(model: DashboardReadModel, showGsc: boolean, showWebmaster: boolean): UnifiedQuery[] {
   const rows = new Map<string, UnifiedQuery>();
   const add = (phrase: string, source: "google" | "yandex", metrics: WebmasterCanonicalMetrics) => {
-    const normalized = phrase.trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
+    const normalized = normalizeQueryPhrase(phrase);
     if (!normalized) return;
-    const current = rows.get(normalized) ?? { phrase: phrase.trim().replace(/\s+/g, " "), google: null, yandex: null };
+    const current = rows.get(normalized) ?? { phrase: phrase.trim().replace(/\s+/g, " "), google: null, yandex: null, seoOs: null };
     rows.set(normalized, { ...current, [source]: mergeQueryMetrics(current[source], metrics) });
+  };
+  const addSeoOs = (position: SeoOsCanonicalData["positions"][number]) => {
+    const normalized = normalizeQueryPhrase(position.query);
+    if (!normalized) return;
+    const current = rows.get(normalized) ?? { phrase: position.query.trim().replace(/\s+/g, " "), google: null, yandex: null, seoOs: null };
+    const seoOs = !current.seoOs || position.clusterId.localeCompare(current.seoOs.clusterId) < 0 ? position : current.seoOs;
+    rows.set(normalized, { ...current, seoOs });
   };
   if (showGsc) {
     for (const row of model.gsc.dimensions) if (row.dimension === "query") add(row.value, "google", row.metrics);
@@ -135,10 +176,18 @@ function unifiedQueries(model: DashboardReadModel, showGsc: boolean, showWebmast
   if (showWebmaster) {
     for (const row of model.webmaster?.queryFacts ?? []) add(row.query, "yandex", row.metrics);
   }
-  // Server HTML intentionally renders a deterministic top 100 by maximum source impressions.
-  return [...rows.values()]
-    .sort((left, right) => Math.max(right.google?.impressions ?? 0, right.yandex?.impressions ?? 0) - Math.max(left.google?.impressions ?? 0, left.yandex?.impressions ?? 0) || left.phrase.localeCompare(right.phrase, "ru"))
+  for (const row of model.seoOs?.positions ?? []) addSeoOs(row);
+  // Preserve the existing top 100 Google/Yandex set and append every explicitly tracked SEO OS phrase.
+  const searchRows = [...rows.entries()]
+    .filter(([, row]) => row.google !== null || row.yandex !== null)
+    .sort(([, left], [, right]) => Math.max(right.google?.impressions ?? 0, right.yandex?.impressions ?? 0) - Math.max(left.google?.impressions ?? 0, left.yandex?.impressions ?? 0) || left.phrase.localeCompare(right.phrase, "ru"))
     .slice(0, 100);
+  const selected = new Set(searchRows.map(([key]) => key));
+  for (const [key, row] of rows) if (row.seoOs) selected.add(key);
+  return [...rows.entries()]
+    .filter(([key]) => selected.has(key))
+    .map(([, row]) => row)
+    .sort((left, right) => Math.max(right.google?.impressions ?? 0, right.yandex?.impressions ?? 0) - Math.max(left.google?.impressions ?? 0, left.yandex?.impressions ?? 0) || left.phrase.localeCompare(right.phrase, "ru"));
 }
 
 function SourceCells({ metrics }: Readonly<{ metrics: WebmasterCanonicalMetrics | null }>) {
@@ -170,8 +219,8 @@ function sectionPositionTicks(maxPosition: number): number[] {
   return [...new Set(Array.from({ length: count }, (_, index) => Math.round(1 + (upper - 1) * index / Math.max(1, count - 1))))];
 }
 
-function SectionPositionChart({ sections }: Readonly<{ sections: readonly SectionAggregate[] }>) {
-  const positioned = sections.flatMap((section, index) => section.metrics?.averagePosition == null ? [] : [{ ...section, index, position: section.metrics.averagePosition }]);
+function SectionPositionChart({ sections }: Readonly<{ sections: readonly SeoOsSectionAggregate[] }>) {
+  const positioned = sections.flatMap((section, index) => section.position == null ? [] : [{ ...section, index, position: section.position }]);
   if (positioned.length === 0) return <EmptyNotice>Нет опубликованных позиций по настроенным разделам.</EmptyNotice>;
   const width = 760;
   const height = 280;
@@ -185,7 +234,7 @@ function SectionPositionChart({ sections }: Readonly<{ sections: readonly Sectio
   const y = (position: number) => margin.top + (position - 1) / Math.max(1, domainMax - 1) * plotHeight;
   const points = positioned.map((row) => `${x(row.index)},${y(row.position)}`).join(" ");
   return <div className="site-seo-section-position-chart" data-chart-kind="section-position-line" data-y-axis="reversed">
-    <p className="site-seo-chart-legend"><span aria-hidden="true" />Средняя позиция · Яндекс Вебмастер</p>
+    <p className="site-seo-chart-legend"><span aria-hidden="true" />Средняя позиция · SEO OS</p>
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Средняя позиция сайта по разделам; позиция 1 находится сверху">
       {ticks.map((tick) => <g key={tick}>
         <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} className="site-seo-chart-grid-line" />
@@ -199,8 +248,31 @@ function SectionPositionChart({ sections }: Readonly<{ sections: readonly Sectio
       {sections.map((section, index) => <text key={section.id} x={x(index)} y={height - 22} textAnchor="middle" className="site-seo-chart-x-label">{section.label}</text>)}
       <text transform={`translate(15 ${margin.top + plotHeight / 2}) rotate(-90)`} textAnchor="middle" className="site-seo-chart-axis-title">Позиция</text>
     </svg>
-    <table className="site-seo-sr-only"><caption>Позиции по разделам</caption><thead><tr><th>Раздел</th><th>Позиция</th></tr></thead><tbody>{sections.map((section) => <tr key={section.id}><th scope="row">{section.label}</th><td>{metric(section.metrics?.averagePosition)}</td></tr>)}</tbody></table>
+    <table className="site-seo-sr-only"><caption>Позиции по разделам</caption><thead><tr><th>Раздел</th><th>Позиция</th></tr></thead><tbody>{sections.map((section) => <tr key={section.id}><th scope="row">{section.label}</th><td>{metric(section.position)}</td></tr>)}</tbody></table>
   </div>;
+}
+
+function SeoOsQueryLink({ row }: Readonly<{ row: UnifiedQuery["seoOs"] }>) {
+  if (!row?.matchedUrl) return null;
+  let linkable = false;
+  try { linkable = ["http:", "https:"].includes(new URL(row.matchedUrl).protocol); }
+  catch { linkable = false; }
+  return <span className="site-seo-query-url">SEO OS: {linkable ? <a href={row.matchedUrl} target="_blank" rel="noreferrer" title={row.matchedUrl}>{row.matchedUrl}</a> : row.matchedUrl}</span>;
+}
+
+function PositionDelta({ value }: Readonly<{ value: number | null }>) {
+  if (value === null || value === 0) return <span className="site-seo-position-delta" data-tone="neutral">—</span>;
+  const improved = value < 0;
+  return <span className="site-seo-position-delta" data-tone={improved ? "improved" : "declined"}>{improved ? "↑" : "↓"} {metric(Math.abs(value))}</span>;
+}
+
+function SeoOsCells({ row }: Readonly<{ row: UnifiedQuery["seoOs"] }>) {
+  if (!row) return <><td>—</td><td>—</td><td>—</td></>;
+  return <>
+    <td>{metric(row.serpPosition)}</td>
+    <td><PositionDelta value={row.deltaPrev} /></td>
+    <td>{row.status === "found" ? "Найдена" : "Нет данных"}</td>
+  </>;
 }
 
 export function Search({ id, model, profile, showGsc, showWebmaster = true }: Readonly<{
@@ -213,8 +285,8 @@ export function Search({ id, model, profile, showGsc, showWebmaster = true }: Re
   comparisonKey?: string;
 }>) {
   const sections = useMemo(
-    () => aggregateWebmasterSections(profile?.seoSections ?? [], showWebmaster ? model.webmaster?.topPages ?? [] : []),
-    [model.webmaster?.topPages, profile?.seoSections, showWebmaster],
+    () => aggregateSeoOsSections(profile?.seoSections ?? [], model.seoOs?.positions ?? []),
+    [model.seoOs?.positions, profile?.seoSections],
   );
   const queries = useMemo(() => unifiedQueries(model, showGsc, showWebmaster), [model, showGsc, showWebmaster]);
   const [querySearch, setQuerySearch] = useState("");
@@ -244,7 +316,7 @@ export function Search({ id, model, profile, showGsc, showWebmaster = true }: Re
         </Panel>
       </div>
 
-      <Panel panelId="seo.queries" title="Запросы: Google, Яндекс и SEO OS" subtitle="Топ-100 фраз по показам в доступных поисковых источниках">
+      <Panel panelId="seo.queries" title="Запросы: Google, Яндекс и SEO OS" subtitle={model.seoOs ? `SEO OS ${model.seoOs.observationPeriod.key} · проверка ${model.seoOs.observationDate}` : "Фразы из доступных поисковых источников"}>
         <div className="site-seo-query-controls">
           <label>Поиск по фразе<input type="search" value={querySearch} onChange={(event) => setQuerySearch(event.target.value)} placeholder="Поиск по фразе" /></label>
           <span>{visibleQueries.length.toLocaleString("ru-RU")} из {queries.length.toLocaleString("ru-RU")}</span>
@@ -266,7 +338,7 @@ export function Search({ id, model, profile, showGsc, showWebmaster = true }: Re
                 <th data-source-group="seo-os">Дельта</th><th data-source-group="seo-os">Статус</th>
               </tr>
             </thead>
-            <tbody>{visibleQueries.length ? visibleQueries.map((row) => <tr key={row.phrase}><th scope="row" className="site-seo-wrap-cell">{row.phrase}</th><SourceCells metrics={row.google} /><SourceCells metrics={row.yandex} /><td>—</td><td>—</td><td>—</td></tr>) : <tr><td colSpan={12} className="site-seo-empty-row">{queries.length ? "Нет запросов, соответствующих поиску." : "Нет опубликованных запросов за выбранные периоды."}</td></tr>}</tbody>
+            <tbody>{visibleQueries.length ? visibleQueries.map((row) => <tr key={row.phrase}><th scope="row" className="site-seo-wrap-cell"><span>{row.phrase}</span><SeoOsQueryLink row={row.seoOs} /></th><SourceCells metrics={row.google} /><SourceCells metrics={row.yandex} /><SeoOsCells row={row.seoOs} /></tr>) : <tr><td colSpan={12} className="site-seo-empty-row">{queries.length ? "Нет запросов, соответствующих поиску." : "Нет опубликованных запросов за выбранные периоды."}</td></tr>}</tbody>
           </table>
         </TableFrame>
       </Panel>

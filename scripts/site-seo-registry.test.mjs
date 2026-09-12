@@ -67,6 +67,15 @@ test("MedRoche registry pins the confirmed canonical source scopes", () => {
       analyticsAccountId: "94927113",
       resourceId: "med.roche.ru",
     },
+    {
+      bindingId: "binding-seo-os-medroche",
+      clientId: "client-roche",
+      siteId: "site-medroche",
+      dashboardId: 41,
+      sourceKey: "seo_os",
+      analyticsAccountId: "94927113",
+      resourceId: "med.roche.ru",
+    },
   ]);
 
   const boundIds = new Set(registry[0].bindings.map((binding) => binding.bindingId));
@@ -74,9 +83,8 @@ test("MedRoche registry pins the confirmed canonical source scopes", () => {
     .filter((source) => source.bindingId && !boundIds.has(source.bindingId))
     .map((source) => source.sourceKey)
     .sort();
-  assert.deepEqual(unboundSourceKeys, [
-    "seo_os",
-  ]);
+  assert.deepEqual(unboundSourceKeys, []);
+  assert.deepEqual(profile.hiddenTabs, ["seo-os"]);
 
   for (const filename of [releaseFilename, repositoryFilename]) {
     const metadata = JSON.parse(readFileSync(filename, "utf8"));

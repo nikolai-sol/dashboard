@@ -101,7 +101,12 @@ test("exports actual Wordstat snapshot windows, Alice query sources, and publish
         queries: [{ query: "лечение", portalPresent: true, portalPosition: 2, portalUrl: "https://portal.test/a", sources: [{ rank: 1, domain: "one.test", url: "https://one.test/a" }] }],
       },
       seoOs: {
-        ...meta, sourceKey: "seo_os", period, state: "partial", completeness: "unknown", kind: "seo_os", rows: [],
+        ...meta, sourceKey: "seo_os", period: { kind: "iso_week", key: "2026-W02", from: "2026-01-05", to: "2026-01-11", sourceTimezone: "Europe/Moscow" }, state: "partial", completeness: "unknown", kind: "seo_os",
+        observationPeriod: { kind: "iso_week", key: "2026-W02", from: "2026-01-05", to: "2026-01-11", sourceTimezone: "Europe/Moscow" },
+        observationDate: "2026-01-09",
+        selectionPeriod: period,
+        positions: [{ week: "2026-W02", section: "diseases", clusterId: "cancer", query: "лечение рака", serpPosition: 4.5, deltaPrev: -2, matchedUrl: "https://example.test/diseases/cancer/", status: "found", checkedAt: "2026-01-09 10:00:00", ingestionRunId: "seo-run-1" }],
+        rows: [],
         recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W01"], ruleVersion: "v3", publicationStatus: "published" }],
         tasks: [{ id: "task-1", status: "open" }],
       },
@@ -117,6 +122,9 @@ test("exports actual Wordstat snapshot windows, Alice query sources, and publish
   assert.match(csv, /Запрос Алиса: лечение.*1\. one\.test/);
   assert.match(csv, /Рекомендация SEO OS: Онкология.*Добавить раздел.*rule: v3/);
   assert.match(csv, /Задача SEO OS task-1.*open/);
+  assert.match(csv, /Период наблюдения SEO OS.*2026-W02.*2026-01-05.*2026-01-11.*2026-01-09/);
+  assert.match(csv, /Период выбора SEO OS.*2026-W01.*2025-12-29.*2026-01-04/);
+  assert.match(csv, /Позиция SEO OS: лечение рака.*позиция 4\.5.*дельта -2.*статус found.*URL https:\/\/example\.test\/diseases\/cancer\/.*checked 2026-01-09 10:00:00.*import seo-run-1/);
 });
 
 test("refuses an export session from another dashboard before any canonical read", async () => {

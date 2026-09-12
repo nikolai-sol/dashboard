@@ -93,7 +93,26 @@ function model() {
       sources: [],
       queries: [],
     },
-    seoOs: null,
+    seoOs: {
+      ...missing,
+      sourceKey: "seo_os" as const,
+      collectionMode: "derived" as const,
+      period: w37,
+      state: "partial" as const,
+      kind: "seo_os" as const,
+      observationPeriod: w37,
+      observationDate: "2026-09-11",
+      selectionPeriod: w36,
+      positions: [
+        { week: "2026-W37", section: "innovations", clusterId: "treatment", query: "  ЛЕЧЕНИЕ  ", serpPosition: 6, deltaPrev: -2, matchedUrl: "https://clinic.example/innovations/treatment/", status: "found" as const, checkedAt: "2026-09-11 09:20:00", ingestionRunId: "run-1" },
+        { week: "2026-W37", section: "products", clusterId: "bevacizumab", query: "Бевацизумаб", serpPosition: 9, deltaPrev: 1, matchedUrl: "https://clinic.example/products/bevacizumab/", status: "found" as const, checkedAt: "2026-09-11 09:21:00", ingestionRunId: "run-1" },
+        { week: "2026-W37", section: "innovations", clusterId: "pulse", query: "Новости", serpPosition: 2, deltaPrev: 0, matchedUrl: "https://clinic.example/innovations/inno-puls/story/", status: "found" as const, checkedAt: "2026-09-11 09:22:00", ingestionRunId: "run-1" },
+        { week: "2026-W37", section: "events", clusterId: "missing", query: "Мероприятие", serpPosition: null, deltaPrev: null, matchedUrl: null, status: "no_data" as const, checkedAt: "2026-09-11 09:23:00", ingestionRunId: "run-1" },
+      ],
+      rows: [],
+      recommendations: [],
+      tasks: [],
+    },
     trafficComparison: {},
   };
 }
@@ -286,7 +305,7 @@ test("Webmaster query facts use the exact scope, week, ALL device and unbounded 
   assert.match(pageCall.sql, /AS positioned_impressions/);
 });
 
-test("SEO page renders Alice summary, longest-prefix sections, and the normalized Yandex query union", () => {
+test("SEO page renders the latest exact SEO OS positions, longest-prefix sections, and the normalized query union", () => {
   const html = renderToStaticMarkup(createElement(Search, { id: "search", model: model(), profile, showGsc: true } as never));
   const panels = [...html.matchAll(/data-panel-id="([^"]+)"/g)].map((match) => match[1]);
 
@@ -299,13 +318,16 @@ test("SEO page renders Alice summary, longest-prefix sections, and the normalize
   assert.match(sectionPanel, /<svg/);
   assert.doesNotMatch(sectionPanel, /site-seo-table-frame/);
   assert.match(html, /Заболевания[^]*—/);
-  assert.match(html, /Препараты[^]*8[^]*100[^]*3/);
-  assert.match(html, /Инновации[^]*3[^]*220[^]*6/);
-  assert.match(html, /INNO-ПУЛЬС[^]*7[^]*100[^]*3/);
+  assert.match(sectionPanel, /Средняя позиция · SEO OS/);
+  assert.match(sectionPanel, /Препараты[^]*9/);
+  assert.match(sectionPanel, /Инновации[^]*6/);
+  assert.match(sectionPanel, /INNO-ПУЛЬС[^]*2/);
+  assert.match(sectionPanel, /Мероприятия[^]*—/);
   assert.match(html, /Запросы: Google, Яндекс и SEO OS/);
   assert.match(html, /Google[^]*Показы[^]*Клики[^]*CTR[^]*Позиция/);
   assert.match(html, /Яндекс Вебмастер[^]*Показы[^]*Клики[^]*CTR[^]*Позиция/);
   assert.match(html, /SEO OS[^]*Позиция[^]*Дельта[^]*Статус/);
+  assert.doesNotMatch(html, /data-source-group="seo-os">URL/);
   assert.match(html, /site-seo-query-controls/);
   assert.match(html, /placeholder="Поиск по фразе"/);
   assert.match(html, /aria-label="Сортировать: Показы Google/);
@@ -313,8 +335,10 @@ test("SEO page renders Alice summary, longest-prefix sections, and the normalize
   assert.match(html, /data-source-group="google"/);
   assert.match(html, /data-source-group="yandex"/);
   assert.match(html, /data-source-group="seo-os"/);
-  assert.equal(html.match(/<th scope="row" class="site-seo-wrap-cell">лечение<\/th>/g)?.length, 1);
-  assert.match(html, /лечение[^]*—[^]*—[^]*—[^]*—[^]*120[^]*9[^]*7,5%[^]*3,92[^]*—[^]*—[^]*—/);
+  assert.equal(html.match(/<th scope="row" class="site-seo-wrap-cell"><span>лечение<\/span>/g)?.length, 1);
+  assert.match(html, /лечение[^]*SEO OS:[^]*href="https:\/\/clinic\.example\/innovations\/treatment\/"[^]*120[^]*9[^]*7,5%[^]*3,92[^]*6[^]*↑[^]*2[^]*Найдена/);
+  assert.match(html, /Бевацизумаб[^]*SEO OS:[^]*href="https:\/\/clinic\.example\/products\/bevacizumab\/"[^]*9[^]*↓[^]*1[^]*Найдена/);
+  assert.match(html, /Мероприятие[^]*Нет данных/);
 });
 
 test("SEO query comparison toggles numeric sorting and keeps missing values last", () => {
@@ -326,14 +350,34 @@ test("SEO query comparison toggles numeric sorting and keeps missing values last
   assert.equal(typeof api.toggleQuerySort, "function");
   if (!api.sortUnifiedQueries || !api.toggleQuerySort) return;
   const rows = [
-    { phrase: "нет данных", google: null, yandex: null },
-    { phrase: "десять", google: null, yandex: { impressions: 10, clicks: 2, ctrPct: 20, averagePosition: 4 } },
-    { phrase: "два", google: null, yandex: { impressions: 2, clicks: 1, ctrPct: 50, averagePosition: 8 } },
+    { phrase: "нет данных", google: null, yandex: null, seoOs: null },
+    { phrase: "десять", google: null, yandex: { impressions: 10, clicks: 2, ctrPct: 20, averagePosition: 4 }, seoOs: { serpPosition: 10 } },
+    { phrase: "два", google: null, yandex: { impressions: 2, clicks: 1, ctrPct: 50, averagePosition: 8 }, seoOs: { serpPosition: 2 } },
   ];
   assert.deepEqual(api.sortUnifiedQueries(rows, { key: "yandex_impressions", direction: "asc" }).map((row) => row.phrase), ["два", "десять", "нет данных"]);
   assert.deepEqual(api.sortUnifiedQueries(rows, { key: "yandex_impressions", direction: "desc" }).map((row) => row.phrase), ["десять", "два", "нет данных"]);
   assert.deepEqual(api.toggleQuerySort({ key: "yandex_impressions", direction: "asc" }, "yandex_impressions"), { key: "yandex_impressions", direction: "desc" });
   assert.deepEqual(api.toggleQuerySort({ key: "google_clicks", direction: "desc" }, "yandex_position"), { key: "yandex_position", direction: "asc" });
+  assert.deepEqual(api.sortUnifiedQueries(rows, { key: "seo_os_position", direction: "asc" }).map((row) => row.phrase), ["два", "десять", "нет данных"]);
+});
+
+test("SEO query normalization is exact and deterministic across Unicode, case, yo, and whitespace", () => {
+  const normalize = (searchModule as unknown as { normalizeQueryPhrase?: (value: string) => string }).normalizeQueryPhrase;
+  assert.equal(typeof normalize, "function");
+  assert.equal(normalize?.("  ЁЛКА\u00a0 ДЛЯ   ЛЕЧЕНИЯ "), "елка для лечения");
+  assert.equal(normalize?.("Ёлка для лечения"), "елка для лечения");
+});
+
+test("SEO OS section positions use exact found URLs and longest profile prefixes without classifying no_data", () => {
+  const aggregate = (searchModule as unknown as {
+    aggregateSeoOsSections?: (sections: NonNullable<SiteProfile["seoSections"]>, positions: readonly unknown[]) => Array<{ id: string; position: number | null }>;
+  }).aggregateSeoOsSections;
+  assert.equal(typeof aggregate, "function");
+  const sections = aggregate?.(profile.seoSections!, model().seoOs.positions) ?? [];
+  assert.equal(sections.find((section) => section.id === "products")?.position, 9);
+  assert.equal(sections.find((section) => section.id === "innovations")?.position, 6);
+  assert.equal(sections.find((section) => section.id === "inno-puls")?.position, 2);
+  assert.equal(sections.find((section) => section.id === "events")?.position, null);
 });
 
 test("section position uses only impressions that carry a position", () => {

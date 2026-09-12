@@ -119,6 +119,23 @@ export type AliceCanonicalData = DatasetMeta & Readonly<{
 
 export type SeoOsCanonicalData = DatasetMeta & Readonly<{
   kind: "seo_os";
+  /** Canonical observation selected independently from the dashboard traffic week. */
+  observationPeriod: Period;
+  observationDate: string;
+  /** Reviewed week whose queries produced this later observation. */
+  selectionPeriod: Period;
+  positions: readonly Readonly<{
+    week: string;
+    section: string;
+    clusterId: string;
+    query: string;
+    serpPosition: number | null;
+    deltaPrev: number | null;
+    matchedUrl: string | null;
+    status: "found" | "no_data";
+    checkedAt: string | null;
+    ingestionRunId: string | null;
+  }>[];
   rows: readonly Readonly<{ engine: string; mentions: number; citations: number; evidence: string | null }>[];
   recommendations: readonly Readonly<{
     kind: string | null;
@@ -1036,7 +1053,25 @@ async function readAliceData(database: CanonicalDatabase, query: CanonicalDatase
     queries: queryList };
 }
 
-type SeoOsRow = Readonly<{ run_id?: unknown; status?: unknown; stages?: unknown; loaded_at?: unknown; task_id?: unknown }>;
+type SeoOsRow = Readonly<{
+  run_id?: unknown;
+  week_key?: unknown;
+  run_week_key?: unknown;
+  tracking_set_checksum?: unknown;
+  tracking_set_item_count?: unknown;
+  status?: unknown;
+  stages?: unknown;
+  loaded_at?: unknown;
+  ingestion_run_id?: unknown;
+  task_id?: unknown;
+  section?: unknown;
+  cluster_id?: unknown;
+  query?: unknown;
+  serp_position?: unknown;
+  delta_prev?: unknown;
+  matched_url?: unknown;
+  checked_at?: unknown;
+}>;
 
 function objectValue(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
@@ -1069,23 +1104,102 @@ function seoOsRecommendations(stages: unknown, publicationStatus: string | null)
   });
 }
 
+function seoOsEvidencePeriod(value: unknown): Period | null {
+  const row = objectValue(value);
+  const kind = stringValue(row?.kind);
+  const key = stringValue(row?.key);
+  const from = stringValue(row?.from);
+  const to = stringValue(row?.to);
+  const sourceTimezone = stringValue(row?.sourceTimezone);
+  if (kind !== "iso_week" || !key || !from || !to || !sourceTimezone) return null;
+  if (!/^\d{4}-W\d{2}$/.test(key) || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return null;
+  const period = sourcePeriod("iso_week", from, to, sourceTimezone);
+  const fromDate = new Date(`${from}T00:00:00Z`);
+  return period.key === key && periodDays(period) === 7 && fromDate.getUTCDay() === 1 ? period : null;
+}
+
+function seoOsPosition(row: SeoOsRow, observationWeek: string, ingestionRunId: string): SeoOsCanonicalData["positions"][number] | null {
+  const status = stringValue(row.status);
+  const week = stringValue(row.week_key);
+  const section = stringValue(row.section);
+  const clusterId = stringValue(row.cluster_id);
+  const query = stringValue(row.query);
+  const rowIngestionRunId = stringValue(row.ingestion_run_id);
+  const serpPosition = row.serp_position === null || row.serp_position === undefined ? null : Number(row.serp_position);
+  const deltaPrev = row.delta_prev === null || row.delta_prev === undefined ? null : Number(row.delta_prev);
+  const matchedUrl = stringValue(row.matched_url);
+  if ((status !== "found" && status !== "no_data") || !week || !section || !clusterId || !query || !rowIngestionRunId
+    || week !== observationWeek || rowIngestionRunId !== ingestionRunId
+    || (serpPosition !== null && !Number.isFinite(serpPosition)) || (deltaPrev !== null && !Number.isFinite(deltaPrev))
+    || (status === "found" && (!(serpPosition! > 0) || !matchedUrl))
+    || (status === "no_data" && (row.serp_position !== null || row.matched_url !== null))) return null;
+  return {
+    week,
+    section,
+    clusterId,
+    query,
+    serpPosition,
+    deltaPrev,
+    matchedUrl,
+    status,
+    checkedAt: stringValue(row.checked_at),
+    ingestionRunId: stringValue(row.ingestion_run_id),
+  };
+}
+
 async function readSeoOsData(database: CanonicalDatabase, query: CanonicalDatasetReadQuery): Promise<DatasetMeta | SeoOsCanonicalData> {
-  const [runRows, taskRows] = await Promise.all([
-    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-run */
-      SELECT id AS run_id, status, stages_json AS stages, finished_at AS loaded_at
-      FROM seo_weekly_runs
-      WHERE analytics_account_id = ? AND week_key = ?
-      ORDER BY finished_at DESC, id DESC LIMIT 1`, params: [query.scope.analyticsAccountId, query.period.key] }),
-    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-tasks */
-      SELECT task_id, status
-      FROM seo_tasks WHERE analytics_account_id = ? AND week_key = ? ORDER BY task_id ASC LIMIT 20`, params: [query.scope.analyticsAccountId, query.period.key] }),
-  ]);
+  const runRows = await rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-run */
+    SELECT id AS run_id, week_key, run_week_key, tracking_set_checksum,
+           tracking_set_item_count, status, stages_json AS stages,
+           finished_at AS loaded_at, ingestion_run_id
+    FROM seo_weekly_runs
+    WHERE source_key = 'seo_os' AND analytics_account_id = ? AND status = 'completed'
+    ORDER BY run_week_key DESC, finished_at DESC, id DESC LIMIT 1`, params: [query.scope.analyticsAccountId] });
   const run = runRows[0];
   if (!run) return missingMeta("seo_os", "derived");
-  const meta = datasetMeta(query, { import_id: run.run_id, loaded_at: run.loaded_at }, "derived", "partial", "unknown");
+  const stages = objectValue(jsonValue(run.stages));
+  const observationPeriod = seoOsEvidencePeriod(stages?.observationPeriod);
+  const selectionPeriod = seoOsEvidencePeriod(stages?.selectionPeriod);
+  const observation = objectValue(stages?.observationPeriod);
+  const observationDate = stringValue(observation?.date);
+  const ingestionRunId = stringValue(run.ingestion_run_id);
+  const trackingSetChecksum = stringValue(run.tracking_set_checksum);
+  const trackingSetItemCount = Number(run.tracking_set_item_count);
+  if (!observationPeriod || !selectionPeriod || String(run.week_key) !== observationPeriod.key
+    || String(run.run_week_key) !== observationPeriod.key || selectionPeriod.key === observationPeriod.key
+    || !observationDate || !/^\d{4}-\d{2}-\d{2}$/.test(observationDate)
+    || observationDate < observationPeriod.from || observationDate > observationPeriod.to
+    || !ingestionRunId || !trackingSetChecksum || !/^[a-f0-9]{64}$/i.test(trackingSetChecksum)
+    || !Number.isSafeInteger(trackingSetItemCount) || trackingSetItemCount < 1 || trackingSetItemCount > 50) {
+    return missingMeta("seo_os", "derived");
+  }
+  const [positionRows, taskRows] = await Promise.all([
+    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-positions */
+      SELECT week_key, section, cluster_id, query, serp_position, delta_prev,
+             matched_url, status, checked_at, ingestion_run_id
+      FROM seo_positions_weekly
+      WHERE source_key = 'seo_os' AND analytics_account_id = ?
+        AND week_key = ? AND region = '225'
+      ORDER BY query ASC, cluster_id ASC`, params: [query.scope.analyticsAccountId, observationPeriod.key] }),
+    rowsFor<SeoOsRow>(database, { sql: `/* site-seo:seo-os-tasks */
+      SELECT task_id, status
+      FROM seo_tasks
+      WHERE source_key = 'seo_os' AND analytics_account_id = ? AND week_key = ?
+      ORDER BY task_id ASC LIMIT 20`, params: [query.scope.analyticsAccountId, observationPeriod.key] }),
+  ]);
+  const positions = positionRows.map((row) => seoOsPosition(row, observationPeriod.key, ingestionRunId));
+  const clusterIds = positions.flatMap((position) => position ? [position.clusterId] : []);
+  if (positions.some((position) => position === null) || positions.length !== trackingSetItemCount
+    || new Set(clusterIds).size !== clusterIds.length) return missingMeta("seo_os", "derived");
+  const meta = datasetMeta(query, { import_id: ingestionRunId, loaded_at: run.loaded_at }, "derived", "ready", "complete");
   return {
     ...meta,
+    period: observationPeriod,
     kind: "seo_os",
+    observationPeriod,
+    observationDate,
+    selectionPeriod,
+    positions: positions as SeoOsCanonicalData["positions"],
     rows: [],
     recommendations: seoOsRecommendations(run.stages, stringValue(run.status)),
     tasks: taskRows.map((row) => ({ id: String(row.task_id), status: String(row.status) })),
