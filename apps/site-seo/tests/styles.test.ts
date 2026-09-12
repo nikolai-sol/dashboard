@@ -115,6 +115,8 @@ test("overview search engines and weekly trend expose their two-column and label
 test("SEO chart and sortable comparison table match the reference visual language", () => {
   const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
 
+  assert.match(css, /\.site-seo-seo-summary-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.doesNotMatch(css, /\.site-seo-two-column-grid,\s*\.site-seo-source-card-grid,\s*\.site-seo-seo-summary-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2/);
   assert.match(css, /\.site-seo-section-position-chart\s*\{[^}]*min-width:\s*0/);
   assert.match(css, /\.site-seo-section-position-chart svg\s*\{[^}]*min-width:\s*0/);
   assert.match(css, /\.site-seo-section-position-line\s*\{[^}]*stroke:\s*var\(--site-seo-teal-600\)/);

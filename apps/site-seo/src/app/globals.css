@@ -399,10 +399,15 @@ body {
 }
 
 .site-seo-two-column-grid,
-.site-seo-source-card-grid,
-.site-seo-seo-summary-grid {
+.site-seo-source-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.site-seo-seo-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -1470,8 +1475,7 @@ body {
   }
 
   .site-seo-two-column-grid,
-  .site-seo-source-card-grid,
-  .site-seo-seo-summary-grid {
+  .site-seo-source-card-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
