@@ -684,7 +684,7 @@ exec "$SCRIPT_DIR/deploy-runtime.sh" "$SCRIPT_DIR/../deploy/abbott/release.json"
 
 - [ ] **Step 3: Add the Abbott PM2 launcher with an environment allowlist**
 
-`deploy/abbott/start.cjs` must accept only general DB, `ABBOTT_PRIVATE_DB_*`, `ABBOTT_EMBED_DB_*`, `NODE_ENV`, `HOSTNAME`, `PORT`, `NEXT_PUBLIC_BASE_URL`, `DASHBOARD_AUTH_SECRET`, `INTERNAL_BASE_URL`, `ABBOTT_EMBED_KEY`, and `PUPPETEER_EXECUTABLE_PATH`; require `HOSTNAME=127.0.0.1`, `PORT=3004`, `NODE_ENV=production`; clear inherited environment; then require `/var/www/dashboard-abbott/apps/abbott/server.js`. It must reject source OAuth keys including `METRIKA_TOKEN`, `YANDEX_*TOKEN`, and `GOOGLE_*TOKEN`.
+`deploy/abbott/start.cjs` must accept only general DB, `ABBOTT_PRIVATE_DB_*`, `ABBOTT_EMBED_DB_*`, `NODE_ENV`, `HOSTNAME`, `PORT`, `NEXT_PUBLIC_BASE_URL`, `DASHBOARD_AUTH_SECRET`, `INTERNAL_BASE_URL`, `ABBOTT_DASHBOARD_EMBED_KEY`, and `PUPPETEER_EXECUTABLE_PATH`; require `HOSTNAME=127.0.0.1`, `PORT=3004`, `NODE_ENV=production`; clear inherited environment; then require `/var/www/dashboard-abbott/apps/abbott/server.js`. It must reject source OAuth keys including `METRIKA_TOKEN`, `YANDEX_*TOKEN`, and `GOOGLE_*TOKEN`.
 
 - [ ] **Step 4: Define and validate exact Nginx locations**
 
