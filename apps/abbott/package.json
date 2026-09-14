@@ -1,0 +1,16 @@
+{
+  "name": "dashboard-abbott",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -p 3004"
+  },
+  "dependencies": {
+    "@reportingdash/runtime-contract": "*",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}

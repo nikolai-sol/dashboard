@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/apps/abbott/.next-abbott/
 /out/
 
 # production
@@ -61,3 +62,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+!apps/abbott/next-env.d.ts
