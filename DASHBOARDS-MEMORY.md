@@ -89,6 +89,19 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 
 ### Shared data loader
 
+- Branch target, Abbott runtime isolation (2026-09-14): `apps/abbott` now owns the
+  Abbott JSON, administrator User ID, HTTP Excel, and PDF routes for aliases
+  `18` and `abbott`. These routes use the focused Abbott authorizer/loader and
+  a closed import graph; this is not a production cutover.
+- The current combined Abbott HTTP Excel response contains zero worksheets;
+  the isolated HTTP route preserves that output. AbbottBiDashboard's separate
+  client-side XLSX downloads remain unchanged.
+- Isolated PDF rendering defaults to `http://127.0.0.1:3004`; an explicit
+  `ABBOTT_INTERNAL_BASE_URL` overrides it, while the combined app's
+  `INTERNAL_BASE_URL` is ignored. PDF keeps the authorized audience/credential
+  version and closes its Chromium instance in `finally`. Administrator User ID
+  reads and mutations remain manager-only with the existing 16 KiB body bound.
+
 - Core runtime is built in:
   - `src/lib/dashboard-data-loader.ts`
 - Public API route uses the shared loader:
