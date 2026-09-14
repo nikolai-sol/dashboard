@@ -148,12 +148,18 @@ function validateAccounts(user, group) {
   if (user && (!group || user.name !== HOST.account || !Number.isInteger(user.uid) || user.uid <= 0 || user.uid === 501 || user.uid >= 1000 || user.gid !== group.gid || user.home !== '/nonexistent' || user.shell !== '/usr/sbin/nologin' || user.groups.length !== 1 || user.groups[0] !== group.gid)) refuse();
 }
 
+function serializeCredentialInput(values) {
+  const desired = Buffer.from(INPUT_KEYS.filter(key => Object.hasOwn(values, key)).map(key => `${key}='${values[key]}'\n`).join(''), 'utf8');
+  if (desired.length > 65536) { desired.fill(0); refuse(); }
+  return desired;
+}
+
 export function bootstrapAbbottHost(platform = realPlatform) {
   if (platform.uid() !== 0 || platform.hostname() !== HOST.hostname) refuse();
   const io = platform.fs;
   const source = sourceSnapshot(platform);
   const values = parseCombinedEnvironment(source, bytes => platform.evaluateEnvironment(bytes));
-  const desired = Buffer.from(INPUT_KEYS.filter(key => Object.hasOwn(values, key)).map(key => `${key}='${values[key]}'\n`).join(''));
+  const desired = serializeCredentialInput(values);
   let user = platform.user(), group = platform.group();
   validateAccounts(user, group);
   const targetExists = io.lstatSync(HOST.targetDir, { throwIfNoEntry: false });
@@ -244,11 +250,13 @@ const realPlatform = {
 export function verifyAbbottBootstrapSource(platform = realPlatform) {
   if (platform.uid() !== 0 || platform.hostname() !== HOST.hostname) refuse();
   const source = sourceSnapshot(platform);
+  let desired;
   try {
     const values = parseCombinedEnvironment(source, bytes => platform.evaluateEnvironment(bytes));
+    desired = serializeCredentialInput(values);
     if (!sourceSnapshot(platform).equals(source)) refuse();
     return { status: 'verified', allowlistedKeyCount: Object.keys(values).length };
-  } finally { source.fill(0); }
+  } finally { source.fill(0); desired?.fill(0); }
 }
 
 export function runBootstrap(platform, args, environment, emit) {

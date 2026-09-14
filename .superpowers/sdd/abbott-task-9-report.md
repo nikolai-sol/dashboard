@@ -251,3 +251,35 @@ and Abbott typechecks, full lint, syntax, explicit artifact verification and dif
 checks pass; lint retains only the ten existing warnings. No production mutation,
 push, deploy, browser session, Nginx edit/reload or database operation occurred.
 Dedicated bootstrap re-review and the separate Nginx fix remain required.
+
+## Narrow bootstrap review revision: exact serialized byte limit
+
+The previous character-count and parser-equality checks did not guarantee that
+the final UTF-8 credential input fit the unchanged worker's 65,536-byte limit.
+A multibyte value referenced by another allowlisted value could pass both checks
+and exceed the worker limit after expansion, quoting and newlines.
+
+Added one shared strict serializer that builds the exact `desired` UTF-8 Buffer
+and rejects `desired.length > 65536`. Bootstrap calls it before any account/group
+lookup or creation, directory creation or publication. The read-only source proof
+uses that same serializer and byte check. The final newline counts toward the
+limit, and temporary verification buffers are cleared. The unchanged fixed
+refusal output contains no value or dynamically interpolated diagnostic.
+
+RED evidence: synthetic multibyte plus allowlisted-expansion cases at 65,537 and
+70,000 serialized bytes passed existing character limits and exact pinned Next
+equality. The read-only gate wrongly accepted them; bootstrap reached six account
+operations before eventual failure. The 65,536-byte boundary was already valid.
+
+GREEN evidence: exactly 65,536 bytes, including its final newline, is accepted by
+bootstrap and by the unchanged worker parser. The 65,537- and 70,000-byte cases
+now return the fixed refusal and perform zero account commands or writes; the
+read-only proof also refuses them. Assertions expose only counts, byte lengths
+and hashes, never the synthetic values. All fixtures are cleaned.
+
+Final verification: focused bootstrap suite 21/21 pass; complete Abbott gate
+build and 67 app/runtime tests plus 266 bootstrap/authority/Nginx/artifact tests
+pass. Root/Abbott typechecks, full lint, syntax, artifact verification and diff
+checks pass; the same ten pre-existing lint warnings remain. No bootstrap,
+production mutation, push or deployment occurred. Final checkpoint re-review is
+still required before execution.

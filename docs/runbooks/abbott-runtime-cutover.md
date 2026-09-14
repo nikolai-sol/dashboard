@@ -73,6 +73,10 @@ Unquoted `#` uses Next comment semantics; quoted or unquoted `$KEY`/`${KEY}` may
 refer only to present allowlisted keys. Missing, ambient, unrelated/source-key,
 cyclic or unsupported references and semantic disagreement refuse bootstrap.
 Unrelated combined-runtime settings are filtered, never printed or copied.
+The final strict quoted credential input is serialized as UTF-8 and must be at
+most 65,536 bytes, including every quote, separator and final newline. Bootstrap
+checks that exact buffer before any account/group operation or filesystem write;
+the read-only proof uses the same serializer and byte check.
 
 The exported read-only `verifyAbbottBootstrapSource` gate performs no account
 command or filesystem write. Its authorized production check on 2026-09-15

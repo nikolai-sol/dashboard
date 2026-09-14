@@ -113,6 +113,59 @@ test('read-only source proof performs no account commands or filesystem writes',
   } finally { f.cleanup(); }
 });
 
+function multibyteSourceForSerializedSize(size) {
+  const base = { ...values, DB_PASSWORD: '', MYSQL_PASSWORD: '' };
+  const serialize = data => Buffer.from(INPUT_KEYS.map(key => `${key}='${data[key]}'\n`).join(''), 'utf8');
+  const remaining = size - serialize(base).length;
+  const repeated = 'é'.repeat(Math.floor(remaining / 4));
+  const effective = { ...base, DB_HOST: base.DB_HOST + 'x'.repeat(remaining % 4), DB_PASSWORD: repeated, MYSQL_PASSWORD: repeated };
+  assert.equal(serialize(effective).length, size);
+  const raw = { ...effective, MYSQL_PASSWORD: '${DB_PASSWORD}' };
+  const bytes = serialize(raw);
+  assert.ok(bytes.length <= 65536);
+  assert.ok(JSON.stringify(effective).length < 65536);
+  return bytes;
+}
+
+for (const size of [65536, 65537, 70000]) test(`exact UTF-8 credential serialization boundary: ${size} bytes`, () => {
+  const f = fixture();
+  try {
+    const bytes = multibyteSourceForSerializedSize(size);
+    fs.writeFileSync(f.resolve(HOST.sourceEnv), bytes);
+    const effective = parseCombinedEnvironment(bytes, localEvaluator);
+    const digest = data => createHash('sha256').update(JSON.stringify(data)).digest('hex');
+    assert.equal(digest(effective), digest(nextReference(bytes)), 'pinned parser equality must pass before testing serialization');
+    const commands = [];
+    let writes = 0;
+    for (const method of ['user', 'group', 'createUser', 'createGroup']) {
+      const operation = f.platform[method];
+      f.platform[method] = (...args) => { commands.push(method); return operation(...args); };
+    }
+    for (const method of ['writeFileSync', 'mkdirSync', 'linkSync', 'unlinkSync', 'chmodSync', 'fchmodSync', 'fchownSync']) {
+      const operation = f.platform.fs[method];
+      f.platform.fs[method] = (...args) => { writes += 1; return operation(...args); };
+    }
+    if (size === 65536) {
+      assert.equal(verifyAbbottBootstrapSource(f.platform).status, 'verified');
+      assert.equal(commands.length, 0); assert.equal(writes, 0);
+      assert.equal(bootstrapAbbottHost(f.platform), 'created');
+      const actual = fs.readFileSync(f.resolve(HOST.targetFile));
+      assert.equal(actual.length, 65536);
+      assert.equal(actual.at(-1), 10, 'the final newline is included in the exact byte limit');
+      const installer = createRuntimeInstaller(RUNTIME_MANIFESTS.abbott, allowed);
+      assert.equal(digest(installer.parseRuntimeSecrets(actual)), digest(effective));
+    } else {
+      let output = '';
+      assert.equal(runBootstrap(f.platform, [], {}, text => { output += text; }), 1);
+      assert.equal(output, 'Abbott host bootstrap refused\n');
+      assert.equal(commands.length, 0); assert.equal(writes, 0);
+      assert.equal(fs.existsSync(f.resolve(HOST.targetDir)), false);
+      assert.throws(() => verifyAbbottBootstrapSource(f.platform), { message: 'Abbott host bootstrap refused' });
+      assert.equal(commands.length, 0); assert.equal(writes, 0);
+    }
+  } finally { f.cleanup(); }
+});
+
 test('missing, unknown, ambient, cyclic and unsupported references fail before any account or file mutation', () => {
   for (const value of ['${MISSING}', '${METRIKA_TOKEN}', '${HOME}', '${DB_PASSWORD}', '${DB_USER:-fallback}', 'line\\nline', "bad'quote"]) {
     const f = fixture();
