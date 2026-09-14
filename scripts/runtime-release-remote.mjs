@@ -474,17 +474,22 @@ function durableFile(filename,value) {
 }
 async function stopProof(proof,platform,account,guard) {
   if(!proof)fail('No owned deployment process');
+  return stopRegistration(proof.registration, proof, platform, account, guard);
+}
+async function stopRegistration(registration, proof, platform, account, guard) {
   guard();
-  validateRuntimeRegistration(proof.registration, account);
-  const active = platform.registration(proof.pmId);
+  validateRuntimeRegistration(registration, account);
+  const active = platform.registration(registration.pmId);
   if (active !== null) {
-    if (!isDeepStrictEqual(active.registration, proof.registration)) fail('PM2 registration ownership changed; no stop');
+    if (!isDeepStrictEqual(active.registration, registration)) fail('PM2 registration ownership changed; no stop');
     if (Number.isSafeInteger(active.pid) && active.pid > 0) {
-      if (!isDeepStrictEqual(processProof(platform, account), proof)) fail('Deployment ownership changed; no stop');
+      const live = processProof(platform, account);
+      if (!live || live.pid !== active.pid || !isDeepStrictEqual(live.registration, registration) ||
+          proof && !isDeepStrictEqual(live, proof)) fail('Deployment ownership changed; no stop');
     } else if (active.pid !== 0 || !['errored', 'waiting restart', 'launching', 'stopping', 'stopped'].includes(active.status)) fail('Unproven PM2 inactive registration; no stop');
-    if (active.pid !== 0 || active.status !== 'stopped') await platform.stop(proof.pmId);
-    const stopped = platform.registration(proof.pmId);
-    if (stopped !== null && (!isDeepStrictEqual(stopped.registration, proof.registration) || stopped.pid !== 0 || stopped.status !== 'stopped')) fail('Owned PM2 registration did not stop');
+    if (active.pid !== 0 || active.status !== 'stopped') await platform.stop(registration.pmId);
+    const stopped = platform.registration(registration.pmId);
+    if (stopped !== null && (!isDeepStrictEqual(stopped.registration, registration) || stopped.pid !== 0 || stopped.status !== 'stopped')) fail('Owned PM2 registration did not stop');
   }
   await platform.assertNoListener();
 }
@@ -585,18 +590,30 @@ async function transact(request, platform = realPlatform, stagedGuard) {
     if (old) attestTree(APP, old);
     const oldBackup = old ? `${BACKUPS}/${old.id}` : null;
     if (oldBackup && fs.lstatSync(oldBackup, { throwIfNoEntry: false })) fail('Predecessor backup collision');
-    let oldMoved = false, candidateMoved = false, started = false, ownedProcess=null;
+    let oldMoved = false, candidateMoved = false, startAttempted = false, ownedRegistration = null, ownedProcess = null;
     try {
       if (old) { fs.renameSync(APP, oldBackup); oldMoved = true; }
       fs.renameSync(stage, APP); candidateMoved = true;
       guard();
       attestTree(APP, record);
       if (hash(stableRead(`${APP}/.env`)) !== envDigest) fail('Runtime environment changed during activation');
-      await platform.start(`${CONTROL}/${record.id}`);
-      started=true;
-      const candidateProcess=processProof(platform,account);
-      if(!candidateProcess||candidateProcess.sourceSha!==record.sourceSha||candidateProcess.registration.releaseId!==record.id||isDeepStrictEqual(candidateProcess,beforeProcess))fail('New deployment process was not established');
-      ownedProcess=candidateProcess;
+      startAttempted = true;
+      let startFailed = false;
+      try { await platform.start(`${CONTROL}/${record.id}`); } catch { startFailed = true; }
+      // A command failure or early process exit can still leave a restartable
+      // registration. Bind that identity before asking for a live PID/socket.
+      const candidate = platform.registration();
+      if (candidate !== null) {
+        validateRuntimeRegistration(candidate.registration, account);
+        if (candidate.registration.sourceSha !== record.sourceSha || candidate.registration.releaseId !== record.id) fail('New deployment registration was not established');
+        ownedRegistration = candidate.registration;
+        if (Number.isSafeInteger(candidate.pid) && candidate.pid > 0) {
+          const candidateProcess = processProof(platform, account);
+          if (!candidateProcess || candidateProcess.pid !== candidate.pid || !isDeepStrictEqual(candidateProcess.registration, ownedRegistration) || isDeepStrictEqual(candidateProcess, beforeProcess)) fail('New deployment process was not established');
+          ownedProcess = candidateProcess;
+        }
+      }
+      if (startFailed || !ownedProcess) fail('New deployment process was not established');
       await platform.health(ownedProcess);
       attestTree(APP, record);
       if (hash(stableRead(`${APP}/.env`)) !== envDigest) fail('Runtime environment changed during health verification');
@@ -609,9 +626,14 @@ async function transact(request, platform = realPlatform, stagedGuard) {
     } catch {
       let rollbackCandidateNeedsRecovery = false;
       try {
-        if(candidateMoved&&started&&ownedProcess)await stopProof(ownedProcess,platform,account,guard);
-        if(candidateMoved&&started&&!ownedProcess&&processProof(platform,account)!==null)fail('Ambiguous startup ownership; no stop');
-        if(candidateMoved&&!started&&beforeProcess===null&&processProof(platform,account)!==null)fail('Ambiguous startup ownership; no stop');
+        if (candidateMoved && startAttempted) {
+          if (ownedRegistration) await stopRegistration(ownedRegistration, ownedProcess, platform, account, guard);
+          else {
+            if (platform.registration(beforeProcess?.pmId) !== null) fail('Ambiguous startup ownership; no stop');
+            await platform.assertNoListener();
+          }
+        }
+        if(candidateMoved&&!startAttempted&&beforeProcess===null&&processProof(platform,account)!==null)fail('Ambiguous startup ownership; no stop');
         if (candidateMoved) {
           // A manual rollback borrows its predecessor from BACKUPS. Return that
           // exact artifact to its authoritative slot so current.previousId stays
@@ -632,10 +654,8 @@ async function transact(request, platform = realPlatform, stagedGuard) {
           attestTree(oldBackup, old);
           if (fs.lstatSync(APP, { throwIfNoEntry: false })) fail('Active recovery path is occupied');
           fs.renameSync(oldBackup, APP);
-          // A failed start reply cannot authorize stopping/replacing an unknown
-          // process. Preserve the exact predecessor only if still provably ours.
-          if(!started&&beforeProcess&&!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Ambiguous predecessor identity');
-          if(started||!beforeProcess)await platform.start(`${CONTROL}/${old.id}`);
+          if(!startAttempted&&beforeProcess&&!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Ambiguous predecessor identity');
+          if(startAttempted||!beforeProcess)await platform.start(`${CONTROL}/${old.id}`);
           const restoredProcess = processProof(platform, account);
           if (!restoredProcess || restoredProcess.sourceSha !== old.sourceSha || restoredProcess.registration.releaseId !== old.id) fail('Restored predecessor process identity mismatch');
           await platform.health(restoredProcess); attestTree(APP, old); publishPointer(old);

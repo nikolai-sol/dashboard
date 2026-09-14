@@ -122,3 +122,30 @@ Final checks:
 Self-review covered protected-record metadata propagation, complete durable-field comparisons, no aliasing of captured arguments, lookup of renamed/reassigned registrations, preservation of live PID proofs, cancellation of retained restart state, stopped/absent verification, listener absence before predecessor restoration, and refusal to act on mismatches. Actual PM2/Linux integration remains a later authorized host verification; this report does not claim it was exercised.
 
 Closure: Done — retained-registration recovery fixed and locally verified. Accepted — parent review pending. Reusable learning — process exit and supervisor-registration removal are different events; recovery must own and cancel restart state separately. Skill action — TDD and verification-before-completion, no acceptance-learning update. Evidence — RED/GREEN and final checks above. Budget stop — none.
+
+## Review revision: registration ownership before the first live snapshot
+
+The remaining early-start failure was reproduced: the candidate could already have PID zero when `start` returned, or the command could report failure after creating a registration. Ownership was still assigned only after a live process snapshot. Matching retained registrations therefore could not be cancelled, and the start-error mismatch path moved the predecessor before recognizing ambiguity.
+
+The transaction now records that start was attempted, catches its result without treating an error as proof of absence, and immediately queries the fixed application registration. Exact app/PM2 ID/exec/cwd/args/UID/GID metadata is validated independently of PID, and its release ID and SHA must match the sealed candidate before `ownedRegistration` is assigned. Only a positive PID triggers live process capture; that proof must match the captured registration and PID. A start error or missing live proof then enters recovery with durable registration ownership already available.
+
+Recovery uses that registration to verify and cancel retained restart state, or prove registration and listener absence before restoring APP. Live processes still require kernel start-time/boot/UID/GID/cwd identity checks; an existing live proof must remain identical. If a previously PID-zero owned registration becomes live before cancellation, it must independently pass the same live identity checks and registration binding. A mismatched registration is never stopped, nor is its active path replaced. Its sealed predecessor backup and existing CURRENT pointer remain intact for operator recovery. Successful matching recovery restarts the sealed predecessor and restores APP/CURRENT consistency, including when the original start command returned an error.
+
+RED: `node --test --test-name-pattern='registration is owned before first live snapshot' scripts/deploy-abbott.test.mjs` failed **4/4** before the implementation change. Retained `errored`, retained `waiting restart`, and start-error-with-matching-registration all failed with the ownership-review recovery error. The start-error-with-mismatched-registration fixture failed because the predecessor backup had been moved prematurely. The errored fixture returns successfully from start, separately from the explicit command-error fixtures.
+
+GREEN: the exact same command passed **4/4** after the change. All three matching scenarios cancel only candidate PM2 ID 13, restore the predecessor, verify APP and CURRENT SHA consistency, and complete subsequent inspect/rollback. The mismatched scenario records zero stop calls, no predecessor restart, and verifies that the sealed predecessor backup and original CURRENT record are preserved.
+
+Fresh final verification:
+
+- `node --test scripts/deploy-abbott.test.mjs`: **35/35 PASS**.
+- Authority/integration/Nginx/lint-config suite: **38/38 PASS**.
+- `npm run test:abbott-runtime`: **PASS**, including a fresh Abbott standalone build, **67 app/contract tests** and **245 control/artifact tests**; twelve exact Nginx routes plus one asset prefix still target only `127.0.0.1:3004`.
+- `npm run typecheck` and `npx tsc --noEmit -p apps/abbott/tsconfig.json`: **PASS**.
+- `npm run lint`: **PASS**, zero errors and the same ten existing warnings in unchanged source.
+- `bash -n scripts/deploy-abbott.sh scripts/rollback-abbott.sh scripts/deploy-runtime.sh`, `node --check` for both installers, launcher and ecosystem config, exact Nginx validation, and `git diff --check`: **PASS**.
+
+No production command ran. Commands in this revision were limited to local file/Git inspection, `apply_patch`, Node VM tests, local Next build, typechecks, lint, syntax/route validation, and the local commit. No SSH, SCP, deployment wrapper invocation with valid arguments, PM2 invocation/daemon, Nginx server edit/reload, production network deployment, push, release-branch creation, database operation, source API call, or secret operation occurred. The four new transitions use only the deterministic VM platform with test-owned temporary filesystem mappings and cleanup in `finally`; they do not contact PM2 or Linux `/proc`. Actual PM2/Linux integration remains unperformed and requires later authorization.
+
+Self-review checked the start-success/error join point, ownership capture before live snapshots, durable candidate release binding, safe PID-zero cancellation, live proof preservation, absence verification, refusal before predecessor movement on mismatch, and subsequent rollback usability. Scope is limited to the generic remote worker, its Abbott VM tests, and this appended report.
+
+Closure: Done — early-start registration ownership fixed and locally verified. Accepted — parent review pending. Reusable learning — a supervisor command error does not establish that registration creation failed. Skill action — TDD, review verification and verification-before-completion; no acceptance-learning update. Evidence — four RED/GREEN scenarios and fresh final checks above. Budget stop — none.

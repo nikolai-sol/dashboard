@@ -224,6 +224,12 @@ function fixture() {
       events.push(['start', control]);
       processRow = { name: 'dashboard-abbott', pid: ++serial, pm_id: serial, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'], uid: 'dashboard-abbott', gid: 'dashboard-abbott', RUNTIME_RELEASE_ID: path.basename(control), RUNTIME_RELEASE_SOURCE_SHA: fs.readFileSync(map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), status: 'online' } };
       startup = nextStartup; nextStartup = 'ready'; listening = startup === 'ready';
+      if (startup.startsWith('early:')) {
+        processRow.pid = 0;
+        processRow.pm2_env.status = startup === 'early:waiting restart' ? 'waiting restart' : 'errored';
+        if (startup === 'early:error mismatch') processRow.pm2_env.RUNTIME_RELEASE_ID = 'd'.repeat(32);
+        if (startup.startsWith('early:error ')) throw new Error('start returned error after registration');
+      }
     },
     async stop(pmId) {
       assert.equal(pmId, processRow.pm_id); events.push(['stop', pmId]);
@@ -287,6 +293,31 @@ for (const mode of ['delayed', 'timeout', 'fail', 'exited']) test(`candidate own
     assert.equal(restored.sourceSha, (mode === 'delayed' ? 'b' : 'a').repeat(40));
     assert.equal(f.installer.inspectActiveRuntime().sourceSha, restored.sourceSha);
     assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')), false);
+  } finally { f.cleanup(); }
+});
+
+for (const mode of ['early:errored', 'early:waiting restart', 'early:error matching', 'early:error mismatch']) test(`registration is owned before first live snapshot for ${mode}`, async () => {
+  const f = fixture();
+  try {
+    const first = await f.installer.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload('a'.repeat(40)) }, f.platform);
+    const second = await f.installer.transact({ action: 'deploy', expectedActiveSha: first.sourceSha, payload: f.payload('b'.repeat(40)) }, f.platform);
+    f.nextStartup(mode);
+    const operation = f.installer.transact({ action: 'deploy', expectedActiveSha: second.sourceSha, payload: f.payload('c'.repeat(40)) }, f.platform);
+    if (mode === 'early:error mismatch') {
+      await assert.rejects(operation, /ownership requires review/);
+      assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
+      assert.equal(f.events.filter(event => event[0] === 'start').length, 3);
+      assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${second.id}/.release-source-sha`), 'utf8').trim(), second.sourceSha, 'sealed predecessor remains recoverable');
+      assert.equal(JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json'), 'utf8')).id, second.id);
+      return;
+    }
+    await assert.rejects(operation, /attested predecessor restored/);
+    assert.ok(f.events.some(event => event[0] === 'stop' && event[1] === 13));
+    assert.equal(f.installer.inspectActiveRuntime().sourceSha, second.sourceSha);
+    assert.equal(fs.readFileSync(f.map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), second.sourceSha);
+    const rollback = await f.installer.transact({ action: 'rollback', expectedActiveSha: second.sourceSha }, f.platform);
+    assert.equal(rollback.sourceSha, first.sourceSha);
+    assert.equal(f.installer.inspectActiveRuntime().sourceSha, first.sourceSha);
   } finally { f.cleanup(); }
 });
 
