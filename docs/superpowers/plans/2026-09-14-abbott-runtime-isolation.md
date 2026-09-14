@@ -511,9 +511,9 @@ test("PDF renders the isolated Abbott page on port 3004", () => {
 
 Implement `buildAbbottDashboardUrl` with default `http://127.0.0.1:3004`, preserve `from`, `to`, `embed_key`, `pdf=true`, and the authorized export token, and reject a non-Abbott identifier before launching Chromium. Keep the current browser close in `finally` and current PDF dimensions/headers.
 
-- [ ] **Step 4: Extract only Abbott workbook sheets and assert privacy**
+- [ ] **Step 4: Preserve the current Abbott HTTP workbook output and assert privacy**
 
-Write fixture assertions for workbook sheet names, row counts, manager fields, embed omissions, dates, and numeric cells. Build the workbook from `projectAbbottDashboardData(await loadAbbottDashboardData(...), audience)`; do not import the generic Excel route or its advertising worksheet builders.
+First execute the current combined Excel handler against the existing Abbott fixture and record its semantic output: workbook sheet names, row counts, cell types, formulas, and whether the current handler emits any Abbott-specific rows. Reproduce exactly that output from `projectAbbottDashboardData(await loadAbbottDashboardData(...), audience)`; do not invent Abbott sheets or columns that the combined handler does not currently return, and do not import the generic Excel route or advertising worksheet builders. Separately keep the existing client-side XLSX downloads inside `AbbottBiDashboard` unchanged. Assert that embed output contains no manager-only values.
 
 Run:
 
