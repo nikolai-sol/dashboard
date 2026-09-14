@@ -43,6 +43,52 @@ node scripts/verify-abbott-nginx-routes.mjs deploy/abbott/nginx-routes.conf
 
 Expected: `python3` is available for descriptor-bound private output writes, zero failed tests, lint/typecheck/build exit `0`, the artifact gate exits `0`, and the final command reports `12 exact Abbott routes, 1 Abbott asset prefix, upstream 127.0.0.1:3004`.
 
+### First-runtime prerequisite checkpoint (review required; not executed)
+
+Read-only preflight on 2026-09-15 found no `dashboard-abbott` service account and no
+`/var/www/.dashboard-abbott-secrets/runtime.env`. The fixed deployer requires both.
+The bootstrap below is a separate code checkpoint and must receive its dedicated
+review before execution. It does not deploy a runtime or change routes.
+
+The source is fixed to the active combined runtime at `/var/www/dashboard/.env`:
+single-link regular file, UID `501`, GID `0`, mode `0600`; its parent is UID `501`,
+GID `0`, mode `0755`. The script also pins the observed combined source SHA,
+PID/start-time, kernel boot ID, cwd, and host name. A restart, release change,
+ownership change or symlink causes refusal and requires new read-only evidence
+and review. Never override these checks through arguments or environment.
+
+After dedicated bootstrap review and the clean-source/release-ref gates above:
+
+```bash
+node --test scripts/bootstrap-abbott-host.test.mjs
+node --check scripts/bootstrap-abbott-host.mjs
+test -z "$(git status --porcelain=v1)"
+ssh -o BatchMode=yes -o StrictHostKeyChecking=yes beget \
+  '/usr/bin/env -i /usr/bin/node --input-type=module' \
+  < scripts/bootstrap-abbott-host.mjs
+```
+
+Expected output is only `Abbott host prerequisites: created` or `unchanged`.
+The account/group is exactly `dashboard-abbott`, with no home creation and
+`/usr/sbin/nologin`. The root-only credential input directory remains root:root
+`0700`, and its file root:root `0600`, as required by the reviewed worker.
+Only existing Abbott allowlisted credential/config values are copied; source
+OAuth keys and unrelated settings are excluded. No password or secret is created
+or rotated. Existing input must byte-match, otherwise the script refuses without
+replacing it. A newly created group/account may remain after a later failure;
+repeat only after resolving and reviewing the failed prerequisite.
+
+The worker, unchanged, supplies `NODE_ENV=production`, `HOSTNAME=127.0.0.1`,
+`PORT=3004`, and `INTERNAL_BASE_URL=http://127.0.0.1:3004` when rendering the app
+`.env` as root:dashboard-abbott `0640`. These generated fields are deliberately
+absent from the root-only secret input. Database role/grant verification remains
+a separate deployment gate; bootstrap performs no database query or mutation.
+
+The current Nginx insertion instructions in section 7 are also blocked pending a
+separate reviewed fix: the live configuration has a composite `server_name` in
+both HTTP and TLS blocks, so its literal single-name needle does not match. Do not
+edit Nginx or run section 7 until that fix is reviewed.
+
 Create one private evidence directory and a bounded local SSH tunnel. The trap stops the task-owned SSH process on every ordinary shell exit.
 
 ```bash
