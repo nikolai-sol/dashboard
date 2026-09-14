@@ -524,7 +524,7 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
   if (dashboardType === "abbott_bi" && abbottBiData) {
     return (
       <main
-        data-dashboard-ready="true"
+        data-dashboard-ready={abbottEmptyMessage ? "false" : "true"}
         className={`mx-auto min-h-screen w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
         style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
       >

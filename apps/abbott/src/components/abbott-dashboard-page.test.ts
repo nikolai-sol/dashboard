@@ -181,6 +181,19 @@ test("month without completed days retains the empty state without signaling dat
   assert.equal(app.requests.length, 0);
 });
 
+test("loaded historical data followed by an empty current month does not signal readiness", async () => {
+  const historical = validData();
+  historical.dashboard.period = { from: "2026-07-01", to: "2026-07-31" };
+  const app = harness("abbott", "from=2026-07-01&to=2026-07-31", [{ status: 200, body: historical }], "2026-08-01T10:00:00Z");
+  assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
+  (app.find("AbbottDatePicker").props.onPresetChange as (preset: string) => void)("this_month");
+  const root = await app.flush();
+  assert.equal(app.requests.length, 1);
+  assert.equal(app.find("section").props.children, dateHelpers.ABBOTT_NO_COMPLETED_DAYS);
+  assert.equal(app.find("section").props.role, "status");
+  assert.equal(root.props["data-dashboard-ready"], "false");
+});
+
 test("initial future end date normalizes to the latest completed day and preserves URL flags", async () => {
   const app = harness("18", "from=2026-08-01&to=2026-08-15&embed_key=e&pdf=true&mobile=1", Array.from({ length: 2 }, () => ({ status: 200, body: validData() })));
   assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
