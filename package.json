@@ -27,11 +27,14 @@
     "access:set-shared-password": "tsx scripts/set-dashboard-shared-password.ts",
     "compare:advertising-read-model": "tsx scripts/compare-advertising-dashboard-read-model.ts",
     "preview-builder:test": "python3 scripts/copy_preview_tree_test.py && bash scripts/build-abbott-preview-release.test.sh",
-    "ci:verify": "npm run test:deploy-source && npm run test:release-runtime && npm run test:abbott-contract-wiring && npm run test:abbott-contract && npm run security:public-assets && npm run lint && npm run typecheck && npm run build && npm run preview-builder:test",
+    "ci:verify": "npm run test:deploy-source && npm run test:release-runtime && npm run test:abbott-runtime && npm run test:abbott-contract-wiring && npm run test:abbott-contract && npm run security:public-assets && npm run lint && npm run typecheck && npm run build && npm run preview-builder:test",
+    "test:abbott-runtime": "npm run build --workspace dashboard-abbott && node --import tsx --test \"apps/abbott/src/**/*.test.ts\" packages/runtime-contract/src/index.test.ts && node --test scripts/deploy-abbott.test.mjs scripts/verify-abbott-nginx-routes.test.mjs scripts/lint-runtime-config.test.mjs scripts/assert-abbott-artifact.test.mjs scripts/runtime-artifact-policy.test.mjs && node scripts/verify-abbott-nginx-routes.mjs deploy/abbott/nginx-routes.conf",
     "collect:yandex-webmaster": "bash scripts/collect-yandex-webmaster-canonical.sh --run-type cron",
     "db:migrate": "tsx src/db/run-migration.ts",
     "deploy": "bash scripts/deploy.sh",
-    "deploy:rollback": "bash scripts/rollback-release.sh"
+    "deploy:rollback": "bash scripts/rollback-release.sh",
+    "deploy:abbott": "bash scripts/deploy-abbott.sh",
+    "deploy:abbott:rollback": "bash scripts/rollback-abbott.sh"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "url": "git@github.com:nikolai-sol/dashboard.git",
+  "ref": "refs/heads/release/abbott",
+  "base": "8f389a28df1c4b741ec33b7538f0354b74f5a40e"
+}

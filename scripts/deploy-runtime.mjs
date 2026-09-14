@@ -1,0 +1,168 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { isDeepStrictEqual } from 'node:util';
+import { pathToFileURL } from 'node:url';
+import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs';
+import { assertRuntimeArtifact, verifyRuntimeArtifactBoot } from './runtime-artifact-policy.mjs';
+import { createRuntimeInstaller } from './runtime-release-remote.mjs';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const hash = value => createHash('sha256').update(value).digest('hex');
+const fail = message => { throw new Error(message); };
+const SOURCE = /^[a-f0-9]{40}$/;
+export const FORBIDDEN_ENV = Object.freeze([
+  'RUNTIME_SCOPE', 'APP_NAME', 'APP_PORT', 'APP_DIR', 'RELEASE_BRANCH', 'DEPLOY_LOCK_DIR',
+  'RELEASES_DIR', 'BACKUPS_DIR', 'RELEASE_ID', 'KEEP_BACKUPS', 'VPS', 'PUBLIC_APP_HOST', 'TARGET_BACKUP',
+  'DEPLOY_REMOTE', 'DEPLOY_BASE_BRANCH', 'DEPLOY_ACTIVE_RELEASE_READER', 'DASHBOARD_DEPLOY_LOCK_DIR',
+  'SSH_BIN', 'DEPLOY_SSH_BIN', 'GIT_SSH', 'GIT_SSH_COMMAND', 'RSYNC_RSH', 'REMOTE_ENV_PATH',
+  'TRUSTED_MANIFEST', 'TRUSTED_MANIFEST_PATH', 'NODE_OPTIONS', 'NODE_PATH', 'BASH_ENV', 'ENV',
+]);
+
+function regular(filename) {
+  const stat = fs.lstatSync(filename);
+  if (!stat.isFile() || stat.nlink !== 1 || fs.realpathSync(filename) !== filename) fail('Unsafe runtime control file');
+  return fs.readFileSync(filename);
+}
+
+export function validateAuthority(filename) {
+  const absolute = path.resolve(filename);
+  const expected = Object.values(RUNTIME_MANIFESTS).find(value => path.join(ROOT, 'deploy', value.scope, 'release.json') === absolute);
+  if (!expected || !isDeepStrictEqual(JSON.parse(regular(absolute)), expected)) fail('Invalid fixed runtime authority');
+  return expected;
+}
+
+export function validateInvocation(args, environment) {
+  for (const key of Object.keys(environment)) if (FORBIDDEN_ENV.includes(key) || key.startsWith('GIT_') && key !== 'GIT_PAGER') fail('Fixed runtime authority override rejected');
+  if (args.length !== 2 || !['deploy', 'rollback'].includes(args[1])) fail('Invalid fixed runtime invocation');
+  return { authority: validateAuthority(args[0]), action: args[1] };
+}
+
+function repositoryFor(authority) {
+  const record = JSON.parse(regular(path.join(ROOT, 'deploy', authority.scope, 'repository.json')));
+  if (Object.keys(record).sort().join(',') !== 'base,ref,url,version' || record.version !== 1 || record.url !== 'git@github.com:nikolai-sol/dashboard.git' || record.ref !== `refs/heads/${authority.releaseBranch}` || !SOURCE.test(record.base)) fail('Invalid fixed repository authority');
+  return record;
+}
+
+const gitEnv = { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' };
+function git(...args) {
+  return execFileSync('/usr/bin/git', ['--no-replace-objects', '-C', ROOT, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.sshCommand=/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv, timeout: 60000 }).trim();
+}
+
+export function verifySource(authority, repository, activeSha, approvedSha, runGit = git) {
+  if (runGit('status', '--porcelain', '--untracked-files=normal')) fail('Runtime source must be clean');
+  if (runGit('branch', '--show-current') !== authority.releaseBranch) fail('Runtime source must use the fixed release branch');
+  const sha = runGit('rev-parse', 'HEAD');
+  if (!SOURCE.test(sha) || approvedSha !== undefined && sha !== approvedSha) fail('Runtime candidate must exactly match the approved release ref');
+  for (const predecessor of [repository.base, ...(activeSha ? [activeSha] : [])]) {
+    if (!SOURCE.test(predecessor)) fail('Invalid runtime predecessor');
+    try { runGit('merge-base', '--is-ancestor', predecessor, sha); }
+    catch { fail('Runtime candidate does not contain its approved predecessor'); }
+  }
+  return sha;
+}
+
+function approvedSource(repository) {
+  // The literal URL/ref from clean tracked authority bypasses mutable remote names.
+  const result = git('ls-remote', '--exit-code', repository.url, repository.ref);
+  const match = /^([a-f0-9]{40})\t([^\n]+)$/.exec(result);
+  if (!match || match[2] !== repository.ref) fail('Fixed remote release ref unavailable');
+  return match[1];
+}
+
+function environmentFor(authority) {
+  const keys = JSON.parse(regular(path.join(ROOT, 'deploy', authority.scope, 'environment.json')));
+  if (!Array.isArray(keys) || keys.some(key => typeof key !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(key)) || new Set(keys).size !== keys.length) fail('Invalid runtime environment authority');
+  return keys;
+}
+
+export function preparePayload(authority, sourceSha) {
+  const scope = authority.scope;
+  const artifact = path.join(ROOT, `apps/${scope}/.next-${scope}/standalone`);
+  const manifestPath = path.join(ROOT, `apps/${scope}/.next-${scope}/trusted-runtime-manifest.json`);
+  const installer = createRuntimeInstaller(authority, environmentFor(authority));
+  const digest = regular(`${manifestPath}.sha256`).toString().trim();
+  const manifest = installer.readPinned(manifestPath, digest).toString();
+  const parsed = JSON.parse(manifest);
+  if (parsed.sourceSha !== sourceSha || parsed.scope !== scope) fail('External artifact authority does not match clean source/scope');
+  assertRuntimeArtifact(artifact, scope, manifestPath);
+  const control = new Map();
+  const authorityFile = name => {
+    installer.safeRelative(name);
+    control.set(name, { path: name, data: regular(path.join(ROOT, name)).toString('base64'), mode: 0o600 });
+  };
+  for (const name of ['scripts/runtime-artifact-policy.mjs', 'package-lock.json', `deploy/${scope}/ecosystem.config.cjs`, `deploy/${scope}/start.cjs`]) authorityFile(name);
+  const files = parsed.files.map(entry => {
+    installer.safeRelative(entry.path);
+    const filename = path.join(entry.required ? artifact : ROOT, entry.path);
+    const bytes = regular(filename);
+    if (bytes.length !== entry.size || hash(bytes) !== entry.sha256 || (fs.lstatSync(filename).mode & 0o777) !== entry.mode) fail('Artifact bytes changed after external authority generation');
+    if (path.basename(entry.path) === 'package.json' && entry.path !== `apps/${scope}/.next-${scope}/package.json`) authorityFile(entry.path);
+    return { path: entry.path, data: bytes.toString('base64'), mode: entry.mode };
+  });
+  installer.readPinned(manifestPath, digest);
+  return { scope, sourceSha, manifest, manifestDigest: digest, control: [...control.values()], files };
+}
+
+function prepareTransport(authority) {
+  // Capture the reviewed worker and profile once, then recheck the clean source
+  // before dispatch. Later filesystem edits cannot replace the transported code.
+  const worker = regular(path.join(ROOT, 'scripts/runtime-release-remote.mjs')).toString();
+  const environmentKeys = environmentFor(authority);
+  return function transfer(request) {
+  const input = Buffer.from(JSON.stringify(request));
+  if (input.length > 536870912) fail('Runtime payload too large');
+  const code = `${worker}\nawait createRuntimeInstaller(${JSON.stringify(authority)}, ${JSON.stringify(environmentKeys)}).remoteMain(${JSON.stringify(hash(input))});`;
+  const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  const command = `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`;
+  const result = spawnSync('/usr/bin/ssh', ['-C', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', command], { input, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', maxBuffer: 1048576, timeout: 300000 });
+  if (result.status !== 0 || result.signal || result.error || result.stderr) fail('Runtime remote transaction refused');
+  return JSON.parse(result.stdout);
+  };
+}
+
+function build(authority) {
+  if (process.getuid() === 0 || process.geteuid() === 0) fail('Runtime builds require an unprivileged account');
+  const environment = { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: os.homedir(), CI: '1', NEXT_TELEMETRY_DISABLED: '1' };
+  const npm = path.join(path.dirname(process.execPath), 'npm');
+  for (const args of [['ci'], ['run', `test:${authority.scope}-runtime`], ['run', 'verify:artifact', '--workspace', `dashboard-${authority.scope}`]]) execFileSync(npm, args, { cwd: ROOT, env: environment, stdio: ['ignore', 'ignore', 'pipe'], timeout: 600000 });
+}
+
+async function main() {
+  const { authority, action } = validateInvocation(process.argv.slice(2), process.env);
+  if (process.getuid() === 0 || process.geteuid() === 0) fail('Local runtime authority requires an unprivileged account');
+  const repository = repositoryFor(authority);
+  const candidate = verifySource(authority, repository);
+  const approved = approvedSource(repository);
+  const transfer = prepareTransport(authority);
+  verifySource(authority, repository, undefined, approved);
+  const active = transfer({ action: 'inspect' });
+  verifySource(authority, repository, active?.sourceSha, approved);
+  if (action === 'rollback') {
+    // Only the sealed active record chooses its predecessor; callers cannot.
+    if (approvedSource(repository) !== candidate) fail('Runtime release authority changed before rollback');
+    verifySource(authority, repository, active?.sourceSha, candidate);
+    validateAuthority(process.argv[2]);
+    const result = transfer({ action, expectedActiveSha: active?.sourceSha ?? null });
+    if (result.scope !== authority.scope || !SOURCE.test(result.sourceSha)) fail('Runtime rollback attestation mismatch');
+    console.log(`Runtime rollback attested: ${result.sourceSha}`);
+    return;
+  }
+  build(authority);
+  const artifact = path.join(ROOT, `apps/${authority.scope}/.next-${authority.scope}/standalone`);
+  const manifest = path.join(ROOT, `apps/${authority.scope}/.next-${authority.scope}/trusted-runtime-manifest.json`);
+  await verifyRuntimeArtifactBoot(artifact, authority.scope, { trustedManifestPath: manifest });
+  const payload = preparePayload(authority, candidate);
+  const latest = transfer({ action: 'inspect' });
+  if (approvedSource(repository) !== candidate || verifySource(authority, repository, latest?.sourceSha, candidate) !== candidate) fail('Runtime release authority changed during build');
+  validateAuthority(process.argv[2]);
+  const result = transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload, binding: { sourceSha: candidate, runId: randomUUID() } });
+  if (result.scope !== authority.scope || result.sourceSha !== candidate || result.manifestDigest !== payload.manifestDigest) fail('Runtime activation attestation mismatch');
+  console.log(`Runtime release attested: ${candidate}`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch(() => { process.stderr.write('Refusing fixed runtime operation\n'); process.exitCode = 1; });
+}

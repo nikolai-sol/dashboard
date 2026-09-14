@@ -4,7 +4,11 @@ import test from "node:test";
 
 test("Abbott build and dev use app-local Webpack discovery", () => {
   const manifest = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
-  assert.equal(manifest.scripts.build, "next build --webpack");
+  assert.deepEqual(manifest.scripts.build.split(" && "), [
+    "next build --webpack",
+    "node ../../scripts/runtime-artifact-policy.mjs --prepare abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json",
+    "node ../../scripts/runtime-artifact-policy.mjs --stamp abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json",
+  ]);
   assert.equal(manifest.scripts.dev, "next dev --webpack");
 });
 
