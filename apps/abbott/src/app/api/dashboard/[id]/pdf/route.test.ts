@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { format } from "node:util";
 import test, { mock } from "node:test";
 import { verifyViewerSession } from "@/lib/access-auth";
 import { buildAbbottDashboardUrl, createAuthorizedViewerExportToken, createAbbottPdfHandler } from "../../../../../lib/abbott-pdf-handler";
@@ -38,11 +39,11 @@ test("export token retains validated manager credential version and embed audien
   assert.equal(createAuthorizedViewerExportToken({...access(),context:{...context,auth_mode:"public"}}),undefined);
 });
 
-function browserFixture(failAt?: string) {
+function browserFixture(failAt?: string, failure: unknown = new Error("private browser failure")) {
   const calls: Array<[string, unknown]> = [];
   const step = (name:string) => async (...args: unknown[]) => {
     calls.push([name,args]);
-    if(failAt===name)throw new Error("private browser failure");
+    if(failAt===name)throw failure;
     return name==="pdf"?new Uint8Array([37,80,68,70]):undefined;
   };
   const page = {setViewport:step("setViewport"),emulateMediaType:step("emulateMediaType"),goto:step("goto"),
@@ -105,5 +106,51 @@ test("foreign alias or identity and unauthorized access reject before Chromium l
     const response=await handler(new Request("https://example.test"),{params:{id:"18"}});
     assert.equal(response.status,status);
     assert.equal(response.headers.get("cache-control"),"private, no-store");
+  }
+});
+
+test("navigation and generation failures log only bounded diagnostics and still close the browser", async (t) => {
+  const logs: unknown[][] = [];
+  const errorLog = mock.method(console, "error", (...args: unknown[]) => { logs.push(args); });
+  t.after(() => errorLog.mock.restore());
+  const signedToken = createAuthorizedViewerExportToken(access())!;
+  const incomingToken = "incoming-private-access-token";
+  const embedKey = "private-embed-credential";
+  const credentialUrl = `http://127.0.0.1:3004/dashboard/18?access_token=${signedToken}&embed_key=${embedKey}`;
+  const incomingUrl = `https://example.test/pdf?access_token=${incomingToken}&embed_key=${embedKey}`;
+  const failure = new Error(`Navigation failed at ${credentialUrl}`);
+  failure.stack = `Error: ${credentialUrl}\n    at navigation (${incomingUrl})`;
+  // Even normally diagnostic-looking name/code properties are untrusted.
+  failure.name = credentialUrl;
+  Object.assign(failure, {
+    code: incomingUrl,
+    cause: new Error(`Nested failure at ${credentialUrl}; request ${incomingUrl}`),
+  });
+
+  for (const [stage, diagnosticStage] of [["goto", "navigate"], ["pdf", "render"]] as const) {
+    logs.length = 0;
+    const fixture = browserFixture(stage, failure);
+    const handler = createAbbottPdfHandler({
+      authorize: async () => access(),
+      launch: fixture.launch as never,
+      wait: async () => undefined,
+    });
+    const response = await handler(new Request(incomingUrl, {
+      headers: { authorization: "Bearer private-auth-header", cookie: "private-session-cookie" },
+    }), { params: { id: "18" } });
+
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+    assert.deepEqual(await response.json(), { error: "PDF generation failed" });
+    assert.equal(fixture.calls.filter(([name]) => name === "close").length, 1);
+    const output = logs.map((args) => format(...args)).join("\n");
+    for (const secret of [signedToken, incomingToken, embedKey, "private-auth-header", "private-session-cookie"]) {
+      assert.equal(output.includes(secret), false, "console output must not include credentials");
+    }
+    assert.doesNotMatch(output, /access_token|embed_key|https?:\/\//);
+    assert.deepEqual(logs, [["Abbott PDF generation failed", {
+      stage: diagnosticStage,
+      error_class: "Error",
+    }]]);
   }
 });

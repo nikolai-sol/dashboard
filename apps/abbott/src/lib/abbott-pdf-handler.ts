@@ -70,6 +70,7 @@ export function createAbbottPdfHandler(overrides: Partial<{
     context: { params: Promise<{ id: string }> | { id: string } },
   ) {
     let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+    let stage: "authorize" | "launch" | "prepare" | "navigate" | "ready" | "render" = "authorize";
 
     try {
       const { id } = await Promise.resolve(context.params);
@@ -90,6 +91,7 @@ export function createAbbottPdfHandler(overrides: Partial<{
       );
       const filenameDate = new Date().toISOString().slice(0, 10);
 
+      stage = "launch";
       browser = await launch({
         headless: true,
         args: [
@@ -100,13 +102,16 @@ export function createAbbottPdfHandler(overrides: Partial<{
         ],
       });
 
+      stage = "prepare";
       const page = await browser.newPage();
       await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
       await page.emulateMediaType("print");
+      stage = "navigate";
       await page.goto(dashboardUrl, {
         waitUntil: "networkidle0",
         timeout: 30000,
       });
+      stage = "ready";
       await page.waitForSelector("[data-dashboard-ready='true']", { timeout: 30000 });
       await page.evaluate(async () => {
         if ("fonts" in document) {
@@ -116,6 +121,7 @@ export function createAbbottPdfHandler(overrides: Partial<{
       await wait(1200);
 
       const generatedLabel = new Intl.DateTimeFormat("ru-RU").format(new Date());
+      stage = "render";
       const pdfBuffer = await page.pdf({
         format: "A4",
         landscape: true,
@@ -148,7 +154,12 @@ export function createAbbottPdfHandler(overrides: Partial<{
         },
       });
     } catch (error) {
-      console.error("PDF generation error:", error);
+      // Browser errors can contain credential-bearing URLs in message, stack,
+      // cause, name, or code. Only locally defined diagnostic labels are safe.
+      console.error("Abbott PDF generation failed", {
+        stage,
+        error_class: error instanceof Error ? "Error" : "NonError",
+      });
       return privateJson(
         { error: "PDF generation failed" },
         { status: 500 },
