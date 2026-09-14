@@ -2,4 +2,8 @@ import { createAbbottJsonHandler } from "../../../../lib/abbott-json-handler";
 
 export const dynamic = "force-dynamic";
 
-export const GET = createAbbottJsonHandler();
+const handleGet = createAbbottJsonHandler();
+
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  return handleGet(request, context);
+}
