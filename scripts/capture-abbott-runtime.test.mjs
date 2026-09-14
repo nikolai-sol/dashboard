@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import * as parityTool from "./compare-abbott-runtime.mjs";
+import * as captureTool from "./capture-abbott-runtime.mjs";
 import { formatSafeCliFailure } from "./compare-abbott-runtime.mjs";
 
 import {
@@ -20,6 +21,67 @@ import {
   runCaptureLifecycle,
   validateCaptureLocations,
 } from "./capture-abbott-runtime.mjs";
+
+function captureTokenFixture(overrides = {}) {
+  return `${Buffer.from(JSON.stringify({ type: "viewer", dashboard_id: 18, audience: "manager", credential_version: 1, exp: Math.floor(Date.now() / 1000) + 600, ...overrides })).toString("base64url")}.${"a".repeat(43)}`;
+}
+
+test("token capture blocks redirects and off-origin requests before credentials can escape", async () => {
+  assert.equal(typeof captureTool.guardCaptureRequests, "function");
+  for (const [url, redirects, allowed] of [["http://127.0.0.1:3004/dashboard/18", [], true], ["https://example.invalid/", [], false], ["http://127.0.0.1:3001/", [], false], ["http://127.0.0.1:3004/dashboard/18", [{}], false]]) {
+    let handler, intercepted = false, continued = 0, aborted = 0;
+    const page = { setRequestInterception: async value => { intercepted = value; }, on: (event, callback) => { assert.equal(event, "request"); handler = callback; } };
+    const guard = await captureTool.guardCaptureRequests(page, "http://127.0.0.1:3004");
+    await handler({ url: () => url, redirectChain: () => redirects, continue: async () => { continued += 1; }, abort: async () => { aborted += 1; } });
+    assert.equal(intercepted, true);
+    assert.equal(continued, allowed ? 1 : 0);
+    assert.equal(aborted, allowed ? 0 : 1);
+    if (allowed) guard.assertSafe(); else assert.throws(() => guard.assertSafe(), /CAPTURE_REQUEST_BOUNDARY/);
+  }
+});
+
+test("token capture authorizes both ports without login and cleans private output on expired server response", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "abbott-token-capture-"));
+  const baseline = path.join(root, "baseline"), outputParent = path.join(root, "output");
+  await mkdir(baseline, { mode: 0o700 }); await mkdir(outputParent, { mode: 0o700 });
+  for (const item of buildCapturePlan(["users_summary", "user_actions", "page_stats", "returning", "general_materials"])) await writeFile(path.join(baseline, item.filename), "fixture");
+  const token = captureTokenFixture(); let launches = 0; const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    requests.push({ url: String(url), options });
+    return new URL(url).port === "3001" ? new Response(JSON.stringify({ user_ids: [] })) : new Response("expired", { status: 401 });
+  });
+  try {
+    await assert.rejects(captureTool.captureAbbottRuntime({ loginBase: "http://127.0.0.1:3001", candidateBase: "http://127.0.0.1:3004", baseline, outputParent, managerAccessToken: token, launch: async () => { launches += 1; } }), error => !String(error).includes(token));
+    assert.deepEqual(requests.map(r => new URL(r.url).port), ["3001", "3004"]);
+    assert.ok(requests.every(r => r.options.method === "GET" && !r.url.includes(token)));
+    assert.equal(launches, 0);
+    assert.deepEqual(await readdir(outputParent), []);
+  } finally { await rm(root, { recursive: true }); }
+});
+
+test("token browser failure closes the owned browser and removes output without token diagnostics", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "abbott-token-cleanup-"));
+  const baseline = path.join(root, "baseline"), outputParent = path.join(root, "output");
+  await mkdir(baseline, { mode: 0o700 }); await mkdir(outputParent, { mode: 0o700 });
+  for (const item of buildCapturePlan(["users_summary", "user_actions", "page_stats", "returning", "general_materials"])) await writeFile(path.join(baseline, item.filename), "fixture");
+  const token = captureTokenFixture(); let closed = false, screenshot = false;
+  t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ user_ids: [] })));
+  const page = {
+    setRequestInterception: async () => undefined, on: () => undefined,
+    setBypassServiceWorker: async () => undefined, setViewport: async () => undefined,
+    setCookie: async cookie => { assert.equal(cookie.value, token); },
+    goto: async () => { throw Error(token); },
+    screenshot: async () => { screenshot = true; },
+  };
+  try {
+    const error = await captureTool.captureAbbottRuntime({ loginBase: "http://127.0.0.1:3001", candidateBase: "http://127.0.0.1:3004", baseline, outputParent, managerAccessToken: token, launch: async () => ({ newPage: async () => page, close: async () => { closed = true; } }) }).catch(error => error);
+    assert.equal(formatSafeCliFailure(error, "ABBOTT_CAPTURE"), "ABBOTT_CAPTURE_FAILED stage=CAPTURE_BROWSER_CAPTURE\n");
+    assert.ok(!String(error).includes(token));
+    assert.equal(closed, true);
+    assert.equal(screenshot, false);
+    assert.deepEqual(await readdir(outputParent), []);
+  } finally { await rm(root, { recursive: true }); }
+});
 
 test("capture plan always includes five desktop tabs and one CSS 390x844 mobile capture", () => {
   assert.deepEqual(buildCapturePlan([

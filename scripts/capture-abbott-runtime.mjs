@@ -12,7 +12,7 @@ import {
   cleanupPrivateOutputDirectory,
   createPrivateOutputDirectory,
   formatSafeCliFailure,
-  obtainManagerToken,
+  resolveManagerToken,
   readCredentialFd,
   releasePrivateOutputDirectory,
   runSafeStage,
@@ -402,15 +402,38 @@ async function writeIndex(outputDirectory, index) {
   return writePrivateExclusiveFile(outputDirectory, "parity-index.json", text);
 }
 
-export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, launch }) {
+export async function guardCaptureRequests(page, candidateBase) {
+  const origin = assertRuntimeBaseUrl(candidateBase, 3004);
+  let violated = false;
+  await page.setRequestInterception(true);
+  page.on("request", async (request) => {
+    try {
+      const url = new URL(request.url());
+      if (url.origin !== origin || url.username || url.password || request.redirectChain().length !== 0) {
+        violated = true;
+        await request.abort();
+      } else await request.continue();
+    } catch {
+      violated = true;
+      await request.abort().catch(() => undefined);
+    }
+  });
+  return { assertSafe() { if (violated) throw new SafeStageError("CAPTURE_REQUEST_BOUNDARY"); } };
+}
+
+export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, managerAccessToken, launch }) {
+  assertRuntimeBaseUrl(loginBase, 3001);
+  assertRuntimeBaseUrl(candidateBase, 3004);
   const locations = await validateCaptureLocations({ baseline, outputParent });
   return runCaptureLifecycle({
     createOutput: () => createPrivateCandidateDirectory(locations.outputParent),
-    authorize: () => obtainManagerToken(loginBase, managerPassword),
+    authorize: () => resolveManagerToken(loginBase, candidateBase, { managerPassword, managerAccessToken }),
     launch,
     capture: async ({ browser, authorization: managerToken, outputDirectory }) => {
       const consoleCounts = { errors: 0, warnings: 0 };
       const page = await browser.newPage();
+      const boundary = await guardCaptureRequests(page, candidateBase);
+      await page.setBypassServiceWorker(true);
       page.on("console", (message) => {
         if (message.type() === "error") consoleCounts.errors += 1;
         if (message.type() === "warning" || message.type() === "warn") consoleCounts.warnings += 1;
@@ -424,6 +447,7 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
         sameSite: "Lax",
       });
       await page.goto(buildCaptureUrl(candidateBase).href, { waitUntil: "networkidle0", timeout: 120_000 });
+      boundary.assertSafe();
       await waitForStableDashboard(page);
       const visibleTabs = await listVisibleTabs(page);
       const missing = REQUIRED_DESKTOP_TABS.filter((tab) => !visibleTabs.includes(tab));
@@ -443,7 +467,9 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
         if (cssViewport.width !== item.viewport.width || cssViewport.height !== item.viewport.height) {
           throw new Error(`Browser did not apply the required CSS viewport for ${item.tab}`);
         }
+        boundary.assertSafe();
         const candidateBytes = Buffer.from(await page.screenshot({ fullPage: true, type: "png" }));
+        boundary.assertSafe();
         await writePrivateExclusiveFile(outputDirectory, item.filename, candidateBytes);
         const baselinePath = path.join(locations.baseline, item.filename);
         const baselineExists = await stat(baselinePath).then((entry) => entry.isFile()).catch(() => false);
@@ -454,6 +480,7 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
           comparison: baselineExists ? await visualComparison(baselinePath, candidateBytes) : null,
         });
       }
+      boundary.assertSafe();
       return { visibleTabs, results, consoleCounts };
     },
     writeIndex: async ({ captureResult, browserOwnership, outputDirectory }) => {
@@ -497,7 +524,7 @@ async function main() {
     loginBase: assertRuntimeBaseUrl(options.login, 3001),
     candidateBase: assertRuntimeBaseUrl(options.candidate, 3004),
   }));
-  const { managerPassword } = await runSafeStage("CREDENTIAL_INPUT", () => readCredentialFd(options.credentialsFd));
+  const { managerPassword, managerAccessToken } = await runSafeStage("CREDENTIAL_INPUT", () => readCredentialFd(options.credentialsFd));
   const puppeteer = await runSafeStage("BROWSER_LIBRARY", async () => (await import("puppeteer")).default);
   const result = await runSafeStage("CAPTURE_EXECUTION", () => captureAbbottRuntime({
     loginBase,
@@ -505,6 +532,7 @@ async function main() {
     baseline: options.baseline,
     outputParent: options.outputParent,
     managerPassword,
+    managerAccessToken,
     launch: () => puppeteer.launch({ headless: true }),
   }));
   process.stdout.write(`captures=${result.index.captures.length} errors=${result.index.console.errors} index=created\n`);

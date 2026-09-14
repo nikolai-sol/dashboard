@@ -2,7 +2,7 @@
 
 This runbook moves only Abbott's exact public routes from the combined runtime on `127.0.0.1:3001` to the already-reviewed isolated runtime on `127.0.0.1:3004`. It does not migrate data, rotate credentials, change collectors or cron, or restart another dashboard runtime. The parity period is fixed at `2026-09-01..2026-09-13`.
 
-Run the local commands from the reviewed isolated-runtime worktree as an unprivileged account. Run the server commands only through the established `beget` SSH alias. Stop on the first failure. Never put a password, access token, embed key, cookie, or authorized URL in shell arguments, environment variables, files, screenshots of browser chrome, or chat. The credential prompts below use shell memory and a pipe only; they do not echo input.
+Run the local commands from the reviewed isolated-runtime worktree as an unprivileged account. Run the server commands only through the established `beget` SSH alias. Stop on the first failure. Never put a password, access token, embed key, cookie, or authorized URL in shell arguments, environment variables, files, screenshots of browser chrome, or chat. Credentials must arrive through the approved ephemeral host issuer and a direct stdin pipe only.
 
 ## 1. Verify the clean reviewed commit
 
@@ -43,12 +43,12 @@ node scripts/verify-abbott-nginx-routes.mjs deploy/abbott/nginx-routes.conf
 
 Expected: `python3` is available for descriptor-bound private output writes, zero failed tests, lint/typecheck/build exit `0`, the artifact gate exits `0`, and the final command reports `12 exact Abbott routes, 1 Abbott asset prefix, upstream 127.0.0.1:3004`.
 
-### First-runtime prerequisite checkpoint (review required; not executed)
+### First-runtime prerequisite checkpoint (reviewed and executed)
 
 Read-only preflight on 2026-09-15 found no `dashboard-abbott` service account and no
 `/var/www/.dashboard-abbott-secrets/runtime.env`. The fixed deployer requires both.
-The bootstrap below is a separate code checkpoint and must receive its dedicated
-review before execution. It does not deploy a runtime or change routes.
+The bootstrap received its dedicated review and was executed from `f80607f` on
+2026-09-15 (operator local date), returning `created`. It did not change routes.
 
 The source is fixed to the active combined runtime at `/var/www/dashboard/.env`:
 single-link regular file, UID `501`, GID `0`, mode `0600`; its parent is UID `501`,
@@ -154,20 +154,44 @@ test "$(curl --fail --silent --show-error http://127.0.0.1:3004/api/health)" = \
   '{"ok":true,"scope":"abbott","database":"connected"}'
 ```
 
-## 4. Obtain ephemeral authorization and compare ports
+## 4. Obtain ephemeral authorization and compare ports — token review checkpoint
 
-At each prompt, type into the local terminal only. Do not paste credentials into chat. The two newline-delimited values go directly to file descriptor `0`; the scripts reject more than two non-empty lines and never persist them.
+**Paused for focused review. Do not run live parity or mint credentials until the
+stdin token tooling is approved. No plaintext or legacy password fallback is
+authorized for this operation.**
+
+The new stdin frame is three LF-delimited lines: the literal mode name
+`manager_access_token`, the short-lived signed manager session, and the existing
+embed key. One final LF is permitted. CR, controls, empty fields, extra lines,
+invalid UTF-8, and input exceeding 65,536 bytes are rejected. Only descriptor 0
+backed by a pipe/socket is accepted; no credential file, alternate descriptor,
+argument, or environment input is supported. Input buffers are cleared after
+parsing. The older two-line protocol remains available for separately authorized
+interactive use, but is not part of this production operation.
+
+After approval, the issuer must run only on `beget`, read the existing root-only
+Abbott input into memory, read the current dashboard 18 DB credential version
+without mutation, and call the existing `createSignedSession` signing code with
+`type=viewer`, `dashboard_id=18`, `audience=manager`, that credential version, and
+an expiry 600 seconds ahead. The consumer rejects expired tokens or expiry more
+than 900 seconds ahead. Pipe its output directly into the relevant CLI; never
+save, echo, log, pass in argv/env, or send the credentials to chat. The exact
+host-side issuer transport still requires verification before execution; do not
+substitute copied signing logic or inspect the legacy plaintext password.
+
+The consumer's envelope checks do not verify a signature. Both live runtimes
+must independently accept the session/current version through a read-only
+manager-only administrator-list GET before comparison or browser launch.
+Requests use the manager cookie in memory, never a manager token URL, and refuse
+redirects. Capture additionally intercepts requests before setting the cookie,
+permits only the literal candidate loopback origin, rejects redirect chains,
+bypasses service workers, and removes partial output on failure.
+
+The consumer command below is a reference, not a complete runnable pipeline until
+the exact issuer transport is verified. Connect only its protected pipe to stdin.
 
 ```bash
-{
-  printf 'Abbott manager password: ' >/dev/tty
-  IFS= read -r -s manager_password </dev/tty
-  printf '\nAbbott embed key: ' >/dev/tty
-  IFS= read -r -s embed_key </dev/tty
-  printf '\n' >/dev/tty
-  printf '%s\n%s\n' "$manager_password" "$embed_key"
-  unset manager_password embed_key
-} | node scripts/compare-abbott-runtime.mjs \
+node scripts/compare-abbott-runtime.mjs \
   --reference http://127.0.0.1:3001 \
   --candidate http://127.0.0.1:3004 \
   --output-parent "$EVIDENCE_PARENT"
@@ -186,18 +210,14 @@ A mismatch exits `1` and reports only redacted paths. Payload totals use order-i
 
 ## 5. Capture and compare the private visual candidate
 
+For the current operation, use the reviewed stdin token frame from section 4.
+Mint a fresh short-lived session for this
+separate capture only after the focused token checkpoint is approved.
+
 This captures the five baseline desktop tabs at CSS width `1440`, the users-summary tab at CSS `390x844`, and every conditional tab that is truthfully visible. The mobile device scale is exactly `800/390`, preserving the baseline's `800`-pixel raster width without changing the CSS viewport; the index records both CSS and raster dimensions. It waits for dashboard readiness, fonts, and chart animation settlement. Its private candidate directory is retained by directory identity and all files are created relative to that descriptor. On failure the retained inode is cleaned without following a replacement path. Browser close has a short deadline and falls back only to the exact recorded Chromium PID on failure, timeout, or signal cancellation.
 
 ```bash
-{
-  printf 'Abbott manager password: ' >/dev/tty
-  IFS= read -r -s manager_password </dev/tty
-  printf '\nAbbott embed key: ' >/dev/tty
-  IFS= read -r -s embed_key </dev/tty
-  printf '\n' >/dev/tty
-  printf '%s\n%s\n' "$manager_password" "$embed_key"
-  unset manager_password embed_key
-} | node scripts/capture-abbott-runtime.mjs \
+node scripts/capture-abbott-runtime.mjs \
   --login http://127.0.0.1:3001 \
   --candidate http://127.0.0.1:3004 \
   --baseline "$BASELINE" \

@@ -1,7 +1,10 @@
-# Abbott Task 9 — local gates and bootstrap review checkpoint
+# Abbott Task 9 — shadow deployment and token-tooling review checkpoint
 
-Status: DONE_WITH_CONCERNS for the explicitly requested bootstrap code checkpoint.
-Task 9 production release/cutover is not complete. Bootstrap has not been executed.
+Status: DONE_WITH_CONCERNS at the requested stdin-token tooling review checkpoint.
+Reviewed bootstrap and shadow deployment succeeded. Public routing is unchanged;
+live parity, six-image comparison and cutover are not complete. Earlier sections
+are chronological checkpoint history, superseded by the final execution section
+where they state that bootstrap/deploy had not occurred.
 
 ## Scope and authorization
 
@@ -283,3 +286,137 @@ pass. Root/Abbott typechecks, full lint, syntax, artifact verification and diff
 checks pass; the same ten pre-existing lint warnings remain. No bootstrap,
 production mutation, push or deployment occurred. Final checkpoint re-review is
 still required before execution.
+
+## Approved bootstrap and shadow execution — 2026-09-15 local date
+
+The parent approved `f80607fbc8a693aa2c720b0976938e88732cdf1a` and authorized
+bootstrap, the two Abbott refs, and fixed shadow deployment, but no Nginx change.
+The exact reviewed bootstrap was piped to `beget` under an empty environment.
+Its immediately repeated fixed host/process/source/parser proof passed, and its
+only output was `Abbott host prerequisites: created`.
+
+Post-bootstrap metadata: `dashboard-abbott` UID 982/GID 984, supplemental group
+984 only, home field `/nonexistent` (absent), shell `/usr/sbin/nologin`.
+`/var/www/.dashboard-abbott-secrets` is root:root `0700`, and `runtime.env` is
+root:root `0600`, single-link regular file. Only existing effective allowlisted
+values were copied. No secret/password was generated or rotated, and no values
+were printed. Neighbors and the exact Nginx hash below stayed unchanged.
+
+Fresh clean-tree local gate at `f80607f`: `npm ci` passed; comparator/capture
+34 tests, app/runtime 67 tests, bootstrap/authority/artifact 266 tests, contract
+111 tests all passed (478 total). Contract wiring, public-asset safety, root and
+Abbott typechecks, full lint, explicit build/artifact, fixed Nginx fragment and
+diff checks passed. Lint retains 10 existing warnings and zero errors. The
+unchanged dependency audit reports 35 vulnerabilities; no audit fix was applied.
+
+Ordinary non-force pushes published only:
+
+- `refs/heads/codex/abbott-runtime-isolation`
+- `refs/heads/release/abbott`
+
+Both literal remote SHAs were verified as
+`f80607fbc8a693aa2c720b0976938e88732cdf1a` using isolated Git authority lookup.
+No other ref was pushed. The token-tooling checkpoint commit is local only.
+
+Read-only DB checks used the existing host Python MySQL connector, not a new
+package. The exact active roles match `abbott_embed_reader_role` and
+`abbott_runtime_reader_role`; MySQL quotes its role representation, which was
+normalized before comparison. Embed has no direct private-schema or mutation
+grant and its private visit-table zero-row SELECT is denied. Manager's private
+visit-table zero-row read succeeds. No SQL write, grant, migration, raw row,
+password/hash, or source-key output occurred.
+
+### Shadow release and final process evidence
+
+Only `npm run deploy:abbott` installed and started the shadow. It returned
+`Runtime release attested: f80607fbc8a693aa2c720b0976938e88732cdf1a`.
+
+- Release ID: `6cd2f12e245a47dcbd5f6ce928c4ed83`; `previousId` is null.
+- Active path: `/var/www/dashboard-abbott`; cwd: its `apps/abbott` directory.
+- PM2 ID 5, PID 542693, online; kernel UID `[982,982,982,982]` and GID
+  `[984,984,984,984]` match the dedicated service identity.
+- Its sole kernel-attested listening socket is loopback port 3004, no public bind.
+- Direct health: HTTP 200, `{"ok":true,"scope":"abbott","database":"connected"}`.
+- Rendered root `.env`: root:GID984 `0640`, single-link regular file; generated
+  NODE_ENV/HOSTNAME/PORT/INTERNAL_BASE_URL match the fixed worker values. No
+  rendered value was printed.
+- Root-only current and immutable record agree; trusted manifest digest is
+  `7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f`.
+  All 2,884 active files are root-owned and not group/world-writable; the active
+  tree contains no symlinks.
+
+Neighbor before/after bootstrap, after deploy, and final checks are identical:
+
+| Process | PM2 ID | PID | Release evidence |
+| --- | --- | --- | --- |
+| dashboard-next | 1 | 3722244 | `/var/www/dashboard`, source `8f389a28df1c4b741ec33b7538f0354b74f5a40e` |
+| dashboard-zaruku | 2 | 791065 | `/var/www/dashboard-zaruku/apps/zaruku`, root source `af1948c8b9a0f70d8696afb9c8abc254408a5daa` |
+| dashboard-medroche | 4 | 1870897 | `/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone/apps/site-seo` |
+
+The initial post-deploy metadata probe lacked HOME and attached to the already
+existing `/etc/.pm2` namespace. Its daemon PID 2463804 and pid-file timestamp
+2026-09-09 were verified as pre-existing, not task-owned, and preserved. Corrected
+checks asserted root PM2 home and existing daemon PID 1316 before reading the
+expected list. No extra PM2 daemon was created or stopped.
+
+Nginx config remains byte-identical SHA-256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+Backup identifier: none, because no Nginx edit/test/reload or route switch was
+performed in this execution. The composite TLS/HTTP server-name mismatch remains
+pending its separate reviewed structural fix. Public routes stay on port 3001.
+
+### Stdin token tooling checkpoint (local only, not used live)
+
+The parent prohibited inspecting/using any legacy plaintext manager password and
+requested a new reviewed `manager_access_token` stdin mode. No legacy password
+was read and no manager token/embed credential was generated or transported for
+parity. The root-only runtime input intentionally excludes manager passwords.
+
+TDD RED: three-line frame rejected; token resolver absent; regular file-backed
+stdin accepted; capture attempted login instead of checking both runtime manager
+endpoints. GREEN: token framing and 65,536-byte boundary, pipe-only stdin, invalid
+encoding/control/frame rejection, short expiry/version envelope, wrong audience/
+dashboard/type rejection, both-port read-only authorization, redirect/server
+rejection sanitization, no manager token URLs, redacted report output, capture
+off-origin/redirect guard, and partial-output cleanup all pass. Existing browser
+PID/signal cleanup regressions remain passing.
+
+The consumer does not claim to verify signatures locally: each runtime verifies
+the supplied signature/version on a manager-only GET before use. Browser requests
+are intercepted before cookie installation, restricted to candidate loopback,
+and redirects rejected. No token appears in report/index metadata. Input buffers
+are cleared; JavaScript strings remain memory-only until process exit.
+
+Live issuance must use existing `createSignedSession` code on the authorized host,
+the existing signing secret and a SELECT-only current DB credential version, with
+manager audience and a 600-second expiry. The exact issuer transport has not been
+executed and remains a verification prerequisite after consumer review.
+
+Fresh token checkpoint verification: comparator/capture 44 tests, app/runtime 67,
+bootstrap/authority/artifact 266, contract 111 (488 total), all zero failures.
+Contract wiring, public assets, root/Abbott typechecks, full lint, syntax, build,
+explicit artifact verification and diff checks pass. Same 10 existing lint
+warnings, zero errors. Artifact scan: 2,870 files, 82 text files.
+
+### Remaining gates and rollback
+
+- Data/Excel/PDF/admin-read/privacy parity: not run; paused for token review.
+- Six-image candidate dimensions/diff: not run; baseline remains untouched at
+  `/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026-09-14`.
+  No candidate/evidence directory was created.
+- Browser/tunnel cleanup: no browser or SSH forwarding session was launched.
+  Foreground SSH diagnostics and deploy child completed; no temporary credential
+  files were created. Abbott is the intended persistent shadow.
+- Post-cutover public smoke: not applicable, no cutover. Shadow health and final
+  neighbor/release/Nginx checks passed as documented above.
+- Route rollback target: combined port 3001 and unchanged source
+  `8f389a28df1c4b741ec33b7538f0354b74f5a40e`. No preceding isolated release exists,
+  so isolated rollback cannot select a predecessor yet. Do not execute a live
+  rollback or modify public routes at this checkpoint.
+- Retained review Minor: Python stamp helper accepts broader direct inputs than
+  its sole fixed Node caller. No production source change was made for it.
+
+No neighbor restart/release/write, database/auth/admin mutation, source API call,
+collector/cron change, shared login change, password rotation, or Nginx mutation
+occurred. Bootstrap and the Abbott-only shadow deployment are the only authorized
+production changes. Stop for focused token-tooling review.

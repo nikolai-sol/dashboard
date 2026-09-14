@@ -149,6 +149,22 @@ then memory must be cleaned, not only appended to.
 
 ## Current production runtime
 
+### Abbott isolation shadow checkpoint — 2026-09-15
+
+- Reviewed fixed bootstrap created `dashboard-abbott` UID 982/GID 984, no home,
+  `/usr/sbin/nologin`; root-only input is root:root `0700`/`0600`.
+- Fixed `deploy:abbott` deployed `f80607fbc8a693aa2c720b0976938e88732cdf1a`,
+  release `6cd2f12e245a47dcbd5f6ce928c4ed83`, PM2 ID 5/PID 542693,
+  at `/var/www/dashboard-abbott`, only `127.0.0.1:3004`; direct health passed.
+- This is shadow only. Public Abbott routes, login and admin remain on combined
+  port 3001. Nginx and all three neighbor process/release identities are unchanged.
+- Data/export/privacy/visual parity is pending the stdin-only ephemeral manager
+  token tooling review. Never inspect/use the legacy plaintext password.
+- No previous isolated release exists. Route-only rollback target remains the
+  unchanged combined runtime; no Nginx backup or route switch has occurred.
+- Details and remaining gates: `docs/runbooks/abbott-runtime-cutover.md` and
+  `.superpowers/sdd/abbott-task-9-report.md`.
+
 ### Dashboard app
 
 - app: `dashboard-next`

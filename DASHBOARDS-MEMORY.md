@@ -37,6 +37,17 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 
 ## Current dashboard architecture
 
+### Abbott isolation shadow — 2026-09-15
+
+Reviewed `f80607f` is installed by fixed `deploy:abbott` as release
+`6cd2f12e245a47dcbd5f6ce928c4ed83`, PM2 ID 5/PID 542693, under UID 982/GID 984.
+Direct health and exclusive loopback port 3004 passed. Public routing remains
+combined port 3001, with neighbor PIDs/releases and Nginx unchanged. Bootstrap
+installed only the existing allowlisted runtime values in root-only input; no
+password rotation, auth/database mutation, collector, cron, or source-API action
+occurred. Live parity and cutover are pending token-tooling and Nginx reviews;
+this is not completed isolation/cutover. See the cutover runbook for authority.
+
 ### Abbott canonical/private release boundary
 
 - The Abbott canonical/private operator procedure is

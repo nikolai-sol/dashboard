@@ -3,9 +3,128 @@ import { mkdir, mkdtemp, readdir, readFile, readlink, rename, stat, symlink, wri
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { openSync, closeSync, rmSync, writeFileSync, mkdtempSync } from "node:fs";
 
 import ExcelJS from "exceljs";
 import * as parityTool from "./compare-abbott-runtime.mjs";
+
+function managerTokenFixture(overrides = {}) {
+  return `${Buffer.from(JSON.stringify({ type: "viewer", dashboard_id: 18, audience: "manager", credential_version: 1, exp: Math.floor(Date.now() / 1000) + 600, ...overrides })).toString("base64url")}.${"a".repeat(43)}`;
+}
+
+test("stdin token frame is explicit, bounded, and rejects ambiguous framing", () => {
+  const token = managerTokenFixture();
+  assert.deepEqual(parseCredentialLines(`manager_access_token\n${token}\nembed-fixture\n`), { managerAccessToken: token, embedKey: "embed-fixture" });
+  for (const input of [
+    `manager_access_token\n${token}\nembed-fixture\nextra\n`,
+    `manager_access_token\r\n${token}\nembed-fixture\n`,
+    `manager_access_token\n${token}\nembed\0fixture\n`,
+    `manager_access_token\n${token}\nembed-fixture\n\n`,
+    `manager_access_token\n${token}\n\n`,
+  ]) assert.throws(() => parseCredentialLines(input));
+  const prefix = `manager_access_token\n${token}\n`;
+  const boundary = prefix + "e".repeat(65536 - Buffer.byteLength(prefix) - 1) + "\n";
+  assert.equal(Buffer.byteLength(boundary), 65536);
+  assert.equal(parseCredentialLines(boundary).managerAccessToken, token);
+  assert.throws(() => parseCredentialLines(boundary + "e"), /too large/);
+});
+
+test("token mode refuses wrong dashboard, audience, expiry and dual credentials without network", async (t) => {
+  let requests = 0;
+  t.mock.method(globalThis, "fetch", async () => { requests += 1; throw Error("must not fetch"); });
+  assert.equal(typeof parityTool.resolveManagerToken, "function");
+  for (const override of [{ audience: "embed" }, { dashboard_id: 19 }, { type: "admin" }, { exp: 1 }, { exp: Math.floor(Date.now() / 1000) + 3600 }, { credential_version: -1 }]) {
+    await assert.rejects(parityTool.resolveManagerToken("http://127.0.0.1:3001", "http://127.0.0.1:3004", { managerAccessToken: managerTokenFixture(override) }), /MANAGER_TOKEN/);
+  }
+  await assert.rejects(parityTool.resolveManagerToken("http://127.0.0.1:3001", "http://127.0.0.1:3004", { managerAccessToken: managerTokenFixture(), managerPassword: "fixture" }));
+  assert.equal(requests, 0);
+});
+
+test("token authorization is read-only on both loopback ports and never puts manager token in URLs", async (t) => {
+  const token = managerTokenFixture();
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url: String(url), options });
+    return new Response(JSON.stringify({ user_ids: [] }));
+  });
+  assert.equal(typeof parityTool.resolveManagerToken, "function");
+  assert.equal(await parityTool.resolveManagerToken("http://127.0.0.1:3001", "http://127.0.0.1:3004", { managerAccessToken: token }), token);
+  assert.deepEqual(calls.map(call => new URL(call.url).port), ["3001", "3004"]);
+  for (const call of calls) {
+    assert.equal(call.options.method, "GET");
+    assert.equal(call.options.redirect, "error");
+    assert.equal(call.options.headers.cookie, `dashboard_viewer_18=${token}`);
+    assert.equal(new URL(call.url).pathname, "/api/dashboard/18/abbott-admin-users");
+    assert.ok(!call.url.includes(token));
+  }
+});
+
+test("token server rejection, redirect and error details fail without credential leakage", async (t) => {
+  const token = managerTokenFixture();
+  assert.equal(typeof parityTool.resolveManagerToken, "function");
+  for (const response of [new Response("expired", { status: 401 }), new Response("wrong audience", { status: 403 }), new Response(null, { status: 302, headers: { location: "https://example.invalid/" } }), new Response(JSON.stringify({ audience: "embed" }))]) {
+    t.mock.method(globalThis, "fetch", async () => response);
+    await assert.rejects(parityTool.resolveManagerToken("http://127.0.0.1:3001", "http://127.0.0.1:3004", { managerAccessToken: token }), error => !String(error).includes(token));
+    t.mock.restoreAll();
+  }
+  t.mock.method(globalThis, "fetch", async () => { throw Error(`fixture ${token}`); });
+  await assert.rejects(parityTool.resolveManagerToken("http://127.0.0.1:3001", "http://127.0.0.1:3004", { managerAccessToken: token }), error => !String(error).includes(token));
+});
+
+test("token mode is pipe-only stdin, not an alternate descriptor or credential file", () => {
+  const token = managerTokenFixture();
+  const moduleUrl = new URL("./compare-abbott-runtime.mjs", import.meta.url).href;
+  const script = `import {readCredentialFd} from ${JSON.stringify(moduleUrl)}; try { await readCredentialFd(3); process.exitCode=2; } catch { console.log('refused'); }`;
+  const alternate = spawnSync(process.execPath, ["--input-type=module", "-e", script], { input: `manager_access_token\n${token}\nembed\n`, encoding: "utf8", timeout: 3000 });
+  assert.equal(alternate.status, 0);
+  assert.equal(alternate.stdout.trim(), "refused");
+  const fileInput = spawnSync(process.execPath, ["--input-type=module", "-e", script.replace("readCredentialFd(3)", "readCredentialFd(0)")], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: 3000 });
+  assert.equal(fileInput.status, 0);
+  assert.equal(fileInput.stdout.trim(), "refused");
+  const temp = mkdtempSync(path.join(os.tmpdir(), "abbott-stdin-fixture-"));
+  const filename = path.join(temp, "fixture");
+  writeFileSync(filename, "manager-fixture\nembed-fixture\n", { mode: 0o600 });
+  const fd = openSync(filename, "r");
+  try {
+    for (const descriptor of [0, 3]) {
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", script.replace("readCredentialFd(3)", `readCredentialFd(${descriptor})`)], { stdio: [descriptor === 0 ? fd : "ignore", "pipe", "pipe", fd], encoding: "utf8", timeout: 3000 });
+      assert.equal(result.status, 0);
+      assert.equal(result.stdout.trim(), "refused");
+    }
+  } finally { closeSync(fd); rmSync(temp, { recursive: true }); }
+});
+
+test("token stdin consumes a valid pipe and rejects oversize or invalid encoding without leaking", () => {
+  const token = managerTokenFixture();
+  const moduleUrl = new URL("./compare-abbott-runtime.mjs", import.meta.url).href;
+  const script = `import {readCredentialFd} from ${JSON.stringify(moduleUrl)}; try { const c=await readCredentialFd(); console.log(c.managerAccessToken ? 'accepted' : 'wrong'); } catch { console.log('refused'); }`;
+  for (const [input, expected] of [[`manager_access_token\n${token}\nembed\n`, "accepted"], [Buffer.concat([Buffer.from(`manager_access_token\n${token}\n`), Buffer.from([255]), Buffer.from("\n")]), "refused"], ["x".repeat(65537), "refused"]]) {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { input, encoding: "utf8", timeout: 3000 });
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout.trim(), expected);
+    assert.ok(!(result.stdout + result.stderr).includes(token));
+  }
+});
+
+test("token parity produces only redacted report fields and never performs password login", async (t) => {
+  const token = managerTokenFixture(), embed = "embed-fixture";
+  const workbook = await new ExcelJS.Workbook().xlsx.writeBuffer();
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url: String(url), options });
+    const endpoint = new URL(url).pathname;
+    if (endpoint.endsWith("abbott-admin-users")) return new Response(JSON.stringify({ user_ids: [] }));
+    if (endpoint.endsWith("excel")) return new Response(workbook);
+    return new Response(JSON.stringify(fixture()));
+  });
+  const report = await parityTool.runParityComparison({ referenceBase: "http://127.0.0.1:3001", candidateBase: "http://127.0.0.1:3004", managerAccessToken: token, embedKey: embed });
+  const text = JSON.stringify(report);
+  assert.equal(report.status, "match");
+  assert.ok(!text.includes(token) && !text.includes(embed));
+  assert.doesNotMatch(text, /access_token|cookie|https?:/);
+  assert.ok(calls.every(call => !call.url.includes(token) && !call.url.includes("dashboard-auth/login")));
+});
 
 import {
   ABBOTT_PARITY_PERIOD,

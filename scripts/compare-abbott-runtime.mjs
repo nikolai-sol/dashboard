@@ -2,7 +2,7 @@
 
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { constants, createReadStream } from "node:fs";
+import { constants, createReadStream, fstatSync } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -526,6 +526,12 @@ export async function summarizeWorkbook(bytes) {
 
 export function parseCredentialLines(text) {
   if (Buffer.byteLength(text) > MAX_CREDENTIAL_BYTES) throw new Error("Credential input is too large");
+  if (text.startsWith("manager_access_token")) {
+    const match = /^manager_access_token\n([^\n]+)\n([^\n]+)\n?$/.exec(text);
+    if (!match || /[\x00-\x1f\x7f]/.test(match[1] + match[2])) throw new SafeStageError("CREDENTIAL_FRAME");
+    validateManagerAccessToken(match[1]);
+    return { managerAccessToken: match[1], embedKey: match[2] };
+  }
   const lines = text.replace(/\r/g, "").split("\n");
   while (lines.at(-1) === "") lines.pop();
   if (lines.length !== 2 || lines.some((line) => line.length === 0)) {
@@ -535,18 +541,28 @@ export function parseCredentialLines(text) {
 }
 
 export async function readCredentialFd(fd = 0) {
+  if (fd !== 0) throw new SafeStageError("CREDENTIAL_INPUT_SOURCE");
+  const source = fstatSync(fd);
+  if (!source.isFIFO() && !source.isSocket()) throw new SafeStageError("CREDENTIAL_INPUT_SOURCE");
   const chunks = [];
   let total = 0;
   const stream = createReadStream(null, { fd, autoClose: false });
-  for await (const chunk of stream) {
-    total += chunk.length;
-    if (total > MAX_CREDENTIAL_BYTES) {
-      stream.destroy();
-      throw new Error("Credential input is too large");
+  let bytes;
+  try {
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+      total += chunk.length;
+      if (total > MAX_CREDENTIAL_BYTES) {
+        stream.destroy();
+        throw new Error("Credential input is too large");
+      }
     }
-    chunks.push(chunk);
+    bytes = Buffer.concat(chunks);
+    return parseCredentialLines(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } finally {
+    for (const chunk of chunks) chunk.fill(0);
+    bytes?.fill(0);
   }
-  return parseCredentialLines(Buffer.concat(chunks).toString("utf8"));
 }
 
 function isWithin(parent, child) {
@@ -774,6 +790,40 @@ export async function obtainManagerToken(referenceBase, password) {
   return body.access_token;
 }
 
+function validateManagerAccessToken(token) {
+  try {
+    if (typeof token !== "string" || token.length > 4096 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(token)) throw new Error();
+    const encoded = token.split(".")[0];
+    const bytes = Buffer.from(encoded, "base64url");
+    if (bytes.toString("base64url") !== encoded) throw new Error();
+    const payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.type !== "viewer" || payload.dashboard_id !== 18 || payload.audience !== "manager"
+      || !Number.isSafeInteger(payload.credential_version) || payload.credential_version < 0
+      || !Number.isSafeInteger(payload.exp) || payload.exp <= now || payload.exp > now + 900) throw new Error();
+  } catch { throw new SafeStageError("MANAGER_TOKEN_ENVELOPE"); }
+}
+
+export async function resolveManagerToken(referenceBase, candidateBase, credentials) {
+  const reference = assertRuntimeBaseUrl(referenceBase, 3001);
+  const candidate = assertRuntimeBaseUrl(candidateBase, 3004);
+  if (credentials.managerAccessToken === undefined) return obtainManagerToken(reference, credentials.managerPassword);
+  if (credentials.managerPassword !== undefined) throw new SafeStageError("MANAGER_TOKEN_AMBIGUOUS");
+  const token = credentials.managerAccessToken;
+  validateManagerAccessToken(token);
+  // Envelope checks are not signature verification. Each runtime must accept the
+  // signed token/current credential version on its manager-only read endpoint.
+  for (const base of [reference, candidate]) {
+    validateManagerAccessToken(token);
+    const request = buildAuthorizedRequest(base, "/api/dashboard/18/abbott-admin-users", { kind: "manager", value: token });
+    const response = await fetchNoRedirect(request.url, { ...request.options, method: "GET", cache: "no-store" }, "MANAGER_TOKEN_AUTHORIZATION");
+    const body = await runSafeStage("MANAGER_TOKEN_RESPONSE", () => response.json());
+    if (!body || !Array.isArray(body.user_ids)) throw new SafeStageError("MANAGER_TOKEN_RESPONSE");
+  }
+  validateManagerAccessToken(token);
+  return token;
+}
+
 async function fetchAudienceSummary(base, audience, credential) {
   const payloadRequest = buildAuthorizedRequest(base, "/api/dashboard/18", credential);
   const payloadResponse = await fetchNoRedirect(
@@ -806,8 +856,8 @@ async function fetchAudienceSummary(base, audience, credential) {
   };
 }
 
-export async function runParityComparison({ referenceBase, candidateBase, managerPassword, embedKey }) {
-  const managerToken = await obtainManagerToken(referenceBase, managerPassword);
+export async function runParityComparison({ referenceBase, candidateBase, managerPassword, managerAccessToken, embedKey }) {
+  const managerToken = await resolveManagerToken(referenceBase, candidateBase, { managerPassword, managerAccessToken });
   const credentials = {
     manager: { kind: "manager", value: managerToken },
     embed: { kind: "embed", value: embedKey },
