@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
@@ -13,6 +13,10 @@ export const HOST = Object.freeze({
   sourceStamp: '/var/www/dashboard/.release-source-sha',
   sourceSha: '8f389a28df1c4b741ec33b7538f0354b74f5a40e',
   sourcePid: 3722244, sourceStart: '122353749', sourceBoot: '1c736efb-eaa2-42d9-b247-bd1a2ef36a4e',
+  sourceUid: Object.freeze([0, 0, 0, 0]), sourceGid: Object.freeze([0, 0, 0, 0]),
+  envParserFile: '/var/www/dashboard/node_modules/@next/env/dist/index.js',
+  envParserPackage: '/var/www/dashboard/node_modules/@next/env/package.json',
+  envParserVersion: '16.1.6', envParserHash: '44e84a28e712bca30781e892e3e64d3aecdc46bef9d23b5b7f39bfa1fcef6baa',
   targetDir: '/var/www/.dashboard-abbott-secrets',
   targetFile: '/var/www/.dashboard-abbott-secrets/runtime.env',
 });
@@ -29,7 +33,7 @@ const REQUIRED = INPUT_KEYS.filter(key => !key.startsWith('MYSQL_') && !['NEXT_P
 const sameFile = (a, b) => ['dev', 'ino', 'size', 'mode', 'uid', 'gid', 'mtimeMs', 'ctimeMs', 'nlink'].every(key => a[key] === b[key]);
 const sameDirectory = (a, b) => ['dev', 'ino', 'mode', 'uid', 'gid'].every(key => a[key] === b[key]);
 
-export function parseCombinedEnvironment(bytes) {
+export function parseCombinedEnvironment(bytes, evaluate) {
   if (!Buffer.isBuffer(bytes) || bytes.length > 65536) refuse();
   const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   if (/[\u0000-\u0009\u000b-\u001f\u007f\ufeff]/.test(text)) refuse();
@@ -38,22 +42,76 @@ export function parseCombinedEnvironment(bytes) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const match = /^(?:export )?([A-Z][A-Z0-9_]*) *= *(.*)$/.exec(line);
-    if (!match || seen.has(match[1])) refuse();
+    if (!match) refuse();
+    // The combined runtime legitimately owns unrelated/source credentials.
+    // Never copy them or permit Abbott references to depend on them.
+    if (!INPUT_KEYS.includes(match[1])) continue;
+    if (seen.has(match[1])) refuse();
     seen.add(match[1]);
     let value = match[2];
     if (value.startsWith("'") || value.startsWith('"')) {
       const quote = value[0], end = value.indexOf(quote, 1);
       if (end < 0 || !/^(?: *#.*)?$/.test(value.slice(end + 1))) refuse();
       value = value.slice(1, end);
-    } else value = value.replace(/ +#.*$/, '').trim();
+    } else value = value.split('#', 1)[0].trim();
     if (/[\u0000-\u001f\u007f'"\\`]/.test(value)) refuse();
-    if (INPUT_KEYS.includes(match[1])) {
-      if (!value.trim()) refuse();
-      result[match[1]] = value;
-    }
+    if (!value.trim()) refuse();
+    result[match[1]] = value;
   }
-  if (REQUIRED.some(key => !result[key]) || result.DB_NAME !== 'report_bd' || result.ABBOTT_PRIVATE_DB_NAME !== 'report_bd_private' || result.ABBOTT_EMBED_DB_NAME !== 'report_bd' || result.ABBOTT_PRIVATE_DB_USER === result.ABBOTT_EMBED_DB_USER) refuse();
-  return result;
+  const expanded = {}, active = new Set();
+  function resolve(key) {
+    if (Object.hasOwn(expanded, key)) return expanded[key];
+    if (!Object.hasOwn(result, key) || active.has(key)) refuse();
+    active.add(key);
+    let value = '', offset = 0;
+    for (const match of result[key].matchAll(/\$(?:\{([A-Z][A-Z0-9_]*)\}|([A-Z][A-Z0-9_]*))/g)) {
+      const literal = result[key].slice(offset, match.index);
+      if (literal.includes('$')) refuse();
+      value += literal + resolve(match[1] ?? match[2]);
+      if (value.length > 65536) refuse();
+      offset = match.index + match[0].length;
+    }
+    const suffix = result[key].slice(offset);
+    if (suffix.includes('$')) refuse();
+    value += suffix;
+    if (!value.trim() || value.length > 65536) refuse();
+    active.delete(key); expanded[key] = value;
+    return value;
+  }
+  for (const key of Object.keys(result)) resolve(key);
+  if (REQUIRED.some(key => !expanded[key]) || expanded.DB_NAME !== 'report_bd' || expanded.ABBOTT_PRIVATE_DB_NAME !== 'report_bd_private' || expanded.ABBOTT_EMBED_DB_NAME !== 'report_bd' || expanded.ABBOTT_PRIVATE_DB_USER === expanded.ABBOTT_EMBED_DB_USER || JSON.stringify(expanded).length > 65536 || typeof evaluate !== 'function') refuse();
+  const effective = evaluate(bytes);
+  if (!effective || typeof effective !== 'object' || Array.isArray(effective) || Object.keys(effective).length !== Object.keys(expanded).length || Object.keys(effective).some(key => !INPUT_KEYS.includes(key) || typeof effective[key] !== 'string' || effective[key] !== expanded[key] || /[\u0000-\u001f\u007f'"\\`]/.test(effective[key]))) refuse();
+  return effective;
+}
+
+// The exact active parser runs in a fresh bounded child, with a private VM env.
+// Only stdin/stdout pipes carry source/value bytes; no values enter argv/files.
+export const NEXT_ENV_EVALUATOR = String.raw`
+const fs = require('node:fs'), vm = require('node:vm'), crypto = require('node:crypto');
+try {
+  const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+  if (crypto.createHash('sha256').update(input.parser).digest('hex') !== '44e84a28e712bca30781e892e3e64d3aecdc46bef9d23b5b7f39bfa1fcef6baa') throw Error();
+  const log = { info() { throw Error(); }, error() { throw Error(); }, log() { throw Error(); }, warn() { throw Error(); } };
+  const context = vm.createContext({ module: { exports: {} }, __dirname: '/fixed-next-env', process: { env: Object.create(null) }, console: log, log, contents: input.contents,
+    require(name) { if (name === 'path') return require('node:path'); if (['fs','crypto','os'].includes(name)) return Object.freeze({}); throw Error(); }
+  });
+  vm.runInContext(input.parser, context, { timeout: 750 });
+  const values = vm.runInContext("module.exports.processEnv([{path:'.env',contents,env:{}}],'/fixed-next-env',log,true)[1]", context, { timeout: 750 });
+  const selected = Object.fromEntries(input.keys.filter(key => Object.hasOwn(values, key)).map(key => [key, values[key]]));
+  process.stdout.write(JSON.stringify(selected));
+} catch { process.stderr.write('Next env verification refused\n'); process.exitCode = 1; }
+`;
+
+export function evaluateNextEnvironment(bytes, parser, execute = execFileSync, executable = '/usr/bin/node') {
+  if (!Buffer.isBuffer(parser) || parser.length > 65536 || createHash('sha256').update(parser).digest('hex') !== HOST.envParserHash) refuse();
+  try {
+    const output = execute(executable, ['--max-old-space-size=64', '-e', NEXT_ENV_EVALUATOR], {
+      input: JSON.stringify({ parser: parser.toString('utf8'), contents: bytes.toString('utf8'), keys: INPUT_KEYS }),
+      env: {}, encoding: 'utf8', timeout: 3000, maxBuffer: 131072, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return JSON.parse(output);
+  } catch { refuse(); }
 }
 
 function directory(io, name, uid, gid, mode) {
@@ -76,7 +134,8 @@ function privateRead(io, name, uid, gid, mode) {
 
 function sourceSnapshot(platform) {
   const io = platform.fs;
-  for (const name of ['/', '/var', '/var/www']) directory(io, name, 0, 0, 0o755);
+  for (const name of ['/', '/var']) directory(io, name, 0, 0, 0o755);
+  directory(io, '/var/www', 0, 0, 0o751);
   directory(io, HOST.sourceDir, 501, 0, 0o755);
   platform.verifySourceProcess();
   const stamp = privateRead(io, HOST.sourceStamp, 501, 0, 0o644);
@@ -93,7 +152,7 @@ export function bootstrapAbbottHost(platform = realPlatform) {
   if (platform.uid() !== 0 || platform.hostname() !== HOST.hostname) refuse();
   const io = platform.fs;
   const source = sourceSnapshot(platform);
-  const values = parseCombinedEnvironment(source);
+  const values = parseCombinedEnvironment(source, bytes => platform.evaluateEnvironment(bytes));
   const desired = Buffer.from(INPUT_KEYS.filter(key => Object.hasOwn(values, key)).map(key => `${key}='${values[key]}'\n`).join(''));
   let user = platform.user(), group = platform.group();
   validateAccounts(user, group);
@@ -151,6 +210,18 @@ const realPlatform = {
     const stat = fs.readFileSync(`/proc/${HOST.sourcePid}/stat`, 'utf8');
     const start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
     if (start !== HOST.sourceStart || fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() !== HOST.sourceBoot || fs.realpathSync(`/proc/${HOST.sourcePid}/cwd`) !== HOST.sourceDir) refuse();
+    const status = fs.readFileSync(`/proc/${HOST.sourcePid}/status`, 'utf8');
+    for (const [key, expected] of [['Uid', HOST.sourceUid], ['Gid', HOST.sourceGid]]) {
+      const match = status.match(new RegExp('^' + key + ':[ \\t]+(\\d+)[ \\t]+(\\d+)[ \\t]+(\\d+)[ \\t]+(\\d+)$', 'm'));
+      if (!match || expected.some((value, index) => Number(match[index + 1]) !== value)) refuse();
+    }
+  },
+  evaluateEnvironment(bytes) {
+    for (const name of [HOST.envParserFile, HOST.envParserPackage]) if (fs.realpathSync(name) !== name) refuse();
+    const pkg = JSON.parse(privateRead(fs, HOST.envParserPackage, 501, 0, 0o644));
+    if (pkg.name !== '@next/env' || pkg.version !== HOST.envParserVersion) refuse();
+    const parser = privateRead(fs, HOST.envParserFile, 501, 0, 0o644);
+    return evaluateNextEnvironment(bytes, parser);
   },
   user() {
     const entry = command('/usr/bin/getent', ['passwd', HOST.account], true);
@@ -169,6 +240,16 @@ const realPlatform = {
   createGroup() { command('/usr/sbin/groupadd', ['--system', HOST.account]); },
   createUser() { command('/usr/sbin/useradd', ['--system', '--gid', HOST.account, '--no-create-home', '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', HOST.account]); },
 };
+
+export function verifyAbbottBootstrapSource(platform = realPlatform) {
+  if (platform.uid() !== 0 || platform.hostname() !== HOST.hostname) refuse();
+  const source = sourceSnapshot(platform);
+  try {
+    const values = parseCombinedEnvironment(source, bytes => platform.evaluateEnvironment(bytes));
+    if (!sourceSnapshot(platform).equals(source)) refuse();
+    return { status: 'verified', allowlistedKeyCount: Object.keys(values).length };
+  } finally { source.fill(0); }
+}
 
 export function runBootstrap(platform, args, environment, emit) {
   try {

@@ -57,6 +57,29 @@ PID/start-time, kernel boot ID, cwd, and host name. A restart, release change,
 ownership change or symlink causes refusal and requires new read-only evidence
 and review. Never override these checks through arguments or environment.
 
+The source process kernel real/effective/saved/filesystem UID and GID are all `0`,
+and all eight values are pinned separately from the source files' UID 501. The
+verified `/var/www` ancestry mode is root:root `0751`; bootstrap checks it and
+does not change it.
+
+Before any mutation, allowlisted source values must match the exact active
+`@next/env` version `16.1.6`, code SHA-256
+`44e84a28e712bca30781e892e3e64d3aecdc46bef9d23b5b7f39bfa1fcef6baa`.
+That parser runs in a fresh child with empty inherited environment, a private VM
+environment, a 64-MiB V8 heap limit, a 3-second process deadline, bounded output,
+and separate 750-ms VM execution limits. Only captured stdin/stdout pipes carry
+values. The parent and child ambient environments are never modified by parsing.
+Unquoted `#` uses Next comment semantics; quoted or unquoted `$KEY`/`${KEY}` may
+refer only to present allowlisted keys. Missing, ambient, unrelated/source-key,
+cyclic or unsupported references and semantic disagreement refuse bootstrap.
+Unrelated combined-runtime settings are filtered, never printed or copied.
+
+The exported read-only `verifyAbbottBootstrapSource` gate performs no account
+command or filesystem write. Its authorized production check on 2026-09-15
+returned only `{"status":"verified","allowlistedKeyCount":23}`. This is source
+semantics verification, not execution or approval of bootstrap. The source process
+and file/parser identities are checked again by bootstrap immediately before use.
+
 After dedicated bootstrap review and the clean-source/release-ref gates above:
 
 ```bash

@@ -3,19 +3,25 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
 import vm from 'node:vm';
-import { bootstrapAbbottHost, parseCombinedEnvironment, INPUT_KEYS, HOST, runBootstrap } from './bootstrap-abbott-host.mjs';
+import { bootstrapAbbottHost, parseCombinedEnvironment, evaluateNextEnvironment, verifyAbbottBootstrapSource, INPUT_KEYS, HOST, runBootstrap } from './bootstrap-abbott-host.mjs';
 import { createRuntimeInstaller } from './runtime-release-remote.mjs';
 import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
+const installedParser = fs.readFileSync(path.join(root, 'node_modules/@next/env/dist/index.js'));
+const localEvaluator = bytes => evaluateNextEnvironment(bytes, installedParser, execFileSync, process.execPath);
 const allowed = JSON.parse(fs.readFileSync(path.join(root, 'deploy/abbott/environment.json')));
 const generated = ['NODE_ENV', 'HOSTNAME', 'PORT', 'INTERNAL_BASE_URL'];
 const values = Object.fromEntries(INPUT_KEYS.map(key => [key, `fixture-${key.toLowerCase()}`]));
 Object.assign(values, { DB_NAME: 'report_bd', ABBOTT_PRIVATE_DB_NAME: 'report_bd_private', ABBOTT_EMBED_DB_NAME: 'report_bd', ABBOTT_PRIVATE_DB_USER: 'private-reader', ABBOTT_EMBED_DB_USER: 'embed-reader' });
 const source = () => Object.entries({ ...values, NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: '3001', INTERNAL_BASE_URL: 'http://127.0.0.1:3001', METRIKA_TOKEN: 'private-source-canary' }).map(([key, value], i) => `${key}=${i % 3 === 0 ? `'${value}'` : i % 3 === 1 ? `"${value}"` : value}`).join('\n') + '\n';
+const nextReference = bytes => {
+  const result = JSON.parse(execFileSync(process.execPath, ['-e', `const fs=require('node:fs');const next=require('@next/env');const result=next.processEnv([{path:'.env',contents:fs.readFileSync(0,'utf8'),env:{}}],'.',{error(){throw Error('refused')},info(){}},true)[1];process.stdout.write(JSON.stringify(result));`], { cwd: root, env: {}, input: bytes, encoding: 'utf8', timeout: 3000, maxBuffer: 131072, stdio: ['pipe','pipe','pipe'] }));
+  return Object.fromEntries(INPUT_KEYS.filter(key => Object.hasOwn(result, key)).map(key => [key, result[key]]));
+};
 
 function fixture() {
   const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abbott-bootstrap-test-')));
@@ -41,6 +47,7 @@ function fixture() {
   io.fchmodSync = fs.fchmodSync; io.fsyncSync = fs.fsyncSync;
   io.realpathSync = name => fs.realpathSync(resolve(name)).slice(directory.length) || '/';
   for (const name of ['/var', '/var/www', HOST.sourceDir, '/proc/sys/kernel/random', `/proc/${HOST.sourcePid}`]) fs.mkdirSync(resolve(name), { recursive: true, mode: 0o755 });
+  fs.chmodSync(resolve('/var/www'), 0o751);
   fs.writeFileSync(resolve(HOST.sourceEnv), source(), { mode: 0o600 });
   fs.writeFileSync(resolve(HOST.sourceStamp), HOST.sourceSha + '\n', { mode: 0o644 });
   metadata.set(HOST.sourceDir, { uid: 501, gid: 0 });
@@ -50,6 +57,7 @@ function fixture() {
   let user = null, group = null;
   const platform = { fs: io, uid: () => 0, hostname: () => HOST.hostname,
     verifySourceProcess: () => {},
+    evaluateEnvironment: localEvaluator,
     user: () => user, group: () => group,
     createGroup() { events.push('group'); group = { name: HOST.account, gid: 991, members: [] }; },
     createUser() { events.push('user'); user = { name: HOST.account, uid: 991, gid: 991, home: '/nonexistent', shell: '/usr/sbin/nologin', groups: [991] }; },
@@ -60,13 +68,96 @@ function fixture() {
 
 test('copies only the existing Abbott input allowlist and preserves worker-generated runtime values', () => {
   assert.deepEqual(INPUT_KEYS, allowed.filter(key => !generated.includes(key)));
-  const parsed = parseCombinedEnvironment(Buffer.from(source()));
+  const parsed = parseCombinedEnvironment(Buffer.from(source()), localEvaluator);
   assert.deepEqual(parsed, values);
   assert.ok(!Object.hasOwn(parsed, 'METRIKA_TOKEN'));
   const renderer = createRuntimeInstaller(RUNTIME_MANIFESTS.abbott, allowed);
   const rendered = renderer.renderEnvironment(parsed);
   assert.deepEqual(generated.map(key => rendered[key]), ['production', '127.0.0.1', '3004', 'http://127.0.0.1:3004']);
   assert.deepEqual(renderer.parseRuntimeSecrets(renderer.serializeRuntimeSecrets(parsed)), values);
+});
+
+test('allowlisted unquoted hashes and quoted or unquoted references exactly match installed Next semantics', () => {
+  for (const value of ['before#comment', '${DB_USER}#comment', '"${DB_USER}#literal"', "'${DB_USER}#literal'", '$DB_USER', '"${DB_USER}"', '${ABBOTT_EMBED_DB_USER}']) {
+    const bytes = Buffer.from(source().replace(/^DB_PASSWORD=.*$/m, `DB_PASSWORD=${value}`));
+    let compared = false;
+    const result = parseCombinedEnvironment(bytes, input => { compared = true; return localEvaluator(input); });
+    assert.equal(compared, true, 'installed parser comparison is mandatory');
+    assert.deepEqual(result, nextReference(bytes));
+  }
+});
+
+test('pinned Next evaluation is sterile, bounded and cannot mutate or inherit the ambient environment', () => {
+  const before = createHash('sha256').update(JSON.stringify(process.env)).digest('hex');
+  const bytes = Buffer.from(source());
+  const result = evaluateNextEnvironment(bytes, installedParser, (binary, args, options) => {
+    assert.deepEqual(options.env, {});
+    assert.equal(options.timeout, 3000);
+    assert.equal(options.maxBuffer, 131072);
+    assert.equal(args[0], '--max-old-space-size=64');
+    assert.ok(!args.some(value => value.includes('private-source-canary')));
+    return execFileSync(binary, args, { ...options, env: { DB_HOST: 'ambient-canary', HOME: '/ambient-canary' } });
+  }, process.execPath);
+  assert.deepEqual(result, nextReference(bytes));
+  assert.equal(createHash('sha256').update(JSON.stringify(process.env)).digest('hex'), before);
+  assert.throws(() => evaluateNextEnvironment(bytes, Buffer.from('modified parser'), () => { throw Error('must not execute'); }));
+});
+
+test('read-only source proof performs no account commands or filesystem writes', () => {
+  const f = fixture();
+  try {
+    for (const key of ['user', 'group', 'createUser', 'createGroup']) f.platform[key] = () => { throw Error('account action forbidden'); };
+    for (const key of ['writeFileSync', 'mkdirSync', 'linkSync', 'unlinkSync', 'chmodSync', 'fchmodSync', 'fchownSync']) f.platform.fs[key] = () => { throw Error('write forbidden'); };
+    assert.deepEqual(verifyAbbottBootstrapSource(f.platform), { status: 'verified', allowlistedKeyCount: INPUT_KEYS.length });
+    assert.equal(fs.existsSync(f.resolve(HOST.targetFile)), false);
+  } finally { f.cleanup(); }
+});
+
+test('missing, unknown, ambient, cyclic and unsupported references fail before any account or file mutation', () => {
+  for (const value of ['${MISSING}', '${METRIKA_TOKEN}', '${HOME}', '${DB_PASSWORD}', '${DB_USER:-fallback}', 'line\\nline', "bad'quote"]) {
+    const f = fixture();
+    try {
+      fs.writeFileSync(f.resolve(HOST.sourceEnv), source().replace(/^DB_PASSWORD=.*$/m, `DB_PASSWORD=${value}`));
+      assert.throws(() => bootstrapAbbottHost(f.platform));
+      assert.deepEqual(f.events, []);
+      assert.equal(fs.existsSync(f.resolve(HOST.targetFile)), false);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('effective parser disagreement or unapproved output fails before mutation', () => {
+  for (const change of [value => ({ ...value, DB_PASSWORD: 'different' }), value => ({ ...value, METRIKA_TOKEN: 'unapproved' })]) {
+    const f = fixture();
+    try {
+      f.platform.evaluateEnvironment = bytes => change(nextReference(bytes));
+      assert.throws(() => bootstrapAbbottHost(f.platform));
+      assert.deepEqual(f.events, []);
+      assert.equal(fs.existsSync(f.resolve(HOST.targetFile)), false);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('multi-key reference cycles never reach parser execution or account mutation', () => {
+  const f = fixture();
+  try {
+    fs.writeFileSync(f.resolve(HOST.sourceEnv), source().replace(/^DB_PASSWORD=.*$/m, 'DB_PASSWORD=${DB_USER}').replace(/^DB_USER=.*$/m, 'DB_USER=${DB_PASSWORD}'));
+    f.platform.evaluateEnvironment = () => { throw Error('parser must not run'); };
+    assert.throws(() => bootstrapAbbottHost(f.platform));
+    assert.deepEqual(f.events, []);
+    assert.equal(fs.existsSync(f.resolve(HOST.targetFile)), false);
+  } finally { f.cleanup(); }
+});
+
+test('the existing target rejects unapproved keys without replacing its bytes', () => {
+  const f = fixture();
+  try {
+    bootstrapAbbottHost(f.platform);
+    fs.appendFileSync(f.resolve(HOST.targetFile), "METRIKA_TOKEN='private-source-canary'\n");
+    const before = fs.readFileSync(f.resolve(HOST.targetFile));
+    assert.throws(() => bootstrapAbbottHost(f.platform));
+    assert.deepEqual(fs.readFileSync(f.resolve(HOST.targetFile)), before);
+    assert.deepEqual(f.events, ['group', 'user']);
+  } finally { f.cleanup(); }
 });
 
 test('bootstrap is idempotent and writes only a root-only credential input without rotating values', () => {
@@ -108,6 +199,7 @@ test('source identity, symlink, ownership and permission drift fail closed', () 
     f => fs.writeFileSync(f.resolve(HOST.sourceStamp), 'a'.repeat(40) + '\n'),
     f => f.metadata.set(HOST.sourceEnv, { uid: 0, gid: 0 }),
     f => fs.chmodSync(f.resolve(HOST.sourceEnv), 0o644),
+    f => fs.chmodSync(f.resolve('/var/www'), 0o755),
     f => fs.linkSync(f.resolve(HOST.sourceEnv), f.resolve(HOST.sourceEnv + '.linked')),
     f => { fs.renameSync(f.resolve(HOST.sourceEnv), f.resolve(HOST.sourceEnv + '.saved')); fs.symlinkSync(f.resolve(HOST.sourceEnv + '.saved'), f.resolve(HOST.sourceEnv)); },
     f => { fs.renameSync(f.resolve(HOST.sourceDir), f.resolve(HOST.sourceDir + '.saved')); fs.symlinkSync(f.resolve(HOST.sourceDir + '.saved'), f.resolve(HOST.sourceDir)); },
@@ -154,6 +246,8 @@ test('real host adapter uses only fixed account commands and verifies the pinned
   try {
     const stat = `${HOST.sourcePid} (next-server) ${['S', ...Array(18).fill('0'), HOST.sourceStart].join(' ')}`;
     fs.writeFileSync(f.resolve(`/proc/${HOST.sourcePid}/stat`), stat);
+    const status = 'Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n';
+    fs.writeFileSync(f.resolve(`/proc/${HOST.sourcePid}/status`), status);
     fs.writeFileSync(f.resolve('/proc/sys/kernel/random/boot_id'), HOST.sourceBoot + '\n');
     fs.symlinkSync(f.resolve(HOST.sourceDir), f.resolve(`/proc/${HOST.sourcePid}/cwd`));
     let user = false, group = false;
@@ -182,11 +276,26 @@ test('real host adapter uses only fixed account commands and verifies the pinned
     const moduleSource = fs.readFileSync(path.join(root, 'scripts/bootstrap-abbott-host.mjs'), 'utf8').replace(/^import .*;\n/gm, '').replaceAll('export const ', 'const ').replaceAll('export function ', 'function ').split('\nif (process.argv.length')[0];
     vm.runInContext(moduleSource + '\nthis.hostPlatform = realPlatform; this.bootstrap = bootstrapAbbottHost;', context);
     context.hostPlatform.directoryPath = f.platform.directoryPath;
+    context.hostPlatform.evaluateEnvironment = localEvaluator;
     assert.equal(context.bootstrap(), 'created');
     assert.equal(context.bootstrap(), 'unchanged');
     assert.equal(calls.filter(([binary]) => binary === '/usr/sbin/useradd').length, 1);
     assert.equal(calls.filter(([binary]) => binary === '/usr/sbin/groupadd').length, 1);
     const before = fs.readFileSync(f.resolve(HOST.targetFile));
+    let writes = 0;
+    for (const method of ['writeFileSync', 'mkdirSync', 'linkSync', 'unlinkSync', 'fchmodSync', 'fchownSync']) {
+      const operation = f.platform.fs[method];
+      f.platform.fs[method] = (...args) => { writes += 1; return operation(...args); };
+    }
+    for (const key of ['Uid', 'Gid']) {
+      fs.writeFileSync(f.resolve(`/proc/${HOST.sourcePid}/status`), status.replace(`${key}:\t0\t0\t0\t0`, `${key}:\t501\t501\t501\t501`));
+      calls.length = 0;
+      assert.throws(() => context.bootstrap());
+      assert.equal(calls.length, 0);
+      assert.equal(writes, 0);
+      assert.deepEqual(fs.readFileSync(f.resolve(HOST.targetFile)), before);
+    }
+    fs.writeFileSync(f.resolve(`/proc/${HOST.sourcePid}/status`), status);
     fs.writeFileSync(f.resolve(`/proc/${HOST.sourcePid}/stat`), stat.replace(HOST.sourceStart, '999'));
     assert.throws(() => context.bootstrap());
     assert.deepEqual(fs.readFileSync(f.resolve(HOST.targetFile)), before);

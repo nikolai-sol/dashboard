@@ -168,3 +168,86 @@ must conform to the existing sealed secret-input contract and verified active
 source identity. Skill action — debugging, TDD and verification; no accepted-work
 learning update. Evidence — local RED/GREEN checks and read-only metadata above.
 Budget stop — none; paused at the explicitly required review boundary.
+
+## Bootstrap review revision: credential semantics and kernel owner proof
+
+This revision addresses the two Important review findings. It still stops before
+bootstrap execution, push, deployment or cutover.
+
+### Credential interpretation
+
+The old parser retained an unquoted hash and literal interpolation text, whereas
+the active Next parser treats an unquoted hash as a comment and expands variables
+even in single-quoted values. Four focused RED tests reproduced missing parser
+comparison, acceptance of unknown/cyclic references, acceptance of effective-value
+disagreement, and missing process owner validation.
+
+The strict parser now applies matching unquoted-hash semantics and resolves only
+present allowlisted `$KEY`/`${KEY}` references through a bounded acyclic graph.
+Missing keys, ambient references, source/unrelated-key dependencies, self/multi-key
+cycles, defaults/unsupported constructs, duplicate selected keys, malformed values,
+multiline/control/NUL/quote/backslash/backtick values and oversized expanded output
+fail before account or credential mutation. The combined source may legitimately
+contain unrelated/source OAuth settings; the parent clarified that these must be
+filtered rather than causing whole-file rejection. The target input still rejects
+every unapproved/source key and is never repaired or replaced.
+
+Every selected result must equal the effective result from the exact installed
+active `@next/env`, version `16.1.6`, SHA-256
+`44e84a28e712bca30781e892e3e64d3aecdc46bef9d23b5b7f39bfa1fcef6baa`.
+The active parser and package are fixed-path, regular, single-link, UID 501/GID 0,
+mode-0644 files; canonical identity and pinned code hash/version are checked.
+Only the verified effective values are serialized into the worker's strict format.
+
+The parser executes in a synchronous, fresh child with no inherited environment,
+a 64-MiB V8 heap limit, a 3-second deadline and 128-KiB captured output bound.
+Inside that child the pinned parser uses a private VM `process.env` and two
+750-ms execution limits; the parent/child ambient environments remain untouched.
+Unneeded filesystem/crypto/OS interfaces inside the parser VM are unavailable.
+Only stdin/stdout pipes carry values, and the parent captures them in memory.
+The exact parser code is hash-checked both before transport and inside the child.
+Subprocess success/failure is synchronously reaped; no background parser survives.
+
+Regressions compare synthetic quoted/unquoted references, forward references,
+and unquoted hash comments against installed `@next/env`; they prove identical
+bytes or refusal. They also prove isolation from an ambient canary, no ambient
+mutation, bounded child options, pinned-parser rejection, effective-value mismatch
+refusal, unknown target-key rejection, and no writes/account commands during the
+read-only source proof.
+
+### Kernel owner and ancestry proof
+
+Read-only kernel metadata for PID 3722244 confirms both UID and GID fields are
+`[0,0,0,0]`, with unchanged boot ID, start time and cwd. These real/effective/saved/
+filesystem identities are now pinned in `HOST` and checked before account lookups
+or secret mutation. UID and GID drift regressions prove zero commands, zero writes,
+and unchanged prior credential bytes.
+
+The first end-to-end read-only proof exposed a previous unverified assumption:
+`/var/www` is root:root mode `0751`, whereas `/` and `/var` are mode `0755`.
+A regression reproduced refusal of the observed mode; bootstrap now pins `0751`
+and rejects drift. No host permissions were changed.
+
+### Actual production file proof
+
+After those checks, the read-only gate against the active source file and exact
+active parser returned only:
+
+```json
+{"status":"verified","allowlistedKeyCount":23}
+```
+
+All 23 selected effective values matched byte-for-byte. No source keys, values,
+cookies, tokens, passwords or serialized credentials were printed, transported to
+the local host, or written to files. The earlier coarse `NEEDS_CONTEXT` categories
+were resolved by the clarified filtering rule and verified ancestry metadata.
+No production bootstrap/account/credential write occurred.
+
+### Final revision verification and remaining boundary
+
+Focused bootstrap suite: 18 tests, zero failures. Full Abbott gate: build passes,
+67 app/runtime tests and 263 bootstrap/authority/Nginx/artifact tests pass. Root
+and Abbott typechecks, full lint, syntax, explicit artifact verification and diff
+checks pass; lint retains only the ten existing warnings. No production mutation,
+push, deploy, browser session, Nginx edit/reload or database operation occurred.
+Dedicated bootstrap re-review and the separate Nginx fix remain required.
