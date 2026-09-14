@@ -26,6 +26,7 @@ type DashboardAccessContextRow = RowDataPacket & {
   client_id: string;
   client_name: string;
   dashboard_name: string;
+  dashboard_type: string;
   is_active: number | boolean;
   access_users_count: number;
 };
@@ -45,6 +46,7 @@ export type DashboardAccessContext = {
   client_id: string;
   client_name: string;
   dashboard_name: string;
+  dashboard_type?: string;
   is_active: boolean;
   access_users_count: number;
   auth_mode: DashboardAuthMode;
@@ -115,6 +117,7 @@ function rowToContext(row: DashboardAccessContextRow): DashboardAccessContext {
     client_id: clientId,
     client_name: String(row.client_name),
     dashboard_name: String(row.dashboard_name),
+    dashboard_type: String(row.dashboard_type),
     is_active: Boolean(row.is_active),
     access_users_count: accessUsersCount,
     auth_mode: resolveAuthMode(clientId, accessUsersCount),
@@ -139,6 +142,7 @@ export async function getDashboardAccessContext(identifier: string | number) {
        d.client_id,
        d.client_name,
        d.dashboard_name,
+       d.dashboard_type,
        d.is_active,
        COUNT(dau.id) AS access_users_count
      FROM dashboards d
