@@ -16,7 +16,8 @@ const ABBOTT_APP_ROOT = "apps/abbott";
 const ABBOTT_SERVER = `${ABBOTT_APP_ROOT}/server.js`;
 const ABBOTT_NEXT = `${ABBOTT_APP_ROOT}/.next-abbott`;
 const ABBOTT_NEXT_SERVER = `${ABBOTT_APP_ROOT}/.next-abbott/server`;
-const ABBOTT_SCHEMA = "src/schemas/yandex_metrika.yaml";
+const ABBOTT_SCHEMA_SOURCE = "src/schemas/yandex_metrika.yaml";
+const ABBOTT_SCHEMA_ARTIFACT = `${ABBOTT_APP_ROOT}/src/schemas/yandex_metrika.yaml`;
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NEXT_AUTHORITY_FILES = [
   "routes-manifest.json", "server/pages-manifest.json", "build-manifest.json", "prerender-manifest.json",
@@ -60,6 +61,12 @@ const FORBIDDEN_CONTENT_MARKERS = [
   "googleads.googleapis.com",
   "metrika_token",
   "yandex_direct_token",
+];
+const VIEWER_CREDENTIAL_PATTERNS = [
+  /(?:^|[^A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,512}\.[A-Za-z0-9_-]{8,4096}\.[A-Za-z0-9_-]{16,1024}(?![A-Za-z0-9_.-])/m,
+  /["']access_token["']\s*[:=]\s*["'][^"'\r\n]{1,2048}["']/i,
+  /["']access_token=[^"'\r\n]{1,2048}["']/i,
+  /[?&](?:access_token|embed_key)=[^&#\s"'`<>]{1,2048}/i,
 ];
 
 const PRIVATE_KEYS = new Set([
@@ -122,6 +129,16 @@ startServer({
 
 function normalizedPath(root, absolutePath) {
   return path.relative(root, absolutePath).split(path.sep).join("/");
+}
+
+function safeRootName(value) {
+  const basename = path.basename(String(value)).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 128);
+  return basename || ".";
+}
+
+function isAbbottTestMaterial(relativePath) {
+  return relativePath.startsWith(`${ABBOTT_APP_ROOT}/src/`) &&
+    (/\.test\.[cm]?[jt]sx?$/.test(relativePath) || /(?:^|\/)[^/]*fixture[^/]*\.[cm]?[jt]sx?$/.test(relativePath));
 }
 
 function isRegularFile(absolutePath) {
@@ -282,7 +299,7 @@ function inspectFileClosure(files, violations, { rejectUntraced = true } = {}) {
     finally { visiting.delete(name); }
   };
   for (const name of [".release-source-sha", ".release-runtime-scope", "package.json", ABBOTT_SERVER,
-    ABBOTT_SCHEMA, `${ABBOTT_APP_ROOT}/package.json`, `${ABBOTT_NEXT}/package.json`, `${ABBOTT_NEXT}/next-server.js.nft.json`,
+    ABBOTT_SCHEMA_ARTIFACT, `${ABBOTT_APP_ROOT}/package.json`, `${ABBOTT_NEXT}/package.json`, `${ABBOTT_NEXT}/next-server.js.nft.json`,
     ...NEXT_AUTHORITY_FILES.map((name) => `${ABBOTT_NEXT}/${name}`)]) include(name);
   for (const target of ABBOTT_COMPILED_ROUTES) {
     include(`${ABBOTT_NEXT_SERVER}/${target}`);
@@ -378,6 +395,69 @@ function readStableFile(filename, { metadata = false } = {}) {
   } finally { fs.closeSync(fd); }
 }
 
+function replacePreparedFile(root, relativePath, buffer) {
+  const absolute = path.join(root, relativePath);
+  if (!fs.existsSync(absolute)) return;
+  const before = fs.lstatSync(absolute, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("unsafe prepared artifact file");
+  const fd = fs.openSync(absolute, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
+  try {
+    if (!sameEntry(before, fs.fstatSync(fd, { bigint: true }))) throw new Error("prepared artifact file changed");
+    fs.ftruncateSync(fd, 0);
+    let offset = 0;
+    while (offset < buffer.length) offset += fs.writeSync(fd, buffer, offset, buffer.length - offset, offset);
+  } finally { fs.closeSync(fd); }
+}
+
+function removePreparedFile(root, relativePath) {
+  const absolute = path.join(root, relativePath);
+  if (!fs.existsSync(absolute)) return;
+  const canonicalRoot = fs.realpathSync(root);
+  const canonicalParent = fs.realpathSync(path.dirname(absolute));
+  if (!canonicalParent.startsWith(`${canonicalRoot}${path.sep}`)) throw new Error("unsafe prepared artifact path");
+  const before = fs.lstatSync(absolute, { bigint: true });
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("unsafe prepared artifact file");
+  const fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    if (!sameEntry(before, fs.fstatSync(fd, { bigint: true })) || !sameEntry(before, fs.lstatSync(absolute, { bigint: true }))) {
+      throw new Error("prepared artifact file changed");
+    }
+  } finally { fs.closeSync(fd); }
+  fs.unlinkSync(absolute);
+}
+
+function prunePreparedTestMaterial(root) {
+  const sourceRoot = path.join(root, ABBOTT_APP_ROOT, "src");
+  if (!fs.existsSync(sourceRoot)) return;
+  const visit = (directory, depth = 0) => {
+    if (depth > 64) throw new Error("excessive test material depth");
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe test material directory");
+    for (const name of fs.readdirSync(directory).sort()) {
+      const absolute = path.join(directory, name);
+      const child = fs.lstatSync(absolute);
+      if (child.isSymbolicLink()) throw new Error("unsafe test material entry");
+      if (child.isDirectory()) visit(absolute, depth + 1);
+      else {
+        const relative = normalizedPath(root, absolute);
+        if (isAbbottTestMaterial(relative)) removePreparedFile(root, relative);
+      }
+    }
+  };
+  visit(sourceRoot);
+}
+
+function removeObsoleteRootSchema(root) {
+  removePreparedFile(root, ABBOTT_SCHEMA_SOURCE);
+  for (const relative of ["src/schemas", "src"]) {
+    const absolute = path.join(root, relative);
+    if (!fs.existsSync(absolute)) continue;
+    const stat = fs.lstatSync(absolute);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe obsolete schema directory");
+    if (fs.readdirSync(absolute).length === 0) fs.rmdirSync(absolute);
+  }
+}
+
 function loadTrustedManifest(root, filename) {
   if (typeof filename !== "string" || !filename) throw new Error("explicit trusted manifest path is required");
   const canonicalRoot = fs.realpathSync(root);
@@ -430,7 +510,10 @@ export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, man
   const buildRoot = path.dirname(root);
   if (scope !== "abbott" || !SOURCE_SHA_PATTERN.test(sourceSha) || buildRoot !== path.join(REPOSITORY_ROOT, ABBOTT_NEXT)) throw new Error("invalid trusted build source");
   if (path.resolve(manifestPath).startsWith(`${root}${path.sep}`)) throw new Error("trusted manifest must be outside artifact");
+  prunePreparedTestMaterial(root);
+  removeObsoleteRootSchema(root);
   const files = new Map();
+  const preparedTraces = new Map();
   let totalBytes = 0;
   const put = (name, buffer, mode = 0o644) => {
     totalBytes += buffer.length - (files.get(name)?.size ?? 0);
@@ -448,24 +531,38 @@ export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, man
     const actual = fs.realpathSync(absolute);
     const artifact = fs.realpathSync(root);
     if (actual === artifact || actual.startsWith(`${artifact}${path.sep}`)) throw new Error("artifact cannot supply trusted build bytes");
-    const { buffer, mode } = readStableFile(absolute);
-    put(name, buffer, mode);
+    const source = readStableFile(absolute);
+    let { buffer } = source;
+    const { mode } = source;
+    let trace;
+    let traceTargets;
     if (name.endsWith(".nft.json")) {
-      const trace = JSON.parse(files.get(name).text);
+      trace = JSON.parse(decodeUtf8(buffer));
       if (trace.version !== 1 || !Array.isArray(trace.files) || trace.files.length > 10000) throw new Error("invalid build trace");
+      traceTargets = [];
+      const retained = [];
       for (const entry of trace.files) {
         if (typeof entry !== "string" || path.posix.isAbsolute(entry) || /[\\\u0000-\u001f:]/.test(entry)) throw new Error("unsafe build trace");
-        load(path.posix.normalize(path.posix.join(path.posix.dirname(name), entry)), false, depth + 1);
+        const target = path.posix.normalize(path.posix.join(path.posix.dirname(name), entry));
+        if (isAbbottTestMaterial(target)) continue;
+        retained.push(entry);
+        traceTargets.push(target);
       }
+      if (retained.length !== trace.files.length) {
+        buffer = Buffer.from(`${JSON.stringify({ ...trace, files: retained })}\n`);
+        preparedTraces.set(name, buffer);
+      }
+    }
+    put(name, buffer, mode);
+    if (traceTargets) {
+      for (const target of traceTargets) load(target, false, depth + 1);
     } else if (fs.existsSync(`${absolute}.nft.json`)) load(`${name}.nft.json`, false, depth + 1);
   };
-  for (const name of ["package.json", ABBOTT_SCHEMA, `${ABBOTT_APP_ROOT}/package.json`, `${ABBOTT_NEXT}/package.json`,
+  for (const name of ["package.json", `${ABBOTT_APP_ROOT}/package.json`, `${ABBOTT_NEXT}/package.json`,
     `${ABBOTT_NEXT}/next-server.js.nft.json`, ...NEXT_AUTHORITY_FILES.map((name) => `${ABBOTT_NEXT}/${name}`)]) load(name);
-  const schemaSource = readStableFile(path.join(REPOSITORY_ROOT, ABBOTT_SCHEMA));
-  if (createHash("sha256").update(schemaSource.buffer).digest("hex") !== files.get(ABBOTT_SCHEMA).digest) {
-    throw new Error("static schema changed during trusted preparation");
-  }
-  for (const directory of [path.join(root, "src"), path.join(root, "src/schemas")]) {
+  const schemaSource = readStableFile(path.join(REPOSITORY_ROOT, ABBOTT_SCHEMA_SOURCE));
+  put(ABBOTT_SCHEMA_ARTIFACT, schemaSource.buffer, schemaSource.mode);
+  for (const directory of [path.join(root, ABBOTT_APP_ROOT, "src"), path.join(root, ABBOTT_APP_ROOT, "src/schemas")]) {
     if (fs.existsSync(directory)) {
       const stat = fs.lstatSync(directory);
       if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe static schema directory");
@@ -473,7 +570,7 @@ export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, man
       mkdirSync(directory);
     }
   }
-  writeFileSync(path.join(root, ABBOTT_SCHEMA), schemaSource.buffer, { flag: "wx", mode: schemaSource.mode });
+  writeFileSync(path.join(root, ABBOTT_SCHEMA_ARTIFACT), schemaSource.buffer, { flag: "wx", mode: schemaSource.mode });
   const rootPackage = JSON.parse(files.get("package.json").text);
   for (const key of ["scripts", "workspaces", "devDependencies"]) delete rootPackage[key];
   put("package.json", Buffer.from(`${JSON.stringify(rootPackage, null, 2)}\n`));
@@ -500,6 +597,7 @@ export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, man
     }
   };
   loadStatic(path.join(buildRoot, "static"));
+  for (const [name, buffer] of preparedTraces) replacePreparedFile(root, name, buffer);
   const violations = [];
   inspectMetadata(files, scope, violations);
   inspectAbbottRoutes(files, violations);
@@ -523,8 +621,9 @@ function inspectPath(relativePath, violations) {
   if (marker) violations.push(`forbidden path marker ${marker}: ${relativePath}`);
   if (basename.startsWith(".env")) violations.push(`unapproved environment file ${relativePath}`);
   if (OPAQUE_SUFFIX.test(lower)) violations.push(`opaque archive or source workbook ${relativePath}`);
+  if (isAbbottTestMaterial(relativePath)) violations.push(`test material forbidden ${relativePath}`);
   // Only traced dependencies, the one app, and scope metadata belong in this artifact.
-  if (!/^(?:node_modules(?:\/|$)|apps(?:\/abbott(?:\/|$)|$)|packages(?:\/runtime-contract(?:\/|$)|$)|src$|src\/schemas$|src\/schemas\/yandex_metrika\.yaml$|package\.json$|\.release-(?:source-sha|runtime-scope)$)/.test(relativePath)) {
+  if (!/^(?:node_modules(?:\/|$)|apps(?:\/abbott(?:\/|$)|$)|packages(?:\/runtime-contract(?:\/|$)|$)|package\.json$|\.release-(?:source-sha|runtime-scope)$)/.test(relativePath)) {
     violations.push(`unexpected artifact path ${relativePath}`);
   }
   if (relativePath.startsWith(`${ABBOTT_APP_ROOT}/`) && ![
@@ -611,16 +710,14 @@ function inspectTree(root, violations, trusted) {
       const expected = trusted?.entries.get(relativePath);
       if (trusted && (!expected || expected.sha256 !== digest || expected.mode !== mode || expected.size !== size)) {
         violations.push(`trusted file mismatch ${relativePath}`);
-        return;
       }
       if (archiveMagic(buffer)) throw new Error("opaque container");
       // Binary browser assets are decoded only after their external hash matches.
       const binary = BINARY_STATIC.test(relativePath) || relativePath.startsWith("node_modules/") && /\.(?:node|dylib|so(?:\.\d+)*)$/.test(relativePath);
       const text = binary ? buffer.toString("latin1") : decodeUtf8(buffer);
-      const contentMarker = /\.test\.[cm]?[jt]sx?$/.test(relativePath)
-        ? undefined
-        : FORBIDDEN_CONTENT_MARKERS.find((marker) => text.toLowerCase().includes(marker));
+      const contentMarker = FORBIDDEN_CONTENT_MARKERS.find((marker) => text.toLowerCase().includes(marker));
       if (contentMarker) violations.push(`forbidden content marker ${contentMarker}: ${relativePath}`);
+      if (VIEWER_CREDENTIAL_PATTERNS.some((pattern) => pattern.test(text))) violations.push(`viewer credential: ${relativePath}`);
       if (!binary && hasPrivateSourceExport(text, relativePath)) violations.push(`private source export ${relativePath}`);
       files.set(relativePath, { text, digest, size, mode });
     } catch { violations.push(`uninspectable artifact entry ${relativePath || "."}`); }
@@ -644,10 +741,10 @@ function inspectRuntimeArtifactState(artifactRoot, scope, trustedManifestPath) {
   try {
     rootStat = lstatSync(root);
   } catch {
-    return rejected(`missing artifact root ${root}`);
+    return rejected(`missing artifact root: ${safeRootName(artifactRoot)}`);
   }
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    return rejected(`artifact root must be a real directory: ${root}`);
+    return rejected(`artifact root must be a real directory: ${safeRootName(artifactRoot)}`);
   }
 
   let trusted;

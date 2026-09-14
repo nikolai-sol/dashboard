@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs, { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -105,7 +105,7 @@ function createArtifact() {
   write(root, ".release-source-sha", `${SOURCE_SHA}\n`);
   write(root, ".release-runtime-scope", "abbott\n");
   write(root, "apps/abbott/server.js", FIXTURE_SERVER);
-  write(root, "src/schemas/yandex_metrika.yaml", readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml")));
+  write(root, "apps/abbott/src/schemas/yandex_metrika.yaml", readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml")));
   const rootPackage = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json")));
   for (const key of ["scripts", "workspaces", "devDependencies"]) delete rootPackage[key];
   write(root, "package.json", JSON.stringify(rootPackage));
@@ -168,10 +168,41 @@ function withArtifact(run) {
 test("closure: realistic sealed build rejects untraced executable additions", async (t) => {
   const realRoot = path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott/standalone");
   assert.ok(fs.existsSync(realRoot), "build the Abbott workspace before its real-artifact closure fixtures");
-  assert.deepEqual(fs.readdirSync(path.join(realRoot, "src/schemas")), ["yandex_metrika.yaml"]);
+  const serverPath = path.join(realRoot, "apps/abbott/server.js");
+  const serverSource = readFileSync(serverPath, "utf8");
+  assert.match(serverSource, /process\.chdir\(__dirname\)/);
+  const serverCwd = path.dirname(serverPath);
+  const runtimeLookup = JSON.parse(execFileSync(process.execPath, ["-e", `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    process.chdir(${JSON.stringify(serverCwd)});
+    const schema = path.resolve(process.cwd(), "src/schemas/yandex_metrika.yaml");
+    process.stdout.write(JSON.stringify({ cwd: process.cwd(), schema, exists: fs.existsSync(schema) }));
+  `], { encoding: "utf8" }));
+  assert.equal(runtimeLookup.cwd, serverCwd);
+  assert.equal(runtimeLookup.schema, path.join(serverCwd, "src/schemas/yandex_metrika.yaml"));
+  assert.equal(runtimeLookup.exists, true);
+  assert.equal(fs.existsSync(path.join(realRoot, "src/schemas/yandex_metrika.yaml")), false);
+  assert.deepEqual(fs.readdirSync(path.join(serverCwd, "src/schemas")), ["yandex_metrika.yaml"]);
   assert.equal(
-    readFileSync(path.join(realRoot, "src/schemas/yandex_metrika.yaml"), "utf8"),
+    readFileSync(path.join(serverCwd, "src/schemas/yandex_metrika.yaml"), "utf8"),
     readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml"), "utf8"),
+  );
+  const appSourceFiles = [];
+  const collectAppSource = (directory) => {
+    for (const name of fs.readdirSync(directory)) {
+      const absolute = path.join(directory, name);
+      if (fs.lstatSync(absolute).isDirectory()) collectAppSource(absolute);
+      else appSourceFiles.push(path.relative(serverCwd, absolute).split(path.sep).join("/"));
+    }
+  };
+  collectAppSource(path.join(serverCwd, "src"));
+  assert.ok(appSourceFiles.every((name) => !/\.test\.[cm]?[jt]sx?$/.test(name)), appSourceFiles.join("\n"));
+  const trustedManifest = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott/trusted-runtime-manifest.json"), "utf8"));
+  assert.ok(trustedManifest.files.every(({ path: name }) => !/\.test\.[cm]?[jt]sx?$/.test(name)));
+  assert.deepEqual(
+    trustedManifest.files.filter(({ path: name }) => name.includes("/schemas/")).map(({ path: name }) => name),
+    ["apps/abbott/src/schemas/yandex_metrika.yaml"],
   );
   for (const name of ["node_modules/google-ads-admin/index.js", `${NEXT_ROOT}/server/app/foreign-helper.js`,
     "packages/runtime-contract/advertising-admin.js", `${NEXT_ROOT}/server/chunks/untraced.js`]) {
@@ -342,14 +373,64 @@ test("accepts the complete Abbott standalone route set and required static schem
 
 test("requires exactly the Abbott Yandex Metrika static schema", async (t) => {
   await t.test("required schema is absent", () => withArtifact((root) => {
-    rmSync(path.join(root, "src/schemas/yandex_metrika.yaml"));
-    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("src/schemas/yandex_metrika.yaml")));
+    rmSync(path.join(root, "apps/abbott/src/schemas/yandex_metrika.yaml"));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("apps/abbott/src/schemas/yandex_metrika.yaml")));
   }));
   await t.test("unrelated advertising schema is present", () => withArtifact((root) => {
-    write(root, "src/schemas/google.yaml", "platform: google\n");
-    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("src/schemas/google.yaml")));
+    write(root, "apps/abbott/src/schemas/google.yaml", "platform: google\n");
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("apps/abbott/src/schemas/google.yaml")));
+  }));
+  await t.test("obsolete standalone-root schema is present", () => withArtifact((root) => {
+    write(root, "src/schemas/yandex_metrika.yaml", "platform: yandex_metrika\n");
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("src/schemas/yandex_metrika.yaml")));
   }));
 });
+
+test("rejects viewer credential forms and test-named secrets without echoing values", async (t) => {
+  const cases = {
+    bare_jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhYmJvdHQtdmlld2VyIn0.dmlld2VyLXNpZ25hdHVyZS1zZW5zaXRpdmU",
+    json_access_token: '{"access_token":"json-policy-sensitive-value"}',
+    string_access_token: "'access_token': 'string-policy-sensitive-value'",
+    embedded_access_token: '"access_token=embedded-policy-sensitive-value"',
+    query_access_token: "https://dashboard.invalid/view?access_token=query-policy-sensitive-value",
+    joined_access_token: "https://dashboard.invalid/view?a=1&access_token=joined-policy-sensitive-value",
+    query_embed_key: "https://dashboard.invalid/view?embed_key=query-embed-policy-sensitive-value",
+    joined_embed_key: "https://dashboard.invalid/view?a=1&embed_key=joined-embed-policy-sensitive-value",
+    test_file: "METRIKA_TOKEN=test-policy-sensitive-value",
+  };
+  for (const [name, contents] of Object.entries(cases)) await t.test(name, () => withArtifact((root) => {
+    const filename = name === "test_file"
+      ? "apps/abbott/src/anything.test.ts"
+      : `${NEXT_ROOT}/server/chunks/${name}.js`;
+    write(root, filename, contents);
+    const violations = inspectRuntimeArtifact(root, "abbott");
+    assert.ok(violations.some((item) => item.includes(filename) && /credential|content marker/.test(item)), violations.join("\n"));
+    assert.ok(violations.every((item) => !item.includes("sensitive-value")));
+  }));
+});
+
+test("trusted verification still content-scans an injected test-named secret", () => {
+  const root = createArtifact();
+  const authority = fixtureAuthority(root);
+  try {
+    const filename = "apps/abbott/src/injected.test.ts";
+    write(root, filename, "METRIKA_TOKEN=trusted-tamper-sensitive-value\n");
+    const violations = runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority);
+    assert.ok(violations.some((item) => item.includes(`trusted file mismatch ${filename}`)));
+    assert.ok(violations.some((item) => item.includes(`forbidden content marker metrika_token: ${filename}`)));
+    assert.ok(violations.every((item) => !item.includes("trusted-tamper-sensitive-value")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(authority, { force: true });
+    rmSync(`${authority}.sha256`, { force: true });
+  }
+});
+
+test("credential matching permits dotted identifiers and empty access-token placeholders", () => withArtifact((root) => {
+  const filename = `${NEXT_ROOT}/server/chunks/safe.js`;
+  write(root, filename, 'const safe = ["long.application.namespace.withSegments", {"access_token":""}, "?access_token="];\n');
+  assert.deepEqual(inspectRuntimeArtifact(root, "abbott"), []);
+}));
 
 test("rejects every prohibited cross-domain marker in artifact contents", async (t) => {
   const forbidden = [
@@ -759,6 +840,28 @@ test("the Abbott artifact assertion entry point rejects foreign route files", ()
     );
     assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stderr, /server\/app\/zaruku\/page\.js/);
+  });
+});
+
+test("runtime policy CLI root diagnostics expose only a safe basename", async (t) => {
+  for (const kind of ["missing", "file"]) await t.test(kind, () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "abbott-policy-sensitive-parent-"));
+    const root = path.join(parent, `${kind}-safe-basename`);
+    const manifest = path.join(parent, "authority.json");
+    try {
+      if (kind === "file") writeFileSync(root, "not a directory\n");
+      const result = spawnSync(process.execPath, [
+        "scripts/runtime-artifact-policy.mjs", "--verify", "abbott", root,
+        "--trusted-manifest", manifest,
+      ], { cwd: REPOSITORY_ROOT, encoding: "utf8" });
+      const output = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.status, 1);
+      assert.match(output, new RegExp(`${kind === "missing" ? "missing artifact root" : "artifact root must be a real directory"}`));
+      assert.match(output, new RegExp(`${kind}-safe-basename`));
+      assert.doesNotMatch(output, new RegExp(parent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });
 

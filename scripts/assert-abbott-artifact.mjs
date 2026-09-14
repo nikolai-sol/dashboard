@@ -20,7 +20,11 @@ const SECRET_CONTENT = [
   /DASHBOARD_AUTH_SECRET\s*=/i,
   /(?:^|[^A-Z_])DB_PASSWORD\s*=/i,
   /ABBOTT_PRIVATE_DB_PASSWORD\s*=/i,
-  /(?:VIEWER_(?:JWT|TOKEN|QUERY_TOKEN)|QUERY_TOKEN|ACCESS_TOKEN)\s*=/i,
+  /(?:VIEWER_(?:JWT|TOKEN|QUERY_TOKEN)|QUERY_TOKEN|ACCESS_TOKEN)\s*=\s*[A-Za-z0-9._~+/%-]{1,2048}/i,
+  /(?:^|[^A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,512}\.[A-Za-z0-9_-]{8,4096}\.[A-Za-z0-9_-]{16,1024}(?![A-Za-z0-9_.-])/m,
+  /["']access_token["']\s*[:=]\s*["'][^"'\r\n]{1,2048}["']/i,
+  /["']access_token=[^"'\r\n]{1,2048}["']/i,
+  /[?&](?:access_token|embed_key)=[^&#\s"'`<>]{1,2048}/i,
   /Abbott-dashboard-visual-baseline-2026-09-14/i,
 ];
 const BINARY_SUFFIX = /\.(?:png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|node|dylib|so(?:\.\d+)*)$/i;
@@ -28,6 +32,11 @@ const MAX_TEXT_BYTES = 32 * 1024 * 1024;
 
 function relativeName(root, absolute) {
   return path.relative(root, absolute).split(path.sep).join("/");
+}
+
+function safeRootName(value) {
+  const basename = path.basename(String(value)).replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 128);
+  return basename || ".";
 }
 
 function pathIsForbidden(relative) {
@@ -46,10 +55,10 @@ export function inspectAbbottArtifact(artifactRoot) {
   try {
     rootStat = fs.lstatSync(root);
   } catch {
-    return { scannedFiles, scannedTextFiles, violations: ["missing artifact root"] };
+    return { scannedFiles, scannedTextFiles, violations: [`missing artifact root: ${safeRootName(artifactRoot)}`] };
   }
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-    return { scannedFiles, scannedTextFiles, violations: ["unsafe artifact root"] };
+    return { scannedFiles, scannedTextFiles, violations: [`unsafe artifact root: ${safeRootName(artifactRoot)}`] };
   }
 
   const visit = (absolute, depth = 0) => {
@@ -79,7 +88,7 @@ export function inspectAbbottArtifact(artifactRoot) {
       return;
     }
     scannedFiles += 1;
-    if (relative.startsWith("node_modules/") || relative.endsWith(".test.ts") || relative.endsWith(".test.tsx") || BINARY_SUFFIX.test(relative)) return;
+    if (relative.startsWith("node_modules/") || BINARY_SUFFIX.test(relative)) return;
     if (stat.size > MAX_TEXT_BYTES) {
       violations.push(`oversized text file: ${relative}`);
       return;
