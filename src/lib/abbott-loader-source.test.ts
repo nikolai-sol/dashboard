@@ -56,7 +56,9 @@ test("trusted dashboard consumers pass audience into data loading", () => {
 test("dashboard loader requires Abbott audience and preserves it for comparisons", () => {
   const loader = source("src/lib/dashboard-data-loader.ts");
 
-  assert.match(loader, /loadAbbottBiData\(dashboard\.id,\s*effectiveCounterIds,\s*range\.from,\s*range\.to,\s*audience\)/);
+  assert.match(loader, /loadAbbottDashboardDataWithDependencies\(request,\s*requestedId,\s*audience,/);
+  const focused = source("src/lib/abbott-dashboard-loader.ts");
+  assert.match(focused, /dependencies\.loadBi\(dashboard\.id,\s*counterIds,\s*range\.from,\s*range\.to,\s*audience\)/);
   assert.match(loader, /dashboardType\s*===\s*["']abbott_bi["'][\s\S]{0,500}trusted audience/i);
 });
 
