@@ -420,3 +420,31 @@ No neighbor restart/release/write, database/auth/admin mutation, source API call
 collector/cron change, shared login change, password rotation, or Nginx mutation
 occurred. Bootstrap and the Abbott-only shadow deployment are the only authorized
 production changes. Stop for focused token-tooling review.
+
+## Token runbook review correction — post-cutover stdin consistency
+
+The consumer review found one Important documentation defect: section 8 still
+contained the old interactive plaintext flow, an alternate credential descriptor,
+and a password-login call. Removed that workflow entirely. Its replacement
+requires the same strict three-line token frame from a direct pipe on stdin,
+explicitly refuses the legacy mode, and invokes the shared dual-port token
+authorization/parity consumer. Errors emit one fixed category, not response or
+credential details.
+
+The issuer transport is explicitly a gated preceding step requiring review and
+approval before any generation, live smoke, or cutover. No issuer placeholder
+command was introduced. The runbook also preserves PDF/privacy/alias/asset
+acceptance as required gates, whose exact token-safe transport must be reviewed
+before route mutation; the parity consumer alone does not claim those checks.
+
+TDD RED: the new static runbook test detected the stale password/descriptor path.
+GREEN: it proves absence of plaintext workflow symbols, login calls and non-stdin
+credential descriptors, plus presence of strict token mode, explicit stdin,
+token-only rejection, and shared parity invocation for both exact loopback ports.
+Focused docs/comparator/capture suite: 45/45 pass. Targeted tool/test lint,
+root/Abbott typechecks and diff checks pass. Application/deployer code is unchanged.
+
+This correction is local only. No token generation/use, production command,
+push/deploy, Nginx action, browser/tunnel launch, or production mutation occurred
+during this revision. The previously verified shadow remains the latest observed
+production state; public routing remains unchanged. Stop for quick re-review.

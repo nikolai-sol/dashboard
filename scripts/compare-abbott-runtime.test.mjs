@@ -9,6 +9,19 @@ import { openSync, closeSync, rmSync, writeFileSync, mkdtempSync } from "node:fs
 import ExcelJS from "exceljs";
 import * as parityTool from "./compare-abbott-runtime.mjs";
 
+test("cutover runbook keeps every credential workflow on strict token stdin", async () => {
+  const runbook = await readFile(new URL("../docs/runbooks/abbott-runtime-cutover.md", import.meta.url), "utf8");
+  assert.doesNotMatch(runbook, /manager_password|managerPassword|obtainManagerToken|dashboard-auth\/login|readCredentialFd\(\s*[1-9]|--credentials-fd\s+[1-9]|\b[1-9]\s*<\s*</);
+  const postCutover = runbook.split("## 8. Post-cutover Abbott and neighbor smoke")[1].split("## 9.")[0];
+  assert.match(postCutover, /issuer transport.*reviewed/i);
+  assert.match(postCutover, /manager_access_token/);
+  assert.match(postCutover, /readCredentialFd\(0\)/);
+  assert.match(postCutover, /credentials\.managerAccessToken/);
+  assert.match(postCutover, /runParityComparison\(/);
+  assert.match(postCutover, /referenceBase: "http:\/\/127\.0\.0\.1:3001"/);
+  assert.match(postCutover, /candidateBase: "http:\/\/127\.0\.0\.1:3004"/);
+});
+
 function managerTokenFixture(overrides = {}) {
   return `${Buffer.from(JSON.stringify({ type: "viewer", dashboard_id: 18, audience: "manager", credential_version: 1, exp: Math.floor(Date.now() / 1000) + 600, ...overrides })).toString("base64url")}.${"a".repeat(43)}`;
 }

@@ -359,65 +359,48 @@ ssh beget '/usr/sbin/nginx -s reload'
 
 ## 8. Post-cutover Abbott and neighbor smoke
 
-Run the redacted parity and visual commands from sections 4 and 5 again before any other change. Then verify both public Abbott aliases, both JSON/export aliases, manager control, embed isolation, and one Abbott asset without exposing authorization:
+**Gated preceding step: the exact issuer transport must be reviewed and approved
+before token generation, live smoke, or cutover.** This section is not executable
+until that gate is satisfied; no issuer placeholder command is supplied.
+
+After approval, mint a fresh short-lived session on the authorized host and pipe
+the strict `manager_access_token\n<token>\n<embed key>\n` frame directly into
+stdin. Re-run the redacted parity and visual consumers from sections 4 and 5.
+The post-cutover smoke consumer below explicitly refuses the legacy two-line
+mode and calls the same dual-port manager authorization/parity path: both
+manager-only administrator-list GETs must accept the current signature/version
+before manager/embed data and workbook comparisons. Authorization stays in
+memory on loopback ports 3001 and 3004 only, with redirects refused.
+
+This is the consumer side, run only with the approved issuer's direct pipe
+connected to descriptor 0; its command arguments contain code, not credentials.
 
 ```bash
-node --input-type=module 3< <(
-  printf 'Abbott manager password: ' >/dev/tty
-  IFS= read -r -s manager_password </dev/tty
-  printf '\nAbbott embed key: ' >/dev/tty
-  IFS= read -r -s embed_key </dev/tty
-  printf '\n' >/dev/tty
-  printf '%s\n%s\n' "$manager_password" "$embed_key"
-  unset manager_password embed_key
-) <<'NODE'
-import { obtainManagerToken, readCredentialFd } from './scripts/compare-abbott-runtime.mjs';
-
-const { managerPassword, embedKey } = await readCredentialFd(3);
-const token = await obtainManagerToken('http://127.0.0.1:3001', managerPassword);
-const origin = 'https://dashboards.adreports.ru';
-const period = { from: '2026-09-01', to: '2026-09-13' };
-const fetchAuthorized = async (pathname, kind, base = origin) => {
-  const url = new URL(pathname, base);
-  url.searchParams.set('from', period.from);
-  url.searchParams.set('to', period.to);
-  if (kind === 'embed') url.searchParams.set('embed_key', embedKey);
-  const response = await fetch(url, {
-    headers: kind === 'manager' ? { cookie: `dashboard_viewer_18=${token}` } : {},
-    redirect: 'error',
-    signal: AbortSignal.timeout(60000),
+node --input-type=module -e '
+import { readCredentialFd, runParityComparison } from "./scripts/compare-abbott-runtime.mjs";
+try {
+  const credentials = await readCredentialFd(0);
+  if (!credentials.managerAccessToken) throw new Error();
+  const report = await runParityComparison({
+    referenceBase: "http://127.0.0.1:3001",
+    candidateBase: "http://127.0.0.1:3004",
+    ...credentials,
   });
-  return response;
-};
-const managerPaths = [
-  '/dashboard/18', '/dashboard/abbott',
-  '/api/dashboard/18', '/api/dashboard/abbott',
-  '/api/dashboard/18/pdf', '/api/dashboard/abbott/pdf',
-  '/api/dashboard/18/excel', '/api/dashboard/abbott/excel',
-  '/api/dashboard/18/abbott-admin-users', '/api/dashboard/abbott/abbott-admin-users',
-];
-for (const pathname of managerPaths) {
-  const response = await fetchAuthorized(pathname, 'manager');
-  if (!response.ok) throw new Error(`manager smoke failed for ${pathname}: HTTP ${response.status}`);
-  console.log(`${pathname}: ${response.status}`);
+  if (report.status !== "match" || report.mismatch_count !== 0) throw new Error();
+  process.stdout.write("Abbott dual-port token smoke: pass\n");
+} catch {
+  process.stderr.write("ABBOTT_POST_CUTOVER_SMOKE_FAILED\n");
+  process.exitCode = 1;
 }
-const embed = await fetchAuthorized('/api/dashboard/18', 'embed', 'http://127.0.0.1:3004');
-if (!embed.ok) throw new Error(`embed smoke returned HTTP ${embed.status}`);
-const embedText = await embed.text();
-if (/raw_user_id|visit_id|start_url|end_url|session_journeys/i.test(embedText)) {
-  throw new Error('embed smoke exposed a forbidden field');
-}
-const denied = await fetchAuthorized('/api/dashboard/18/abbott-admin-users', 'embed', 'http://127.0.0.1:3004');
-if (denied.status !== 403) throw new Error(`embed manager-control smoke returned HTTP ${denied.status}`);
-const page = await fetchAuthorized('/dashboard/18', 'manager');
-const html = await page.text();
-const assetPath = html.match(/\/_next-abbott\/[^"'\s<]+/)?.[0];
-if (!assetPath) throw new Error('Abbott asset path not found');
-const asset = await fetch(new URL(assetPath, origin), { redirect: 'error', signal: AbortSignal.timeout(60000) });
-if (!asset.ok) throw new Error(`Abbott asset smoke returned HTTP ${asset.status}`);
-console.log(`embed isolation: pass; manager-control denial: ${denied.status}; asset: ${asset.status}`);
-NODE
+'
 ```
+
+This parity consumer does not replace the remaining acceptance checks: PDF,
+embed private-field absence and administrator-control denial, both page/JSON/
+export aliases, and the Abbott public asset must all pass before declaring
+cutover complete. Their exact token-safe smoke transport must be reviewed with
+the issuer/Nginx gate before any route mutation; do not improvise a public-token
+URL, credential file, extra descriptor, or plaintext fallback to perform them.
 
 Verify representative neighbor pages and the three direct health endpoints, then compare PIDs again:
 
