@@ -196,6 +196,74 @@ test("signal cancellation with hung close removes output and leaves no owned PID
   assert.equal(await stat(output).then(() => true).catch(() => false), false);
 });
 
+test("timed PID wait escalates from ignored SIGTERM to SIGKILL and cleanup settles", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "abbott-timed-escalation-"));
+  const output = path.join(parent, "candidate");
+  const signals = [];
+  let alive = true;
+  const started = Date.now();
+  const error = await Promise.race([
+    runCaptureLifecycle({
+      signalSource: new EventEmitter(),
+      setExitCode: () => undefined,
+      createOutput: async () => { await mkdir(output, { mode: 0o700 }); return output; },
+      authorize: async () => "authorization-fixture",
+      launch: async () => ({
+        close: async () => { throw new Error("private close rejection"); },
+        process: () => ({ pid: 4747 }),
+      }),
+      capture: async () => {
+        await writeFile(path.join(output, "partial.png"), "private");
+        throw new Error("private capture failure");
+      },
+      writeIndex: async () => undefined,
+      closeTimeoutMs: 10,
+      pidFallbackTimeoutMs: 15,
+      isPidAlive: () => alive,
+      terminatePid: (_pid, signal) => {
+        signals.push(signal);
+        if (signal === "SIGKILL") alive = false;
+      },
+    }).catch((caught) => caught),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("escalation did not settle")), 300)),
+  ]);
+
+  assert.equal(error.code, "CAPTURE_BROWSER_CAPTURE");
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(alive, false);
+  assert.equal(await stat(output).then(() => true).catch(() => false), false);
+  assert.ok(Date.now() - started < 300);
+});
+
+test("terminal SIGKILL failure returns a fixed code after partial output cleanup", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "abbott-terminal-escalation-"));
+  const output = path.join(parent, "candidate");
+  const signals = [];
+  const error = await Promise.race([
+    runCaptureLifecycle({
+      signalSource: new EventEmitter(),
+      setExitCode: () => undefined,
+      createOutput: async () => { await mkdir(output, { mode: 0o700 }); return output; },
+      authorize: async () => "authorization-fixture",
+      launch: async () => ({
+        close: async () => { throw new Error("private close rejection"); },
+        process: () => ({ pid: 4848 }),
+      }),
+      capture: async () => { await writeFile(path.join(output, "partial.png"), "private"); return {}; },
+      writeIndex: async () => undefined,
+      closeTimeoutMs: 10,
+      pidFallbackTimeoutMs: 15,
+      isPidAlive: () => true,
+      terminatePid: (_pid, signal) => { signals.push(signal); },
+    }).catch((caught) => caught),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("terminal escalation did not settle")), 300)),
+  ]);
+
+  assert.equal(formatSafeCliFailure(error, "ABBOTT_CAPTURE"), "ABBOTT_CAPTURE_FAILED stage=CAPTURE_BROWSER_EXIT\n");
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(await stat(output).then(() => true).catch(() => false), false);
+});
+
 test("SIGINT and SIGTERM at every capture stage close browser and remove partial output", async () => {
   for (const signal of ["SIGINT", "SIGTERM"]) {
     for (const signalStage of ["output", "authorization", "launch", "capture", "index"]) {

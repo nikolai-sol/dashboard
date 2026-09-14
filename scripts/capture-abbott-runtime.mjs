@@ -182,8 +182,13 @@ async function waitForPidsToExit(processIds, isPidAlive, pause, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (processIds.some(isPidAlive) && Date.now() < deadline) {
     const remaining = Math.max(1, deadline - Date.now());
-    await settleWithin(() => pause(Math.min(50, remaining)), remaining, "CAPTURE_BROWSER_EXIT");
+    try {
+      await settleWithin(() => pause(Math.min(50, remaining)), remaining, "CAPTURE_BROWSER_EXIT");
+    } catch {
+      return false;
+    }
   }
+  return !processIds.some(isPidAlive);
 }
 
 export async function closeOwnedBrowser(browser, options = {}) {
