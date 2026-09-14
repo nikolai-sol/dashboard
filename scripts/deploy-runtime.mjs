@@ -77,9 +77,9 @@ function git(...args) {
 
 export function verifySource(authority, repository, activeSha, approvedSha, runGit = git) {
   if (runGit('status', '--porcelain', '--untracked-files=normal')) fail('Runtime source must be clean');
-  if (runGit('branch', '--show-current') !== authority.releaseBranch) fail('Runtime source must use the fixed release branch');
+  if (repository.ref !== `refs/heads/${authority.releaseBranch}`) fail('Invalid fixed release ref');
   const sha = runGit('rev-parse', 'HEAD');
-  if (!SOURCE.test(sha) || approvedSha !== undefined && sha !== approvedSha) fail('Runtime candidate must exactly match the approved release ref');
+  if (!SOURCE.test(sha) || !SOURCE.test(approvedSha) || sha !== approvedSha) fail('Runtime candidate must exactly match the approved release ref');
   for (const predecessor of [repository.base, ...(activeSha ? [activeSha] : [])]) {
     if (!SOURCE.test(predecessor)) fail('Invalid runtime predecessor');
     try { runGit('merge-base', '--is-ancestor', predecessor, sha); }
@@ -173,8 +173,9 @@ async function main() {
   const { authority, action } = validateInvocation(process.argv.slice(2), process.env);
   if (process.getuid() === 0 || process.geteuid() === 0) fail('Local runtime authority requires an unprivileged account');
   const repository = repositoryFor(authority);
-  const candidate = verifySource(authority, repository);
+  if (git('status', '--porcelain', '--untracked-files=normal')) fail('Runtime source must be clean');
   const approved = approvedSource(repository);
+  const candidate = verifySource(authority, repository, undefined, approved);
   const transfer = prepareTransport(authority);
   verifySource(authority, repository, undefined, approved);
   const active = transfer({ action: 'inspect' });

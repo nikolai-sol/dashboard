@@ -17,6 +17,13 @@ git show --no-patch --format='%H %s' "$SOURCE_SHA"
 
 Do not continue from an uncommitted checkout or if `release/abbott` is not the reviewed commit.
 
+The fixed deploy command binds the exact clean local worktree and its Git directory,
+then requires local `HEAD` to equal the literal remote `refs/heads/release/abbott`
+resolved through isolated Git configuration. The local branch name does not grant
+deployment authority; keep this feature worktree checked out as above. Publish its
+reviewed commit to both the feature branch and `release/abbott` with ordinary
+non-force pushes only after the complete local gates pass.
+
 ## 2. Build and test locally
 
 ```bash

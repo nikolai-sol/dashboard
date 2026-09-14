@@ -109,13 +109,15 @@ test('remote worker validates paths, dedicated secrets and exact process identit
   assert.throws(() => installer.assertRuntimeProcess([{ name: 'dashboard-abbott', pid: 123 }], account, () => status, () => '/var/www/dashboard-next'));
 });
 
-test('source gate rejects dirty, wrong branch, nonexact ref and missing predecessor', async () => {
+test('source gate accepts a feature branch only at the exact approved release SHA', async () => {
   const { verifySource } = await import(modulePath);
   const repository = JSON.parse(read('deploy/abbott/repository.json'));
   const sha = 'a'.repeat(40);
-  const run = (...args) => args[0] === 'status' ? '' : args[0] === 'branch' ? 'release/abbott' : args[0] === 'rev-parse' ? sha : '';
+  const run = (...args) => args[0] === 'status' ? '' : args[0] === 'branch' ? 'codex/abbott-runtime-isolation' : args[0] === 'rev-parse' ? sha : '';
   assert.equal(verifySource(RUNTIME_MANIFESTS.abbott, repository, undefined, sha, run), sha);
-  for (const [command, result] of [['status', ' M package.json'], ['branch', 'release/zaruku'], ['rev-parse', 'b'.repeat(40)]]) assert.throws(() => verifySource(RUNTIME_MANIFESTS.abbott, repository, undefined, sha, (...args) => args[0] === command ? result : run(...args)));
+  for (const [command, result] of [['status', ' M package.json'], ['rev-parse', 'b'.repeat(40)]]) assert.throws(() => verifySource(RUNTIME_MANIFESTS.abbott, repository, undefined, sha, (...args) => args[0] === command ? result : run(...args)));
+  for (const missing of [undefined, null, '']) assert.throws(() => verifySource(RUNTIME_MANIFESTS.abbott, repository, undefined, missing, run), /approved release ref/);
+  assert.throws(() => verifySource(RUNTIME_MANIFESTS.abbott, { ...repository, ref: 'refs/heads/release/zaruku' }, undefined, sha, run), /release ref/);
   assert.throws(() => verifySource(RUNTIME_MANIFESTS.abbott, repository, 'c'.repeat(40), sha, (...args) => { if (args[0] === 'merge-base') throw new Error(); return run(...args); }));
 });
 
@@ -152,6 +154,9 @@ test('remote Git approval ignores caller-local insteadOf redirects and config in
     const source = read('scripts/deploy-runtime.mjs').replace(/^import .*;\n/gm, '').replaceAll('export function ', 'function ').replaceAll('export const ', 'const ').replace("const ROOT = path.resolve(import.meta.dirname, '..');", 'const ROOT = testRoot;').split('\nif (process.argv[1]')[0];
     vm.runInContext(source + '\nthis.lookup = approvedSource;', context);
     assert.throws(() => context.lookup({ url: literal, ref: 'refs/heads/release/abbott' }), /Fixed remote release ref unavailable/);
+    assert.equal(context.lookup({ url: `file://${bare}`, ref: 'refs/heads/release/abbott' }), sha);
+    run(['--git-dir', bare, 'update-ref', '-d', 'refs/heads/release/abbott']);
+    assert.throws(() => context.lookup({ url: `file://${bare}`, ref: 'refs/heads/release/abbott' }), /Fixed remote release ref unavailable/);
     assert.ok(temporaryCwds.length >= 2, 'remote discovery and query must use an isolated cwd');
     for (const cwd of temporaryCwds) assert.equal(fs.existsSync(cwd), false, 'temporary Git authority cwd must be cleaned');
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
