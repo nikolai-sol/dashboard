@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { constants, createReadStream } from "node:fs";
-import { lstat, mkdir, open, realpath, rm, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -51,6 +52,93 @@ const REQUIRED_COMMON_ARRAYS = [
 const REQUIRED_MANAGER_ARRAYS = ["users_summary", "users_summary_without_admins", "user_actions"];
 
 const SAFE_STAGE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const PRIVATE_OUTPUT_STATE = new WeakMap();
+const PYTHON_MKDIR_AT = `
+import os, sys
+name = sys.argv[1]
+os.mkdir(name, 0o700, dir_fd=3)
+fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=3)
+try:
+    os.fchmod(fd, 0o700)
+finally:
+    os.close(fd)
+entry = os.stat(name, dir_fd=3, follow_symlinks=False)
+sys.stdout.write(f"{entry.st_dev} {entry.st_ino}")
+`;
+const PYTHON_WRITE_AT = `
+import os, sys
+name = sys.argv[1]
+fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=3)
+try:
+    os.fchmod(fd, 0o600)
+    while True:
+        chunk = sys.stdin.buffer.read(65536)
+        if not chunk:
+            break
+        os.write(fd, chunk)
+    os.fsync(fd)
+finally:
+    os.close(fd)
+`;
+const PYTHON_CLEAN_OUTPUT = `
+import os, stat, sys, time
+expected_dev, expected_ino = sys.argv[1], sys.argv[2]
+def clear(directory_fd):
+    for name in os.listdir(directory_fd):
+        entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISDIR(entry.st_mode):
+            nested = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            try:
+                clear(nested)
+            finally:
+                os.close(nested)
+            os.rmdir(name, dir_fd=directory_fd)
+        else:
+            os.unlink(name, dir_fd=directory_fd)
+removed = False
+for attempt in range(100):
+    clear(4)
+    for name in os.listdir(3):
+        entry = os.stat(name, dir_fd=3, follow_symlinks=False)
+        if str(entry.st_dev) == expected_dev and str(entry.st_ino) == expected_ino and stat.S_ISDIR(entry.st_mode):
+            try:
+                os.rmdir(name, dir_fd=3)
+                removed = True
+            except OSError:
+                pass
+            break
+    if removed:
+        break
+    time.sleep(0.05)
+if not removed:
+    raise SystemExit(3)
+`;
+const PYTHON_REMOVE_CREATED = `
+import os, stat, sys
+expected_dev, expected_ino = sys.argv[1], sys.argv[2]
+def clear(directory_fd):
+    for name in os.listdir(directory_fd):
+        entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISDIR(entry.st_mode):
+            nested = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+            try:
+                clear(nested)
+            finally:
+                os.close(nested)
+            os.rmdir(name, dir_fd=directory_fd)
+        else:
+            os.unlink(name, dir_fd=directory_fd)
+for name in os.listdir(3):
+    entry = os.stat(name, dir_fd=3, follow_symlinks=False)
+    if str(entry.st_dev) == expected_dev and str(entry.st_ino) == expected_ino and stat.S_ISDIR(entry.st_mode):
+        nested = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=3)
+        try:
+            clear(nested)
+        finally:
+            os.close(nested)
+        os.rmdir(name, dir_fd=3)
+        break
+`;
 
 export class SafeStageError extends Error {
   constructor(code) {
@@ -472,9 +560,9 @@ export async function createPrivateReportDirectory(outputParent, repositoryRoot 
 
 async function directoryIdentity(directory) {
   const resolved = await realpath(path.resolve(directory));
-  const entry = await stat(resolved);
+  const entry = await stat(resolved, { bigint: true });
   if (!entry.isDirectory()) throw new SafeStageError("OUTPUT_CONTAINMENT");
-  return { resolved, dev: entry.dev, ino: entry.ino };
+  return { resolved, dev: entry.dev.toString(), ino: entry.ino.toString() };
 }
 
 async function matchesDirectoryIdentity(directory, expected) {
@@ -506,51 +594,138 @@ async function assertExistingAncestorsOutsideRepository(outputParent, repository
 
 export async function createPrivateOutputDirectory(outputParent, prefix, repositoryRoot = process.cwd(), options = {}) {
   const state = await assertExistingAncestorsOutsideRepository(outputParent, repositoryRoot);
-  await options.afterValidation?.();
-  if (!await matchesDirectoryIdentity(state.namedParent, state.identity)) {
-    throw new SafeStageError("OUTPUT_CONTAINMENT");
-  }
-  const directory = path.join(state.identity.resolved, `${prefix}${crypto.randomBytes(12).toString("hex")}`);
+  let parentHandle = null;
+  let directoryHandle = null;
+  let createdIdentity = null;
   try {
-    await mkdir(directory, { recursive: false, mode: 0o700 });
-    const created = await lstat(directory);
-    if (!created.isDirectory() || created.isSymbolicLink()
-      || !await matchesDirectoryIdentity(state.namedParent, state.identity)) {
-      await rm(directory, { recursive: true, force: true });
+    parentHandle = await open(state.identity.resolved, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const openedParent = await parentHandle.stat({ bigint: true });
+    if (openedParent.dev.toString() !== state.identity.dev || openedParent.ino.toString() !== state.identity.ino) {
       throw new SafeStageError("OUTPUT_CONTAINMENT");
     }
-    return directory;
+    await options.afterValidation?.();
+    const name = `${prefix}${crypto.randomBytes(12).toString("hex")}`;
+    const created = await runPythonHelper(PYTHON_MKDIR_AT, [name], [parentHandle.fd]);
+    const [dev, ino] = created.trim().split(" ");
+    if (!/^\d+$/.test(dev) || !/^\d+$/.test(ino)) throw new SafeStageError("OUTPUT_CONTAINMENT");
+    createdIdentity = { dev, ino };
+    const directoryPath = path.join(state.identity.resolved, name);
+    directoryHandle = await open(directoryPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const openedDirectory = await directoryHandle.stat({ bigint: true });
+    if (openedDirectory.dev.toString() !== dev || openedDirectory.ino.toString() !== ino
+      || !await matchesDirectoryIdentity(state.namedParent, state.identity)) {
+      throw new SafeStageError("OUTPUT_CONTAINMENT");
+    }
+    const outputHandle = Object.freeze({
+      path: directoryPath,
+      identity: Object.freeze({ realpath: directoryPath, dev, ino }),
+    });
+    PRIVATE_OUTPUT_STATE.set(outputHandle, {
+      name,
+      parentHandle,
+      directoryHandle,
+      parentIdentity: state.identity,
+      lexicalParent: state.namedParent,
+      released: false,
+    });
+    parentHandle = null;
+    directoryHandle = null;
+    return outputHandle;
   } catch (error) {
+    if (createdIdentity && parentHandle) {
+      await runPythonHelper(PYTHON_REMOVE_CREATED, [createdIdentity.dev, createdIdentity.ino], [parentHandle.fd]).catch(() => undefined);
+    }
+    await Promise.allSettled([directoryHandle?.close(), parentHandle?.close()]);
     if (error instanceof SafeStageError) throw error;
     throw new SafeStageError("OUTPUT_CONTAINMENT");
   }
 }
 
-export async function writePrivateExclusiveFile(directory, filename, contents, options = {}) {
-  const identity = await directoryIdentity(directory).catch(() => { throw new SafeStageError("OUTPUT_WRITE"); });
-  const destination = path.join(identity.resolved, filename);
-  let handle = null;
-  let openedByUs = false;
+function outputState(outputHandle) {
+  const state = PRIVATE_OUTPUT_STATE.get(outputHandle);
+  if (!state || state.released) throw new SafeStageError("OUTPUT_CONTAINMENT");
+  return state;
+}
+
+async function retainedOutputStillNamed(outputHandle, state) {
   try {
-    await options.beforeOpen?.();
-    if (!await matchesDirectoryIdentity(directory, identity)) throw new SafeStageError("OUTPUT_WRITE");
-    handle = await open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    openedByUs = true;
-    await handle.writeFile(contents);
-    await handle.sync();
-    const entry = await handle.stat();
-    if (!entry.isFile() || !await matchesDirectoryIdentity(directory, identity)) throw new SafeStageError("OUTPUT_WRITE");
-    await handle.close();
-    handle = null;
-    return destination;
-  } catch (error) {
-    await handle?.close().catch(() => undefined);
-    if (openedByUs && await matchesDirectoryIdentity(directory, identity)) {
-      await rm(destination, { force: true }).catch(() => undefined);
-    }
-    if (error instanceof SafeStageError) throw error;
+    if (!await matchesDirectoryIdentity(state.lexicalParent, state.parentIdentity)) return false;
+    const named = await stat(outputHandle.path, { bigint: true });
+    return named.isDirectory()
+      && named.dev.toString() === outputHandle.identity.dev
+      && named.ino.toString() === outputHandle.identity.ino;
+  } catch {
+    return false;
+  }
+}
+
+async function runPythonHelper(script, args, inheritedFds, input = Buffer.alloc(0), timeoutMs = 5_000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", ["-c", script, ...args], {
+      stdio: ["pipe", "pipe", "ignore", ...inheritedFds],
+    });
+    const chunks = [];
+    let size = 0;
+    let settled = false;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(new SafeStageError("OUTPUT_HELPER"));
+    }, timeoutMs);
+    child.stdout.on("data", (chunk) => {
+      size += chunk.length;
+      if (size <= 256) chunks.push(chunk);
+      else child.kill("SIGKILL");
+    });
+    child.stdin.on("error", () => undefined);
+    child.on("error", () => finish(new SafeStageError("OUTPUT_HELPER")));
+    child.on("close", (code) => finish(code === 0 ? null : new SafeStageError("OUTPUT_HELPER"), Buffer.concat(chunks).toString("utf8")));
+    child.stdin.end(input);
+  });
+}
+
+export async function writePrivateExclusiveFile(outputHandle, filename, contents, options = {}) {
+  if (typeof filename !== "string" || filename !== path.basename(filename) || filename === "." || filename === "..") {
     throw new SafeStageError("OUTPUT_WRITE");
   }
+  const state = outputState(outputHandle);
+  try {
+    if (!await retainedOutputStillNamed(outputHandle, state)) throw new SafeStageError("OUTPUT_CONTAINMENT");
+    await options.beforeOpen?.();
+    await runPythonHelper(PYTHON_WRITE_AT, [filename], [state.directoryHandle.fd], Buffer.from(contents));
+    if (!await retainedOutputStillNamed(outputHandle, state)) throw new SafeStageError("OUTPUT_CONTAINMENT");
+    return path.join(outputHandle.path, filename);
+  } catch (error) {
+    if (error instanceof SafeStageError && error.code === "OUTPUT_CONTAINMENT") throw error;
+    throw new SafeStageError("OUTPUT_WRITE");
+  }
+}
+
+export async function releasePrivateOutputDirectory(outputHandle) {
+  const state = outputState(outputHandle);
+  state.released = true;
+  const results = await Promise.allSettled([state.directoryHandle.close(), state.parentHandle.close()]);
+  if (results.some((result) => result.status === "rejected")) throw new SafeStageError("OUTPUT_RELEASE");
+}
+
+export async function cleanupPrivateOutputDirectory(outputHandle) {
+  const state = outputState(outputHandle);
+  state.released = true;
+  const cleanup = runPythonHelper(
+    PYTHON_CLEAN_OUTPUT,
+    [outputHandle.identity.dev, outputHandle.identity.ino],
+    [state.parentHandle.fd, state.directoryHandle.fd],
+    Buffer.alloc(0),
+    6_000,
+  );
+  const results = await Promise.allSettled([cleanup, state.directoryHandle.close(), state.parentHandle.close()]);
+  if (results.some((result) => result.status === "rejected")) throw new SafeStageError("OUTPUT_CLEANUP");
 }
 
 export async function writeParityReport(directory, report, options = {}) {
@@ -684,7 +859,13 @@ async function main() {
   const credentials = await runSafeStage("CREDENTIAL_INPUT", () => readCredentialFd(options.credentialsFd));
   const report = await runSafeStage("PARITY_EXECUTION", () => runParityComparison({ referenceBase, candidateBase, ...credentials }));
   const directory = await runSafeStage("OUTPUT_CREATE", () => createPrivateReportDirectory(options.outputParent));
-  await writeParityReport(directory, report);
+  try {
+    await writeParityReport(directory, report);
+    await releasePrivateOutputDirectory(directory);
+  } catch (error) {
+    await cleanupPrivateOutputDirectory(directory).catch(() => undefined);
+    throw error;
+  }
   process.stdout.write(`status=${report.status} mismatches=${report.mismatch_count} report=created\n`);
   if (report.status !== "match") process.exitCode = 1;
 }

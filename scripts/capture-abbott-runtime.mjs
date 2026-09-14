@@ -9,10 +9,12 @@ import {
   ABBOTT_PARITY_PERIOD,
   SafeStageError,
   assertRuntimeBaseUrl,
+  cleanupPrivateOutputDirectory,
   createPrivateOutputDirectory,
   formatSafeCliFailure,
   obtainManagerToken,
   readCredentialFd,
+  releasePrivateOutputDirectory,
   runSafeStage,
   writePrivateExclusiveFile,
 } from "./compare-abbott-runtime.mjs";
@@ -162,10 +164,35 @@ function defaultPidAlive(pid) {
   }
 }
 
+async function settleWithin(operation, timeoutMs, code) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(operation),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new SafeStageError(code)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function waitForPidsToExit(processIds, isPidAlive, pause, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (processIds.some(isPidAlive) && Date.now() < deadline) {
+    const remaining = Math.max(1, deadline - Date.now());
+    await settleWithin(() => pause(Math.min(50, remaining)), remaining, "CAPTURE_BROWSER_EXIT");
+  }
+}
+
 export async function closeOwnedBrowser(browser, options = {}) {
   const isPidAlive = options.isPidAlive ?? defaultPidAlive;
   const pause = options.pause ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const terminatePid = options.terminatePid ?? ((pid, signal) => process.kill(pid, signal));
+  const closeTimeoutMs = options.closeTimeoutMs ?? 2_000;
+  const pidExitTimeoutMs = options.pidExitTimeoutMs ?? 1_000;
+  const pidFallbackTimeoutMs = options.pidFallbackTimeoutMs ?? 1_000;
   const pid = Number(browser.process?.()?.pid);
   const processIds = Number.isSafeInteger(pid) && pid > 0 ? [pid] : [];
   let closeAttempts = 0;
@@ -173,24 +200,20 @@ export async function closeOwnedBrowser(browser, options = {}) {
   while (closeAttempts < 2 && !closeSucceeded) {
     closeAttempts += 1;
     try {
-      await browser.close();
+      await settleWithin(() => browser.close(), closeTimeoutMs, "CAPTURE_BROWSER_CLOSE");
       closeSucceeded = true;
-    } catch {
-      if (closeAttempts < 2) await pause(50);
-    }
+    } catch {}
   }
-  for (let check = 0; check < 20 && processIds.some(isPidAlive); check += 1) await pause(50);
+  if (closeSucceeded) await waitForPidsToExit(processIds, isPidAlive, pause, pidExitTimeoutMs);
   for (const signal of ["SIGTERM", "SIGKILL"]) {
     const alivePids = processIds.filter(isPidAlive);
     if (alivePids.length === 0) break;
-    for (const ownedPid of alivePids) {
-      try {
-        terminatePid(ownedPid, signal);
-      } catch (error) {
-        if (error?.code !== "ESRCH") throw new SafeStageError("CAPTURE_BROWSER_EXIT");
-      }
-    }
-    for (let check = 0; check < 20 && processIds.some(isPidAlive); check += 1) await pause(50);
+    await Promise.allSettled(alivePids.map((ownedPid) => settleWithin(
+      () => terminatePid(ownedPid, signal),
+      pidFallbackTimeoutMs,
+      "CAPTURE_BROWSER_EXIT",
+    )));
+    await waitForPidsToExit(processIds, isPidAlive, pause, pidFallbackTimeoutMs);
   }
   if (processIds.some(isPidAlive)) throw new SafeStageError("CAPTURE_BROWSER_EXIT");
   if (!closeSucceeded && processIds.length === 0) throw new SafeStageError("CAPTURE_BROWSER_CLOSE");
@@ -215,19 +238,24 @@ export async function runCaptureLifecycle(options) {
       return undefined;
     }
     cleanupPromise = (async () => {
+      const removeOutput = options.removeOutput ?? ((output) => typeof output === "string"
+        ? rm(output, { recursive: true, force: true })
+        : cleanupPrivateOutputDirectory(output));
+      const tasks = [];
       if (browser && !browserCloseStarted) {
         browserCloseStarted = true;
-        browserOwnership = await closeOwnedBrowser(browser, {
+        tasks.push(closeOwnedBrowser(browser, {
+          closeTimeoutMs: options.closeTimeoutMs,
           isPidAlive: options.isPidAlive,
           pause: options.pause,
+          pidExitTimeoutMs: options.pidExitTimeoutMs,
+          pidFallbackTimeoutMs: options.pidFallbackTimeoutMs,
           terminatePid: options.terminatePid,
-        });
-        browser = null;
+        }).then((ownership) => { browserOwnership = ownership; browser = null; }));
       }
-      if (outputDirectory) {
-        await rm(outputDirectory, { recursive: true, force: true });
-        outputDirectory = null;
-      }
+      if (outputDirectory) tasks.push(Promise.resolve(removeOutput(outputDirectory)).then(() => { outputDirectory = null; }));
+      const results = await Promise.allSettled(tasks);
+      if (results.some((result) => result.status === "rejected")) throw new SafeStageError("CAPTURE_CLEANUP");
     })();
     try {
       await cleanupPromise;
@@ -262,14 +290,21 @@ export async function runCaptureLifecycle(options) {
     assertActive();
     browserCloseStarted = true;
     browserOwnership = await closeOwnedBrowser(browser, {
+      closeTimeoutMs: options.closeTimeoutMs,
       isPidAlive: options.isPidAlive,
       pause: options.pause,
+      pidExitTimeoutMs: options.pidExitTimeoutMs,
+      pidFallbackTimeoutMs: options.pidFallbackTimeoutMs,
       terminatePid: options.terminatePid,
     });
     browser = null;
     assertActive();
     const result = await runSafeStage("CAPTURE_INDEX_WRITE", () => options.writeIndex({ captureResult, browserOwnership, outputDirectory, signal: controller.signal }));
     assertActive();
+    if (options.releaseOutput) {
+      await runSafeStage("CAPTURE_OUTPUT_RELEASE", () => options.releaseOutput(outputDirectory));
+      outputDirectory = null;
+    }
     return result;
   } catch (error) {
     try {
@@ -325,8 +360,8 @@ async function selectTab(page, tab) {
   await waitForStableDashboard(page);
 }
 
-async function visualComparison(referencePath, candidatePath) {
-  const [referenceBytes, candidateBytes] = await Promise.all([readFile(referencePath), readFile(candidatePath)]);
+async function visualComparison(referencePath, candidateBytes) {
+  const referenceBytes = await readFile(referencePath);
   const referenceDimensions = inspectPngDimensions(referenceBytes);
   const candidateDimensions = inspectPngDimensions(candidateBytes);
   const result = {
@@ -404,14 +439,14 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
           throw new Error(`Browser did not apply the required CSS viewport for ${item.tab}`);
         }
         const candidateBytes = Buffer.from(await page.screenshot({ fullPage: true, type: "png" }));
-        const candidatePath = await writePrivateExclusiveFile(outputDirectory, item.filename, candidateBytes);
+        await writePrivateExclusiveFile(outputDirectory, item.filename, candidateBytes);
         const baselinePath = path.join(locations.baseline, item.filename);
         const baselineExists = await stat(baselinePath).then((entry) => entry.isFile()).catch(() => false);
         results.push({
           filename: item.filename,
           tab: item.tab,
           dimensions: buildCaptureDimensions(item.viewport, candidateBytes),
-          comparison: baselineExists ? await visualComparison(baselinePath, candidatePath) : null,
+          comparison: baselineExists ? await visualComparison(baselinePath, candidateBytes) : null,
         });
       }
       return { visibleTabs, results, consoleCounts };
@@ -428,6 +463,8 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
       const indexPath = await writeIndex(outputDirectory, index);
       return { outputDirectory, indexPath, index };
     },
+    removeOutput: cleanupPrivateOutputDirectory,
+    releaseOutput: releasePrivateOutputDirectory,
   });
 }
 

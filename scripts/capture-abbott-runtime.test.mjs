@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import * as parityTool from "./compare-abbott-runtime.mjs";
 import { formatSafeCliFailure } from "./compare-abbott-runtime.mjs";
 
 import {
@@ -114,6 +115,87 @@ test("browser close failure uses only the captured PID for bounded termination",
   assert.deepEqual(terminations, [[4343, "SIGTERM"]]);
 });
 
+test("never-settling browser close reaches the captured-PID fallback and settles", async () => {
+  let alive = true;
+  const terminations = [];
+  const result = await Promise.race([
+    closeOwnedBrowser({
+      close: () => new Promise(() => undefined),
+      process: () => ({ pid: 4444 }),
+    }, {
+      closeTimeoutMs: 5,
+      isPidAlive: () => alive,
+      terminatePid: (pid, signal) => { terminations.push([pid, signal]); alive = false; },
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("close did not settle")), 200)),
+  ]);
+
+  assert.equal(result.close_succeeded, false);
+  assert.equal(result.exit_verified, true);
+  assert.deepEqual(terminations, [[4444, "SIGTERM"]]);
+});
+
+test("close and PID-fallback failure still removes partial capture output", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "abbott-close-cleanup-"));
+  const output = path.join(parent, "candidate");
+  let alive = true;
+  const error = await runCaptureLifecycle({
+    signalSource: new EventEmitter(),
+    setExitCode: () => undefined,
+    createOutput: async () => { await mkdir(output, { mode: 0o700 }); return output; },
+    authorize: async () => "authorization-fixture",
+    launch: async () => ({
+      close: async () => { throw new Error("private close failure"); },
+      process: () => ({ pid: 4545 }),
+    }),
+    capture: async () => { await writeFile(path.join(output, "partial.png"), "private"); return {}; },
+    writeIndex: async () => undefined,
+    closeTimeoutMs: 5,
+    pidFallbackTimeoutMs: 5,
+    isPidAlive: () => alive,
+    terminatePid: () => { throw Object.assign(new Error("private fallback failure"), { code: "EPERM" }); },
+    pause: async () => undefined,
+  }).catch((caught) => caught);
+
+  assert.equal(formatSafeCliFailure(error, "ABBOTT_CAPTURE"), "ABBOTT_CAPTURE_FAILED stage=CAPTURE_BROWSER_EXIT\n");
+  assert.equal(await stat(output).then(() => true).catch(() => false), false);
+  alive = false;
+});
+
+test("signal cancellation with hung close removes output and leaves no owned PID", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "abbott-hung-cancel-"));
+  const output = path.join(parent, "candidate");
+  const signalSource = new EventEmitter();
+  let alive = true;
+  const error = await Promise.race([
+    runCaptureLifecycle({
+      signalSource,
+      setExitCode: () => undefined,
+      createOutput: async () => { await mkdir(output, { mode: 0o700 }); return output; },
+      authorize: async () => "authorization-fixture",
+      launch: async () => ({
+        close: () => new Promise(() => undefined),
+        process: () => ({ pid: 4646 }),
+      }),
+      capture: async () => {
+        await writeFile(path.join(output, "partial.png"), "private");
+        signalSource.emit("SIGINT");
+        return {};
+      },
+      writeIndex: async () => undefined,
+      closeTimeoutMs: 5,
+      pidFallbackTimeoutMs: 5,
+      isPidAlive: () => alive,
+      terminatePid: () => { alive = false; },
+    }).catch((caught) => caught),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("cancellation did not settle")), 200)),
+  ]);
+
+  assert.equal(error.code, "CAPTURE_CANCELLED");
+  assert.equal(alive, false);
+  assert.equal(await stat(output).then(() => true).catch(() => false), false);
+});
+
 test("SIGINT and SIGTERM at every capture stage close browser and remove partial output", async () => {
   for (const signal of ["SIGINT", "SIGTERM"]) {
     for (const signalStage of ["output", "authorization", "launch", "capture", "index"]) {
@@ -194,7 +276,8 @@ test("candidate directory is private and locations outside Git are enforced", as
 
   await validateCaptureLocations({ baseline, outputParent, repositoryRoot: process.cwd() });
   const candidate = await createPrivateCandidateDirectory(outputParent);
-  assert.equal((await stat(candidate)).mode & 0o777, 0o700);
+  assert.equal((await stat(typeof candidate === "string" ? candidate : candidate.path)).mode & 0o777, 0o700);
+  await parityTool.cleanupPrivateOutputDirectory?.(candidate);
   await assert.rejects(
     validateCaptureLocations({ baseline, outputParent: path.join(process.cwd(), "output"), repositoryRoot: process.cwd() }),
     /outside Git/,

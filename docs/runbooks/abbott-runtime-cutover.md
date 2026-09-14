@@ -21,6 +21,7 @@ Do not continue from an uncommitted checkout or if `release/abbott` is not the r
 
 ```bash
 npm ci
+command -v python3 >/dev/null
 node --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs
 npm run test:abbott-runtime
 npm run test:abbott-contract
@@ -33,7 +34,7 @@ npm --workspace apps/abbott run verify:artifact
 node scripts/verify-abbott-nginx-routes.mjs deploy/abbott/nginx-routes.conf
 ```
 
-Expected: zero failed tests, lint/typecheck/build exit `0`, the artifact gate exits `0`, and the final command reports `12 exact Abbott routes, 1 Abbott asset prefix, upstream 127.0.0.1:3004`.
+Expected: `python3` is available for descriptor-bound private output writes, zero failed tests, lint/typecheck/build exit `0`, the artifact gate exits `0`, and the final command reports `12 exact Abbott routes, 1 Abbott asset prefix, upstream 127.0.0.1:3004`.
 
 Create one private evidence directory and a bounded local SSH tunnel. The trap stops the task-owned SSH process on every ordinary shell exit.
 
@@ -105,7 +106,7 @@ A mismatch exits `1` and reports only redacted paths. Payload totals use order-i
 
 ## 5. Capture and compare the private visual candidate
 
-This captures the five baseline desktop tabs at CSS width `1440`, the users-summary tab at CSS `390x844`, and every conditional tab that is truthfully visible. The mobile device scale is exactly `800/390`, preserving the baseline's `800`-pixel raster width without changing the CSS viewport; the index records both CSS and raster dimensions. It waits for dashboard readiness, fonts, and chart animation settlement. Its private candidate directory is removed on failure, and the owned Chromium process closes on success, failure, or signal cancellation.
+This captures the five baseline desktop tabs at CSS width `1440`, the users-summary tab at CSS `390x844`, and every conditional tab that is truthfully visible. The mobile device scale is exactly `800/390`, preserving the baseline's `800`-pixel raster width without changing the CSS viewport; the index records both CSS and raster dimensions. It waits for dashboard readiness, fonts, and chart animation settlement. Its private candidate directory is retained by directory identity and all files are created relative to that descriptor. On failure the retained inode is cleaned without following a replacement path. Browser close has a short deadline and falls back only to the exact recorded Chromium PID on failure, timeout, or signal cancellation.
 
 ```bash
 {

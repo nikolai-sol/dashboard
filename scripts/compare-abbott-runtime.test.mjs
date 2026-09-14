@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, readlink, rename, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import ExcelJS from "exceljs";
+import * as parityTool from "./compare-abbott-runtime.mjs";
 
 import {
   ABBOTT_PARITY_PERIOD,
@@ -250,9 +251,10 @@ test("credential input is bounded, positional, and never included in report outp
   });
   const report = await readFile(reportPath, "utf8");
 
-  assert.equal((await stat(directory)).mode & 0o777, 0o700);
+  assert.equal((await stat(typeof directory === "string" ? directory : directory.path)).mode & 0o777, 0o700);
   assert.equal((await stat(reportPath)).mode & 0o777, 0o600);
   assert.doesNotMatch(report, /manager-fixture|embed-fixture/);
+  await parityTool.cleanupPrivateOutputDirectory?.(directory);
 });
 
 test("output containment rejects links into Git and a swapped parent", async () => {
@@ -285,9 +287,32 @@ test("exclusive no-follow report write rejects a swapped leaf without changing i
   await writeFile(target, "unchanged", { mode: 0o600 });
 
   await assert.rejects(writeParityReport(directory, { status: "match" }, {
-    beforeOpen: () => symlink(target, path.join(directory, "abbott-runtime-parity.json")),
+    beforeOpen: () => symlink(target, path.join(typeof directory === "string" ? directory : directory.path, "abbott-runtime-parity.json")),
   }), /OUTPUT_WRITE/);
   assert.equal(await readFile(target, "utf8"), "unchanged");
+  await parityTool.cleanupPrivateOutputDirectory?.(directory);
+});
+
+test("retained output identity rejects a renamed directory replacement and cleans only the approved inode", async () => {
+  const outside = await mkdtemp(path.join(os.tmpdir(), "abbott-retained-output-"));
+  const fakeRepository = path.join(outside, "fake-repository");
+  const outputParent = path.join(outside, "output-parent");
+  const renamedApproved = path.join(outputParent, "renamed-approved");
+  await mkdir(fakeRepository, { mode: 0o700 });
+  await mkdir(outputParent, { mode: 0o700 });
+  const output = await createPrivateReportDirectory(outputParent, fakeRepository);
+  assert.equal(typeof parityTool.cleanupPrivateOutputDirectory, "function");
+  assert.equal(typeof output, "object");
+  const originalPath = output.path;
+  await rename(originalPath, renamedApproved);
+  await symlink(fakeRepository, originalPath);
+
+  await assert.rejects(writeParityReport(output, { status: "match" }), /OUTPUT_CONTAINMENT|OUTPUT_WRITE/);
+  assert.deepEqual(await readdir(fakeRepository), []);
+  await parityTool.cleanupPrivateOutputDirectory(output);
+  assert.equal(await readlink(originalPath), fakeRepository);
+  assert.equal(await stat(renamedApproved).then(() => true).catch(() => false), false);
+  assert.deepEqual(await readdir(fakeRepository), []);
 });
 
 test("manager authorization uses an in-memory cookie instead of a query URL", () => {
