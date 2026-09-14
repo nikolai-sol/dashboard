@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs, { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test, { mock } from "node:test";
@@ -15,6 +16,7 @@ import * as runtimePolicy from "./runtime-artifact-policy.mjs";
 
 const SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567";
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
 const NEXT_ROOT = "apps/abbott/.next-abbott";
 function fixtureAuthority(root) {
   const entries = [];
@@ -62,7 +64,15 @@ const DYNAMIC_ROUTES = [
   ["/api/dashboard/[id]/pdf", "^/api/dashboard/([^/]+?)/pdf(?:/)?$", "^/api/dashboard/(?<nxtPid>[^/]+?)/pdf(?:/)?$"],
   ["/dashboard/[id]", "^/dashboard/([^/]+?)(?:/)?$", "^/dashboard/(?<nxtPid>[^/]+?)(?:/)?$"],
 ].map(([page, regex, namedRegex]) => ({ page, regex, routeKeys: { nxtPid: "nxtPid" }, namedRegex }));
-const FIXTURE_CONFIG = { output: "standalone", distDir: ".next-abbott", assetPrefix: "/_next-abbott", basePath: "", env: {} };
+const FIXTURE_CONFIG = {
+  output: "standalone",
+  distDir: ".next-abbott",
+  assetPrefix: "/_next-abbott",
+  basePath: "",
+  env: {},
+  outputFileTracingIncludes: { "/*": ["./src/schemas/yandex_metrika.yaml"] },
+  outputFileTracingExcludes: { "/*": ["./src/**/*.test.ts", "./src/**/*.test.tsx", "./src/**/*fixture*.ts"] },
+};
 const FIXTURE_SERVER = `const path = require('path')
 const dir = path.join(__dirname)
 process.env.NODE_ENV = 'production'
@@ -218,6 +228,20 @@ test("closure: realistic sealed build rejects untraced executable additions", as
       } finally { rmSync(root, { recursive: true, force: true }); }
     });
   }
+});
+
+test("Abbott Next tracing emits the app-local canonical schema and excludes test material", () => {
+  const config = require(path.join(REPOSITORY_ROOT, "apps/abbott/next.config.js"));
+  assert.deepEqual(config.outputFileTracingIncludes, {
+    "/*": ["./src/schemas/yandex_metrika.yaml"],
+  });
+  assert.deepEqual(config.outputFileTracingExcludes, {
+    "/*": ["./src/**/*.test.ts", "./src/**/*.test.tsx", "./src/**/*fixture*.ts"],
+  });
+  assert.deepEqual(
+    readFileSync(path.join(REPOSITORY_ROOT, "apps/abbott/src/schemas/yandex_metrika.yaml")),
+    readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml")),
+  );
 });
 
 test("trust root: artifact cannot authorize its own new or modified files", async (t) => {
@@ -426,7 +450,7 @@ test("trusted verification still content-scans an injected test-named secret", (
   }
 });
 
-test("prepare rejects a symlinked trace ancestor without modifying the outside sentinel", () => {
+test("prepare rejects every requested trace rewrite without modifying an outside sentinel", () => {
   const root = mkdtempSync(path.join(tmpdir(), "abbott-prepare-ancestor-"));
   const outside = mkdtempSync(path.join(tmpdir(), "abbott-prepare-outside-"));
   const trace = `${NEXT_ROOT}/server/app/api/health/route.js.nft.json`;
@@ -441,7 +465,7 @@ test("prepare rejects a symlinked trace ancestor without modifying the outside s
     const before = createHash("sha256").update(readFileSync(sentinel)).digest("hex");
     assert.throws(
       () => runtimePolicy.prepareRuntimeArtifactFiles(root, new Map([[trace, Buffer.from('{"version":1,"files":["replacement"]}\n')]])),
-      /unsafe|symlink|ancestor/,
+      /build emitted forbidden test trace material/,
     );
     const afterBytes = readFileSync(sentinel);
     assert.equal(createHash("sha256").update(afterBytes).digest("hex"), before);
@@ -451,6 +475,103 @@ test("prepare rejects a symlinked trace ancestor without modifying the outside s
     rmSync(outside, { recursive: true, force: true });
   }
 });
+
+test("prepare never unlinks through a parent swapped at the deletion boundary", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-prepare-delete-root-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "abbott-prepare-delete-outside-"));
+  const parent = path.join(root, "apps/abbott/src/lib");
+  const heldParent = `${parent}-inside`;
+  const victim = path.join(parent, "victim.test.ts");
+  const sentinel = path.join(outside, "victim.test.ts");
+  const originalBytes = Buffer.from("original-test-material\n");
+  const sentinelBytes = Buffer.from("outside-delete-sensitive-value\n");
+  let swapped = false;
+  write(root, "apps/abbott/src/schemas/yandex_metrika.yaml", readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml")));
+  write(root, "apps/abbott/src/lib/victim.test.ts", originalBytes);
+  writeFileSync(sentinel, sentinelBytes);
+  const originalUnlink = fs.unlinkSync;
+  const boundary = mock.method(fs, "unlinkSync", (target, ...args) => {
+    if (target === victim) {
+      fs.renameSync(parent, heldParent);
+      symlinkSync(outside, parent);
+      swapped = true;
+    }
+    return originalUnlink(target, ...args);
+  });
+  let error;
+  try {
+    try { runtimePolicy.prepareRuntimeArtifactFiles(root, new Map()); }
+    catch (caught) { error = caught; }
+  } finally { boundary.mock.restore(); }
+  try {
+    assert.ok(error instanceof Error);
+    assert.doesNotMatch(String(error), /outside-delete-sensitive-value/);
+    assert.equal(swapped, false, "mutation-free prepare must never reach unlink");
+    assert.deepEqual(readFileSync(victim), originalBytes);
+    assert.deepEqual(readFileSync(sentinel), sentinelBytes);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("prepare never creates a schema through a parent swapped at the exclusive-create boundary", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-prepare-schema-root-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "abbott-prepare-schema-outside-"));
+  const parent = path.join(root, "apps/abbott/src/schemas");
+  const heldParent = `${parent}-inside`;
+  const schema = path.join(parent, "yandex_metrika.yaml");
+  const outsideSchema = path.join(outside, "yandex_metrika.yaml");
+  mkdirSync(parent, { recursive: true });
+  const originalOpen = fs.openSync;
+  let swapped = false;
+  const boundary = mock.method(fs, "openSync", (target, ...args) => {
+    if (target === schema) {
+      fs.renameSync(parent, heldParent);
+      symlinkSync(outside, parent);
+      swapped = true;
+    }
+    return originalOpen(target, ...args);
+  });
+  let error;
+  try {
+    try { runtimePolicy.prepareRuntimeArtifactFiles(root, new Map()); }
+    catch (caught) { error = caught; }
+  } finally { boundary.mock.restore(); }
+  try {
+    assert.ok(error instanceof Error);
+    assert.doesNotMatch(String(error), /sensitive|credential|token/i);
+    assert.equal(swapped, false, "mutation-free prepare must never reach exclusive create");
+    assert.equal(fs.existsSync(schema), false);
+    assert.equal(fs.existsSync(outsideSchema), false);
+    assert.deepEqual(fs.readdirSync(parent), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("successful prepare validation leaves every artifact byte unchanged", () => withArtifact((root) => {
+  const snapshot = () => {
+    const entries = [];
+    const visit = (directory) => {
+      for (const name of fs.readdirSync(directory).sort()) {
+        const absolute = path.join(directory, name);
+        const stat = fs.lstatSync(absolute);
+        if (stat.isDirectory()) visit(absolute);
+        else entries.push([
+          path.relative(root, absolute).split(path.sep).join("/"),
+          createHash("sha256").update(readFileSync(absolute)).digest("hex"),
+        ]);
+      }
+    };
+    visit(root);
+    return entries;
+  };
+  const before = snapshot();
+  runtimePolicy.prepareRuntimeArtifactFiles(root, new Map());
+  assert.deepEqual(snapshot(), before);
+}));
 
 test("credential matching permits dotted identifiers and empty access-token placeholders", () => withArtifact((root) => {
   const filename = `${NEXT_ROOT}/server/chunks/safe.js`;
@@ -811,6 +932,7 @@ test("stamps immutable scope and source metadata for a fresh build", () => {
   const root = path.join(buildRoot, "standalone");
   try {
     write(root, "apps/abbott/server.js", "// standalone\n");
+    write(root, "package.json", readFileSync(path.join(REPOSITORY_ROOT, "package.json")));
     mkdirSync(path.join(root, NEXT_ROOT), { recursive: true });
     write(buildRoot, "next-server.js.nft.json", '{"version":1,"files":[]}');
     stampRuntimeArtifact(root, "abbott", SOURCE_SHA, fixtureAuthority(root));
