@@ -63,3 +63,38 @@ Reviewed exact profile values, argument/environment boundaries, import-only test
 - Skill action: TDD and verification-before-completion used; no accepted-work skill update because independent acceptance is not yet present.
 - Evidence: implementation commit, RED/GREEN results and exact commands above.
 - Budget stop: none.
+
+## Review revision: Git configuration authority and pre-listener ownership
+
+The parent review identified two Important blockers in the initial implementation. Both were reproduced and fixed locally, without replacing any earlier report evidence.
+
+### Fixed Git authority
+
+The previous `ls-remote` ran with `-C` pointing at the caller checkout, which allowed its repository-local `url.*.insteadOf` rules to replace the otherwise literal repository URL. Remote approval now creates a private task-owned temporary directory under the canonical OS temporary root, verifies its ownership/mode/canonical path, and confirms Git cannot discover any repository from that cwd before running the literal URL/ref lookup. Both commands use a constructed environment with system/global configuration disabled; no caller Git directory, worktree, ceiling, prefix, SSH or config-injection variables are passed. The temporary cwd is removed in `finally`. Errors reveal neither remote URLs nor config values.
+
+Local source checks use a separate runner limited to status/branch/rev-parse/merge-base. It validates the canonical checkout, `.git` directory or linked-worktree marker and backlink, and Git's reported worktree/git-dir. It then supplies those verified exact paths explicitly. This runner rejects URL operations. The actual linked worktree was also checked: its identity passed, and the dirty source was rejected before any approval or network operation.
+
+RED: `node --test --test-name-pattern='remote Git approval' scripts/deploy-abbott.test.mjs` failed with `Missing expected exception`: the old approval code returned the fixture bare repository's SHA through a real local `insteadOf` rule. GREEN: the same test passed after isolation; it verifies the fixture redirect remains effective in the caller checkout while the approval lookup rejects the nonexistent literal authority, receives only constructed Git environment settings, and leaves no temporary cwd. A separate test verifies local worktree redirection through `core.worktree` is rejected and the local runner cannot perform `ls-remote`.
+
+### Process ownership before listener readiness
+
+Process identity capture no longer queries sockets. Immediately after start/reload it records the exact PM2 app/ID, kernel PID/start time/boot ID, runtime UID/GID, active cwd, fixed launcher command metadata and active release SHA. The candidate is assigned to `ownedProcess` before entering readiness. Listener ownership is checked separately, inside bounded health retries, and the same process proof is checked before and after readiness.
+
+Recovery verifies and stops only that owned process without requiring a listener. It verifies shutdown, restores the sealed predecessor and its process, and checks the restored release identity. An already absent or confirmed-stopped registration does not trigger a stop against a potentially reassigned old PM2 ID. When ownership is ambiguous, the code continues to refuse an unproven stop. Recovery fixtures assert APP metadata and CURRENT agree and that subsequent inspection and rollback work.
+
+RED: all three deterministic VM scenarios (`delayed`, `timeout`, and failure before listener) initially failed with `runtime activation and predecessor restoration failed; ownership requires review`. GREEN: delayed startup now succeeds on the second fixture readiness check; timeout and pre-listener failure stop only candidate PM2 ID 13 and restore the previous release. A fourth scenario reproduced the already-exited candidate failure and now restores safely without sending a stale-ID stop. All four subsequently inspect and roll back successfully, and their owned locks are removed.
+
+Self-review found that pinned Next 16.1.6 sets `process.title` in `node_modules/next/dist/server/lib/start-server.js:182`, changing Linux argv memory. The first launcher-proof approach therefore received an additional failing regression. The fix validates PM2's exact retained executable/cwd/argument metadata and kernel identity instead of depending on mutable argv. The final test accepts the normal Next title change, rejects a different launcher, and separately rejects absent, foreign-PID, wildcard and duplicate listeners.
+
+### Revision verification and operation boundary
+
+- Focused authority/integration/Nginx/lint-config run: **22/22 PASS**.
+- Final complete authority/integration/Nginx/artifact command: `node --test scripts/deploy-abbott.test.mjs scripts/verify-abbott-nginx-routes.test.mjs scripts/lint-runtime-config.test.mjs scripts/assert-abbott-artifact.test.mjs scripts/runtime-artifact-policy.test.mjs` — **229/229 PASS**, zero failures, including actual sealed Abbott payload materialization.
+- `npm run typecheck` and `npx tsc --noEmit -p apps/abbott/tsconfig.json`: **PASS**.
+- Full `npm run lint`: **PASS**, zero errors and the same ten existing source warnings.
+- All three shell scripts pass `bash -n`; both installer modules and both CommonJS configurations pass `node --check`; JSON/PM2 parse assertions remain green. Exact Nginx validator reports the unchanged twelve exact routes, one asset prefix and 3004 upstream. `git diff --check`: **PASS**.
+- This revision did not rebuild or deploy an application; it reused the existing verified artifact for relevant fixture tests. No app runtime, UI, database, collector, deployment profile or Nginx route changed.
+- **No production or network operation ran.** The new Git regression executes `init`, object/ref creation, config setup, and `ls-remote` only inside task-owned temporary fixtures using local file transport. It creates no release branch in the project or on a remote. The actual project check performs only read-only local Git identity/status commands. No SSH, remote fetch/approval, push, PM2, production HTTP, service restart, Nginx reload, secret installation, database command or schedule ran. Fixture/config values were not printed. Every Git and transaction temporary directory was cleaned in `finally`; no browser or background service was created.
+- Self-review covered URL-resolution isolation, linked-worktree identity, retained launcher metadata versus process title, proof assignment ordering, listener/health retry ownership, candidate shutdown, APP/CURRENT restoration, and tests using real worker code with isolated filesystem/platform fixtures. Actual PM2/Linux-host behavior remains a later authorized rollout check.
+
+Closure: Done — both review blockers fixed and locally verified. Accepted — parent review pending. Reusable learning — repository-local Git URL rules survive disabled global/system config, and runtime identity must be established independently of socket readiness. Skill action — TDD and verification-before-completion; no acceptance-learning update. Evidence — RED/GREEN and final checks above. Budget stop — none.

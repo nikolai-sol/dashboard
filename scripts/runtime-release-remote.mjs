@@ -370,7 +370,7 @@ const realPlatform = {
   snapshot() {
     const matches = JSON.parse(command('pm2',['jlist'])).filter(row=>row.name===`dashboard-${scope}`);
     if (!matches.length || matches.length===1 && matches[0].pid===0 && matches[0].pm2_env?.status==='stopped') return null;
-    const proof=captureRuntimeIdentity(matches,realPlatform.account(),filename=>fs.readFileSync(filename,'utf8'),filename=>fs.realpathSync(filename),command('ss',['-ltnpH',`( sport = :${port} )`]));
+    const proof=captureRuntimeIdentity(matches,realPlatform.account(),filename=>fs.readFileSync(filename,'utf8'),filename=>fs.realpathSync(filename));
     const second=JSON.parse(command('pm2',['jlist'])).filter(row=>row.name===`dashboard-${scope}`);
     if(second.length!==1||second[0].pid!==proof.pid||second[0].pm_id!==proof.pmId)fail('Runtime identity changed');
     return proof;
@@ -379,10 +379,12 @@ const realPlatform = {
     if(!Number.isSafeInteger(pmId)||pmId<0)fail('Owned PM2 identity required');
     command('pm2', ['stop', String(pmId)]);
   },
-  async health() {
+  async health(proof) {
     let healthy = false;
     for (let attempt = 0; attempt < 20; attempt++) {
+      if (!isDeepStrictEqual(realPlatform.snapshot(), proof)) fail('Runtime identity changed during readiness');
       try {
+        assertRuntimeListener(proof, command('ss', ['-ltnpH', `( sport = :${port} )`]));
         const response = await fetch(`http://127.0.0.1:${port}/api/health`, { redirect: 'error', signal: AbortSignal.timeout(1000) });
         const body = await response.json();
         if (response.status === 200 && isDeepStrictEqual(body, { ok: true, scope, database: "connected" })) { healthy = true; break; }
@@ -390,24 +392,35 @@ const realPlatform = {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
     if (!healthy) fail('runtime health attestation failed');
-    assertRuntimeProcess(JSON.parse(command('pm2', ['jlist'])), realPlatform.account());
-    const rows = command('ss', ['-ltnH', `( sport = :${port} )`]).trim().split('\n');
-    if (!rows.length || rows.some(row => row.trim().split(/\s+/)[3] !== `127.0.0.1:${port}`)) fail('runtime listener is not exclusively loopback');
+    if (!isDeepStrictEqual(realPlatform.snapshot(), proof)) fail('Runtime identity changed after readiness');
+    assertRuntimeListener(proof, command('ss', ['-ltnpH', `( sport = :${port} )`]));
   },
 };
 
-function captureRuntimeIdentity(processes,account,readText,readCwd,listeners) {
+function captureRuntimeIdentity(processes,account,readText,readCwd) {
   assertRuntimeProcess(processes,account,readText,readCwd);
   const process=processes.find(item => item.name === appName);
   if(!Number.isSafeInteger(process.pm_id)||process.pm_id<0)fail('Runtime identity mismatch');
+  const script = `${BASE}/.dashboard-${scope}-launcher.cjs`;
+  // Next changes process.title and therefore Linux argv memory. PM2 retains
+  // the exact launch command independently of that mutable process title.
+  const launcherArgs = ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', script];
+  if (process.pm2_env?.pm_exec_path !== '/usr/bin/env' || process.pm2_env?.pm_cwd !== `${APP}/apps/${scope}` ||
+      !Array.isArray(process.pm2_env.args) || process.pm2_env.args.length !== launcherArgs.length || process.pm2_env.args.some((value, index) => value !== launcherArgs[index])) fail('Runtime script identity mismatch');
   const stat=()=>{const text=readText(`/proc/${process.pid}/stat`),close=text.lastIndexOf(')');const fields=text.slice(close+2).trim().split(/\s+/);if(close<0||!/^\d+$/.test(fields[19]??''))fail('Runtime start identity mismatch');return fields[19];};
   const startTime=stat(),bootId=readText('/proc/sys/kernel/random/boot_id').trim();
   if(!/^[a-f0-9-]{36}$/.test(bootId))fail('Runtime boot identity mismatch');
-  const rows=listeners.trim().split('\n');
-  if(rows.length!==1||rows[0].trim().split(/\s+/)[3]!==`127.0.0.1:${port}`||[...rows[0].matchAll(/pid=(\d+)/g)].map(match=>Number(match[1])).some(pid=>pid!==process.pid)||!rows[0].includes(`pid=${process.pid},`))fail('Runtime listener ownership mismatch');
+  const sourceSha = readText(`${APP}/.release-source-sha`).trim();
+  if (!SHA.test(sourceSha)) fail('Runtime source identity mismatch');
   assertRuntimeProcess(processes,account,readText,readCwd);
   if(stat()!==startTime)fail('Runtime PID reused');
-  return {pid:process.pid,pmId:process.pm_id,startTime,bootId,uid:account.uid,gid:account.gid,cwd:readCwd(`/proc/${process.pid}/cwd`),listener:`127.0.0.1:${port}`};
+  return {appName,pid:process.pid,pmId:process.pm_id,startTime,bootId,uid:account.uid,gid:account.gid,cwd:readCwd(`/proc/${process.pid}/cwd`),script,sourceSha};
+}
+
+function assertRuntimeListener(proof, listeners) {
+  const rows = listeners.trim().split('\n');
+  if (!proof || rows.length !== 1 || rows[0].trim().split(/\s+/)[3] !== `127.0.0.1:${port}` ||
+      !rows[0].includes(`pid=${proof.pid},`) || [...rows[0].matchAll(/pid=(\d+)/g)].some(match => Number(match[1]) !== proof.pid)) fail('Runtime listener ownership mismatch');
 }
 
 function bindingValid(binding) {
@@ -416,7 +429,7 @@ function bindingValid(binding) {
 function processProof(platform,account) {
   const value=platform.snapshot();
   if(value===null)return null;
-  if(!value||Object.keys(value).sort().join(',')!==`bootId,cwd,gid,listener,pid,pmId,startTime,uid`||!Number.isSafeInteger(value.pid)||value.pid<=0||!Number.isSafeInteger(value.pmId)||value.pmId<0||!/^\d+$/.test(value.startTime)||!/^[a-f0-9-]{36}$/.test(value.bootId)||value.uid!==account.uid||value.gid!==account.gid||value.cwd!==`${APP}/apps/${scope}`||value.listener!==`127.0.0.1:${port}`)fail('Invalid deployment process ownership');
+  if(!value||Object.keys(value).sort().join(',')!=='appName,bootId,cwd,gid,pid,pmId,script,sourceSha,startTime,uid'||value.appName!==appName||!Number.isSafeInteger(value.pid)||value.pid<=0||!Number.isSafeInteger(value.pmId)||value.pmId<0||!/^\d+$/.test(value.startTime)||!/^[a-f0-9-]{36}$/.test(value.bootId)||value.uid!==account.uid||value.gid!==account.gid||value.cwd!==`${APP}/apps/${scope}`||value.script!==`${BASE}/.dashboard-${scope}-launcher.cjs`||!SHA.test(value.sourceSha))fail('Invalid deployment process ownership');
   return value;
 }
 const directoryIdentity=()=>{owned(APP,true);const stat=fs.lstatSync(APP);return {dev:String(stat.dev),ino:String(stat.ino)};};
@@ -428,8 +441,13 @@ function durableFile(filename,value) {
 async function stopProof(proof,platform,account,guard) {
   if(!proof)fail('No owned deployment process');
   guard();
-  if(!isDeepStrictEqual(processProof(platform,account),proof))fail('Deployment ownership changed; no stop');
+  const active = processProof(platform, account);
+  // Absence or a confirmed stopped registration already satisfies shutdown;
+  // never send the former PM2 ID a stop that could affect a reassigned process.
+  if (active === null) return;
+  if(!isDeepStrictEqual(active,proof))fail('Deployment ownership changed; no stop');
   await platform.stop(proof.pmId);
+  if (processProof(platform,account) !== null) fail('Owned runtime process did not stop');
 }
 async function stopOwned(binding,platform,account,guard) {
   bindingValid(binding);
@@ -538,9 +556,9 @@ async function transact(request, platform = realPlatform, stagedGuard) {
       await platform.start(`${CONTROL}/${record.id}`);
       started=true;
       const candidateProcess=processProof(platform,account);
-      if(!candidateProcess||isDeepStrictEqual(candidateProcess,beforeProcess))fail('New deployment process was not established');
+      if(!candidateProcess||candidateProcess.sourceSha!==record.sourceSha||isDeepStrictEqual(candidateProcess,beforeProcess))fail('New deployment process was not established');
       ownedProcess=candidateProcess;
-      await platform.health();
+      await platform.health(ownedProcess);
       attestTree(APP, record);
       if (hash(stableRead(`${APP}/.env`)) !== envDigest) fail('Runtime environment changed during health verification');
       publishPointer(record);
@@ -552,7 +570,8 @@ async function transact(request, platform = realPlatform, stagedGuard) {
     } catch {
       let rollbackCandidateNeedsRecovery = false;
       try {
-        if(candidateMoved&&started)await stopProof(ownedProcess,platform,account,guard);
+        if(candidateMoved&&started&&ownedProcess)await stopProof(ownedProcess,platform,account,guard);
+        if(candidateMoved&&started&&!ownedProcess&&processProof(platform,account)!==null)fail('Ambiguous startup ownership; no stop');
         if(candidateMoved&&!started&&beforeProcess===null&&processProof(platform,account)!==null)fail('Ambiguous startup ownership; no stop');
         if (candidateMoved) {
           // A manual rollback borrows its predecessor from BACKUPS. Return that
@@ -578,7 +597,9 @@ async function transact(request, platform = realPlatform, stagedGuard) {
           // process. Preserve the exact predecessor only if still provably ours.
           if(!started&&beforeProcess&&!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Ambiguous predecessor identity');
           if(started||!beforeProcess)await platform.start(`${CONTROL}/${old.id}`);
-          await platform.health(); attestTree(APP, old); publishPointer(old);
+          const restoredProcess = processProof(platform, account);
+          if (!restoredProcess || restoredProcess.sourceSha !== old.sourceSha) fail('Restored predecessor process identity mismatch');
+          await platform.health(restoredProcess); attestTree(APP, old); publishPointer(old);
         }
       } catch { fail('runtime activation and predecessor restoration failed; ownership requires review'); }
       if (rollbackCandidateNeedsRecovery) fail('Current runtime release restored; rollback backup collision or integrity failure requires recovery');
@@ -608,6 +629,6 @@ async function remoteMain(expectedDigest) {
 
 
 return { safeRelative, readPinned, renderEnvironment, parseRuntimeSecrets, serializeRuntimeSecrets,
-  assertRuntimeProcess, captureRuntimeIdentity, normalizeBootEnvironment, inspectActiveRuntime: current,
+  assertRuntimeProcess, captureRuntimeIdentity, assertRuntimeListener, normalizeBootEnvironment, inspectActiveRuntime: current,
   transact, remoteMain, ENV_KEYS, HOST_DIRECTORY_MODES };
 }

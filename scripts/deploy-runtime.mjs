@@ -47,8 +47,32 @@ function repositoryFor(authority) {
 }
 
 const gitEnv = { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' };
+const gitOptions = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv, timeout: 60000 };
+const gitControls = ['--no-replace-objects', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+
+function localGitIdentity() {
+  if (fs.realpathSync(ROOT) !== ROOT) fail('Invalid local Git worktree identity');
+  const marker = path.join(ROOT, '.git');
+  const stat = fs.lstatSync(marker);
+  let gitDir;
+  if (stat.isDirectory() && !stat.isSymbolicLink()) gitDir = marker;
+  else {
+    const match = /^gitdir: ([^\r\n]+)\n?$/.exec(regular(marker).toString());
+    if (!match) fail('Invalid local Git directory identity');
+    gitDir = path.resolve(ROOT, match[1]);
+    if (regular(path.join(gitDir, 'gitdir')).toString().trim() !== marker) fail('Git worktree backlink mismatch');
+  }
+  if (fs.realpathSync(gitDir) !== gitDir || !fs.lstatSync(gitDir).isDirectory()) fail('Invalid local Git directory identity');
+  const found = execFileSync('/usr/bin/git', [...gitControls, '-C', ROOT, 'rev-parse', '--show-toplevel', '--absolute-git-dir'], gitOptions).trim().split('\n');
+  if (found.length !== 2 || found[0] !== ROOT || found[1] !== gitDir) fail('Local Git directory/worktree identity mismatch');
+  return gitDir;
+}
+
 function git(...args) {
-  return execFileSync('/usr/bin/git', ['--no-replace-objects', '-C', ROOT, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.sshCommand=/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv, timeout: 60000 }).trim();
+  // This checkout-bound runner never resolves a repository URL.
+  if (!['status', 'branch', 'rev-parse', 'merge-base'].includes(args[0])) fail('Invalid local Git operation');
+  const gitDir = localGitIdentity();
+  return execFileSync('/usr/bin/git', [...gitControls, '--git-dir', gitDir, '--work-tree', ROOT, '-C', ROOT, ...args], gitOptions).trim();
 }
 
 export function verifySource(authority, repository, activeSha, approvedSha, runGit = git) {
@@ -65,11 +89,26 @@ export function verifySource(authority, repository, activeSha, approvedSha, runG
 }
 
 function approvedSource(repository) {
-  // The literal URL/ref from clean tracked authority bypasses mutable remote names.
-  const result = git('ls-remote', '--exit-code', repository.url, repository.ref);
-  const match = /^([a-f0-9]{40})\t([^\n]+)$/.exec(result);
-  if (!match || match[2] !== repository.ref) fail('Fixed remote release ref unavailable');
-  return match[1];
+  // Checkout-local and config.worktree URL rewrites must not affect authority.
+  // No inherited Git environment enters either discovery or URL resolution.
+  const directory = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'runtime-git-authority-'));
+  try {
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o700 || fs.realpathSync(directory) !== directory) fail('Unsafe remote Git authority directory');
+    const options = { ...gitOptions, cwd: directory };
+    let outsideRepository = false;
+    try { execFileSync('/usr/bin/git', [...gitControls, 'rev-parse', '--git-dir'], options); }
+    catch (error) { if (error.status === 128) outsideRepository = true; }
+    if (!outsideRepository) fail('Remote Git authority must be outside every repository');
+    const result = execFileSync('/usr/bin/git', [...gitControls, '-c', 'core.sshCommand=/usr/bin/ssh -o BatchMode=yes -o StrictHostKeyChecking=yes', 'ls-remote', '--exit-code', repository.url, repository.ref], options).trim();
+    const match = /^([a-f0-9]{40})\t([^\n]+)$/.exec(result);
+    if (!match || match[2] !== repository.ref) fail('Fixed remote release ref unavailable');
+    return match[1];
+  } catch {
+    fail('Fixed remote release ref unavailable');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 function environmentFor(authority) {
