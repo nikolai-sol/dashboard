@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "next build --webpack",
+    "build": "next build --webpack && node ../../scripts/runtime-artifact-policy.mjs --prepare abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json && node ../../scripts/runtime-artifact-policy.mjs --stamp abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json",
+    "verify:artifact": "node ../../scripts/assert-abbott-artifact.mjs .next-abbott/standalone && node ../../scripts/runtime-artifact-policy.mjs --verify abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json",
+    "verify:boot": "node ../../scripts/runtime-artifact-policy.mjs --boot abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json",
     "start": "next start -p 3004"
   },
   "dependencies": {
