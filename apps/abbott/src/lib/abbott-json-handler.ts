@@ -13,7 +13,6 @@ const PRIVATE_RESPONSE_HEADERS = { "Cache-Control": "private, no-store" };
 type AbbottJsonHandlerDependencies = {
   authorize: typeof authorizeAbbottRoute;
   load: typeof loadAbbottDashboardData;
-  project: typeof projectAbbottDashboardData;
 };
 
 function privateJson(body: unknown, init?: ResponseInit) {
@@ -28,7 +27,6 @@ export function createAbbottJsonHandler(
 ) {
   const authorize = overrides.authorize ?? authorizeAbbottRoute;
   const load = overrides.load ?? loadAbbottDashboardData;
-  const project = overrides.project ?? projectAbbottDashboardData;
 
   return async function GET(
     request: Request,
@@ -62,10 +60,25 @@ export function createAbbottJsonHandler(
       }
 
       const result = await load(request, id, access.audience);
+      if (
+        result.dashboard_id !== 18
+        || result.dashboard_id !== access.context.id
+        || result.data.dashboard.type !== "abbott_bi"
+        || result.data.dashboard.type !== access.context.dashboard_type
+      ) {
+        return privateJson({ error: "Dashboard not found" }, { status: 404 });
+      }
       if (result.ai_summary_enabled) {
         result.data.ai_summary = result.ai_summary_override ?? result.ai_summary_snapshot ?? undefined;
       }
-      return privateJson(project(result.data, access.audience));
+      const projected = projectAbbottDashboardData(result.data, access.audience);
+      if (access.audience !== "embed" || !projected.abbott_bi) {
+        return privateJson(projected);
+      }
+      const embedAbbott = Object.fromEntries(
+        Object.entries(projected.abbott_bi).filter(([key]) => key !== "session_journeys"),
+      );
+      return privateJson({ ...projected, abbott_bi: embedAbbott });
     } catch (error) {
       if (error instanceof InvalidDashboardDateRangeError) {
         return privateJson({ error: "Invalid date range" }, { status: 400 });

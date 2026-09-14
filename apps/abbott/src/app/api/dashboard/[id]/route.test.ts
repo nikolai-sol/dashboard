@@ -189,9 +189,46 @@ test("embed response is projected before serialization", async () => {
   );
   assert.equal(response.status, 200);
   const text = await response.text();
-  assert.doesNotMatch(text, /raw_user_id|visit_id|start_url|end_url/);
-  assert.deepEqual(JSON.parse(text).abbott_bi.session_journeys.rows, []);
+  assert.doesNotMatch(text, /raw_user_id|visit_id|session_journeys|start_url|end_url/);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
+});
+
+test("privacy projection cannot be bypassed by an injected dependency", async () => {
+  const handler = createAbbottJsonHandler({
+    authorize: async () => access("embed"),
+    load: async () => loaded(),
+    project: (data: unknown) => data,
+  } as never);
+  const response = await handler(
+    new Request("https://example.test/api/dashboard/abbott?embed_key=valid"),
+    { params: { id: "abbott" } },
+  );
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(
+    await response.text(),
+    /raw_user_id|visit_id|session_journeys|start_url|end_url/,
+  );
+});
+
+test("loaded dashboard id and type mismatches each fail closed without serializing data", async () => {
+  const cases = [
+    { dashboard_id: 28, data: dashboardData() },
+    { dashboard_id: 18, data: Object.assign(dashboardData(), { dashboard: { ...dashboardData().dashboard, type: "zaruku_bi" } }) },
+  ];
+  for (const foreign of cases) {
+    Object.assign(foreign.data, { raw_user_id: "must-not-leak" });
+    const handler = createAbbottJsonHandler({
+      authorize: async () => access("manager"),
+      load: async () => loaded(foreign),
+    });
+    const response = await handler(
+      new Request("https://example.test/api/dashboard/abbott"),
+      { params: { id: "abbott" } },
+    );
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "Dashboard not found" });
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+  }
 });
 
 test("invalid ranges, absent dashboards and unexpected failures keep existing semantics", async (t) => {

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import { build } from "esbuild";
+import ts from "typescript";
 
 const ALLOWED_INTERNAL_INPUTS = new Set([
   "apps/abbott/src/app/api/dashboard/[id]/route.ts",
@@ -32,6 +34,35 @@ const ALLOWED_INTERNAL_INPUTS = new Set([
   "src/lib/source-mapping.ts",
 ]);
 
+function assertLiteralDynamicImports(inputs: string[]) {
+  for (const input of inputs) {
+    if (!/\.[cm]?[jt]sx?$/.test(input)) continue;
+    const source = ts.createSourceFile(
+      input,
+      readFileSync(input, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    function inspect(node: ts.Node) {
+      if (
+        ts.isCallExpression(node)
+        && (
+          node.expression.kind === ts.SyntaxKind.ImportKeyword
+          || (ts.isIdentifier(node.expression) && node.expression.text === "require")
+        )
+      ) {
+        const specifier = node.arguments[0];
+        assert.ok(
+          specifier && ts.isStringLiteral(specifier),
+          `dynamic dependency must be statically traceable in ${input}`,
+        );
+      }
+      ts.forEachChild(node, inspect);
+    }
+    inspect(source);
+  }
+}
+
 test("Abbott JSON route includes only recognized Abbott, access and static-config runtime modules", async () => {
   const result = await build({
     entryPoints: ["./apps/abbott/src/app/api/dashboard/[id]/route.ts"],
@@ -43,12 +74,17 @@ test("Abbott JSON route includes only recognized Abbott, access and static-confi
     format: "esm",
     logLevel: "silent",
     tsconfig: "apps/abbott/tsconfig.json",
+    alias: {
+      "@reportingdash/runtime-contract": path.resolve("packages/runtime-contract/src/index.ts"),
+    },
   });
   const inputs = Object.keys(result.metafile!.inputs).sort();
   const trace = inputs.join("\n");
   assert.match(trace, /abbott-route-access\.ts/);
   assert.match(trace, /abbott-dashboard-loader\.ts/);
   assert.match(trace, /abbott-data-projection\.ts/);
+  assert.match(trace, /packages\/runtime-contract\/src\/index\.ts/);
+  assert.match(trace, /packages\/runtime-contract\/src\/manifest\.mjs/);
   assert.match(trace, /schema-parser\.ts/, "static Abbott schema configuration remains allowed");
   assert.doesNotMatch(trace, /dashboard-data-loader\.ts|zaruku|advertising-binding|google-ads|yandex-direct|metrika-client|bitrix.*client|manual-data-fetcher/);
   assert.doesNotMatch(trace, /^src\/app\/api\/dashboard\/\[id\]\//m);
@@ -58,12 +94,13 @@ test("Abbott JSON route includes only recognized Abbott, access and static-confi
     return internal && !ALLOWED_INTERNAL_INPUTS.has(input);
   });
   assert.deepEqual(unexpected, [], `unrecognized internal imports:\n${unexpected.join("\n")}`);
+  assertLiteralDynamicImports(inputs);
 
   const workspaceExternals = Object.values(result.metafile!.inputs)
     .flatMap((input) => input.imports)
     .filter((entry) => entry.external && (entry.path.startsWith("@reportingdash/") || entry.path.startsWith("@abbott/") || entry.path.startsWith("@runtime-contract")))
     .map((entry) => entry.path);
-  assert.deepEqual([...new Set(workspaceExternals)], ["@reportingdash/runtime-contract"]);
+  assert.deepEqual([...new Set(workspaceExternals)], [], "internal workspace imports must resolve into the graph");
 });
 
 test("shared authorization context carries the dashboard type needed for fail-closed identity checks", () => {
