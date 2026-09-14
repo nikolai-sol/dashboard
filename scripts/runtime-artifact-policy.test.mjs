@@ -426,6 +426,32 @@ test("trusted verification still content-scans an injected test-named secret", (
   }
 });
 
+test("prepare rejects a symlinked trace ancestor without modifying the outside sentinel", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-prepare-ancestor-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "abbott-prepare-outside-"));
+  const trace = `${NEXT_ROOT}/server/app/api/health/route.js.nft.json`;
+  const traceParent = path.dirname(path.join(root, trace));
+  const sentinel = path.join(outside, "route.js.nft.json");
+  const sentinelBytes = Buffer.from('{"version":1,"files":["outside-sentinel"]}\n');
+  try {
+    write(root, trace, '{"version":1,"files":[]}\n');
+    writeFileSync(sentinel, sentinelBytes);
+    rmSync(traceParent, { recursive: true, force: true });
+    symlinkSync(outside, traceParent);
+    const before = createHash("sha256").update(readFileSync(sentinel)).digest("hex");
+    assert.throws(
+      () => runtimePolicy.prepareRuntimeArtifactFiles(root, new Map([[trace, Buffer.from('{"version":1,"files":["replacement"]}\n')]])),
+      /unsafe|symlink|ancestor/,
+    );
+    const afterBytes = readFileSync(sentinel);
+    assert.equal(createHash("sha256").update(afterBytes).digest("hex"), before);
+    assert.deepEqual(afterBytes, sentinelBytes);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test("credential matching permits dotted identifiers and empty access-token placeholders", () => withArtifact((root) => {
   const filename = `${NEXT_ROOT}/server/chunks/safe.js`;
   write(root, filename, 'const safe = ["long.application.namespace.withSegments", {"access_token":""}, "?access_token="];\n');

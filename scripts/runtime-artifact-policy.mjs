@@ -395,40 +395,214 @@ function readStableFile(filename, { metadata = false } = {}) {
   } finally { fs.closeSync(fd); }
 }
 
-function replacePreparedFile(root, relativePath, buffer) {
-  const absolute = path.join(root, relativePath);
-  if (!fs.existsSync(absolute)) return;
-  const before = fs.lstatSync(absolute, { bigint: true });
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("unsafe prepared artifact file");
-  const fd = fs.openSync(absolute, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
+function preparedTarget(root, relativePath) {
+  if (typeof relativePath !== "string" || !relativePath || path.posix.normalize(relativePath) !== relativePath ||
+    relativePath === ".." || relativePath.startsWith("../") || path.posix.isAbsolute(relativePath) || /[\\\u0000-\u001f:]/.test(relativePath)) {
+    throw new Error("unsafe prepared artifact path");
+  }
+  const absolute = path.join(root, ...relativePath.split("/"));
+  const contained = path.relative(root, absolute);
+  if (!contained || contained === ".." || contained.startsWith(`..${path.sep}`) || path.isAbsolute(contained)) {
+    throw new Error("unsafe prepared artifact path");
+  }
+  return absolute;
+}
+
+function capturePreparedAncestors(root, relativePath) {
+  const absolute = preparedTarget(root, relativePath);
+  const rootBefore = fs.lstatSync(root, { bigint: true });
+  if (!rootBefore.isDirectory() || rootBefore.isSymbolicLink()) throw new Error("unsafe prepared artifact root");
+  const canonicalRoot = fs.realpathSync(root);
+  const parentRelative = path.relative(root, path.dirname(absolute));
+  const segments = parentRelative ? parentRelative.split(path.sep) : [];
+  const ancestors = [];
+  let current = root;
   try {
+    for (let index = 0; index <= segments.length; index += 1) {
+      if (index > 0) current = path.join(current, segments[index - 1]);
+      const before = fs.lstatSync(current, { bigint: true });
+      if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("unsafe prepared artifact ancestor");
+      const fd = fs.openSync(current, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_DIRECTORY ?? 0));
+      if (!sameEntry(before, fs.fstatSync(fd, { bigint: true }))) {
+        fs.closeSync(fd);
+        throw new Error("prepared artifact ancestor changed");
+      }
+      const canonical = fs.realpathSync(current);
+      const expected = index === 0 ? canonicalRoot : path.join(canonicalRoot, ...segments.slice(0, index));
+      if (canonical !== expected) {
+        fs.closeSync(fd);
+        throw new Error("prepared artifact ancestor escaped root");
+      }
+      ancestors.push({ path: current, before, canonical, fd });
+    }
+    return { absolute, ancestors };
+  } catch (error) {
+    for (const ancestor of ancestors) fs.closeSync(ancestor.fd);
+    throw error;
+  }
+}
+
+function revalidatePreparedAncestors(state) {
+  const sameDirectoryIdentity = (left, right) => ["dev", "ino", "mode"].every((key) => left[key] === right[key]);
+  for (const ancestor of state.ancestors) {
+    const current = fs.lstatSync(ancestor.path, { bigint: true });
+    if (!current.isDirectory() || current.isSymbolicLink() || !sameDirectoryIdentity(ancestor.before, current) ||
+      !sameDirectoryIdentity(ancestor.before, fs.fstatSync(ancestor.fd, { bigint: true })) || fs.realpathSync(ancestor.path) !== ancestor.canonical) {
+      throw new Error("prepared artifact ancestor changed");
+    }
+  }
+}
+
+function closePreparedAncestors(state) {
+  for (const ancestor of state.ancestors) fs.closeSync(ancestor.fd);
+}
+
+function replacePreparedFile(root, relativePath, buffer) {
+  const state = capturePreparedAncestors(root, relativePath);
+  let fd;
+  try {
+    let before;
+    try { before = fs.lstatSync(state.absolute, { bigint: true }); }
+    catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("unsafe prepared artifact file");
+    fd = fs.openSync(state.absolute, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
     if (!sameEntry(before, fs.fstatSync(fd, { bigint: true }))) throw new Error("prepared artifact file changed");
+    revalidatePreparedAncestors(state);
+    if (!sameEntry(before, fs.lstatSync(state.absolute, { bigint: true }))) throw new Error("prepared artifact file changed");
+    revalidatePreparedAncestors(state);
     fs.ftruncateSync(fd, 0);
     let offset = 0;
     while (offset < buffer.length) offset += fs.writeSync(fd, buffer, offset, buffer.length - offset, offset);
-  } finally { fs.closeSync(fd); }
+    if (fs.fstatSync(fd, { bigint: true }).ino !== before.ino || fs.fstatSync(fd, { bigint: true }).dev !== before.dev) {
+      throw new Error("prepared artifact file changed during write");
+    }
+    revalidatePreparedAncestors(state);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    closePreparedAncestors(state);
+  }
 }
 
 function removePreparedFile(root, relativePath) {
-  const absolute = path.join(root, relativePath);
-  if (!fs.existsSync(absolute)) return;
-  const canonicalRoot = fs.realpathSync(root);
-  const canonicalParent = fs.realpathSync(path.dirname(absolute));
-  if (!canonicalParent.startsWith(`${canonicalRoot}${path.sep}`)) throw new Error("unsafe prepared artifact path");
-  const before = fs.lstatSync(absolute, { bigint: true });
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("unsafe prepared artifact file");
-  const fd = fs.openSync(absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let state;
+  try { state = capturePreparedAncestors(root, relativePath); }
+  catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  let fd;
   try {
-    if (!sameEntry(before, fs.fstatSync(fd, { bigint: true })) || !sameEntry(before, fs.lstatSync(absolute, { bigint: true }))) {
-      throw new Error("prepared artifact file changed");
+    let before;
+    try { before = fs.lstatSync(state.absolute, { bigint: true }); }
+    catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
     }
-  } finally { fs.closeSync(fd); }
-  fs.unlinkSync(absolute);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n) throw new Error("unsafe prepared artifact file");
+    fd = fs.openSync(state.absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    if (!sameEntry(before, fs.fstatSync(fd, { bigint: true }))) throw new Error("prepared artifact file changed");
+    revalidatePreparedAncestors(state);
+    if (!sameEntry(before, fs.lstatSync(state.absolute, { bigint: true }))) throw new Error("prepared artifact file changed");
+    revalidatePreparedAncestors(state);
+    fs.unlinkSync(state.absolute);
+    revalidatePreparedAncestors(state);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    closePreparedAncestors(state);
+  }
+}
+
+function removePreparedEmptyDirectory(root, relativePath) {
+  let state;
+  try { state = capturePreparedAncestors(root, relativePath); }
+  catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  let fd;
+  try {
+    let before;
+    try { before = fs.lstatSync(state.absolute, { bigint: true }); }
+    catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error("unsafe prepared artifact directory");
+    fd = fs.openSync(state.absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_DIRECTORY ?? 0));
+    if (!sameEntry(before, fs.fstatSync(fd, { bigint: true })) || fs.readdirSync(state.absolute).length !== 0) return;
+    revalidatePreparedAncestors(state);
+    if (!sameEntry(before, fs.lstatSync(state.absolute, { bigint: true })) || fs.realpathSync(state.absolute) !== path.join(state.ancestors.at(-1).canonical, path.basename(state.absolute))) {
+      throw new Error("prepared artifact directory changed");
+    }
+    revalidatePreparedAncestors(state);
+    fs.rmdirSync(state.absolute);
+    revalidatePreparedAncestors(state);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    closePreparedAncestors(state);
+  }
+}
+
+function ensurePreparedDirectory(root, relativePath) {
+  const segments = relativePath.split("/");
+  for (let index = 1; index <= segments.length; index += 1) {
+    const current = segments.slice(0, index).join("/");
+    const absolute = preparedTarget(root, current);
+    try {
+      const state = capturePreparedAncestors(root, `${current}/.directory-check`);
+      try { revalidatePreparedAncestors(state); }
+      finally { closePreparedAncestors(state); }
+      continue;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    const state = capturePreparedAncestors(root, current);
+    try {
+      revalidatePreparedAncestors(state);
+      fs.mkdirSync(absolute);
+      revalidatePreparedAncestors(state);
+    } finally { closePreparedAncestors(state); }
+    const created = capturePreparedAncestors(root, `${current}/.directory-check`);
+    try { revalidatePreparedAncestors(created); }
+    finally { closePreparedAncestors(created); }
+  }
+}
+
+function writePreparedFileExclusive(root, relativePath, buffer, mode) {
+  const state = capturePreparedAncestors(root, relativePath);
+  let fd;
+  try {
+    try {
+      fs.lstatSync(state.absolute);
+      throw new Error("prepared artifact file already exists");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    revalidatePreparedAncestors(state);
+    fd = fs.openSync(state.absolute, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, mode);
+    revalidatePreparedAncestors(state);
+    let offset = 0;
+    while (offset < buffer.length) offset += fs.writeSync(fd, buffer, offset, buffer.length - offset, offset);
+    revalidatePreparedAncestors(state);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    closePreparedAncestors(state);
+  }
 }
 
 function prunePreparedTestMaterial(root) {
   const sourceRoot = path.join(root, ABBOTT_APP_ROOT, "src");
-  if (!fs.existsSync(sourceRoot)) return;
+  let sourceGuard;
+  try { sourceGuard = capturePreparedAncestors(root, `${ABBOTT_APP_ROOT}/src/.source-check`); }
+  catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  try { revalidatePreparedAncestors(sourceGuard); }
+  finally { closePreparedAncestors(sourceGuard); }
   const visit = (directory, depth = 0) => {
     if (depth > 64) throw new Error("excessive test material depth");
     const stat = fs.lstatSync(directory);
@@ -449,13 +623,25 @@ function prunePreparedTestMaterial(root) {
 
 function removeObsoleteRootSchema(root) {
   removePreparedFile(root, ABBOTT_SCHEMA_SOURCE);
-  for (const relative of ["src/schemas", "src"]) {
-    const absolute = path.join(root, relative);
-    if (!fs.existsSync(absolute)) continue;
-    const stat = fs.lstatSync(absolute);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe obsolete schema directory");
-    if (fs.readdirSync(absolute).length === 0) fs.rmdirSync(absolute);
+  for (const relative of ["src/schemas", "src"]) removePreparedEmptyDirectory(root, relative);
+}
+
+export function prepareRuntimeArtifactFiles(artifactRoot, traceRewrites) {
+  const root = path.resolve(artifactRoot);
+  const rootStat = fs.lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error("unsafe prepared artifact root");
+  if (!(traceRewrites instanceof Map)) throw new Error("invalid prepared trace rewrites");
+  for (const [name, buffer] of traceRewrites) {
+    if (!name.startsWith(`${ABBOTT_NEXT_SERVER}/`) || !name.endsWith(".nft.json") || !Buffer.isBuffer(buffer)) {
+      throw new Error("invalid prepared trace rewrite");
+    }
   }
+  prunePreparedTestMaterial(root);
+  removeObsoleteRootSchema(root);
+  const schemaSource = readStableFile(path.join(REPOSITORY_ROOT, ABBOTT_SCHEMA_SOURCE));
+  ensurePreparedDirectory(root, `${ABBOTT_APP_ROOT}/src/schemas`);
+  writePreparedFileExclusive(root, ABBOTT_SCHEMA_ARTIFACT, schemaSource.buffer, schemaSource.mode);
+  for (const [name, buffer] of traceRewrites) replacePreparedFile(root, name, buffer);
 }
 
 function loadTrustedManifest(root, filename) {
@@ -510,8 +696,6 @@ export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, man
   const buildRoot = path.dirname(root);
   if (scope !== "abbott" || !SOURCE_SHA_PATTERN.test(sourceSha) || buildRoot !== path.join(REPOSITORY_ROOT, ABBOTT_NEXT)) throw new Error("invalid trusted build source");
   if (path.resolve(manifestPath).startsWith(`${root}${path.sep}`)) throw new Error("trusted manifest must be outside artifact");
-  prunePreparedTestMaterial(root);
-  removeObsoleteRootSchema(root);
   const files = new Map();
   const preparedTraces = new Map();
   let totalBytes = 0;
@@ -562,15 +746,6 @@ export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, man
     `${ABBOTT_NEXT}/next-server.js.nft.json`, ...NEXT_AUTHORITY_FILES.map((name) => `${ABBOTT_NEXT}/${name}`)]) load(name);
   const schemaSource = readStableFile(path.join(REPOSITORY_ROOT, ABBOTT_SCHEMA_SOURCE));
   put(ABBOTT_SCHEMA_ARTIFACT, schemaSource.buffer, schemaSource.mode);
-  for (const directory of [path.join(root, ABBOTT_APP_ROOT, "src"), path.join(root, ABBOTT_APP_ROOT, "src/schemas")]) {
-    if (fs.existsSync(directory)) {
-      const stat = fs.lstatSync(directory);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe static schema directory");
-    } else {
-      mkdirSync(directory);
-    }
-  }
-  writeFileSync(path.join(root, ABBOTT_SCHEMA_ARTIFACT), schemaSource.buffer, { flag: "wx", mode: schemaSource.mode });
   const rootPackage = JSON.parse(files.get("package.json").text);
   for (const key of ["scripts", "workspaces", "devDependencies"]) delete rootPackage[key];
   put("package.json", Buffer.from(`${JSON.stringify(rootPackage, null, 2)}\n`));
@@ -597,7 +772,7 @@ export function createTrustedRuntimeManifest(artifactRoot, scope, sourceSha, man
     }
   };
   loadStatic(path.join(buildRoot, "static"));
-  for (const [name, buffer] of preparedTraces) replacePreparedFile(root, name, buffer);
+  prepareRuntimeArtifactFiles(root, preparedTraces);
   const violations = [];
   inspectMetadata(files, scope, violations);
   inspectAbbottRoutes(files, violations);
