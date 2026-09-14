@@ -218,17 +218,37 @@ function fixture() {
       assert.equal(fs.existsSync(map(artifact + '/.env')), false, 'sealed artifact verification must never include runtime secrets');
     },
     snapshot: () => processRow === null ? null : context.installer.captureRuntimeIdentity([processRow], { uid: 1001, gid: 1001 }, processText, () => '/var/www/dashboard-abbott/apps/abbott', listening ? `LISTEN 0 511 127.0.0.1:3004 0.0.0.0:* users:(("node",pid=${serial},fd=18))` : ''),
+    registration: () => processRow === null ? null : ({ registration: context.installer.captureRuntimeRegistration([processRow], { uid: 1001, gid: 1001 }), pid: processRow.pid, status: processRow.pm2_env.status }),
+    async assertNoListener() { assert.equal(listening, false, 'candidate listener must be absent before restoration'); events.push(['no-listener']); },
     async start(control) {
       events.push(['start', control]);
-      processRow = { name: 'dashboard-abbott', pid: ++serial, pm_id: serial, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'] } };
+      processRow = { name: 'dashboard-abbott', pid: ++serial, pm_id: serial, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'], uid: 'dashboard-abbott', gid: 'dashboard-abbott', RUNTIME_RELEASE_ID: path.basename(control), RUNTIME_RELEASE_SOURCE_SHA: fs.readFileSync(map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), status: 'online' } };
       startup = nextStartup; nextStartup = 'ready'; listening = startup === 'ready';
     },
-    async stop(pmId) { assert.equal(pmId, processRow.pm_id); events.push(['stop', pmId]); processRow = null; listening = false; },
+    async stop(pmId) {
+      assert.equal(pmId, processRow.pm_id); events.push(['stop', pmId]);
+      if (processRow.pid === 0) processRow.pm2_env.status = 'stopped';
+      else processRow = null;
+      listening = false;
+    },
     async health() {
       if (healthFailure) { healthFailure = false; throw new Error('fixture failed health'); }
       for (let attempt = 0; attempt < 3; attempt++) {
         events.push(['readiness', serial, attempt]);
         if (startup === 'exited') { processRow = null; throw new Error('candidate exited before listener'); }
+        if (['errored', 'waiting restart', 'launching'].includes(startup) || startup.startsWith('mismatched retained')) {
+          processRow.pid = 0; processRow.pm2_env.status = startup.startsWith('mismatched retained') ? 'errored' : startup;
+          const field = startup.split(':')[1];
+          if (field === 'name') processRow.name = 'dashboard-other';
+          else if (field === 'uid' || field === 'gid') processRow.pm2_env[field] = 1001;
+          else if (field === 'exec') processRow.pm2_env.pm_exec_path = '/usr/bin/other';
+          else if (field === 'cwd') processRow.pm2_env.pm_cwd = '/var/www/dashboard-other';
+          else if (field === 'args') processRow.pm2_env.args[3] = '/var/www/other-launcher.cjs';
+          else if (field === 'release') processRow.pm2_env.RUNTIME_RELEASE_ID = 'd'.repeat(32);
+          else if (field === 'source') processRow.pm2_env.RUNTIME_RELEASE_SOURCE_SHA = 'd'.repeat(40);
+          else if (startup.startsWith('mismatched retained')) processRow.pm_id += 100;
+          throw new Error('retained candidate registration before listener');
+        }
         if (startup === 'fail') throw new Error('failure before listener');
         if (startup === 'delayed' && attempt === 1) listening = true;
         if (listening) return;
@@ -267,6 +287,32 @@ for (const mode of ['delayed', 'timeout', 'fail', 'exited']) test(`candidate own
     assert.equal(restored.sourceSha, (mode === 'delayed' ? 'b' : 'a').repeat(40));
     assert.equal(f.installer.inspectActiveRuntime().sourceSha, restored.sourceSha);
     assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')), false);
+  } finally { f.cleanup(); }
+});
+
+for (const mode of ['errored', 'waiting restart', 'launching', ...['id','name','exec','cwd','args','uid','gid','release','source'].map(field => `mismatched retained:${field}`)]) test(`recovery handles ${mode} PM2 registration without an active PID`, async () => {
+  const f = fixture();
+  try {
+    const first = await f.installer.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload('a'.repeat(40)) }, f.platform);
+    const second = await f.installer.transact({ action: 'deploy', expectedActiveSha: first.sourceSha, payload: f.payload('b'.repeat(40)) }, f.platform);
+    f.nextStartup(mode);
+    const operation = f.installer.transact({ action: 'deploy', expectedActiveSha: second.sourceSha, payload: f.payload('c'.repeat(40)) }, f.platform);
+    if (mode.startsWith('mismatched retained')) {
+      await assert.rejects(operation, /ownership requires review/);
+      assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
+      assert.equal(f.events.filter(event => event[0] === 'start').length, 3, 'mismatched registration must not be replaced');
+      return;
+    }
+    await assert.rejects(operation, /attested predecessor restored/);
+    const stop = f.events.findIndex(event => event[0] === 'stop' && event[1] === 13);
+    const listener = f.events.findIndex((event, index) => index > stop && event[0] === 'no-listener');
+    const restart = f.events.findIndex((event, index) => index > stop && event[0] === 'start');
+    assert.ok(stop >= 0 && listener > stop && restart > listener, 'cancel restart and verify no listener before predecessor restart');
+    assert.equal(f.installer.inspectActiveRuntime().sourceSha, second.sourceSha);
+    assert.equal(fs.readFileSync(f.map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), second.sourceSha);
+    const rollback = await f.installer.transact({ action: 'rollback', expectedActiveSha: second.sourceSha }, f.platform);
+    assert.equal(rollback.sourceSha, first.sourceSha);
+    assert.equal(f.installer.inspectActiveRuntime().sourceSha, first.sourceSha);
   } finally { f.cleanup(); }
 });
 
@@ -343,7 +389,7 @@ test('runtime env profiles and package commands retain the fixed reviewed bounda
 test('identity proof binds launcher and release independently of listener ownership', async () => {
   const { createRuntimeInstaller } = await import('./runtime-release-remote.mjs');
   const installer = createRuntimeInstaller(RUNTIME_MANIFESTS.abbott, Object.keys(runtime));
-  const row = { name: 'dashboard-abbott', pid: 123, pm_id: 7, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'] } };
+  const row = { name: 'dashboard-abbott', pid: 123, pm_id: 7, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'], uid: 'dashboard-abbott', gid: 'dashboard-abbott', RUNTIME_RELEASE_ID: 'b'.repeat(32), RUNTIME_RELEASE_SOURCE_SHA: 'a'.repeat(40) } };
   const readText = name => name.endsWith('/status') ? 'Uid:\t1001\t1001\t1001\t1001\nGid:\t1001\t1001\t1001\t1001\n' : name.endsWith('/stat') ? `123 (node) ${['S', ...Array(18).fill('0'), '300'].join(' ')}` : name.endsWith('/cmdline') ? '/usr/bin/node\0/var/www/.dashboard-abbott-launcher.cjs\0' : name.endsWith('/boot_id') ? 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n' : 'a'.repeat(40) + '\n';
   const args = [[row], { uid: 1001, gid: 1001 }, readText, () => '/var/www/dashboard-abbott/apps/abbott'];
   const proof = installer.captureRuntimeIdentity(...args);
@@ -353,7 +399,10 @@ test('identity proof binds launcher and release independently of listener owners
   const changedTitle = installer.captureRuntimeIdentity(args[0], args[1], name => name.endsWith('/cmdline') ? 'next-server (v16.1.6)\0' : readText(name), args[3]);
   assert.deepEqual(changedTitle, proof, 'Next changes process.title; proof must use stable launcher metadata');
   const badRow = { ...row, pm2_env: { ...row.pm2_env, args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/other-launcher.cjs'] } };
-  assert.throws(() => installer.captureRuntimeIdentity([badRow], args[1], readText, args[3]), /script identity/);
+  assert.throws(() => installer.captureRuntimeIdentity([badRow], args[1], readText, args[3]), /registration identity/);
+  assert.deepEqual(installer.captureRuntimeRegistration([{ ...row, pid: 0, pm2_env: { ...row.pm2_env, status: 'waiting restart' } }], args[1]), proof.registration);
+  assert.deepEqual(installer.releaseCommandEnvironment({ scope: 'abbott', id: 'b'.repeat(32), sourceSha: 'a'.repeat(40) }), { RUNTIME_RELEASE_ID: 'b'.repeat(32), RUNTIME_RELEASE_SOURCE_SHA: 'a'.repeat(40) });
+  assert.throws(() => installer.releaseCommandEnvironment({ scope: 'other', id: 'b'.repeat(32), sourceSha: 'a'.repeat(40) }));
   assert.throws(() => installer.assertRuntimeListener(proof, ''), /listener ownership/);
   const listener = 'LISTEN 0 511 127.0.0.1:3004 0.0.0.0:* users:(("node",pid=123,fd=18))';
   installer.assertRuntimeListener(proof, listener);
