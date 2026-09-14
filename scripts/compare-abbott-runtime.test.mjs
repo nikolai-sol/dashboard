@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,10 +8,14 @@ import ExcelJS from "exceljs";
 
 import {
   ABBOTT_PARITY_PERIOD,
+  SafeStageError,
   buildAuthorizedRequest,
   compareRedactedValues,
   createPrivateReportDirectory,
+  fetchNoRedirect,
+  formatSafeCliFailure,
   parseCredentialLines,
+  runSafeStage,
   summarizeAbbottPayload,
   summarizeWorkbook,
   writeParityReport,
@@ -44,6 +48,7 @@ function fixture() {
         requested_to: "2026-09-13",
         blocking_gaps: [],
       },
+      counters: ["90602537"],
       users_summary: [{ raw_user_id: "[fixture]", visits: 2, users: 1 }],
       users_summary_without_admins: [{ raw_user_id: "[fixture]", visits: 2, users: 1 }],
       traffic_summary: [{ traffic_source: "Direct", visits: 2, users: 1 }],
@@ -102,6 +107,41 @@ test("conditional time tab visibility matches the dashboard's positive-user rule
   assert.equal(summarizeAbbottPayload(payload).tabs.includes("time_buckets"), true);
 });
 
+test("payload contract rejects identically wrong periods and missing required sections", () => {
+  const wrongLeft = fixture();
+  const wrongRight = fixture();
+  wrongLeft.dashboard.period.to = "2026-09-12";
+  wrongRight.dashboard.period.to = "2026-09-12";
+  assert.throws(() => summarizeAbbottPayload(wrongLeft, { audience: "manager" }), /PAYLOAD_CONTRACT/);
+  assert.throws(() => summarizeAbbottPayload(wrongRight, { audience: "manager" }), /PAYLOAD_CONTRACT/);
+
+  const missing = fixture();
+  delete missing.abbott_bi.page_stats;
+  assert.throws(() => summarizeAbbottPayload(missing, { audience: "manager" }), /PAYLOAD_CONTRACT/);
+});
+
+test("return-frequency displayed totals participate in parity", () => {
+  const left = summarizeAbbottPayload(fixture(), { audience: "manager" });
+  const changed = fixture();
+  changed.abbott_bi.return_frequency.identified_visitors = 1;
+  changed.abbott_bi.return_frequency.unidentified_visits = 2;
+  const mismatch = compareRedactedValues(left, summarizeAbbottPayload(changed, { audience: "manager" }));
+
+  assert.deepEqual(mismatch, [
+    "supplemental_totals.identified_visitors",
+    "supplemental_totals.unidentified_visits",
+  ]);
+
+  const returningChanged = fixture();
+  returningChanged.abbott_bi.returning[0].returning_1_day = 2;
+  assert.deepEqual(compareRedactedValues(left, summarizeAbbottPayload(returningChanged, { audience: "manager" })), [
+    "tab_rows.returning.numeric_aggregates.returning_1_day",
+  ]);
+  const wrongTotalType = fixture();
+  wrongTotalType.abbott_bi.return_frequency.identified_visitors = "0";
+  assert.throws(() => summarizeAbbottPayload(wrongTotalType, { audience: "manager" }), /PAYLOAD_CONTRACT/);
+});
+
 test("redacted comparison returns field paths without differing values", () => {
   const left = summarizeAbbottPayload(fixture(), { administratorExclusionCount: 2 });
   const changed = fixture();
@@ -132,8 +172,65 @@ test("workbook summary compares sheet names, row counts, cell types, and formula
   ]);
   assert.deepEqual(summary.sheets[0].cell_types, { formula: 1, number: 1, string: 4 });
   assert.equal(summary.sheets[0].formula_hashes.length, 1);
+  assert.deepEqual(summary.sheets[0].cells.map(({ coordinate, type }) => ({ coordinate, type })), [
+    { coordinate: "A1", type: "string" },
+    { coordinate: "B1", type: "string" },
+    { coordinate: "C1", type: "string" },
+    { coordinate: "A2", type: "string" },
+    { coordinate: "B2", type: "number" },
+    { coordinate: "C2", type: "formula" },
+  ]);
   assert.match(summary.semantic_sha256, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(text, /B2\*2|2099-01-01/);
+});
+
+test("workbook semantics detect changed values and moved cells or formulas", async () => {
+  const bytes = async (configure) => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Summary");
+    configure(sheet);
+    return Buffer.from(await workbook.xlsx.writeBuffer());
+  };
+  const original = await summarizeWorkbook(await bytes((sheet) => {
+    sheet.getCell("A1").value = 1;
+    sheet.getCell("B1").value = { formula: "A1+1", result: 2 };
+  }));
+  const changedValue = await summarizeWorkbook(await bytes((sheet) => {
+    sheet.getCell("A1").value = 99;
+    sheet.getCell("B1").value = { formula: "A1+1", result: 100 };
+  }));
+  const moved = await summarizeWorkbook(await bytes((sheet) => {
+    sheet.getCell("A2").value = 1;
+    sheet.getCell("B2").value = { formula: "A2+1", result: 2 };
+  }));
+  const empty = new ExcelJS.Workbook();
+
+  assert.notEqual(original.semantic_sha256, changedValue.semantic_sha256);
+  assert.notEqual(original.semantic_sha256, moved.semantic_sha256);
+  assert.deepEqual((await summarizeWorkbook(Buffer.from(await empty.xlsx.writeBuffer()))).sheets, []);
+});
+
+test("decimal aggregates are order-independent at six decimal places and preserve integer counts", () => {
+  const left = fixture();
+  left.abbott_bi.page_stats = [
+    { page_title: "Same", url: "[fixture]", pageviews: 1, bounce_rate: 0.1 },
+    { page_title: "Same", url: "[fixture]", pageviews: 2, bounce_rate: 0.2 },
+    { page_title: "Same", url: "[fixture]", pageviews: 3, bounce_rate: 0.3 },
+  ];
+  const reordered = structuredClone(left);
+  reordered.abbott_bi.page_stats.reverse();
+  const changed = structuredClone(left);
+  changed.abbott_bi.page_stats[2].bounce_rate = 0.300001;
+
+  const leftSummary = summarizeAbbottPayload(left, { audience: "manager" });
+  const reorderedSummary = summarizeAbbottPayload(reordered, { audience: "manager" });
+  const changedSummary = summarizeAbbottPayload(changed, { audience: "manager" });
+  assert.deepEqual(leftSummary, reorderedSummary);
+  assert.equal(leftSummary.tab_rows.page_stats.numeric_aggregates.pageviews, 6);
+  assert.equal(leftSummary.tab_rows.page_stats.numeric_aggregates.bounce_rate, "0.6");
+  assert.deepEqual(compareRedactedValues(leftSummary, changedSummary), [
+    "tab_rows.page_stats.numeric_aggregates.bounce_rate",
+  ]);
 });
 
 test("credential input is bounded, positional, and never included in report output", async () => {
@@ -158,6 +255,41 @@ test("credential input is bounded, positional, and never included in report outp
   assert.doesNotMatch(report, /manager-fixture|embed-fixture/);
 });
 
+test("output containment rejects links into Git and a swapped parent", async () => {
+  const outside = await mkdtemp(path.join(os.tmpdir(), "abbott-output-boundary-"));
+  const linked = path.join(outside, "linked-output");
+  await symlink(process.cwd(), linked);
+  await assert.rejects(
+    createPrivateReportDirectory(linked, process.cwd()),
+    /outside Git|OUTPUT_CONTAINMENT/,
+  );
+
+  const parent = path.join(outside, "parent");
+  const held = path.join(outside, "held-parent");
+  await mkdir(parent, { mode: 0o700 });
+  const before = new Set(await readdir(process.cwd()));
+  await assert.rejects(createPrivateReportDirectory(parent, process.cwd(), {
+    afterValidation: async () => {
+      await rename(parent, held);
+      await symlink(process.cwd(), parent);
+    },
+  }), /OUTPUT_CONTAINMENT/);
+  const after = await readdir(process.cwd());
+  assert.deepEqual(new Set(after), before);
+});
+
+test("exclusive no-follow report write rejects a swapped leaf without changing its target", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "abbott-output-leaf-"));
+  const directory = await createPrivateReportDirectory(parent);
+  const target = path.join(parent, "protected-target");
+  await writeFile(target, "unchanged", { mode: 0o600 });
+
+  await assert.rejects(writeParityReport(directory, { status: "match" }, {
+    beforeOpen: () => symlink(target, path.join(directory, "abbott-runtime-parity.json")),
+  }), /OUTPUT_WRITE/);
+  assert.equal(await readFile(target, "utf8"), "unchanged");
+});
+
 test("manager authorization uses an in-memory cookie instead of a query URL", () => {
   const request = buildAuthorizedRequest(
     "http://127.0.0.1:3004",
@@ -167,4 +299,46 @@ test("manager authorization uses an in-memory cookie instead of a query URL", ()
 
   assert.doesNotMatch(request.url.href, /manager-fixture|access_token|cookie/i);
   assert.equal(request.options.headers.cookie, "dashboard_viewer_18=manager-fixture");
+});
+
+test("runtime origins are literal HTTP loopback with exact ports", () => {
+  assert.equal(buildAuthorizedRequest("http://127.0.0.1:3004", "/api/dashboard/18", { kind: "manager", value: "manager-fixture" }).url.origin, "http://127.0.0.1:3004");
+  for (const origin of [
+    "https://127.0.0.1:3004",
+    "http://localhost:3004",
+    "http://example.test:3004",
+    "http://127.0.0.1:3002",
+    "http://user:pass@127.0.0.1:3004",
+  ]) {
+    assert.throws(() => buildAuthorizedRequest(origin, "/api/dashboard/18", { kind: "manager", value: "manager-fixture" }), /LOOPBACK_ORIGIN/);
+  }
+});
+
+test("credentialed fetch refuses redirects without following them", async () => {
+  let calls = 0;
+  await assert.rejects(fetchNoRedirect(
+    new URL("http://127.0.0.1:3004/api/dashboard/18"),
+    { headers: { cookie: "dashboard_viewer_18=manager-fixture" } },
+    "PAYLOAD_FETCH",
+    async (_url, options) => {
+      calls += 1;
+      assert.equal(options.redirect, "error");
+      return new Response(null, { status: 302, headers: { location: "http://example.test/private" } });
+    },
+  ), (error) => error instanceof SafeStageError && error.code === "PAYLOAD_FETCH");
+  assert.equal(calls, 1);
+});
+
+test("safe stage errors never render JSON, workbook, browser, URL, or credential details", async () => {
+  const privateText = "manager-fixture embed-fixture http://127.0.0.1:3004/?access_token=fixture raw-cell";
+  for (const [code, operation] of [
+    ["PAYLOAD_JSON", async () => JSON.parse(`{${privateText}`)],
+    ["WORKBOOK_PARSE", async () => summarizeWorkbook(Buffer.from(privateText))],
+    ["BROWSER_CAPTURE", async () => { throw new Error(`browser failed ${privateText}`); }],
+  ]) {
+    await assert.rejects(runSafeStage(code, operation), SafeStageError);
+    const output = formatSafeCliFailure(await runSafeStage(code, operation).catch((caught) => caught), "ABBOTT_TEST");
+    assert.equal(output, `ABBOTT_TEST_FAILED stage=${code}\n`);
+    assert.doesNotMatch(output, /manager-fixture|embed-fixture|http|token|raw-cell|parse failed|workbook failed|browser failed/i);
+  }
 });

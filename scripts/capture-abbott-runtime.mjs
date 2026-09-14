@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
   ABBOTT_PARITY_PERIOD,
+  SafeStageError,
   assertRuntimeBaseUrl,
+  createPrivateOutputDirectory,
+  formatSafeCliFailure,
   obtainManagerToken,
   readCredentialFd,
+  runSafeStage,
+  writePrivateExclusiveFile,
 } from "./compare-abbott-runtime.mjs";
 
 const REQUIRED_DESKTOP_TABS = ["users_summary", "user_actions", "page_stats", "returning", "general_materials"];
@@ -37,7 +42,7 @@ const TAB_LABEL_PARTS = {
   general_materials: ["Общие материалы"],
 };
 const DESKTOP_VIEWPORT = Object.freeze({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-const MOBILE_VIEWPORT = Object.freeze({ width: 390, height: 844, deviceScaleFactor: 2 });
+const MOBILE_VIEWPORT = Object.freeze({ width: 390, height: 844, deviceScaleFactor: 800 / 390 });
 const REQUIRED_BASELINE_FILES = [
   "01-users-summary-desktop.png",
   "02-user-actions-desktop.png",
@@ -79,27 +84,25 @@ export function buildCapturePlan(visibleTabs) {
 }
 
 export async function validateCaptureLocations({ baseline, outputParent, repositoryRoot = process.cwd() }) {
-  const root = path.resolve(repositoryRoot);
+  const root = await realpath(path.resolve(repositoryRoot));
   const baselinePath = await realpath(path.resolve(baseline));
-  const outputPath = path.resolve(outputParent);
-  if (isWithin(root, baselinePath) || isWithin(root, outputPath)) {
+  const namedOutputPath = path.resolve(outputParent);
+  if (isWithin(root, baselinePath) || isWithin(root, namedOutputPath)) {
     throw new Error("Baseline and candidate output must remain outside Git");
   }
+  const outputPath = await realpath(namedOutputPath);
+  if (isWithin(root, outputPath)) throw new Error("Baseline and candidate output must remain outside Git");
   const baselineMode = (await stat(baselinePath)).mode & 0o777;
   if ((baselineMode & 0o077) !== 0) throw new Error("Visual baseline directory must be private (mode 0700)");
   for (const filename of REQUIRED_BASELINE_FILES) {
     const file = await stat(path.join(baselinePath, filename)).catch(() => null);
     if (!file?.isFile()) throw new Error(`Visual baseline is missing ${filename}`);
   }
-  await mkdir(outputPath, { recursive: true, mode: 0o700 });
-  await chmod(outputPath, 0o700);
-  return { baseline: baselinePath, outputParent: await realpath(outputPath) };
+  return { baseline: baselinePath, outputParent: outputPath };
 }
 
-export async function createPrivateCandidateDirectory(outputParent) {
-  const directory = await mkdtemp(path.join(path.resolve(outputParent), "abbott-runtime-candidate-"));
-  await chmod(directory, 0o700);
-  return directory;
+export async function createPrivateCandidateDirectory(outputParent, repositoryRoot = process.cwd(), options = {}) {
+  return createPrivateOutputDirectory(outputParent, "abbott-runtime-candidate-", repositoryRoot, options);
 }
 
 export function inspectPngDimensions(bytes) {
@@ -109,6 +112,13 @@ export function inspectPngDimensions(bytes) {
     throw new Error("Invalid PNG image");
   }
   return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+}
+
+export function buildCaptureDimensions(viewport, pngBytes) {
+  return {
+    css: { width: viewport.width, height: viewport.height },
+    pixels: inspectPngDimensions(pngBytes),
+  };
 }
 
 export function calculatePixelDifference(referencePixels, candidatePixels, channels) {
@@ -142,25 +152,135 @@ export function passesVisualThreshold(comparison) {
     && comparison.pixel_metrics.mean_absolute_error <= VISUAL_THRESHOLDS.mean_absolute_error;
 }
 
-export async function runOwnedBrowserTask(launch, task) {
-  const browser = await launch();
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    await browser.close();
-  };
-  const signalHandlers = new Map();
-  for (const [signal, exitCode] of [["SIGINT", 130], ["SIGTERM", 143]]) {
-    const handler = () => { void close().finally(() => process.exit(exitCode)); };
-    signalHandlers.set(signal, handler);
-    process.once(signal, handler);
-  }
+function defaultPidAlive(pid) {
   try {
-    return await task(browser);
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+export async function closeOwnedBrowser(browser, options = {}) {
+  const isPidAlive = options.isPidAlive ?? defaultPidAlive;
+  const pause = options.pause ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const terminatePid = options.terminatePid ?? ((pid, signal) => process.kill(pid, signal));
+  const pid = Number(browser.process?.()?.pid);
+  const processIds = Number.isSafeInteger(pid) && pid > 0 ? [pid] : [];
+  let closeAttempts = 0;
+  let closeSucceeded = false;
+  while (closeAttempts < 2 && !closeSucceeded) {
+    closeAttempts += 1;
+    try {
+      await browser.close();
+      closeSucceeded = true;
+    } catch {
+      if (closeAttempts < 2) await pause(50);
+    }
+  }
+  for (let check = 0; check < 20 && processIds.some(isPidAlive); check += 1) await pause(50);
+  for (const signal of ["SIGTERM", "SIGKILL"]) {
+    const alivePids = processIds.filter(isPidAlive);
+    if (alivePids.length === 0) break;
+    for (const ownedPid of alivePids) {
+      try {
+        terminatePid(ownedPid, signal);
+      } catch (error) {
+        if (error?.code !== "ESRCH") throw new SafeStageError("CAPTURE_BROWSER_EXIT");
+      }
+    }
+    for (let check = 0; check < 20 && processIds.some(isPidAlive); check += 1) await pause(50);
+  }
+  if (processIds.some(isPidAlive)) throw new SafeStageError("CAPTURE_BROWSER_EXIT");
+  if (!closeSucceeded && processIds.length === 0) throw new SafeStageError("CAPTURE_BROWSER_CLOSE");
+  return { process_ids: processIds, exit_verified: true, close_attempts: closeAttempts, close_succeeded: closeSucceeded };
+}
+
+export async function runCaptureLifecycle(options) {
+  const signalSource = options.signalSource ?? process;
+  const setExitCode = options.setExitCode ?? ((value) => { process.exitCode = value; });
+  const controller = new AbortController();
+  let cancelled = false;
+  let outputDirectory = null;
+  let browser = null;
+  let browserCloseStarted = false;
+  let browserOwnership = { process_ids: [], exit_verified: true, close_attempts: 0, close_succeeded: true };
+  let cleanupPromise = null;
+
+  const cleanup = async () => {
+    if (cleanupPromise) {
+      await cleanupPromise;
+      if ((browser && !browserCloseStarted) || outputDirectory) return cleanup();
+      return undefined;
+    }
+    cleanupPromise = (async () => {
+      if (browser && !browserCloseStarted) {
+        browserCloseStarted = true;
+        browserOwnership = await closeOwnedBrowser(browser, {
+          isPidAlive: options.isPidAlive,
+          pause: options.pause,
+          terminatePid: options.terminatePid,
+        });
+        browser = null;
+      }
+      if (outputDirectory) {
+        await rm(outputDirectory, { recursive: true, force: true });
+        outputDirectory = null;
+      }
+    })();
+    try {
+      await cleanupPromise;
+    } finally {
+      cleanupPromise = null;
+    }
+  };
+  const handlers = new Map();
+  for (const [signal, exitCode] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+    const handler = () => {
+      if (cancelled) return;
+      cancelled = true;
+      setExitCode(exitCode);
+      controller.abort();
+      void cleanup().catch(() => undefined);
+    };
+    handlers.set(signal, handler);
+    signalSource.once(signal, handler);
+  }
+  const assertActive = () => {
+    if (cancelled || controller.signal.aborted) throw new SafeStageError("CAPTURE_CANCELLED");
+  };
+
+  try {
+    outputDirectory = await runSafeStage("CAPTURE_OUTPUT_CREATE", () => options.createOutput(controller.signal));
+    assertActive();
+    const authorization = await runSafeStage("CAPTURE_AUTHORIZATION", () => options.authorize(controller.signal));
+    assertActive();
+    browser = await runSafeStage("CAPTURE_BROWSER_LAUNCH", () => options.launch(controller.signal));
+    assertActive();
+    const captureResult = await runSafeStage("CAPTURE_BROWSER_CAPTURE", () => options.capture({ browser, authorization, outputDirectory, signal: controller.signal }));
+    assertActive();
+    browserCloseStarted = true;
+    browserOwnership = await closeOwnedBrowser(browser, {
+      isPidAlive: options.isPidAlive,
+      pause: options.pause,
+      terminatePid: options.terminatePid,
+    });
+    browser = null;
+    assertActive();
+    const result = await runSafeStage("CAPTURE_INDEX_WRITE", () => options.writeIndex({ captureResult, browserOwnership, outputDirectory, signal: controller.signal }));
+    assertActive();
+    return result;
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch {
+      throw new SafeStageError("CAPTURE_CLEANUP");
+    }
+    if (cancelled) throw new SafeStageError("CAPTURE_CANCELLED");
+    throw error instanceof SafeStageError ? error : new SafeStageError("CAPTURE_STAGE");
   } finally {
-    for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
-    await close();
+    for (const [signal, handler] of handlers) signalSource.removeListener(signal, handler);
   }
 }
 
@@ -239,19 +359,17 @@ export function buildCaptureUrl(candidateBase) {
 async function writeIndex(outputDirectory, index) {
   const text = `${JSON.stringify(index, null, 2)}\n`;
   if (INDEX_FORBIDDEN_TEXT.test(text)) throw new Error("Visual parity index contains forbidden content");
-  const destination = path.join(outputDirectory, "parity-index.json");
-  await writeFile(destination, text, { flag: "wx", mode: 0o600 });
-  await chmod(destination, 0o600);
-  return destination;
+  return writePrivateExclusiveFile(outputDirectory, "parity-index.json", text);
 }
 
 export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, launch }) {
   const locations = await validateCaptureLocations({ baseline, outputParent });
-  const outputDirectory = await createPrivateCandidateDirectory(locations.outputParent);
-  try {
-    const managerToken = await obtainManagerToken(loginBase, managerPassword);
-    const consoleCounts = { errors: 0, warnings: 0 };
-    const captures = await runOwnedBrowserTask(launch, async (browser) => {
+  return runCaptureLifecycle({
+    createOutput: () => createPrivateCandidateDirectory(locations.outputParent),
+    authorize: () => obtainManagerToken(loginBase, managerPassword),
+    launch,
+    capture: async ({ browser, authorization: managerToken, outputDirectory }) => {
+      const consoleCounts = { errors: 0, warnings: 0 };
       const page = await browser.newPage();
       page.on("console", (message) => {
         if (message.type() === "error") consoleCounts.errors += 1;
@@ -285,33 +403,32 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
         if (cssViewport.width !== item.viewport.width || cssViewport.height !== item.viewport.height) {
           throw new Error(`Browser did not apply the required CSS viewport for ${item.tab}`);
         }
-        const candidatePath = path.join(outputDirectory, item.filename);
-        await page.screenshot({ path: candidatePath, fullPage: true, type: "png" });
-        await chmod(candidatePath, 0o600);
+        const candidateBytes = Buffer.from(await page.screenshot({ fullPage: true, type: "png" }));
+        const candidatePath = await writePrivateExclusiveFile(outputDirectory, item.filename, candidateBytes);
         const baselinePath = path.join(locations.baseline, item.filename);
         const baselineExists = await stat(baselinePath).then((entry) => entry.isFile()).catch(() => false);
         results.push({
           filename: item.filename,
           tab: item.tab,
-          css_viewport: cssViewport,
+          dimensions: buildCaptureDimensions(item.viewport, candidateBytes),
           comparison: baselineExists ? await visualComparison(baselinePath, candidatePath) : null,
         });
       }
-      return { visibleTabs, results };
-    });
-    const index = {
-      period: ABBOTT_PARITY_PERIOD,
-      visible_tabs: captures.visibleTabs,
-      console: consoleCounts,
-      visual_thresholds: VISUAL_THRESHOLDS,
-      captures: captures.results,
-    };
-    const indexPath = await writeIndex(outputDirectory, index);
-    return { outputDirectory, indexPath, index };
-  } catch (error) {
-    await rm(outputDirectory, { recursive: true, force: true });
-    throw error;
-  }
+      return { visibleTabs, results, consoleCounts };
+    },
+    writeIndex: async ({ captureResult, browserOwnership, outputDirectory }) => {
+      const index = {
+        period: ABBOTT_PARITY_PERIOD,
+        visible_tabs: captureResult.visibleTabs,
+        console: captureResult.consoleCounts,
+        browser_processes: browserOwnership,
+        visual_thresholds: VISUAL_THRESHOLDS,
+        captures: captureResult.results,
+      };
+      const indexPath = await writeIndex(outputDirectory, index);
+      return { outputDirectory, indexPath, index };
+    },
+  });
 }
 
 function parseArgs(argv) {
@@ -333,20 +450,22 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const loginBase = assertRuntimeBaseUrl(options.login, 3001);
-  const candidateBase = assertRuntimeBaseUrl(options.candidate, 3004);
-  const { managerPassword } = await readCredentialFd(options.credentialsFd);
-  const puppeteer = (await import("puppeteer")).default;
-  const result = await captureAbbottRuntime({
+  const options = await runSafeStage("ARGUMENTS", () => parseArgs(process.argv.slice(2)));
+  const { loginBase, candidateBase } = await runSafeStage("ORIGIN_VALIDATION", () => ({
+    loginBase: assertRuntimeBaseUrl(options.login, 3001),
+    candidateBase: assertRuntimeBaseUrl(options.candidate, 3004),
+  }));
+  const { managerPassword } = await runSafeStage("CREDENTIAL_INPUT", () => readCredentialFd(options.credentialsFd));
+  const puppeteer = await runSafeStage("BROWSER_LIBRARY", async () => (await import("puppeteer")).default);
+  const result = await runSafeStage("CAPTURE_EXECUTION", () => captureAbbottRuntime({
     loginBase,
     candidateBase,
     baseline: options.baseline,
     outputParent: options.outputParent,
     managerPassword,
     launch: () => puppeteer.launch({ headless: true }),
-  });
-  process.stdout.write(`captures=${result.index.captures.length} errors=${result.index.console.errors} index=${result.indexPath}\n`);
+  }));
+  process.stdout.write(`captures=${result.index.captures.length} errors=${result.index.console.errors} index=created\n`);
   if (result.index.console.errors > 0 || result.index.captures.some((item) => item.comparison && !passesVisualThreshold(item.comparison))) {
     process.exitCode = 1;
   }
@@ -354,8 +473,9 @@ async function main() {
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   main().catch((error) => {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    process.stderr.write(`Abbott capture failed: ${message.replace(/https?:\/\/\S+/g, "[redacted-url]")}\n`);
-    process.exitCode = 1;
+    if (!(error instanceof SafeStageError && error.code === "CAPTURE_CANCELLED")) {
+      process.stderr.write(formatSafeCliFailure(error, "ABBOTT_CAPTURE"));
+      process.exitCode = 1;
+    }
   });
 }

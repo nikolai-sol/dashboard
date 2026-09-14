@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
-import { createReadStream } from "node:fs";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
+import { lstat, mkdir, open, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -37,6 +37,76 @@ const VISIBLE_TAB_ORDER = [
 ];
 const PRIVATE_OR_URL_KEY = /(?:^|_)(?:access_token|embed_key|cookie|raw_user_id|user_id|visit_id|session_id|start_url|end_url|url|path)(?:_|$)/i;
 const NUMERIC_IDENTIFIER_KEY = /(?:^|_)(?:id|identifier|ordinal)(?:_|$)/i;
+const DECIMAL_SCALE = 1_000_000n;
+const REQUIRED_COMMON_ARRAYS = [
+  "counters",
+  "traffic_summary",
+  "page_stats",
+  "bitrix_pages",
+  "external_events",
+  "external_clicks",
+  "returning",
+  "general_materials",
+];
+const REQUIRED_MANAGER_ARRAYS = ["users_summary", "users_summary_without_admins", "user_actions"];
+
+const SAFE_STAGE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+export class SafeStageError extends Error {
+  constructor(code) {
+    super(code);
+    this.name = "SafeStageError";
+    this.code = SAFE_STAGE_CODE.test(code) ? code : "UNEXPECTED";
+  }
+}
+
+export async function runSafeStage(code, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof SafeStageError) throw error;
+    throw new SafeStageError(code);
+  }
+}
+
+export function formatSafeCliFailure(error, tool) {
+  const code = error instanceof SafeStageError ? error.code : "UNEXPECTED";
+  const prefix = SAFE_STAGE_CODE.test(tool) ? tool : "ABBOTT_TOOL";
+  return `${prefix}_FAILED stage=${code}\n`;
+}
+
+export async function fetchNoRedirect(url, options, stageCode, fetchImpl = fetch) {
+  return runSafeStage(stageCode, async () => {
+    assertLoopbackUrl(url);
+    const response = await fetchImpl(url, {
+      ...options,
+      redirect: "error",
+      signal: options?.signal ?? AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) throw new Error("HTTP response rejected");
+    return response;
+  });
+}
+
+function assertLoopbackUrl(value, expectedPort) {
+  let url;
+  try {
+    url = value instanceof URL ? value : new URL(value);
+  } catch {
+    throw new Error("LOOPBACK_ORIGIN");
+  }
+  const hostname = url.hostname.toLowerCase();
+  const portAllowed = expectedPort === undefined
+    ? ["3001", "3004"].includes(url.port)
+    : url.port === String(expectedPort);
+  if (url.protocol !== "http:"
+    || !["127.0.0.1", "[::1]"].includes(hostname)
+    || !portAllowed
+    || url.username || url.password) {
+    throw new Error("LOOPBACK_ORIGIN");
+  }
+  return url;
+}
 
 function sha256(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -76,6 +146,46 @@ function numericObject(value) {
       .filter(([, nested]) => typeof nested === "number" && Number.isFinite(nested))
       .sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+function assertAbbottPayloadContract(payload, audience) {
+  if (!isRecord(payload) || !isRecord(payload.dashboard) || !isRecord(payload.abbott_bi)
+    || !isRecord(payload.kpi) || !isRecord(payload.dashboard.period)) {
+    throw new Error("PAYLOAD_CONTRACT");
+  }
+  if (payload.dashboard.period.from !== ABBOTT_PARITY_PERIOD.from
+    || payload.dashboard.period.to !== ABBOTT_PARITY_PERIOD.to
+    || payload.dashboard.type !== "abbott_bi") {
+    throw new Error("PAYLOAD_CONTRACT");
+  }
+  const data = payload.abbott_bi;
+  const kpiValues = Object.values(payload.kpi);
+  const requiredArrays = audience === "embed"
+    ? REQUIRED_COMMON_ARRAYS
+    : [...REQUIRED_COMMON_ARRAYS, ...REQUIRED_MANAGER_ARRAYS];
+  if (kpiValues.length === 0 || kpiValues.some((value) => typeof value !== "number" || !Number.isFinite(value))
+    || requiredArrays.some((key) => !Array.isArray(data[key]))
+    || !isRecord(data.data_quality)
+    || !isRecord(data.time_buckets)
+    || !Array.isArray(data.time_buckets.overall)
+    || !Array.isArray(data.time_buckets.materials)
+    || !Array.isArray(data.time_buckets.by_page)
+    || !isRecord(data.return_frequency)
+    || !Array.isArray(data.return_frequency.groups)
+    || !Array.isArray(data.return_frequency.user_directions)
+    || !Array.isArray(data.return_frequency.return_pages)
+    || !Number.isSafeInteger(data.return_frequency.identified_visitors)
+    || data.return_frequency.identified_visitors < 0
+    || !Number.isSafeInteger(data.return_frequency.unidentified_visits)
+    || data.return_frequency.unidentified_visits < 0
+    || typeof data.return_frequency.available !== "boolean"
+    || typeof data.return_frequency.period_local !== "boolean") {
+    throw new Error("PAYLOAD_CONTRACT");
+  }
+  if (audience !== "embed" && (!isRecord(data.session_journeys) || !Array.isArray(data.session_journeys.rows)
+    || !isRecord(data.admin_user_filter))) {
+    throw new Error("PAYLOAD_CONTRACT");
+  }
 }
 
 function dataQualitySummary(value) {
@@ -140,7 +250,15 @@ function addNumericAggregates(value, target = {}, keyPath = "") {
   for (const [key, nested] of Object.entries(value)) {
     const nextPath = keyPath ? `${keyPath}.${key}` : key;
     if (typeof nested === "number" && Number.isFinite(nested) && !NUMERIC_IDENTIFIER_KEY.test(key)) {
-      target[nextPath] = (target[nextPath] ?? 0) + nested;
+      const state = target[nextPath] ?? { integer: 0n, scaled: 0n, fractional: false };
+      if (Number.isInteger(nested) && Number.isSafeInteger(nested)) {
+        state.integer += BigInt(nested);
+        state.scaled += BigInt(nested) * DECIMAL_SCALE;
+      } else {
+        state.fractional = true;
+        state.scaled += BigInt(Math.round(nested * Number(DECIMAL_SCALE)));
+      }
+      target[nextPath] = state;
     } else if (Array.isArray(nested) || isRecord(nested)) {
       addNumericAggregates(nested, target, nextPath);
     }
@@ -148,14 +266,28 @@ function addNumericAggregates(value, target = {}, keyPath = "") {
   return target;
 }
 
+function formatScaled(value) {
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const whole = absolute / DECIMAL_SCALE;
+  const fraction = String(absolute % DECIMAL_SCALE).padStart(6, "0").replace(/0+$/, "");
+  return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
+}
+
+function finalizeNumericAggregates(states) {
+  return Object.fromEntries(Object.entries(states).sort(([left], [right]) => left.localeCompare(right)).map(([key, state]) => {
+    if (state.fractional) return [key, formatScaled(state.scaled)];
+    const numeric = Number(state.integer);
+    return [key, Number.isSafeInteger(numeric) ? numeric : state.integer.toString()];
+  }));
+}
+
 function summarizeRows(rows) {
   const safeRows = Array.isArray(rows) ? rows : [];
   return {
     count: safeRows.length,
     stable_identifier_hashes: safeRows.map((row) => sha256(canonicalJson(identifierProjection(row)))).sort(),
-    numeric_aggregates: Object.fromEntries(
-      Object.entries(addNumericAggregates(safeRows)).sort(([left], [right]) => left.localeCompare(right)),
-    ),
+    numeric_aggregates: finalizeNumericAggregates(addNumericAggregates(safeRows)),
   };
 }
 
@@ -191,6 +323,9 @@ function supplementaryDatasetRows(data) {
 }
 
 export function summarizeAbbottPayload(payload, options = {}) {
+  const audience = options.audience ?? "manager";
+  if (audience !== "manager" && audience !== "embed") throw new Error("PAYLOAD_CONTRACT");
+  assertAbbottPayloadContract(payload, audience);
   const dashboard = isRecord(payload?.dashboard) ? payload.dashboard : {};
   const data = isRecord(payload?.abbott_bi) ? payload.abbott_bi : {};
   const period = isRecord(dashboard.period)
@@ -208,6 +343,12 @@ export function summarizeAbbottPayload(payload, options = {}) {
     tabs: visibleTabs(data),
     tab_rows: tabRows,
     supplemental_rows: supplementalRows,
+    supplemental_totals: {
+      available: data.return_frequency.available,
+      identified_visitors: data.return_frequency.identified_visitors,
+      period_local: data.return_frequency.period_local,
+      unidentified_visits: data.return_frequency.unidentified_visits,
+    },
     administrator_exclusion_count: Number.isSafeInteger(options.administratorExclusionCount)
       ? options.administratorExclusionCount
       : null,
@@ -246,17 +387,41 @@ function cellTypeName(cell) {
   return names[cell.type] ?? "unknown";
 }
 
+function normalizeCellValue(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return { date: value.toISOString() };
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Invalid workbook number");
+    return { number: Number.isInteger(value) ? String(value) : value.toString() };
+  }
+  if (["string", "boolean"].includes(typeof value)) return value;
+  if (Array.isArray(value)) return value.map(normalizeCellValue);
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalizeCellValue(value[key])]));
+  }
+  return String(value);
+}
+
 export async function summarizeWorkbook(bytes) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(Buffer.from(bytes));
   const sheets = workbook.worksheets.map((worksheet) => {
     const types = {};
     const formulas = [];
+    const cells = [];
     worksheet.eachRow({ includeEmpty: false }, (row) => {
       row.eachCell({ includeEmpty: false }, (cell) => {
         const name = cellTypeName(cell);
         types[name] = (types[name] ?? 0) + 1;
         if (cell.formula) formulas.push(sha256(String(cell.formula)));
+        const semanticValue = cell.formula
+          ? { formula: String(cell.formula), result: normalizeCellValue(cell.result) }
+          : normalizeCellValue(cell.value);
+        cells.push({
+          coordinate: cell.address,
+          type: name,
+          content_sha256: sha256(canonicalJson(semanticValue)),
+        });
       });
     });
     return {
@@ -264,6 +429,7 @@ export async function summarizeWorkbook(bytes) {
       row_count: worksheet.actualRowCount,
       cell_types: Object.fromEntries(Object.entries(types).sort(([left], [right]) => left.localeCompare(right))),
       formula_hashes: formulas.sort(),
+      cells,
     };
   });
   const summary = { sheets };
@@ -300,39 +466,114 @@ function isWithin(parent, child) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-export async function createPrivateReportDirectory(outputParent, repositoryRoot = process.cwd()) {
-  const parent = path.resolve(outputParent);
-  const root = path.resolve(repositoryRoot);
-  if (isWithin(root, parent)) throw new Error("Parity output must be outside Git");
-  await mkdir(parent, { recursive: true, mode: 0o700 });
-  await chmod(parent, 0o700);
-  const directory = await mkdtemp(path.join(parent, "abbott-runtime-parity-"));
-  await chmod(directory, 0o700);
-  return directory;
+export async function createPrivateReportDirectory(outputParent, repositoryRoot = process.cwd(), options = {}) {
+  return createPrivateOutputDirectory(outputParent, "abbott-runtime-parity-", repositoryRoot, options);
 }
 
-export async function writeParityReport(directory, report) {
-  const text = `${JSON.stringify(canonicalize(report), null, 2)}\n`;
-  if (FORBIDDEN_REPORT_TEXT.test(text)) throw new Error("Parity report contains forbidden content");
-  const destination = path.join(directory, REPORT_NAME);
-  await writeFile(destination, text, { mode: 0o600, flag: "wx" });
-  await chmod(destination, 0o600);
-  return destination;
+async function directoryIdentity(directory) {
+  const resolved = await realpath(path.resolve(directory));
+  const entry = await stat(resolved);
+  if (!entry.isDirectory()) throw new SafeStageError("OUTPUT_CONTAINMENT");
+  return { resolved, dev: entry.dev, ino: entry.ino };
+}
+
+async function matchesDirectoryIdentity(directory, expected) {
+  try {
+    const current = await directoryIdentity(directory);
+    return current.resolved === expected.resolved && current.dev === expected.dev && current.ino === expected.ino;
+  } catch {
+    return false;
+  }
+}
+
+async function assertExistingAncestorsOutsideRepository(outputParent, repositoryRoot) {
+  const namedParent = path.resolve(outputParent);
+  const root = await realpath(path.resolve(repositoryRoot));
+  const parsed = path.parse(namedParent);
+  let cursor = parsed.root;
+  const parts = namedParent.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  for (const part of parts) {
+    cursor = path.join(cursor, part);
+    const entry = await lstat(cursor).catch(() => null);
+    if (!entry) throw new SafeStageError("OUTPUT_CONTAINMENT");
+    const resolvedAncestor = await realpath(cursor);
+    if (isWithin(root, resolvedAncestor)) throw new SafeStageError("OUTPUT_CONTAINMENT");
+  }
+  const identity = await directoryIdentity(namedParent);
+  if (isWithin(root, identity.resolved)) throw new SafeStageError("OUTPUT_CONTAINMENT");
+  return { namedParent, identity };
+}
+
+export async function createPrivateOutputDirectory(outputParent, prefix, repositoryRoot = process.cwd(), options = {}) {
+  const state = await assertExistingAncestorsOutsideRepository(outputParent, repositoryRoot);
+  await options.afterValidation?.();
+  if (!await matchesDirectoryIdentity(state.namedParent, state.identity)) {
+    throw new SafeStageError("OUTPUT_CONTAINMENT");
+  }
+  const directory = path.join(state.identity.resolved, `${prefix}${crypto.randomBytes(12).toString("hex")}`);
+  try {
+    await mkdir(directory, { recursive: false, mode: 0o700 });
+    const created = await lstat(directory);
+    if (!created.isDirectory() || created.isSymbolicLink()
+      || !await matchesDirectoryIdentity(state.namedParent, state.identity)) {
+      await rm(directory, { recursive: true, force: true });
+      throw new SafeStageError("OUTPUT_CONTAINMENT");
+    }
+    return directory;
+  } catch (error) {
+    if (error instanceof SafeStageError) throw error;
+    throw new SafeStageError("OUTPUT_CONTAINMENT");
+  }
+}
+
+export async function writePrivateExclusiveFile(directory, filename, contents, options = {}) {
+  const identity = await directoryIdentity(directory).catch(() => { throw new SafeStageError("OUTPUT_WRITE"); });
+  const destination = path.join(identity.resolved, filename);
+  let handle = null;
+  let openedByUs = false;
+  try {
+    await options.beforeOpen?.();
+    if (!await matchesDirectoryIdentity(directory, identity)) throw new SafeStageError("OUTPUT_WRITE");
+    handle = await open(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    openedByUs = true;
+    await handle.writeFile(contents);
+    await handle.sync();
+    const entry = await handle.stat();
+    if (!entry.isFile() || !await matchesDirectoryIdentity(directory, identity)) throw new SafeStageError("OUTPUT_WRITE");
+    await handle.close();
+    handle = null;
+    return destination;
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    if (openedByUs && await matchesDirectoryIdentity(directory, identity)) {
+      await rm(destination, { force: true }).catch(() => undefined);
+    }
+    if (error instanceof SafeStageError) throw error;
+    throw new SafeStageError("OUTPUT_WRITE");
+  }
+}
+
+export async function writeParityReport(directory, report, options = {}) {
+  return runSafeStage("OUTPUT_WRITE", async () => {
+    const text = `${JSON.stringify(canonicalize(report), null, 2)}\n`;
+    if (FORBIDDEN_REPORT_TEXT.test(text)) throw new Error("forbidden");
+    return writePrivateExclusiveFile(directory, REPORT_NAME, text, options);
+  });
 }
 
 export function assertRuntimeBaseUrl(value, expectedPort) {
-  const url = new URL(value);
-  if (!["http:", "https:"].includes(url.protocol)
-    || url.username || url.password || url.search || url.hash
+  const url = assertLoopbackUrl(value, expectedPort);
+  if (url.search || url.hash
     || (url.pathname !== "/" && url.pathname !== "")
-    || url.port !== String(expectedPort)) {
-    throw new Error(`Runtime URL must be an origin on port ${expectedPort} without credentials or a path`);
+  ) {
+    throw new Error("LOOPBACK_ORIGIN");
   }
   return url.origin;
 }
 
 export function buildAuthorizedRequest(base, endpoint, credential) {
-  const url = new URL(endpoint, `${base}/`);
+  const baseUrl = assertLoopbackUrl(base);
+  const url = new URL(endpoint, `${baseUrl.origin}/`);
   url.searchParams.set("from", ABBOTT_PARITY_PERIOD.from);
   url.searchParams.set("to", ABBOTT_PARITY_PERIOD.to);
   if (credential.kind === "embed") url.searchParams.set("embed_key", credential.value);
@@ -344,59 +585,49 @@ export function buildAuthorizedRequest(base, endpoint, credential) {
   };
 }
 
-async function fetchChecked(url, options, label) {
-  let response;
-  try {
-    response = await fetch(url, { ...options, signal: AbortSignal.timeout(60_000) });
-  } catch {
-    throw new Error(`${label} request failed`);
-  }
-  if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
-  return response;
-}
-
 export async function obtainManagerToken(referenceBase, password) {
-  const response = await fetchChecked(new URL("/api/dashboard-auth/login", `${referenceBase}/`), {
+  const origin = assertRuntimeBaseUrl(referenceBase, 3001);
+  const response = await fetchNoRedirect(new URL("/api/dashboard-auth/login", `${origin}/`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ dashboard_id: "18", password }),
-  }, "Manager authorization");
-  const body = await response.json().catch(() => null);
+  }, "MANAGER_AUTHORIZATION");
+  const body = await runSafeStage("MANAGER_AUTHORIZATION_JSON", () => response.json());
   if (!body || typeof body.access_token !== "string" || !body.access_token) {
-    throw new Error("Manager authorization returned no token");
+    throw new SafeStageError("MANAGER_AUTHORIZATION_RESPONSE");
   }
   return body.access_token;
 }
 
 async function fetchAudienceSummary(base, audience, credential) {
   const payloadRequest = buildAuthorizedRequest(base, "/api/dashboard/18", credential);
-  const payloadResponse = await fetchChecked(
+  const payloadResponse = await fetchNoRedirect(
     payloadRequest.url,
     { ...payloadRequest.options, cache: "no-store" },
-    `${audience} dashboard`,
+    `${audience.toUpperCase()}_PAYLOAD_FETCH`,
   );
-  const payload = await payloadResponse.json();
+  const payload = await runSafeStage(`${audience.toUpperCase()}_PAYLOAD_JSON`, () => payloadResponse.json());
   let administratorExclusionCount = null;
   if (audience === "manager") {
     const adminRequest = buildAuthorizedRequest(base, "/api/dashboard/18/abbott-admin-users", credential);
-    const adminResponse = await fetchChecked(
+    const adminResponse = await fetchNoRedirect(
       adminRequest.url,
       { ...adminRequest.options, cache: "no-store" },
-      "Manager exclusion count",
+      "MANAGER_ADMIN_FETCH",
     );
-    const body = await adminResponse.json().catch(() => null);
-    if (!body || !Array.isArray(body.user_ids)) throw new Error("Manager exclusion count response is invalid");
+    const body = await runSafeStage("MANAGER_ADMIN_JSON", () => adminResponse.json());
+    if (!body || !Array.isArray(body.user_ids)) throw new SafeStageError("MANAGER_ADMIN_RESPONSE");
     administratorExclusionCount = body.user_ids.length;
   }
   const workbookRequest = buildAuthorizedRequest(base, "/api/dashboard/18/excel", credential);
-  const workbookResponse = await fetchChecked(
+  const workbookResponse = await fetchNoRedirect(
     workbookRequest.url,
     { ...workbookRequest.options, cache: "no-store" },
-    `${audience} workbook`,
+    `${audience.toUpperCase()}_WORKBOOK_FETCH`,
   );
   return {
-    payload: summarizeAbbottPayload(payload, { administratorExclusionCount }),
-    workbook: await summarizeWorkbook(Buffer.from(await workbookResponse.arrayBuffer())),
+    payload: await runSafeStage(`${audience.toUpperCase()}_PAYLOAD_CONTRACT`, () => summarizeAbbottPayload(payload, { administratorExclusionCount, audience })),
+    workbook: await runSafeStage(`${audience.toUpperCase()}_WORKBOOK_PARSE`, async () => summarizeWorkbook(Buffer.from(await workbookResponse.arrayBuffer()))),
   };
 }
 
@@ -445,21 +676,22 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
-  const referenceBase = assertRuntimeBaseUrl(options.reference, 3001);
-  const candidateBase = assertRuntimeBaseUrl(options.candidate, 3004);
-  const credentials = await readCredentialFd(options.credentialsFd);
-  const report = await runParityComparison({ referenceBase, candidateBase, ...credentials });
-  const directory = await createPrivateReportDirectory(options.outputParent);
-  const reportPath = await writeParityReport(directory, report);
-  process.stdout.write(`status=${report.status} mismatches=${report.mismatch_count} report=${reportPath}\n`);
+  const options = await runSafeStage("ARGUMENTS", () => parseArgs(process.argv.slice(2)));
+  const { referenceBase, candidateBase } = await runSafeStage("ORIGIN_VALIDATION", () => ({
+    referenceBase: assertRuntimeBaseUrl(options.reference, 3001),
+    candidateBase: assertRuntimeBaseUrl(options.candidate, 3004),
+  }));
+  const credentials = await runSafeStage("CREDENTIAL_INPUT", () => readCredentialFd(options.credentialsFd));
+  const report = await runSafeStage("PARITY_EXECUTION", () => runParityComparison({ referenceBase, candidateBase, ...credentials }));
+  const directory = await runSafeStage("OUTPUT_CREATE", () => createPrivateReportDirectory(options.outputParent));
+  await writeParityReport(directory, report);
+  process.stdout.write(`status=${report.status} mismatches=${report.mismatch_count} report=created\n`);
   if (report.status !== "match") process.exitCode = 1;
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   main().catch((error) => {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    process.stderr.write(`Abbott parity failed: ${message.replace(/https?:\/\/\S+/g, "[redacted-url]")}\n`);
+    process.stderr.write(formatSafeCliFailure(error, "ABBOTT_PARITY"));
     process.exitCode = 1;
   });
 }

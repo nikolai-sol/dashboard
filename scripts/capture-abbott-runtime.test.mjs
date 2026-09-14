@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtemp, stat, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
+import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { formatSafeCliFailure } from "./compare-abbott-runtime.mjs";
+
 import {
   buildCapturePlan,
+  buildCaptureDimensions,
   buildCaptureUrl,
   calculatePixelDifference,
+  closeOwnedBrowser,
   createPrivateCandidateDirectory,
   inspectPngDimensions,
   passesVisualThreshold,
-  runOwnedBrowserTask,
+  runCaptureLifecycle,
   validateCaptureLocations,
 } from "./capture-abbott-runtime.mjs";
 
@@ -28,7 +33,7 @@ test("capture plan always includes five desktop tabs and one CSS 390x844 mobile 
     { filename: "03-page-stats-desktop.png", tab: "page_stats", viewport: { width: 1440, height: 1000, deviceScaleFactor: 1 } },
     { filename: "04-returning-desktop.png", tab: "returning", viewport: { width: 1440, height: 1000, deviceScaleFactor: 1 } },
     { filename: "05-general-materials-desktop.png", tab: "general_materials", viewport: { width: 1440, height: 1000, deviceScaleFactor: 1 } },
-    { filename: "06-users-summary-mobile.png", tab: "users_summary", viewport: { width: 390, height: 844, deviceScaleFactor: 2 } },
+    { filename: "06-users-summary-mobile.png", tab: "users_summary", viewport: { width: 390, height: 844, deviceScaleFactor: 800 / 390 } },
   ]);
 });
 
@@ -36,6 +41,20 @@ test("capture URL contains only the fixed period and never authorization", () =>
   const url = buildCaptureUrl("http://127.0.0.1:3004");
   assert.equal(url.href, "http://127.0.0.1:3004/dashboard/18?from=2026-09-01&to=2026-09-13");
   assert.doesNotMatch(url.href, /token|cookie|embed/i);
+});
+
+test("mobile capture records CSS 390x844 and preserved 800px raster width", () => {
+  const png = Buffer.alloc(24);
+  Buffer.from("89504e470d0a1a0a0000000d49484452", "hex").copy(png);
+  png.writeUInt32BE(800, 16);
+  png.writeUInt32BE(7192, 20);
+  assert.deepEqual(buildCaptureDimensions(
+    { width: 390, height: 844, deviceScaleFactor: 800 / 390 },
+    png,
+  ), {
+    css: { width: 390, height: 844 },
+    pixels: { width: 800, height: 7192 },
+  });
 });
 
 test("capture plan adds only conditional tabs that are truthfully visible", () => {
@@ -55,13 +74,105 @@ test("capture plan adds only conditional tabs that are truthfully visible", () =
   ]);
 });
 
-test("owned browser closes on success and failure", async () => {
+test("browser is marked closed only after successful bounded retry and exact PIDs exit", async () => {
   let closes = 0;
-  const launch = async () => ({ close: async () => { closes += 1; } });
+  let alive = true;
+  const browser = {
+    close: async () => {
+      closes += 1;
+      if (closes === 1) throw new Error("close fixture");
+      alive = false;
+    },
+    process: () => ({ pid: 4242 }),
+  };
 
-  assert.equal(await runOwnedBrowserTask(launch, async () => "ok"), "ok");
-  await assert.rejects(runOwnedBrowserTask(launch, async () => { throw new Error("fixture failure"); }), /fixture failure/);
+  assert.deepEqual(await closeOwnedBrowser(browser, {
+    isPidAlive: () => alive,
+    pause: async () => undefined,
+  }), { process_ids: [4242], exit_verified: true, close_attempts: 2, close_succeeded: true });
   assert.equal(closes, 2);
+});
+
+test("browser close failure uses only the captured PID for bounded termination", async () => {
+  let alive = true;
+  const terminations = [];
+  const result = await closeOwnedBrowser({
+    close: async () => { throw new Error("private close failure"); },
+    process: () => ({ pid: 4343 }),
+  }, {
+    isPidAlive: () => alive,
+    terminatePid: (pid, signal) => { terminations.push([pid, signal]); alive = false; },
+    pause: async () => undefined,
+  });
+
+  assert.deepEqual(result, {
+    process_ids: [4343],
+    exit_verified: true,
+    close_attempts: 2,
+    close_succeeded: false,
+  });
+  assert.deepEqual(terminations, [[4343, "SIGTERM"]]);
+});
+
+test("SIGINT and SIGTERM at every capture stage close browser and remove partial output", async () => {
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    for (const signalStage of ["output", "authorization", "launch", "capture", "index"]) {
+      const parent = await mkdtemp(path.join(os.tmpdir(), "abbott-cancel-test-"));
+      const output = path.join(parent, "candidate");
+      const signalSource = new EventEmitter();
+      let closeCount = 0;
+      let exitCode = null;
+      let alive = true;
+      const maybeSignal = (stage) => {
+        if (signalStage === stage) signalSource.emit(signal);
+      };
+      const browser = {
+        close: async () => { closeCount += 1; alive = false; },
+        process: () => ({ pid: 5252 }),
+      };
+
+      await assert.rejects(runCaptureLifecycle({
+        signalSource,
+        setExitCode: (value) => { exitCode = value; },
+        createOutput: async () => { await mkdir(output, { mode: 0o700 }); maybeSignal("output"); return output; },
+        authorize: async () => { maybeSignal("authorization"); return "authorized-fixture"; },
+        launch: async () => { maybeSignal("launch"); return browser; },
+        capture: async () => { await writeFile(path.join(output, "partial.png"), "fixture"); maybeSignal("capture"); return {}; },
+        writeIndex: async () => { await writeFile(path.join(output, "partial.json"), "fixture"); maybeSignal("index"); return {}; },
+        isPidAlive: () => alive,
+        pause: async () => undefined,
+      }), (error) => error?.code === "CAPTURE_CANCELLED");
+
+      assert.equal(exitCode, signal === "SIGINT" ? 130 : 143);
+      assert.equal(await stat(output).then(() => true).catch(() => false), false, `${signal} at ${signalStage}`);
+      assert.equal(closeCount, ["launch", "capture", "index"].includes(signalStage) ? 1 : 0);
+    }
+  }
+});
+
+test("browser failures become fixed safe stage codes and clean partial output", async () => {
+  const parent = await mkdtemp(path.join(os.tmpdir(), "abbott-browser-error-"));
+  const output = path.join(parent, "candidate");
+  const privateText = "browser manager-fixture http://127.0.0.1:3004/?access_token=fixture raw-cell";
+  let alive = true;
+  const error = await runCaptureLifecycle({
+    signalSource: new EventEmitter(),
+    setExitCode: () => undefined,
+    createOutput: async () => { await mkdir(output, { mode: 0o700 }); return output; },
+    authorize: async () => "authorization-fixture",
+    launch: async () => ({
+      close: async () => { alive = false; },
+      process: () => ({ pid: 6262 }),
+    }),
+    capture: async () => { throw new Error(privateText); },
+    writeIndex: async () => undefined,
+    isPidAlive: () => alive,
+    pause: async () => undefined,
+  }).catch((caught) => caught);
+
+  assert.equal(formatSafeCliFailure(error, "ABBOTT_CAPTURE"), "ABBOTT_CAPTURE_FAILED stage=CAPTURE_BROWSER_CAPTURE\n");
+  assert.doesNotMatch(formatSafeCliFailure(error, "ABBOTT_CAPTURE"), /manager-fixture|http|token|raw-cell|browser manager/i);
+  assert.equal(await stat(output).then(() => true).catch(() => false), false);
 });
 
 test("candidate directory is private and locations outside Git are enforced", async () => {

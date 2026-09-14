@@ -101,11 +101,11 @@ test "$(stat -f '%Lp' "$PARITY_REPORT")" = "600"
 node -e 'const fs=require("fs");const p=process.argv[1];const v=JSON.parse(fs.readFileSync(p,"utf8"));if(v.status!=="match"||v.mismatch_count!==0)process.exit(1);console.log("manager/embed parity: match")' "$PARITY_REPORT"
 ```
 
-A mismatch exits `1` and reports only redacted paths. Do not inspect or save source responses or workbook rows.
+A mismatch exits `1` and reports only redacted paths. Payload totals use order-independent fixed six-decimal aggregation (integer counts remain exact). Workbooks are compared by worksheet, coordinate, cell type, and hashes of normalized formulas or values; raw cells are never persisted. Do not inspect or save source responses or workbook rows.
 
 ## 5. Capture and compare the private visual candidate
 
-This captures the five baseline desktop tabs at CSS width `1440`, the users-summary tab at CSS `390x844`, and every conditional tab that is truthfully visible. It waits for dashboard readiness, fonts, and chart animation settlement. Its private candidate directory is removed on failure, and the owned Chromium process closes in `finally` on success or failure.
+This captures the five baseline desktop tabs at CSS width `1440`, the users-summary tab at CSS `390x844`, and every conditional tab that is truthfully visible. The mobile device scale is exactly `800/390`, preserving the baseline's `800`-pixel raster width without changing the CSS viewport; the index records both CSS and raster dimensions. It waits for dashboard readiness, fonts, and chart animation settlement. Its private candidate directory is removed on failure, and the owned Chromium process closes on success, failure, or signal cancellation.
 
 ```bash
 {
@@ -125,11 +125,31 @@ This captures the five baseline desktop tabs at CSS width `1440`, the users-summ
 
 Expected: six captures unless a conditional tab is visible, zero console errors, matching dimensions, `changed_pixel_ratio <= 0.02`, and `mean_absolute_error <= 0.005` for every baseline-backed capture. The script exits `1` if a baseline-backed image misses either threshold. Open the candidate and baseline images side by side and confirm the tab heading, labels, KPI cards, charts, tables, and responsive layout; aggregate thresholds do not replace human review. The 13 documented chart-size warnings may recur, but any new warning requires review.
 
-Verify that no task-owned browser remains. The first command must find no Puppeteer process whose parent belongs to this operator run; do not terminate an unowned process:
+Verify only the exact browser PID captured when this tool launched Chromium. The index must attest cleanup and each captured PID must already have exited; this check neither reads command lines nor guesses browser cache paths:
 
 ```bash
-pgrep -fal 'chrome|chromium' | grep -F "$PWD/node_modules/puppeteer" && exit 1 || true
-find "$EVIDENCE_PARENT" -maxdepth 2 -type f -name parity-index.json -exec stat -f '%Lp %N' {} \;
+CAPTURE_INDEX="$(find "$EVIDENCE_PARENT" -maxdepth 2 -type f -name parity-index.json -print | sort | tail -n 1)"
+test -n "$CAPTURE_INDEX"
+test "$(stat -f '%Lp' "$CAPTURE_INDEX")" = "600"
+node --input-type=module - "$CAPTURE_INDEX" <<'NODE'
+import fs from 'node:fs';
+
+const index = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const ownership = index.browser_processes;
+if (!ownership || ownership.exit_verified !== true || !Array.isArray(ownership.process_ids)) {
+  throw new Error('browser cleanup attestation missing');
+}
+for (const pid of ownership.process_ids) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('invalid captured browser PID');
+  try {
+    process.kill(pid, 0);
+    throw new Error(`captured browser PID ${pid} remains alive`);
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+}
+console.log(`captured browser cleanup: ${ownership.process_ids.length} PID(s) exited`);
+NODE
 ```
 
 ## 6. Verify every neighbor PID is unchanged
