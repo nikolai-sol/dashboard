@@ -277,6 +277,29 @@ verify the safe host state and task-owned process exit. No Nginx change, smoke,
 token issuance, capture or PM2 update implementation belongs to this checkpoint.
 The PM2 release-binding update defect is a separate checkpoint after recovery.
 
+The single approved attempt from278fd2d returned UNACKNOWLEDGED and stopped;
+the interrupted layout, neighbors and Nginx were then verified unchanged.
+The following local diagnostic changes require review before another attempt.
+Output is now exactly one closed status plus `stage=<enum> reason=<enum>`;
+it never contains remote stderr/stdout, host, command, path or PID data. Stages
+distinguish local_spawn, identity_proof, source_write, run_write, remote_startup,
+remote_preflight, remote_recovery, ack_framing, timeout, ssh_close,
+local_evidence, complete and unknown. Unknown errors remain unknown, not raw
+exception text. Strict acknowledgement pairs distinguish remote module startup
+from preflight refusal without disclosing either exception.
+
+Before transmitting source, the wrapper captures the transient SSH PID and then
+its verified start internally. Identity-only lifecycle evidence is atomically
+written in the fixed ignored `.superpowers/sdd/.abbott-recovery-evidence`
+directory (invoking UID0700; file0600, no symlinks or hardlinks). No elevated
+local process is required. After terminal observation, it copies only
+identity-captured/exit-observed/exit-verified booleans into an in-memory summary,
+then removes the evidence file/directory. PIDs/start never enter output or Git.
+Evidence drift refuses and preserves unverified files for inspection; do not
+delete or overwrite existing evidence to bypass a refusal. An unverified exit
+remains unverified even after the observation deadline; no cleanup claim can
+be inferred from a closed diagnostic alone.
+
 #### Normal shadow health check (not a recovery substitute)
 
 ```bash

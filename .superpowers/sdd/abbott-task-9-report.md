@@ -1709,3 +1709,49 @@ replace the missing PID/start-specific proof or remote acknowledgement.
 BLOCKED at ABBOTT_RECOVERY_UNACKNOWLEDGED. Public routing remains on combined3001;
 the predecessor backup is preserved and candidate activation is still
 inconsistent. Await separate direction; no speculative recovery or retry.
+
+### Recovery diagnostic checkpoint (local only; awaiting review)
+
+Source/tests and the exact earlier invocation metadata were inspected without
+SSH or a live request. The earlier single UNACKNOWLEDGED status cannot identify
+which transport phase failed. No deterministic protocol cause was established,
+and no speculative host, auth, framing authority or recovery-state change was
+made. In particular, this checkpoint does not retroactively infer that the
+remote loader started or that it refused a particular preflight.
+
+TDD added closed status/stage/reason diagnostics for local spawn, initial
+identity proof, source/RUN writes, remote startup, remote preflight, terminal
+recovery review, acknowledgement framing, deadline and SSH close. Unknown
+errors map to unknown. Remote acknowledgements are strictly bound to allowed
+status/stage/reason pairs; secret-bearing or forged/extra/oversized output is
+never a diagnostic source. Parent output is one formatted closed line only,
+without stderr/stdout, exception text, host, command, path, PID or start time.
+Actual local loader tests distinguish startup/import errors from preflight
+refusals without disclosing either exception. Recovery mutation logic and pins
+remain unchanged.
+
+The owner clarified local evidence ownership: invoking UID, not root, because
+the fixed wrapper remains unprivileged. A fixed ignored private directory0700
+and identity-only file0600 record the child PID immediately after spawn, then
+verified start before any source write, and exit observation/verification.
+Publication is atomic and rejects links, unsafe modes, existing directory,
+arbitrary fields and malformed identity data. After copying a no-PID boolean
+summary internally, the wrapper removes its evidence. Interrupted writes
+preserve prior evidence and remove only their own verified temporary inode;
+drift refuses without deleting unverified files. No PID/start enters Git or
+output. Existing bounded drains, deadlines, ownership-checked termination and
+late-close observation remain active on evidence failure too.
+
+Fresh evidence:44 focused recovery tests,328 full authority/artifact/bootstrap/
+recovery tests,67 app/runtime tests and61 smoke/asset/orchestrator/capture
+regressions passed. Build, root and Abbott typechecks, trusted artifact scan
+(2,870 files/82 text files), exact12-route/one-prefix validation, changed-script
+syntax and whitespace checks passed. Lint:zero errors/ten existing warnings.
+The new failure cases were first observed RED before implementation. Private
+fixture directories were removed; real local loader children were reaped and
+their PIDs independently absent. All test/build sessions exited, and the fixed
+production evidence directory was never created. Its Git ignore rule passed.
+
+STOP for focused re-review. No push, live SSH, recovery retry, credentials,
+browser, deploy, smoke/capture or Nginx operation occurred. The last live state
+and remote refs remain those recorded in the previous operational entry.

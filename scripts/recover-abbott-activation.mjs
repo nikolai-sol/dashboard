@@ -1,7 +1,21 @@
 import fs from'node:fs';import path from'node:path';import{execFileSync}from'node:child_process';import{pathToFileURL}from'node:url';
 import{runRecoveryTransport}from'./abbott-recovery-transport.mjs';
+import{formatRecoveryDiagnostic,safeRecoveryDiagnostic}from'./abbott-recovery-diagnostics.mjs';
+import{createRecoveryEvidence}from'./abbott-recovery-evidence.mjs';
 const ROOT='/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
 const fail=()=>{throw Error('ABBOTT_RECOVERY_REFUSED');};
+export async function runWithRecoveryEvidence(input,{signal,transport=runRecoveryTransport,evidence}={}){
+  let result={status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',diagnostic:{stage:'unknown',reason:'unknown'}},summary;
+  try{
+    if(!evidence){try{evidence=createRecoveryEvidence();}catch{return{status:'ABBOTT_RECOVERY_REFUSED',diagnostic:{stage:'local_evidence',reason:'failed'}};}}
+    const raw=await transport(input,{signal,onEvidence:row=>evidence.record(row)});
+    result={status:['ABBOTT_RECOVERY_RESTORED','ABBOTT_RECOVERY_REFUSED','ABBOTT_RECOVERY_REVIEW_REQUIRED','ABBOTT_RECOVERY_UNACKNOWLEDGED'].includes(raw.status)?raw.status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',diagnostic:safeRecoveryDiagnostic(raw.diagnostic)};
+    summary=evidence.finish();evidence=null;
+    if(summary.exitVerified!==raw.sshExitVerified||raw.status==='ABBOTT_RECOVERY_RESTORED'&&(!raw.remoteAcknowledged||!summary.identityCaptured||!summary.exitObserved||!summary.exitVerified))result={status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',diagnostic:{stage:'local_evidence',reason:'failed'}};
+  }catch{result={status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',diagnostic:{stage:'local_evidence',reason:'failed'}};}
+  finally{if(evidence)try{summary=evidence.finish();}catch{result={status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',diagnostic:{stage:'local_evidence',reason:'failed'}};}}
+  return result;
+}
 export function validateRecoveryInvocation(args,env){
   // macOS inserts this non-authority key even after env -i. Nothing else may
   // enter the local invocation; SSH receives its own fixed minimal environment.
@@ -33,10 +47,9 @@ async function main(){
   const input=buildRecoveryCapsule(sources,JSON.parse(git('show','HEAD:deploy/abbott/environment.json'))),abort=new AbortController(),stop=()=>abort.abort();
   for(const s of['SIGINT','SIGTERM'])process.on(s,stop);
   try{
-    const result=await runRecoveryTransport(input,{signal:abort.signal});
-    if(!result.remoteAcknowledged||!result.sshExitVerified)throw Error('ABBOTT_RECOVERY_UNACKNOWLEDGED');
-    if(result.status!=='ABBOTT_RECOVERY_RESTORED')throw Error(result.status);
-    process.stdout.write('ABBOTT_RECOVERY_RESTORED\n');
+    const result=await runWithRecoveryEvidence(input,{signal:abort.signal});
+    const success=result.status==='ABBOTT_RECOVERY_RESTORED';
+    (success?process.stdout:process.stderr).write(formatRecoveryDiagnostic(result));if(!success)process.exitCode=1;
   }finally{input.fill(0);for(const s of['SIGINT','SIGTERM'])process.removeListener(s,stop);}
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href)await main().catch(e=>{const status=['ABBOTT_RECOVERY_REVIEW_REQUIRED','ABBOTT_RECOVERY_UNACKNOWLEDGED'].includes(e?.message)?e.message:'ABBOTT_RECOVERY_REFUSED';process.stderr.write(status+'\n');process.exitCode=1;});
+if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href)await main().catch(()=>{process.stderr.write(formatRecoveryDiagnostic({status:'ABBOTT_RECOVERY_REFUSED'}));process.exitCode=1;});
