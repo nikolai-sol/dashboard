@@ -1,11 +1,9 @@
-# Abbott Task 9 — smoke consumer pin correction awaits review
+# Abbott Task 9 — approved9af24ce smoke stopped at control PDF
 
-Status: DONE_WITH_CONCERNS. Source-only consumer pin correction awaits review.
-Approved b39c2d8 was published and one smoke diagnostic returned
-`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`; no finer
-boundary reason was exposed then. The subsequent read-only architecture audit
-found stale predecessor pins in the consumer; the narrow TDD fix is not live.
-The prior before/after checks verified unchanged6f09982/8c79 production,
+Status: BLOCKED. Approved9af24ce was published and one smoke returned
+`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=control_5xx` after passing
+the corrected consumer pin gate. Stopped without retry, capture or Nginx action.
+Fresh before/after checks verified unchanged6f09982/8c79 production,
 retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite, neighbors
 and Nginx. Owned process/port/output cleanup passed. Further parity, six-image
 comparison and cutover remain incomplete. Earlier
@@ -2995,3 +2993,55 @@ or Nginx action occurred. Published refs remain b39c2d8; deployed6f09982/release
 and retainedf80607f/release6cd2 rollback have not been changed or newly inspected.
 Later parity/visual gates remain unverified. DONE_WITH_CONCERNS; STOP for review
 before any live retry.
+
+## Approved9af24ce publication and single smoke — control PDF refusal
+
+The clean exact reviewed HEAD9af24ceee088721a210711dfe26272e1c6f79ec0 was ordinary
+fast-forward pushed to refs/heads/codex/abbott-runtime-isolation and
+refs/heads/release/abbott only. Literal isolated remote reads verified both exact
+SHAs. The approved local gates are recorded in the preceding checkpoint:
+focused51, broader140, app67, authority512, contract111 and comparator25 passing,
+plus build/typechecks/artifact/wiring/public-asset security. Lint has0 errors and
+10 existing warnings. The fix changes local smoke pins/tests only; the attested
+app remained6f09982 with no redeployment.
+
+The independent full read-only production proof passed before the run. Executed
+exactly one reviewed orchestrator smoke with fixed2026-09-01..2026-09-13 dates,
+literal loopback3001/3004, approved ephemeral in-memory/pipe credentials and
+deployed8c79/6f09982 attestation. Its closed result was:
+
+`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=control_5xx`
+
+`ABBOTT_VERIFICATION_OWNED_CLEANUP_VERIFIED`
+
+The smoke reached control PDF fetch beyond the corrected manifest pin check.
+This identifies only the control origin's5xx response class; no exact status,
+body, URL, header, alias, audience or raw exception is recorded or inferred.
+No root cause is claimed for this new failed gate. The required immediate stop
+was observed: no retry, diagnostic probe/source fix, capture or Nginx work.
+
+The observer retained owned local orchestrator/SSH/descendant PID/start metadata
+only in memory, verified all observed PIDs absent, and checked the forward's
+paired terminal exit record. Independent local checks found no3001/3004
+listeners, private identity evidence directory, smoke report or partial capture
+output. Reviewed credential/attestation/output buffers were cleared; no credential
+file or extra descriptor was created. No local visual browser session or capture
+invocation was launched. Both independent read-only SSH proof processes exited.
+
+The independent post-run proof again verified deployed source
+6f09982fb1e8068f02340ddfcb5c945fb02ebfd5, release/control
+8c79caf495f147ad91b2174b9bc5f65c, manifest
+a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2,
+and predecessor6cd2f12e245a47dcbd5f6ce928c4ed83. Active/current/control/receipt,
+exact PM2/kernel binding/UID982/GID984/cwd/launcher, soleloopback3004/health,
+full rollback/quarantine trees, browser prerequisite/env, protected committed/
+restored audits, and absent lock/staging passed. All three neighbor PID/start/
+cwd/release proofs remain unchanged. Nginx remains SHA256
+1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c.
+
+No deploy, Nginx backup/test/reload/cutover, neighbor mutation, DB/auth/fact write,
+password rotation or collector/cron change occurred. Public routing remains3001;
+retainedf80607f/release6cd2 remains the application rollback target. No new
+screenshot/dimension/diff or complete parity acceptance is claimed. The reviewed
+runbook stop gate and verification-before-completion required fresh state and
+cleanup evidence. Evidence-only commit; BLOCKED after the single approved result.
