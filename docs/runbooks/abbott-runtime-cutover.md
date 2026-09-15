@@ -24,7 +24,9 @@ burst=1..1,000,000 and either nodelay or delay=1..1,000,000. Explicit delay=0 is
 invalid; omission uses Nginx's default. One zone cannot be applied twice in the
 same server/location context, but distinct zones and parent/child applications
 remain permitted. Duplicate/conflicting options, variables, unknown args, blocks
-and context misuse refuse. This follows the module's
+and context misuse refuse within the selected TLS server. Inactive HTTP and
+unrelated vhost shapes retain baseline acceptance exactly; their limiter
+semantics are not newly validated by this scoped extension. This follows the module's
 [argument and per-context duplicate checks](https://github.com/nginx/nginx/blob/master/src/http/modules/ngx_http_limit_req_module.c).
 No rate
 limiter directive is synthesized or changed on the host. Snapshot metadata/hash

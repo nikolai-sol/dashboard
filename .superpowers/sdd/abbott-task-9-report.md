@@ -1,7 +1,7 @@
 # Abbott Task 9 — bounded rate-limiter grammar source checkpoint
 
-Current status: DONE_WITH_CONCERNS. Source-only bounded limit_req_zone and
-selected limit_req validation follows the proven top_limit_req_zone blocker.
+Current status: DONE_WITH_CONCERNS. Source-only inactive-vhost compatibility
+correction scopes the new rate-limiter guard to the selected TLS server.
 No production call, push, deploy or Nginx mutation occurred. STOP for independent
 review; actual production compatibility and later gates are not yet attested.
 
@@ -4937,3 +4937,49 @@ credentials, raw config or production rows were read or emitted.
 No production SSH/read, push, deploy, retry, smoke, capture, PDF, Nginx edit,
 DB/auth/collector/cron or neighbor action occurred. Production uncertainty after
 the historical first rejection remains; STOP for independent review before use.
+
+## Inactive-vhost compatibility correction — source-only review checkpoint
+
+Independent review reproduced unintended tightening in the new rate context
+guard: baseline-accepted inactive HTTP `if ($host) { limit_req zone=missing; }`
+and inactive HTTP `limit_req_zone` were refused. Both the dedicated regression
+and the expanded differential test failed RED before implementation. The only
+validator change scopes this new context guard to active selected TLS. Valid
+top-level declarations still pass their separate strict grammar; selected TLS
+limit_req still requires a declared zone. Existing inactive/unrelated vhost
+acceptance is preserved, without claiming to validate its limiter semantics.
+
+GREEN:36/36 focused tests;829/829 full authority plus Abbott app/runtime tests
+and12routes/1prefix. Differential coverage now proves327 unchanged acceptance
+and diagnostic sequences (279existing+48inactive context cases), with exactly
+the16previously documented safe top-level/selected-TLS additions. The matrix
+includes HTTP, nested if/location, unrelated HTTP/TLS vhosts, valid/malformed
+limiter directives and block forms. Independent read-only review ran36/36 and
+reported no remaining findings.
+
+Fresh Abbott and combined builds, root/focused typechecks, lint (0errors,
+10pre-existing warnings), deploy-source/release-runtime, syntax and whitespace
+checks passed. The attempted workspace typecheck alias was absent; it made no
+source change and was replaced by the existing direct tsc command below.
+
+```sh
+node --test --test-name-pattern='inactive HTTP rate' scripts/abbott-nginx-readonly.test.mjs
+node --test --test-name-pattern='differential strict' scripts/abbott-nginx-readonly.test.mjs
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+npm run test:deploy-source
+npm run test:release-runtime
+npm run build
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+git diff --check
+```
+
+Only the diagnostic analysis source hash was refreshed; reader hash, deployed
+pins, SSH configuration, snapshot and runtime lifecycle are unchanged. All
+owned test sessions completed; no browser or SSH resource was started. No
+push, live read, deploy, smoke, capture, PDF, Nginx, DB/auth, collector/cron or
+neighbor action occurred. STOP for independent re-review before operational use.

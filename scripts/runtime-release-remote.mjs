@@ -66,7 +66,7 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     };
     const visit=(list,context='root',selected=false,location=null)=>{const appliedZones=new Set();for(const n of list){try{nginxReason('unknown');let childLocation=location;const active=selected||n===targets[0],args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))refuse(/abbott/i.test(n.name+' '+args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args)?'existing_abbott_route':'existing_3004');
       // Includes are outside this single-file snapshot: never silently authorize them.
-      if(n.name==='limit_req_zone'&&(context!=='root'||!zoneNodes.has(n))||n.name==='limit_req'&&!['server','location'].includes(context))refuse(unsupported(n,active));
+      if(active&&(n.name==='limit_req_zone'&&(context!=='root'||!zoneNodes.has(n))||n.name==='limit_req'&&!['server','location'].includes(context)))refuse(unsupported(n,active));
       if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))refuse(unsupported(n,active));
       if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))refuse(unsupported(n,active));
       if(active&&n.name!=='server'){
