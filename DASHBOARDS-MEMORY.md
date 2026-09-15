@@ -48,8 +48,10 @@ password rotation, auth/database mutation, collector, cron, or source-API action
 occurred. Approved ephemeral-token comparison now passes manager/embed JSON and
 HTTP Excel for 2026-09-01..2026-09-13 with zero mismatches. Visual capture failed;
 no candidate images/index remain and owned browser/SSH PIDs exited. Additional
-read-only PDF/alias/privacy/asset smoke is locally implemented pending review,
-not run live. Both authorized refs are `bb9fad5`; the shadow remains `f80607f`
+read-only smoke was approved and retried once at `b9c8965`, stopping at
+`pdf_fetch reason=candidate_5xx`. Owned SSH exited, no smoke report or candidate
+images were retained, and no further capture or Nginx action occurred.
+Both authorized refs are `b9c8965`; the shadow remains `f80607f`
 because later changes affect only tooling/docs. Nginx is unchanged; isolation
 cutover is not complete. See the cutover runbook for authority.
 

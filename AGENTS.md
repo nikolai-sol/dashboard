@@ -161,9 +161,11 @@ then memory must be cleaned, not only appended to.
 - Reviewed ephemeral manager-token compare passed for 2026-09-01..2026-09-13
   (manager/embed JSON and HTTP Excel, zero mismatches). Visual capture failed;
   its browser/SSH PIDs exited and no candidate images/index remain. Additional
-  read-only PDF/alias/privacy/asset smoke is implemented locally pending review,
-  not live execution. Never inspect/use the legacy plaintext password.
-- Both authorized Git refs advanced ordinarily to `bb9fad5`. Shadow remains
+  read-only smoke was approved and retried once at `b9c8965`, stopping at
+  `pdf_fetch reason=candidate_5xx`. No subsequent capture or Nginx action occurred;
+  owned SSH exited and neighbor/runtime/config proofs remained unchanged.
+  Never inspect/use the legacy plaintext password.
+- Both authorized Git refs advanced ordinarily to `b9c8965`. Shadow remains
   `f80607f`: later changes are tooling/docs, not packaged application changes.
 - No previous isolated release exists. Route-only rollback target remains the
   unchanged combined runtime; no Nginx backup or route switch has occurred.

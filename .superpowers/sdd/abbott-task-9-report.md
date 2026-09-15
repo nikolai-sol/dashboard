@@ -1262,3 +1262,79 @@ script syntax checks and whitespace checks passed. Lint has zero errors and the
 same ten existing warnings. Final independent local test-browser inventory was
 zero; all test command sessions exited. This checkpoint is local/unpushed and
 requires review; it does not establish live PDF or visual parity.
+
+### Approved PDF diagnostic retry — candidate PDF 5xx, BLOCKED
+
+From clean reviewed `b9c89654cb14dfe5c44e6145ef2fd66bab806eb6`, ordinary non-force
+pushes advanced only `refs/heads/codex/abbott-runtime-isolation` and
+`refs/heads/release/abbott`. Both literal remote SHAs were verified equal to HEAD
+through an isolated Git lookup; existing remote SHAs were ancestors. Prior local
+gates are the immediately preceding checkpoint's 143 focused, 67 app/runtime,
+268 authority/artifact, 108 auth/access and 111 contract tests, plus build,
+artifact, typechecks, syntax/security/wiring and lint (zero errors/ten warnings).
+
+No redeploy: the diff since installed `f80607f` contains only verification/
+bootstrap tooling and operational documentation, including AGENTS/dashboard
+memory. Application, dependency, launcher and runtime/artifact authority are
+unchanged. Shadow remains source `f80607fbc8a693aa2c720b0976938e88732cdf1a`, release
+`6cd2f12e245a47dcbd5f6ce928c4ed83`, previousId null. Current/immutable records agree;
+manifest digest remains `7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f`.
+
+The first read-only metadata proof used an incorrect guessed rendered-env path
+under apps/abbott and refused before issuance/smoke. Reviewed start.cjs/worker
+source proves the exact path is `/var/www/dashboard-abbott/.env`; metadata-only
+inspection confirmed it is root:GID984 0640, single-link regular, no symlink.
+The full corrected preflight passed. No file was created/moved/read for values.
+Root-only input remains root:root 0700 directory / 0600 single-link regular file.
+Account UID982/GID984 remains no-home `/nonexistent`, `/usr/sbin/nologin`.
+
+Ran `node scripts/verify-abbott-shadow.mjs smoke` exactly once for the fixed
+`2026-09-01..2026-09-13` dates with reviewed ephemeral issuer/pipe/in-memory
+credentials and deployed manifest attestation. Exit 1 emitted only:
+
+`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`
+
+This establishes only that a candidate-port PDF response was in the server-error
+class. Exact status, alias/audience, error body/header and underlying cause were
+not exposed or inferred. No raw response/PDF, private row, secret or authorized
+URL was inspected or retained. No complete smoke pass/report exists. Per the
+hard stop, no capture retry, browser investigation, source fix or Nginx inserter
+work followed. No new image dimensions or diff result exists.
+
+Owned SSH PID38311, start `Tue Sep 15 04:16:49 2026`, emitted normal
+exitVerified=true; orchestrator PID38301 exited 1. Independent checks returned
+ESRCH for both exact PIDs, ports3001/3004 free, zero smoke directories and zero
+local test-browser processes. The reviewed normal finally path clears retained
+credential/attestation/child buffers. No credential file, manual tunnel,
+standalone issuer/consumer, signal or forced cleanup was used. Post-run kernel
+child inventories for combined PID3722244 and candidate PID542693 were both zero.
+
+Full preflight/post-cleanup proof matched host ybjqbzojln, root PM2 daemon1316,
+boot ID `1c736efb-eaa2-42d9-b247-bd1a2ef36a4e`, all pid-file IDs, kernel starts,
+cwds, and real/effective/saved/filesystem UID/GID values:
+
+| Runtime | PM2 ID / PID | Kernel start | UID / GID |
+| --- | --- | --- | --- |
+| dashboard-next | 1 / 3722244 | 122353749 | 0 / 0 |
+| dashboard-zaruku | 2 / 791065 | 131477500 | 984 / 991 |
+| dashboard-medroche | 4 / 1870897 | 139126198 | 983 / 983 |
+| dashboard-abbott | 5 / 542693 | 160900613 | 982 / 984 |
+
+Combined cwd `/var/www/dashboard`, source `8f389a28df1c4b741ec33b7538f0354b74f5a40e`;
+Zaruku cwd `/var/www/dashboard-zaruku/apps/zaruku`, root source
+`af1948c8b9a0f70d8696afb9c8abc254408a5daa`; MedRoche cwd remains the apps/site-seo
+directory under immutable release `13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone`,
+and its public release pointer resolves there. Abbott cwd remains
+`/var/www/dashboard-abbott/apps/abbott`; sole listener127.0.0.1:3004 and direct
+health200 both passed before/after.
+
+Nginx exact single-link regular config SHA-256 remained
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c` before/after.
+No backup, config write, nginx test/reload or cutover occurred; public routing and
+route-only rollback target remain3001. No neighbor restart/release, DB/auth/admin/
+fact mutation, migration, collector/cron/source-API action or credential rotation.
+This sanitized evidence/docs update is local/unpushed. BLOCKED at candidate PDF
+5xx; next diagnosis requires reviewed scope, not an automatic retry.
+
+Evidence/docs validation: 49 diagnostic/capture/orchestrator tests passed, zero
+failures; whitespace check passed. No implementation change was made after smoke.

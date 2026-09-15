@@ -4,6 +4,14 @@ This runbook moves only Abbott's exact public routes from the combined runtime o
 
 Run the local commands from the reviewed isolated-runtime worktree as an unprivileged account. Run the server commands only through the established `beget` SSH alias. Stop on the first failure. Never put a password, access token, embed key, cookie, or authorized URL in shell arguments, environment variables, files, screenshots of browser chrome, or chat. Credentials must arrive through the approved ephemeral host issuer and a direct stdin pipe only.
 
+Current operational checkpoint (2026-09-15): PDF diagnostics `b9c8965` received
+review approval and both authorized refs were verified at that SHA. One live
+smoke stopped at `ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`.
+Owned SSH/process cleanup and unchanged neighbors/Nginx were verified. No capture,
+redeploy or route change followed. STOP: no retry or speculative runtime fix
+without a separately reviewed next step. Earlier diagnostic-review notes below
+describe historical checkpoints; they do not authorize bypassing this failed gate.
+
 ## 1. Verify the clean reviewed commit
 
 ```bash
