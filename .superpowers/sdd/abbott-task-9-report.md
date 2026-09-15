@@ -1,9 +1,9 @@
-# Abbott Task 9 — Nginx parser ambiguity operational checkpoint
+# Abbott Task 9 — arbitrary unsupported block diagnostic source checkpoint
 
-Current status: DONE_WITH_CONCERNS. One approved read-only caller at clean
-2c655055 returned parser_ambiguity/exit1 with verified owned transport/evidence
-cleanup. No names or partial inventory were returned. No retry, push, deploy,
-smoke, capture or Nginx edit occurred. STOP for direction.
+Current status: DONE_WITH_CONCERNS. Diagnostic-only unsupported-block name
+collection now includes any block at a proven selected-TLS boundary, without
+visiting contents. The2c655055 parser_ambiguity/exit1 remains historical, not a
+new host attestation. No retry, push or live action occurred. STOP for review.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4709,3 +4709,44 @@ or attest current neighbor/release/lock/journal/browser/Nginx state beyond the
 caller's fixed-file metadata contract. No supplemental remote checks ran.
 No retry, push, deploy, recovery, smoke, capture, PDF request, Nginx edit or other
 host mutation occurred. Evidence-only local commit; STOP for direction.
+
+## Source-only follow-up — arbitrary unsupported block names
+
+Parent approved broadening name collection only, not deployment grammar. TDD
+reproduced the restricted block collector: map, other known block names, and
+unknown blocks returned parser_ambiguity despite their existing unsupported
+rejection being eligible for a diagnostic name. The collector now records any
+unsupported block at selected TLS or already-proven literal-location context.
+The same fixed vocabulary maps unknown names to successful other. It never
+visits block children, reports arguments or content, or changes strict deploy
+validation. Nested server/location authority and every non-unsupported structural
+failure still discard the entire inventory, including after earlier blocks.
+
+Production change is one catch-guard line. Only the diagnostic capsule's analysis
+source hash was refreshed to match that changed source; reader hash, deployed/
+current pins, transport lifecycle and runtime/deploy acceptance remain unchanged.
+RED tests established failures before the implementation. Known/unknown blocks
+in both scopes, secret-bearing args/contents, later regex/nested-authority/3004/
+syntax ambiguity, strict deployment rejection and HTTP-context refusal pass.
+The existing differential corpus retains270 cases with zero acceptance drift.
+
+Fresh verification: focused23/23, full authority814/814 plus Abbott app/runtime
+and12routes/1prefix; Abbott build, root/focused typechecks, source syntax and
+whitespace pass. Lint0errors with the same10existing warnings. Independent
+read-only review found no findings and independently passed23/23 including
+source hashes and differential270. Verification commands:
+
+```sh
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+git diff --check
+```
+
+No live/read-only remote invocation, push, deploy, retry, smoke, capture, PDF,
+Nginx edit or other host mutation occurred. The actual production blocker is not
+newly identified; no supplemental host checks were made. STOP for review.

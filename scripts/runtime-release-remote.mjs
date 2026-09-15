@@ -71,7 +71,7 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported){
         }else if(!passive.has(n.name))refuse(unsupported(n,active));
       }
       visit(n.children,n.name,active,childLocation);
-      }catch(error){const code=rejected.get(error);if(!onUnsupported||!(selected||n===targets[0])||n.block&&!(['if','types','limit_except'].includes(n.name)&&['server','location'].includes(context))||n.name==='location'||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
+      }catch(error){const code=rejected.get(error);if(!onUnsupported||!(selected||n===targets[0])||n.block&&!['server','location'].includes(context)||['server','location'].includes(n.name)||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
     }};visit(nodes);
   }
 

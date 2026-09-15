@@ -7,7 +7,8 @@ mutation. Supplemental remote release/lock/neighbor checks were not performed;
 that refusal is not a new full host attestation. The following new caller is
 source-only and must be reviewed before any host invocation. The one approved
 0ec4a305 invocation returned the old ambiguous names=other/exit1; no retry ran.
-The follow-up protocol below remains gated for review:
+The2c655055 read returned parser_ambiguity/exit1 with verified owned cleanup.
+The follow-up arbitrary-block name collection below remains gated for review:
 
 ```sh
 /usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
@@ -30,11 +31,12 @@ name diagnosis; no installer, lifecycle or deployment function executes.
 Strict deploy validation and name diagnosis use the same private tokenizer and
 TLS/visitor logic. Strict validation remains fail-fast. Batch mode records only
 existing refused directive sites in the selected dashboards TLS server and
-already-proven literal locations. Only the known opaque block names if, types,
-and limit_except may be collected at those boundaries: their contents are never
-visited and no nested names are reported. Other opaque blocks, malformed syntax,
-ambiguous shared TLS listeners or other analysis failures discard the entire
-collected result. No partial success is returned and no refused syntax gains
+already-proven literal locations. Any unsupported block at those boundaries
+contributes only its external fixed enum name, or other if unknown: its contents
+are never visited and no nested names are reported. Nested server/location
+authority, malformed syntax, ambiguous shared TLS listeners and non-unsupported
+structural failures discard the entire collected result. No partial success is
+returned after such ambiguity, and no refused syntax gains
 acceptance. The fixed broad common-directive vocabulary is declared by
 `abbottNginxDiagnosticNames`; unknown names map to `other`. Names are unique and
 lexically sorted, never source order. Arguments, values, paths, offsets, counts,
