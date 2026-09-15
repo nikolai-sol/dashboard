@@ -11,7 +11,7 @@ isolation worktree, without arguments or inherited authority:
 /usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-pdf-stage.mjs
 ```
 
-The caller pins classifier/proof/worker source hashes, clean HEAD blobs, exact
+The caller pins classifier/proof source hashes, clean HEAD blobs, exact
 worktree/Git directory, its own script realpath and bytes, installed Node and
 local SSH key/known-host metadata. Its fixed SSH command uses root on beget's
 pinned host/address/key/known-host authority, LogLevel=ERROR, no config/proxy/
@@ -21,10 +21,19 @@ The loader verifies exact schema, source hashes and size limits before importing
 the proof. No source or log file is created remotely.
 
 The read-only proof reconciles the exact6f09982/8c79/a5b5 current record and sealed
-ownership receipt with active-directory inode, kernel PID/start/UID982/GID984,
-PM2 registration/cwd/launcher/source/release/log-path, sole loopback3004 listener
-and bounded no-redirect health. It repeats process/record checks around the
-classifier and health afterward. No runtime.env or application .env is read.
+ownership receipt with active-directory inode, direct kernel PID/start/UID982/
+GID984, cwd/exe/cmdline and the receipt's fixed launcher/source/control release
+binding. It reads no PM2 state, invokes no PM2 CLI/library and connects to no
+supervisor socket. Only fixed read-only `/usr/bin/ss` proves sole loopback3004
+ownership; no-redirect bounded health remains mandatory. Kernel stat/status and
+exact cwd/exe targets are repeated around the classifier and health. All proc
+reads are bounded/stable/O_NOFOLLOW; only cwd/exe may be exact-target proc magic
+links. The kernel initial environ must match the fixed env-i PATH boundary and
+is compared as bytes then zeroed, never decoded or reported. Source/control
+binding comes from the protected receipt/current records and same PID/start,
+not invented RUNTIME_RELEASE variables in environ. The installed Next16.1.6
+process-title rewrite or exact original launcher argv is required. No runtime.env
+or application .env is read. Supervisor socket loss is irrelevant to this proof.
 The classifier's strict0600,64KiB,complete-safe-record acceptance is unchanged;
 unknown remains unknown, without permission repair or broader log inspection.
 
@@ -43,7 +52,7 @@ does not authorize smoke retry, deployment or Nginx changes.
 After the approved d17712f smoke returned `pdf_fetch/candidate_5xx`, stop live
 verification. `scripts/abbott-pdf-log-stage.mjs` is a read-only classifier library,
 not an operational command. It requires review and a separately reviewed caller
-that attests the exact active PM2 registration against the protected deploy
+that attests the exact active kernel process against the protected deploy
 receipt and kernel PID/start before and after reading. Do not invoke a host log
 read, copy logs, or use `pm2 logs`, `tail`, or raw SSH output at this checkpoint.
 

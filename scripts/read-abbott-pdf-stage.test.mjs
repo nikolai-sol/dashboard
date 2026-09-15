@@ -36,11 +36,11 @@ test('late ownership recovery sends TERM before KILL and never resumes source di
 test('private evidence must prove exit and is finished; source erased even on failure',async()=>{
  for(const good of [false,true]){let finished=false;const input=Buffer.from('source'),line=await runPdfStageWithEvidence(input,{evidence:{record(){},finish(){finished=true;return{identityCaptured:true,exitObserved:true,exitVerified:good};}},transport:async()=>({line:GOOD,exitVerified:good})});assert.equal(line,good?GOOD:UNKNOWN);assert.ok(finished);assert.ok(input.every(b=>b===0));}
 });
-test('transported source pins match committed classifier/worker/proof bytes; no extra or changed input',()=>{
- const sources=Object.fromEntries([['classifier','abbott-pdf-log-stage.mjs'],['worker','runtime-release-remote.mjs'],['proof','abbott-pdf-active-proof.mjs']].map(([key,file])=>[key,fs.readFileSync(new URL('./'+file,import.meta.url))]));
+test('transported source pins match committed classifier/proof bytes; worker and other extra input refused',()=>{
+ const sources=Object.fromEntries([['classifier','abbott-pdf-log-stage.mjs'],['proof','abbott-pdf-active-proof.mjs']].map(([key,file])=>[key,fs.readFileSync(new URL('./'+file,import.meta.url))]));
  for(const[key,bytes]of Object.entries(sources))assert.equal(createHash('sha256').update(bytes).digest('hex'),PDF_SOURCE_HASHES[key]);
  const input=buildPdfStageInput(sources);assert.ok(input.length<262144);input.fill(0);
- for(const key of Object.keys(sources))assert.throws(()=>buildPdfStageInput({...sources,[key]:Buffer.from('synthetic-secret')}));assert.throws(()=>buildPdfStageInput({...sources,extra:Buffer.alloc(1)}));
+ for(const key of Object.keys(sources))assert.throws(()=>buildPdfStageInput({...sources,[key]:Buffer.from('synthetic-secret')}));assert.throws(()=>buildPdfStageInput({...sources,extra:Buffer.alloc(1)}));assert.throws(()=>buildPdfStageInput({...sources,worker:Buffer.alloc(1)}));
 });
 async function inertLoader(input,script=PDF_LOG_LOADER){
  const child=spawn(process.execPath,['--input-type=module','-e',script],{cwd:'/',env:{},stdio:['pipe','pipe','pipe']});const chunks=[],errors=[];child.stdout.on('data',b=>chunks.push(b));child.stderr.on('data',b=>errors.push(b));child.stdin.on('error',()=>{});const timer=setTimeout(()=>child.kill('SIGKILL'),3000);const closed=new Promise(resolve=>child.on('close',(status,signal)=>resolve({status,signal})));child.stdin.end(input);const result=await closed;clearTimeout(timer);assert.equal(result.status,0);assert.equal(result.signal,null);assert.equal(Buffer.concat(errors).length,0);assert.throws(()=>process.kill(child.pid,0),{code:'ESRCH'});const output=Buffer.concat(chunks).toString();for(const b of [...chunks,...errors])b.fill(0);return output;
@@ -49,7 +49,7 @@ test('actual inert loader rejects malformed, truncated, oversized and wrong-hash
  for(const input of ['synthetic-secret',JSON.stringify({classifier:'c2VjcmV0',worker:'c2VjcmV0',proof:'c2VjcmV0'}),'x'.repeat(262145)])assert.equal(await inertLoader(input),UNKNOWN);
 });
 test('actual loader with inert pinned fixture modules produces only exact closed result',async()=>{
- const sources={classifier:Buffer.from('export const unused=1;'),worker:Buffer.from('export const unused=1;'),proof:Buffer.from(`import './runtime-release-remote.mjs';import './abbott-pdf-log-stage.mjs';export const createFixedPdfProof=()=>({});export async function inspectAbbottPdfStage(){return ${JSON.stringify(GOOD)};}`)};
+ const sources={classifier:Buffer.from('export const unused=1;'),proof:Buffer.from(`import './abbott-pdf-log-stage.mjs';export const createFixedPdfProof=()=>({});export async function inspectAbbottPdfStage(){return ${JSON.stringify(GOOD)};}`)};
  let script='delete process.env.__CF_USER_TEXT_ENCODING;'+PDF_LOG_LOADER.replace('process.getuid()!==0','false');for(const[key,bytes]of Object.entries(sources))script=script.replace(PDF_SOURCE_HASHES[key],createHash('sha256').update(bytes).digest('hex'));
  const frame=JSON.stringify(Object.fromEntries(Object.entries(sources).map(([k,b])=>[k,b.toString('base64')])));
  assert.equal(await inertLoader(frame,script),GOOD);

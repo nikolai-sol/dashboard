@@ -3348,3 +3348,78 @@ remain unobserved; unknown does not authorize broader inspection or permission
 repair. Last verified production remains6f09982/release8c79, predecessorf80607f/
 release6cd2 retained, published refsd17712f; no fresh host-state claim from this
 source-only turn. DONE_WITH_CONCERNS; STOP for caller review before execution.
+
+## Caller review correction — direct kernel proof, no supervisor interaction
+
+Review identified an Important violation in a161f02: PM2 jlist is not guaranteed
+to be read-only because its client can contact or start the daemon. The prior
+section's read-only characterization of that design is retracted. That caller
+was never run against the host, so this is a source-only correction, not evidence
+of a production mutation or remediation.
+
+Removed every PM2 CLI/library call, supervisor PID/socket dependency and the
+runtime-release worker import from the PDF proof. The transported capsule now
+contains only the hash-pinned classifier and fixed proof. A worker/third source
+is an unexpected field and refuses. SSH source framing, clean authority, bounded
+process lifecycle, private evidence and closed output are otherwise unchanged.
+
+The root-only current/record/ownership receipt supplies the exact approved
+6f09982/8c79 identity and original process PID/start. Receipt schema, active
+directory inode, source/scope stamps, protected manifest hash and sealed launcher
+remain mandatory. The receipt's exact launch/cwd/source/control binding is
+checked locally without querying any supervisor. Its reviewed account name or
+numeric UID/GID representation is accepted only for dashboard-abbott982/984;
+kernel identity must always be exactly982/984. PM2 socket loss or daemon absence
+cannot trigger a connection, fallback or startup.
+
+Direct bounded O_RDONLY|O_NOFOLLOW reads inspect only the approved proc boot
+metadata and receipt-derived PID stat/status/cmdline/environ. Genuine fixed
+ancestors, proc-directory ownership and stable descriptor/path metadata are
+required. Only cwd and exe may be proc magic symlinks, with exact active Abbott
+cwd and /usr/bin/node targets; other symlinks or target drift refuse. Stat's exact
+PID/start and live state, all real/effective/saved/fs UID/GID values, and magic
+targets are checked twice per snapshot. Snapshot identity is also rechecked
+before/during classifier and after bounded health. The only subprocess is
+literal /usr/bin/ss with fixed read-only listener arguments, empty environment,
+5-second timeout and8KiB output limit; it must prove one loopback3004 listener
+owned solely by the same PID. No generic command or socket-connect fallback exists.
+
+Source inspection establishes env-i passes PATH only to the Node launcher, which
+then clears/replaces process.env in userspace. Therefore kernel initial environ
+is not invented evidence for RUNTIME_RELEASE fields or the loaded application
+secrets. The fixed initial PATH boundary is compared byte-for-byte without
+decoding environ; every read buffer is zeroed in finally, including refusal.
+Release/source/control identity comes from the protected receipt/current record
+and unchanged kernel PID/start instead. Unknown actual proc layout will refuse,
+not loosen that boundary. Installed Next16.1.6 explicitly rewrites process.title;
+cmdline accepts only that exact fixed title or original Node/launcher argv with
+NUL termination/padding. No arbitrary cmdline/environment content is retained,
+printed, or used to form output. Application .env/runtime.env remain unread.
+
+TDD RED exposed the original daemon dependency and mutable worker import with
+socket-absent fixtures/static guards. Further RED cases covered proc ancestor
+symlinks and the existing receipt's numeric account representation. GREEN31/31
+focused groups cover receipt/kernel proof with supervisor absent, PID reuse
+during a snapshot, exact magic-link targets, UID/GID drift, malformed/duplicate/
+unknown environ, oversized kernel files, sealed record/directory/launcher drift,
+listener/health failure, no PM2/socket/write call and buffer zeroing. Prior log
+rotation/mode and transport secrecy/cleanup tests remain passing. Synthetic
+fixture metadata/IO seams execute no host operation; a fixture UUID typo was
+corrected without changing production authority.
+
+Fresh gates: focused31/31; combined verification204/204;
+authority/bootstrap/browser/recovery/deploy/artifact512/512; app67/67; dashboard
+contract111/111. Production build, exact12-route/1-prefix check, contract wiring,
+public-asset security, root/Abbott typechecks, changed-script syntax and whitespace
+pass. Lint exits0 with0 errors and10 existing warnings after removing one newly
+unused fixture variable. All invoked commands/owned fixture subprocesses exited.
+No real browser/SSH session, PM2 command, host/proc/log read, real health/export
+request, credential issuance/use, push, deploy, neighbor change, DB/auth/fact/
+collector/cron mutation, smoke/capture or Nginx work occurred.
+
+Receiving-code-review required verifying the real launcher/Next contracts before
+implementation; TDD and verification-before-completion governed the correction.
+The candidate PDF cause is still unknown. Live log metadata, kernel formatting
+and per-request log attribution remain unverified. Last verified production and
+published refs are unchanged from the prior operational evidence; there is no
+new host-state claim. DONE_WITH_CONCERNS; STOP for re-review before any live use.
