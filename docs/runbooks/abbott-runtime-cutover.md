@@ -32,6 +32,7 @@ command -v python3 >/dev/null
 node --import tsx --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs \
   scripts/abbott-parity-issuer.test.mjs scripts/verify-abbott-shadow.test.mjs
 node --import tsx --test scripts/smoke-abbott-runtime.test.mjs scripts/abbott-asset-attestation.test.mjs
+node --import tsx --test scripts/abbott-verification-diagnostics.test.mjs
 npm run test:abbott-runtime
 npm run test:abbott-contract
 npm run test:abbott-contract-wiring
@@ -151,9 +152,10 @@ test "$(ssh beget 'curl --fail --silent --show-error http://127.0.0.1:3004/api/h
 
 **Issuer/orchestrator `bb9fad5` was approved and used for comparison and capture.
 Comparison passed; capture failed without retained images/index. The additional
-smoke source was approved at `af33ac7`, but its live attempt stalled before smoke
-checks on an ESM entrypoint cycle. The local startup correction below remains
-paused for review before retry. No
+smoke source was approved at `af33ac7`, but its live attempt stalled on an ESM
+entrypoint cycle. The approved startup correction `b4252b8` returned a generic
+refusal on retry, with normal cleanup and no smoke report. The local closed-enum
+diagnostic change below is paused for review before any further retry. No
 plaintext or legacy password fallback is authorized for this operation.**
 
 The new stdin frame is three LF-delimited lines: the literal mode name
@@ -268,13 +270,13 @@ NODE
 
 ## 6. Verify every neighbor PID is unchanged
 
-### Additional read-only smoke transport — startup correction STOP for review
+### Additional read-only smoke transport — diagnostics STOP for review
 
-The approved `af33ac7` attempt produced no smoke report. Its owned orchestrator
-and forward were closed and their exits independently verified; neighbors and
-Nginx were unchanged. The following entrypoint must not be retried until the
-startup correction receives dedicated review. It does not waive the failed
-visual gate:
+Neither the stalled `af33ac7` attempt nor the corrected `b4252b8` refusal produced
+a smoke report. Owned orchestrator/forward exits were independently verified;
+neighbors and Nginx were unchanged. The following entrypoint must not be retried
+until the local diagnostics change receives dedicated review. It does not waive
+the failed visual gate:
 
 ```bash
 node scripts/verify-abbott-shadow.mjs smoke
@@ -290,6 +292,18 @@ to clear retained buffers and close/verify the owned forward rather than waiting
 forever on an unresolved import/setup promise. Late returned buffers are also
 cleared. Signal handlers remain until forward cleanup completes. No timeout or
 module authority can be supplied through CLI arguments or environment.
+
+The pending diagnostic change emits failures only as
+`ABBOTT_VERIFICATION_REFUSED stage=<allowed_enum> reason=<allowed_enum>`.
+Smoke stages distinguish manager/embed aliases, manager administration/embed
+denial, privacy shape, PDF fetch/parse/comparison, Excel and asset checks. Visual
+stages distinguish launch, navigation, readiness, screenshot, dimensions and
+comparison. Both stage and reason use fixed closed lists; unknown errors or
+unrecognized values become `unknown`. No exception properties, stacks, causes,
+URLs, request/response headers, bodies, credentials or arbitrary paths enter the
+formatter. The parent accepts a child diagnostic only for exit 1, empty stdout,
+and one exact bounded allowlisted stderr line; other child output is never relayed.
+Success reports remain unchanged and contain no diagnostic/raw error objects.
 
 This mode uses the same strict credential frame and owned-forward lifecycle.
 Before credential issuance, a separate bounded read-only SSH capsule repeats the
@@ -430,8 +444,8 @@ ssh beget '/usr/sbin/nginx -s reload'
 
 ## 8. Post-cutover Abbott and neighbor smoke
 
-**Gated preceding step: the smoke startup correction must be reviewed and
-approved, live smoke must pass, and the failed visual gate must be resolved before
+**Gated preceding step: the closed-enum diagnostics must be reviewed and
+approved before retry, live smoke must pass, and the failed visual gate must be resolved before
 cutover.** The initial
 issuer transport was reviewed and approved; no issuer placeholder command is supplied.
 
@@ -452,8 +466,9 @@ node scripts/verify-abbott-shadow.mjs smoke
 ```
 
 The additional smoke mode covers the separately required PDF/privacy/admin/
-alias/asset checks described above, but its first approved live attempt stalled
-before those checks; the startup correction has not been approved or retried.
+alias/asset checks described above, but neither approved live attempt passed.
+The corrected attempt refused with normal cleanup; the diagnostics change has
+not been approved or used for a further retry.
 All of these and visual parity must pass before any route mutation; do not
 improvise a public-token URL, credential file, extra descriptor, or plaintext
 fallback to perform them.

@@ -905,3 +905,61 @@ performed. No Nginx backup/edit/test/reload/cutover, deploy, neighbor restart,
 DB/auth/admin mutation, credential rotation, collector or cron action occurred.
 Public route rollback target remains port 3001. Both smoke and the prior visual
 gate remain unpassed. This evidence-only update is local/unpushed.
+
+### Closed-enum smoke / visual diagnostics — local review checkpoint
+
+Added a shared leaf diagnostic module with frozen, explicit stage/reason lists.
+Its formatter emits only
+`ABBOTT_VERIFICATION_REFUSED stage=<allowed_enum> reason=<allowed_enum>`.
+Only internally associated WeakMap metadata is read: arbitrary error fields,
+messages, stacks, causes, codes, URLs, headers, bodies and paths are not consulted.
+Unknown errors or unapproved values become `unknown`. Forged error properties
+cannot grant a diagnostic stage. No raw error object is added to a report.
+
+Smoke now distinguishes manager/embed JSON aliases, manager administration,
+embed administrative denial, recursive privacy shape, PDF fetch/parse/comparison,
+Excel fetch/parse/comparison, and HTML/assets/attestation/comparison. Known HTTP
+status, content-type, cache-policy and parity failures use fixed reasons, never
+the actual response text or URL. Existing private/body/buffer cleanup remains in
+place. The precise prior live refusal is still unknown; no stage is retroactively
+assigned to it.
+
+Capture associates fixed stages with browser launch, navigation, render readiness,
+screenshots, dimensions and comparison. Console, dimension and pixel-diff
+acceptance failures emit a fixed mismatch diagnostic before any success-shaped
+stdout line. Existing threshold values and private index/image semantics are
+unchanged. Browser logs remain counts only; raw console/error text is not retained.
+
+The parent preserves internally branded smoke diagnostics and accepts a capture
+child diagnostic only for exit status 1, no signal, empty stdout and one exact
+allowlisted LF-terminated stderr line of at most 160 bytes. Extra lines, malformed
+framing, unknown values, nonempty stdout or arbitrary stderr map to unknown;
+neither child stream is relayed. Credential/output erasure and owned forward
+cleanup still precede returning a failure. Signal/watchdog/cleanup failures also
+use the same closed vocabulary.
+
+TDD RED observed absent formatter/protocol, smoke stage association, visual
+boundaries/acceptance and parent propagation. GREEN exercises every allowed
+stage/reason pair with secret-bearing error fields; forged fields and throwing
+property proxies; invalid/extra/oversized child frames; actual parent/capture CLI
+failure output; requested smoke stages including PDF semantic mismatch; visual
+launch/navigation/render/screenshot/dimensions failures and cleanup; console/
+dimension/diff rejection; and parent propagation only after buffer/forward cleanup.
+Synthetic browser/HTTP errors include private strings in messages, stacks, causes,
+headers, bodies, URLs and paths; none reaches the formatted result.
+
+Fresh gates passed: 127 focused bootstrap/issuer/orchestrator/compare/capture/
+smoke/asset/diagnostic tests; 108 auth/access/PDF-auth/app/runtime tests; full
+Abbott build with 67 app/runtime and 268 authority/artifact tests; 111 Abbott
+contract tests; contract wiring; public-asset security check; explicit trusted
+artifact verification (2,870 files, 82 text files); unchanged exact route-fragment
+validation. Root and Abbott typechecks, full lint (zero errors, ten existing
+warnings), syntax and whitespace checks passed. The runbook documents the exact
+failure framing and retains the review-before-retry stop.
+
+STOP for review. No push, live credential issuance, smoke/capture retry, SSH,
+production access, deploy or Nginx action occurred in this implementation turn.
+No real browser was launched; local test children were bounded/reaped and temporary
+fixtures cleaned. The last production evidence remains the preceding failed
+attempt's normal cleanup and unchanged runtime/Nginx identities. Smoke and visual
+acceptance remain outstanding, with public routing unchanged on port 3001.

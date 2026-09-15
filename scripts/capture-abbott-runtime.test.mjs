@@ -26,6 +26,36 @@ function captureTokenFixture(overrides = {}) {
   return `${Buffer.from(JSON.stringify({ type: "viewer", dashboard_id: 18, audience: "manager", credential_version: 1, exp: Math.floor(Date.now() / 1000) + 600, ...overrides })).toString("base64url")}.${"a".repeat(43)}`;
 }
 
+test('visual launch/navigation/render/screenshot/dimensions errors have closed diagnostics and cleanup',async(t)=>{
+  const d=await import('./abbott-verification-diagnostics.mjs').catch(()=>({}));assert.equal(typeof d.formatVerificationFailure,'function');
+  const root=await mkdtemp(path.join(os.tmpdir(),'abbott-stage-fixture-')),baseline=path.join(root,'baseline'),outputParent=path.join(root,'output');
+  await mkdir(baseline,{mode:0o700});await mkdir(outputParent,{mode:0o700});
+  for(const item of buildCapturePlan([]))await writeFile(path.join(baseline,item.filename),'fixture');
+  t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({user_ids:[]})));
+  try{for(const stage of ['capture_launch','capture_navigation','capture_render','capture_screenshot','capture_dimensions']){
+    let closed=0;const secret='synthetic-private https://invalid/?access_token=hidden';
+    const fault=()=>{throw Object.assign(Error(secret),{code:secret,stage:secret,reason:secret,stack:secret,cause:secret,headers:secret,body:secret,url:secret,path:secret,stdout:secret,stderr:secret});};
+    const page={setRequestInterception:async()=>{},on(){},setBypassServiceWorker:async()=>{},setViewport:async()=>{},setCookie:async()=>{},
+      goto:async()=>{if(stage==='capture_navigation')fault();},waitForSelector:async()=>{if(stage==='capture_render')fault();},
+      evaluate:async fn=>String(fn).includes('window.innerWidth')?{width:stage==='capture_dimensions'?0:1440,height:1000}:undefined,
+      $$eval:async(_selector,_fn,args)=>args?true:['Источники трафика','Действия пользователя','Статистика страниц','Вернувшиеся','Общие материалы'],
+      screenshot:async()=>fault(),
+    };
+    const error=await captureTool.captureAbbottRuntime({loginBase:'http://127.0.0.1:3001',candidateBase:'http://127.0.0.1:3004',baseline,outputParent,managerAccessToken:captureTokenFixture(),launch:async()=>{if(stage==='capture_launch')fault();return{newPage:async()=>page,close:async()=>{closed++;}};}}).catch(e=>e);
+    assert.match(d.formatVerificationFailure(error),new RegExp(`^ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=[a-z_]+\\n$`));
+    assert.doesNotMatch(d.formatVerificationFailure(error),/private|http|token|hidden/);assert.equal(closed,stage==='capture_launch'?0:1);assert.deepEqual(await readdir(outputParent),[]);
+  }}finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('visual acceptance reports only dimension, comparison or console enums',async()=>{
+  assert.equal(typeof captureTool.validateCaptureResult,'function');const d=await import('./abbott-verification-diagnostics.mjs');
+  for(const [stage,index]of [
+    ['capture_console',{console:{errors:1},captures:[]}],
+    ['capture_dimensions',{console:{errors:0},captures:[{comparison:{dimensions_match:false}}]}],
+    ['capture_compare',{console:{errors:0},captures:[{comparison:{dimensions_match:true,pixel_metrics:{changed_pixel_ratio:1,mean_absolute_error:1}}}]}],
+  ]){const error=await Promise.resolve().then(()=>captureTool.validateCaptureResult(index)).catch(e=>e);assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=mismatch\n`);}
+});
+
 test("token capture blocks redirects and off-origin requests before credentials can escape", async () => {
   assert.equal(typeof captureTool.guardCaptureRequests, "function");
   for (const [url, redirects, allowed] of [["http://127.0.0.1:3004/dashboard/18", [], true], ["https://example.invalid/", [], false], ["http://127.0.0.1:3001/", [], false], ["http://127.0.0.1:3004/dashboard/18", [{}], false]]) {

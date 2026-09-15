@@ -11,13 +11,17 @@ import {
   assertRuntimeBaseUrl,
   cleanupPrivateOutputDirectory,
   createPrivateOutputDirectory,
-  formatSafeCliFailure,
   resolveManagerToken,
   readCredentialFd,
   releasePrivateOutputDirectory,
   runSafeStage,
   writePrivateExclusiveFile,
 } from "./compare-abbott-runtime.mjs";
+import { markDiagnostic, carryDiagnostic, formatVerificationFailure } from './abbott-verification-diagnostics.mjs';
+
+async function captureStage(stage,operation,code='CAPTURE_BROWSER_CAPTURE') {
+  try{return await operation();}catch(error){throw carryDiagnostic(error instanceof SafeStageError?error:new SafeStageError(code),error,stage,'failed');}
+}
 
 const REQUIRED_DESKTOP_TABS = ["users_summary", "user_actions", "page_stats", "returning", "general_materials"];
 const CONDITIONAL_TABS = ["bitrix_pages", "session_journeys", "external_events", "time_buckets"];
@@ -154,6 +158,15 @@ export function passesVisualThreshold(comparison) {
     && comparison.pixel_metrics.mean_absolute_error <= VISUAL_THRESHOLDS.mean_absolute_error;
 }
 
+export function validateCaptureResult(index) {
+  const reject=stage=>{throw markDiagnostic(new SafeStageError('CAPTURE_ACCEPTANCE'),stage,'mismatch');};
+  if(index.console.errors>0)reject('capture_console');
+  for(const item of index.captures){
+    if(item.comparison&&!item.comparison.dimensions_match)reject('capture_dimensions');
+    if(item.comparison&&!passesVisualThreshold(item.comparison))reject('capture_compare');
+  }
+}
+
 function defaultPidAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -285,13 +298,13 @@ export async function runCaptureLifecycle(options) {
   };
 
   try {
-    outputDirectory = await runSafeStage("CAPTURE_OUTPUT_CREATE", () => options.createOutput(controller.signal));
+    outputDirectory = await captureStage('capture_output', () => options.createOutput(controller.signal),'CAPTURE_OUTPUT_CREATE');
     assertActive();
-    const authorization = await runSafeStage("CAPTURE_AUTHORIZATION", () => options.authorize(controller.signal));
+    const authorization = await captureStage('admin_manager', () => options.authorize(controller.signal),'CAPTURE_AUTHORIZATION');
     assertActive();
-    browser = await runSafeStage("CAPTURE_BROWSER_LAUNCH", () => options.launch(controller.signal));
+    browser = await captureStage('capture_launch', () => options.launch(controller.signal),'CAPTURE_BROWSER_LAUNCH');
     assertActive();
-    const captureResult = await runSafeStage("CAPTURE_BROWSER_CAPTURE", () => options.capture({ browser, authorization, outputDirectory, signal: controller.signal }));
+    const captureResult = await captureStage('capture_render', () => options.capture({ browser, authorization, outputDirectory, signal: controller.signal }));
     assertActive();
     browserCloseStarted = true;
     browserOwnership = await closeOwnedBrowser(browser, {
@@ -315,9 +328,9 @@ export async function runCaptureLifecycle(options) {
     try {
       await cleanup();
     } catch {
-      throw new SafeStageError("CAPTURE_CLEANUP");
+      throw markDiagnostic(new SafeStageError("CAPTURE_CLEANUP"),'cleanup','failed');
     }
-    if (cancelled) throw new SafeStageError("CAPTURE_CANCELLED");
+    if (cancelled) throw markDiagnostic(new SafeStageError("CAPTURE_CANCELLED"),'cleanup','cancelled');
     throw error instanceof SafeStageError ? error : new SafeStageError("CAPTURE_STAGE");
   } finally {
     for (const [signal, handler] of handlers) signalSource.removeListener(signal, handler);
@@ -424,14 +437,14 @@ export async function guardCaptureRequests(page, candidateBase) {
 export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, managerAccessToken, launch }) {
   assertRuntimeBaseUrl(loginBase, 3001);
   assertRuntimeBaseUrl(candidateBase, 3004);
-  const locations = await validateCaptureLocations({ baseline, outputParent });
+  const locations = await captureStage('capture_output',()=>validateCaptureLocations({ baseline, outputParent }),'CAPTURE_OUTPUT_CREATE');
   return runCaptureLifecycle({
     createOutput: () => createPrivateCandidateDirectory(locations.outputParent),
     authorize: () => resolveManagerToken(loginBase, candidateBase, { managerPassword, managerAccessToken }),
     launch,
     capture: async ({ browser, authorization: managerToken, outputDirectory }) => {
       const consoleCounts = { errors: 0, warnings: 0 };
-      const page = await browser.newPage();
+      const page = await captureStage('capture_launch',()=>browser.newPage());
       const boundary = await guardCaptureRequests(page, candidateBase);
       await page.setBypassServiceWorker(true);
       page.on("console", (message) => {
@@ -446,10 +459,9 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
         httpOnly: true,
         sameSite: "Lax",
       });
-      await page.goto(buildCaptureUrl(candidateBase).href, { waitUntil: "networkidle0", timeout: 120_000 });
-      boundary.assertSafe();
-      await waitForStableDashboard(page);
-      const visibleTabs = await listVisibleTabs(page);
+      await captureStage('capture_navigation',async()=>{await page.goto(buildCaptureUrl(candidateBase).href, { waitUntil: "networkidle0", timeout: 120_000 });boundary.assertSafe();});
+      await captureStage('capture_render',()=>waitForStableDashboard(page));
+      const visibleTabs = await captureStage('capture_render',()=>listVisibleTabs(page));
       const missing = REQUIRED_DESKTOP_TABS.filter((tab) => !visibleTabs.includes(tab));
       if (missing.length > 0) throw new Error(`Required visual tabs are not visible: ${missing.join(", ")}`);
       const plan = buildCapturePlan(visibleTabs);
@@ -458,26 +470,26 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
       for (const item of plan) {
         const viewportKey = JSON.stringify(item.viewport);
         if (viewportKey !== previousViewport) {
-          await page.setViewport(item.viewport);
-          await waitForStableDashboard(page);
+          await captureStage('capture_dimensions',()=>page.setViewport(item.viewport));
+          await captureStage('capture_render',()=>waitForStableDashboard(page));
           previousViewport = viewportKey;
         }
-        await selectTab(page, item.tab);
-        const cssViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+        await captureStage('capture_render',()=>selectTab(page, item.tab));
+        const cssViewport = await captureStage('capture_dimensions',()=>page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })));
         if (cssViewport.width !== item.viewport.width || cssViewport.height !== item.viewport.height) {
-          throw new Error(`Browser did not apply the required CSS viewport for ${item.tab}`);
+          throw markDiagnostic(new SafeStageError('CAPTURE_BROWSER_CAPTURE'),'capture_dimensions','mismatch');
         }
         boundary.assertSafe();
-        const candidateBytes = Buffer.from(await page.screenshot({ fullPage: true, type: "png" }));
+        const candidateBytes = await captureStage('capture_screenshot',async()=>Buffer.from(await page.screenshot({ fullPage: true, type: "png" })));
         boundary.assertSafe();
-        await writePrivateExclusiveFile(outputDirectory, item.filename, candidateBytes);
+        await captureStage('capture_output',()=>writePrivateExclusiveFile(outputDirectory, item.filename, candidateBytes));
         const baselinePath = path.join(locations.baseline, item.filename);
         const baselineExists = await stat(baselinePath).then((entry) => entry.isFile()).catch(() => false);
         results.push({
           filename: item.filename,
           tab: item.tab,
-          dimensions: buildCaptureDimensions(item.viewport, candidateBytes),
-          comparison: baselineExists ? await visualComparison(baselinePath, candidateBytes) : null,
+          dimensions: await captureStage('capture_dimensions',()=>buildCaptureDimensions(item.viewport, candidateBytes)),
+          comparison: baselineExists ? await captureStage('capture_compare',()=>visualComparison(baselinePath, candidateBytes)) : null,
         });
       }
       boundary.assertSafe();
@@ -535,16 +547,14 @@ async function main() {
     managerAccessToken,
     launch: () => puppeteer.launch({ headless: true }),
   }));
+  validateCaptureResult(result.index);
   process.stdout.write(`captures=${result.index.captures.length} errors=${result.index.console.errors} index=created\n`);
-  if (result.index.console.errors > 0 || result.index.captures.some((item) => item.comparison && !passesVisualThreshold(item.comparison))) {
-    process.exitCode = 1;
-  }
 }
 
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   main().catch((error) => {
     if (!(error instanceof SafeStageError && error.code === "CAPTURE_CANCELLED")) {
-      process.stderr.write(formatSafeCliFailure(error, "ABBOTT_CAPTURE"));
+      process.stderr.write(formatVerificationFailure(error));
       process.exitCode = 1;
     }
   });

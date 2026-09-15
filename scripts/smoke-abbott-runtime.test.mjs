@@ -86,6 +86,27 @@ test('real API shape without dashboard.id passes exact aliases, audiences, expor
   for(const {url,options}of f.requests){assert.ok(['http://127.0.0.1:3001','http://127.0.0.1:3004'].includes(url.origin));assert.equal(options.method,'GET');assert.equal(options.redirect,'error');assert.ok(!url.href.includes('synthetic-token'));if(!url.pathname.includes('/static/')){assert.equal(url.searchParams.get('from'),'2026-09-01');assert.equal(url.searchParams.get('to'),'2026-09-13');}}
   assert.ok(!JSON.stringify(result).includes('synthetic'));
 });
+
+test('smoke failures expose only exact stage enums and never response or exception content',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs').catch(()=>({}));assert.equal(typeof d.formatVerificationFailure,'function');
+  const cases=[
+    ['admin_manager',r=>{if(r.u.pathname.endsWith('/abbott-admin-users')&&!r.u.searchParams.has('embed_key'))r.status=500;}],
+    ['admin_embed_denial',r=>{if(r.u.pathname.endsWith('/abbott-admin-users')&&r.u.searchParams.has('embed_key'))r.status=200;}],
+    ['alias_manager_json',r=>{if(/^\/api\/dashboard\/(18|abbott)$/.test(r.u.pathname)&&!r.u.searchParams.has('embed_key'))r.body='secret-invalid-json';}],
+    ['alias_embed_json',r=>{if(/^\/api\/dashboard\/(18|abbott)$/.test(r.u.pathname)&&r.u.searchParams.has('embed_key'))r.body='secret-invalid-json';}],
+    ['privacy_shape',r=>{if(/^\/api\/dashboard\/(18|abbott)$/.test(r.u.pathname)&&r.u.searchParams.has('embed_key')){const body=JSON.parse(r.body);body.abbott_bi.session_journeys=null;r.body=JSON.stringify(body);}}],
+    ['pdf_fetch',r=>{if(r.u.pathname.endsWith('/pdf'))r.status=500;}],
+    ['asset_html',r=>{if(r.u.pathname.startsWith('/dashboard/'))r.body='<script src="https://invalid.test/?access_token=secret"></script>';}],
+    ['asset_fetch',r=>{if(r.u.pathname.endsWith('.js'))r.status=500;}],
+    ['asset_attestation',r=>{if(r.u.pathname.endsWith('.js')&&r.u.port==='3004')r.body='secret-modified';}],
+  ];
+  for(const [stage,change]of cases){
+    const f=fixture(change);const error=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})}).catch(e=>e);
+    assert.match(d.formatVerificationFailure(error),new RegExp(`^ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=[a-z_]+\\n$`));assert.doesNotMatch(d.formatVerificationFailure(error),/secret|token|http|synthetic/);
+  }
+  const f=fixture();const error=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>{throw Object.assign(Error('secret'),{url:'secret',body:'secret'});}}).catch(e=>e);
+  assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_parse reason=failed\n');
+});
 test('wrong aliases/period/privacy/PDF/assets/status/types and redirects fail with fixed diagnostics',async()=>{
   const m=await api();assert.equal(typeof m.runReadOnlySmoke,'function');
   for(const mutate of [
@@ -121,7 +142,7 @@ test('failed response headers cancel the unread body before returning refusal',a
 });
 
 test('semantic PDF differences, period drift, manager denial and unapproved inventory fail',async()=>{
-  const m=await api();
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
   for(const kind of ['pdf','period','manager','unattested','type','empty']){
     let calls=0;const f=fixture(r=>{
       if(kind==='period'&&r.u.pathname==='/api/dashboard/abbott')r.body=String(r.body).replaceAll('2026-09-13','2026-09-12');
@@ -130,6 +151,9 @@ test('semantic PDF differences, period drift, manager denial and unapproved inve
       if(kind==='type'&&r.u.pathname.endsWith('.js'))r.type='text/html';
       if(kind==='empty'&&r.u.pathname.startsWith('/dashboard/'))r.body='<html>login</html>';
     });
-    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash(kind==='pdf'?String(calls++):'same')})}),/^Error: ABBOTT_SMOKE_REFUSED$/);
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash(kind==='pdf'?String(calls++):'same')})}),error=>{
+      const stage={pdf:'pdf_compare',period:'alias_manager_json',manager:'admin_manager',unattested:'asset_attestation',type:'asset_fetch',empty:'asset_html'}[kind];
+      assert.match(d.formatVerificationFailure(error),new RegExp(`^ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=[a-z_]+\\n$`));return /^Error: ABBOTT_SMOKE_REFUSED$/.test(String(error));
+    });
   }
 });

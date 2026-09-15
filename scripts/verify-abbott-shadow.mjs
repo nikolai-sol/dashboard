@@ -8,6 +8,7 @@ import { parseCredentialLines, createPrivateOutputDirectory, writePrivateExclusi
 import { HOST } from './bootstrap-abbott-host.mjs';
 import { captureBoundedChild } from './abbott-bounded-child.mjs';
 export { captureBoundedChild } from './abbott-bounded-child.mjs';
+import { markDiagnostic, carryDiagnostic, diagnosticFromChild, formatVerificationFailure } from './abbott-verification-diagnostics.mjs';
 
 const ROOT = '/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
 const OUTPUT = '/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026-09-14';
@@ -176,11 +177,11 @@ const realPlatform = {
 };
 
 export async function runAbbottVerification(mode, platform = realPlatform) {
-  let proof, code, issued, consumed, assets, consumer, watchdog, passed = false, tearingDown = false;
+  let proof, code, issued, consumed, assets, consumer, watchdog, failure, stage='setup', passed = false, tearingDown = false;
   const controller = new AbortController();
   const setTimer = platform.setTimer ?? setTimeout, clearTimer = platform.clearTimer ?? clearTimeout;
-  const interrupt = () => controller.abort();
-  const forwardFailed = () => { if (!tearingDown) controller.abort(); };
+  const interrupt = () => { failure??=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),stage,'cancelled');controller.abort(); };
+  const forwardFailed = () => { if (!tearingDown){failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'forward','failed');controller.abort();} };
   const active = () => { if (controller.signal.aborted) refuse(); };
   const checkForward = () => { active(); platform.verifyForward(proof); active(); };
   // Allow child/browser shutdown its existing 30-second grace, but never await
@@ -206,31 +207,31 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     if (!['compare','capture','smoke'].includes(mode)) refuse();
     // Covers capsule/setup/import as well as issuance and consuming work. The
     // fixed CLI has no caller-provided timeout or environment override.
-    watchdog = setTimer(interrupt, {compare:240000,capture:660000,smoke:540000}[mode]);
+    watchdog = setTimer(()=>{failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),stage,'deadline');interrupt();}, {compare:240000,capture:660000,smoke:540000}[mode]);
     code = platform.capsule(); active();
     platform.prepareOutput(); active();
-    proof = await platform.openForward(controller.signal); active();
+    stage='forward';proof = await platform.openForward(controller.signal); active();
     proof.failure?.addEventListener('abort', forwardFailed, { once: true });
     if (proof.failure?.aborted) interrupt();
     checkForward();
     platform.recordForward?.(proof, false);
-    if(platform.loadConsumer){consumer=await guarded(()=>platform.loadConsumer(mode,controller.signal));checkForward();}
+    if(platform.loadConsumer){stage='consumer_load';consumer=await guarded(()=>platform.loadConsumer(mode,controller.signal));checkForward();}
     if(mode==='smoke'){
-      assets=await guarded(()=>platform.readAssets(controller.signal));checkForward();
+      stage='asset_attestation';assets=await guarded(()=>platform.readAssets(controller.signal));checkForward();
       if(assets.status!==0||assets.signal||assets.stderr.length||!Buffer.isBuffer(assets.stdout)||assets.stdout.length>262144)refuse();
     }
-    issued = await guarded(() => platform.issue(code, controller.signal));
+    stage='issuer';issued = await guarded(() => platform.issue(code, controller.signal));
     checkForward();
     if (issued.status !== 0 || issued.signal || issued.stderr.length || !Buffer.isBuffer(issued.stdout) || issued.stdout.length > 65536) refuse();
-    const credentials = parseCredentialLines(new TextDecoder('utf8',{fatal:true}).decode(issued.stdout));
+    stage='credential_frame';const credentials = parseCredentialLines(new TextDecoder('utf8',{fatal:true}).decode(issued.stdout));
     try { if (!credentials.managerAccessToken || !issued.stdout.toString().endsWith('\n')) refuse(); }
     finally { for (const key of Object.keys(credentials)) delete credentials[key]; }
-    consumed = await guarded(() => { checkForward(); return platform.consume(mode, issued.stdout, controller.signal, assets?.stdout, consumer); });
+    stage='unknown';consumed = await guarded(() => { checkForward(); return platform.consume(mode, issued.stdout, controller.signal, assets?.stdout, consumer); });
     checkForward();
     const expected = mode === 'compare' ? /^status=match mismatches=0 report=created\n$/ : mode==='smoke'?/^smoke=passed checks=[1-9]\d*\n$/:/^captures=[1-9]\d* errors=0 index=created\n$/;
-    if (consumed.status !== 0 || consumed.signal || consumed.stderr.length || !expected.test(consumed.stdout.toString())) refuse();
+    if (consumed.status !== 0 || consumed.signal || consumed.stderr.length || !expected.test(consumed.stdout.toString())) throw diagnosticFromChild(consumed);
     passed = true;
-  } catch { passed = false; }
+  } catch(error) { passed = false;failure??=carryDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),error,stage,stage==='unknown'?'unknown':'failed'); }
   finally {
     code?.fill(0); erase(issued); erase(consumed); erase(assets);
     try {
@@ -243,15 +244,14 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     } catch { passed = false; tearingDown = true; }
     try {
       if (proof) { await platform.closeForward(proof); platform.recordForward?.(proof, true); }
-    } catch { passed = false; }
+    } catch { passed = false;failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'cleanup','failed'); }
     finally {
       clearTimer(watchdog);
       proof?.failure?.removeEventListener('abort', forwardFailed);
       platform.signalSource.removeListener('SIGINT', interrupt); platform.signalSource.removeListener('SIGTERM', interrupt);
     }
   }
-  active();
-  if (!passed) refuse();
+  if(controller.signal.aborted||!passed)throw failure??new Error('ABBOTT_VERIFICATION_REFUSED');
   return { mode, status:'passed', forward:{pid:proof.pid,start:proof.start,exitVerified:true} };
 }
 
@@ -260,5 +260,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     if (process.argv.length !== 3) refuse();
     const result = await runAbbottVerification(process.argv[2]);
     process.stdout.write(`${JSON.stringify(result)}\n`);
-  } catch { process.stderr.write('ABBOTT_VERIFICATION_REFUSED\n'); process.exitCode=1; }
+  } catch(error) { process.stderr.write(formatVerificationFailure(error)); process.exitCode=1; }
 }

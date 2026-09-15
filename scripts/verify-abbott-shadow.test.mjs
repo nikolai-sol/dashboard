@@ -186,6 +186,22 @@ test('failed asset attestation refuses before issuing a credential and never lea
   await assert.rejects(api.runAbbottVerification('smoke',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);assert.equal(issued,0);assert.ok(assets.every(x=>x===0));assert.ok(stderr.every(x=>x===0));
 });
 
+test('parent propagates only branded or exact child enum diagnostics after cleanup',async()=>{
+  const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs').catch(()=>({}));assert.equal(typeof d.formatVerificationFailure,'function');
+  for(const kind of ['smoke','capture','forged','raw-child']){
+    const bytes=frame(),assets=Buffer.from('{}');let closed=0;
+    const platform={signalSource:new EventEmitter(),capsule:()=>Buffer.from('code'),prepareOutput(){},verifyForward(){},openForward:async()=>({pid:4242,start:'fixture'}),closeForward:async()=>{closed++;},readAssets:async()=>({status:0,stdout:assets,stderr:Buffer.alloc(0)}),issue:async()=>({status:0,stdout:bytes,stderr:Buffer.alloc(0)}),
+      consume:async()=>{
+        if(kind==='smoke')throw d.markDiagnostic(Error('secret'), 'pdf_parse','shape');
+        if(kind==='forged')throw Object.assign(Error('secret'),{stage:'pdf_parse',reason:'shape',stack:'secret',cause:'secret'});
+        return{status:1,stdout:Buffer.alloc(0),stderr:Buffer.from(kind==='capture'?'ABBOTT_VERIFICATION_REFUSED stage=capture_navigation reason=failed\n':'secret https://invalid/?access_token=private')};
+      }};
+    const error=await api.runAbbottVerification(kind==='smoke'?'smoke':'capture',platform).catch(e=>e);
+    const expected=kind==='smoke'?'stage=pdf_parse reason=shape':kind==='capture'?'stage=capture_navigation reason=failed':'stage=unknown reason=unknown';
+    assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED ${expected}\n`);assert.equal(closed,1);assert.ok(bytes.every(x=>x===0));
+  }
+});
+
 test('real CLI entrypoint can load smoke without an ESM top-level-await cycle',async()=>{
   const api=await moduleUnderTest();
   const directory=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'abbott-entrypoint-test-'));

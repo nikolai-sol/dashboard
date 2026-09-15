@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { buildAuthorizedRequest, summarizeAbbottPayload, summarizeWorkbook } from './compare-abbott-runtime.mjs';
 import { captureBoundedChild } from './abbott-bounded-child.mjs';
+import { markDiagnostic, carryDiagnostic } from './abbott-verification-diagnostics.mjs';
 
 const fail = () => { throw new Error('ABBOTT_SMOKE_REFUSED'); };
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -89,11 +90,12 @@ function assetType(p,type) {
 export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},signal,seams={}) {
   signal=AbortSignal.any([signal,AbortSignal.timeout(480000)]);
   const fetchImpl=seams.fetchImpl??fetch,parsePdf=seams.parsePdf??summarizePdf;
-  let checks=0;const summaries=new Map(),inventories=new Map(),assetResults=new Map();
+  let checks=0,stage='setup';const summaries=new Map(),inventories=new Map(),assetResults=new Map();
+  const reject=reason=>{throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),stage,reason);};
   try{
     active(signal);
     if(typeof managerAccessToken!=='string'||!managerAccessToken||typeof embedKey!=='string'||!embedKey||/[\r\n\0]/.test(managerAccessToken+embedKey))fail();
-    const approved=validateManifest(manifest);
+    stage='asset_attestation';const approved=validateManifest(manifest);
     async function request(origin,endpoint,credential,kind,denied=false) {
       active(signal);
       const {url,options}=credential?buildAuthorizedRequest(origin,endpoint,credential):{url:new URL(endpoint,origin),options:{}};
@@ -101,17 +103,18 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       const bounded=AbortSignal.any([signal,AbortSignal.timeout(kind==='pdf'?120000:30000)]);
       const response=await fetchImpl(url,{...options,method:'GET',redirect:'error',cache:'no-store',signal:bounded});
       try{
-      if(response.redirected||response.url&&new URL(response.url).origin!==origin)fail();
-      if(denied){if(![401,403].includes(response.status))fail();await response.body?.cancel();checks++;return null;}
+      if(response.redirected||response.url&&new URL(response.url).origin!==origin)reject('boundary');
+      if(denied){if(![401,403].includes(response.status))reject('status');await response.body?.cancel();checks++;return null;}
       const type=(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase();
-      if(response.status!==200||(kind==='json'&&type!=='application/json')||(kind==='html'&&type!=='text/html')||(kind==='pdf'&&type!=='application/pdf')||(kind==='excel'&&type!=='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')||(kind==='asset'&&!assetType(endpoint,type)))fail();
-      if(kind!=='asset'&&(!/private/.test(response.headers.get('cache-control')??'')||!/no-store/.test(response.headers.get('cache-control')??'')))fail();
+      if(response.status!==200)reject('status');
+      if((kind==='json'&&type!=='application/json')||(kind==='html'&&type!=='text/html')||(kind==='pdf'&&type!=='application/pdf')||(kind==='excel'&&type!=='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')||(kind==='asset'&&!assetType(endpoint,type)))reject('content_type');
+      if(kind!=='asset'&&(!/private/.test(response.headers.get('cache-control')??'')||!/no-store/.test(response.headers.get('cache-control')??'')))reject('cache_policy');
       const max=kind==='pdf'?32*1024*1024:16*1024*1024;
       if(Number(response.headers.get('content-length'))>max)fail();
       const chunks=[];let length=0,bytes;const reader=response.body?.getReader();if(!reader)fail();
       try{for(;;){const item=await reader.read();if(item.done)break;length+=item.value.length;if(length>max){item.value.fill(0);fail();}chunks.push(Buffer.from(item.value));item.value.fill(0);}bytes=Buffer.concat(chunks);active(signal);checks++;return {bytes,type};}
-      catch{await reader.cancel().catch(()=>{});bytes?.fill(0);fail();}finally{for(const chunk of chunks)chunk.fill(0);reader.releaseLock();}
-      }catch{await response.body?.cancel().catch(()=>{});fail();}
+      catch(error){await reader.cancel().catch(()=>{});bytes?.fill(0);throw error;}finally{for(const chunk of chunks)chunk.fill(0);reader.releaseLock();}
+      }catch(error){await response.body?.cancel().catch(()=>{});throw error;}
     }
     async function inspect(origin,endpoint,credential,kind,operation) {
       const result=await request(origin,endpoint,credential,kind);
@@ -120,31 +123,38 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
     for(const audience of ['manager','embed'])for(const origin of ORIGINS)for(const alias of ['18','abbott']){
       const credential={kind:audience,value:audience==='manager'?managerAccessToken:embedKey};
       const admin='/api/dashboard/'+alias+'/abbott-admin-users';let administratorExclusionCount=null;
+      stage=audience==='embed'?'admin_embed_denial':'admin_manager';
       if(audience==='embed')await request(origin,admin,credential,'json',true);
       else administratorExclusionCount=await inspect(origin,admin,credential,'json',bytes=>{const data=JSON.parse(bytes);if(!Array.isArray(data.user_ids)||data.user_ids.some(x=>typeof x!=='string'))fail();return data.user_ids.length;});
+      stage=audience==='embed'?'alias_embed_json':'alias_manager_json';
       const summary=await inspect(origin,'/api/dashboard/'+alias,credential,'json',bytes=>{
         // The public loader omits dashboard.id. Fixed aliases/authentication and
         // the Abbott-specific schema/period checked below establish identity.
-        const data=JSON.parse(bytes);if(audience==='embed')scanEmbedPrivacy(data);
+        const data=JSON.parse(bytes);if(audience==='embed'){stage='privacy_shape';scanEmbedPrivacy(data);stage='alias_embed_json';}
         return summarizeAbbottPayload(data,{audience,administratorExclusionCount});
       });
-      const pdf=await inspect(origin,'/api/dashboard/'+alias+'/pdf',credential,'pdf',bytes=>parsePdf(bytes,signal));
-      const workbook=await inspect(origin,'/api/dashboard/'+alias+'/excel',credential,'excel',bytes=>summarizeWorkbook(bytes));
+      stage='pdf_fetch';const pdf=await inspect(origin,'/api/dashboard/'+alias+'/pdf',credential,'pdf',bytes=>{stage='pdf_parse';return parsePdf(bytes,signal);});
+      stage='excel_fetch';const workbook=await inspect(origin,'/api/dashboard/'+alias+'/excel',credential,'excel',bytes=>{stage='excel_parse';return summarizeWorkbook(bytes);});
+      stage='asset_html';
       const paths=await inspect(origin,'/dashboard/'+alias,credential,'html',bytes=>assetInventory(new TextDecoder('utf8',{fatal:true}).decode(bytes),origin));
-      const combined={summary,pdf,workbook};if(summaries.has(audience)&&!isDeepStrictEqual(summaries.get(audience),combined))fail();summaries.set(audience,combined);
+      const combined={summary,pdf,workbook};if(summaries.has(audience))for(const [key,code]of [['summary','json_compare'],['pdf','pdf_compare'],['workbook','excel_compare']]){stage=code;if(!isDeepStrictEqual(summaries.get(audience)[key],combined[key]))reject('mismatch');}summaries.set(audience,combined);
+      stage='asset_html';
       if(inventories.has(origin)&&!isDeepStrictEqual(inventories.get(origin),paths))fail();inventories.set(origin,paths);
     }
     for(const origin of ORIGINS){
       const paths=inventories.get(origin);
+      stage='asset_attestation';
       if(origin===ORIGINS[1]&&paths.some(p=>!approved.has(p)))fail();
       const all=origin===ORIGINS[1]?[...approved.keys()].sort():paths;
-      for(const p of all){const result=await inspect(origin,p,null,'asset',(bytes,type)=>({size:bytes.length,sha256:hash(bytes),type}));
+      for(const p of all){stage='asset_fetch';const result=await inspect(origin,p,null,'asset',(bytes,type)=>({size:bytes.length,sha256:hash(bytes),type}));
+        stage='asset_attestation';
         if(origin===ORIGINS[1]&&(result.sha256!==approved.get(p).sha256||result.size!==approved.get(p).size))fail();
         const normalized=p.replace(/^\/_next(?:-abbott)?\//,'/_next/');
+        stage='asset_compare';
         if(assetResults.has(normalized)&&!isDeepStrictEqual(assetResults.get(normalized),result))fail();assetResults.set(normalized,result);
       }
     }
     active(signal);
     return {status:'passed',period:{from:'2026-09-01',to:'2026-09-13'},aliases:2,audiences:2,checks,pdfs:Object.fromEntries([...summaries].map(([key,value])=>[key,value.pdf])),workbooks:Object.fromEntries([...summaries].map(([key,value])=>[key,hash(JSON.stringify(value.workbook))])),candidate_assets:approved.size,reference_assets:inventories.get(ORIGINS[0]).length};
-  }catch{fail();}
+  }catch(error){throw carryDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),error,stage,signal.aborted?'cancelled':'failed');}
 }
