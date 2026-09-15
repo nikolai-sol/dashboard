@@ -158,7 +158,19 @@ test("overview reaches the truthful not-configured panel for a resolved SEO quer
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model: { targetIntent: notConfigured, gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} }, showGsc: true, targetIntentEnabled: true }));
   assert.match(html, /Классификация не настроена/);
+  assert.match(html, /Расчёт появится после публикации правил классификации/);
+  assert.doesNotMatch(html, /Доли рассчитаны|Клики — переходы/);
   assert.doesNotMatch(html, /Поисковые визиты/);
+});
+
+test("overview does not claim calculated methodology while classification is unavailable", () => {
+  const unavailable = { ...readyView, state: "unavailable" as const, queries: [], target: { ...readyView.target, impressions: null, clicks: null, sharePct: null, queryCount: null }, other: { ...readyView.other, impressions: null, clicks: null, sharePct: null, queryCount: null } };
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model: { targetIntent: unavailable, gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} }, showGsc: true }));
+
+  assert.match(html, /Классификация временно недоступна/);
+  assert.match(html, /Расчёт появится после восстановления классификации и данных выбранной недели/);
+  assert.doesNotMatch(html, /Доли рассчитаны|Клики — переходы/);
 });
 
 test("unrelated dashboards retain the legacy overview until target intent is active or explicitly enabled", () => {
@@ -174,11 +186,18 @@ test("unrelated dashboards retain the legacy overview until target intent is act
   assert.match(enabled, /Классификация не настроена/);
 });
 
-test("detects a stale intent publication before rendering a paginated review", () => {
-  assert.equal(intentPublicationMatches(readyView, "92"), true);
-  assert.equal(intentPublicationMatches(readyView, "old-publication"), false);
-  assert.equal(intentPublicationMatches(readyView, null), true);
+test("requires an exact publication token only for ready-catalogue review navigation", () => {
+  const notConfigured = { ...readyView, state: "not_configured" as const, provenance: null };
+  const unavailable = { ...readyView, state: "unavailable" as const, provenance: null };
+  assert.equal(intentPublicationMatches(readyView, "92", true), true);
+  assert.equal(intentPublicationMatches(readyView, "old-publication", true), false);
+  assert.equal(intentPublicationMatches(readyView, "", true), false);
+  assert.equal(intentPublicationMatches(readyView, null, true), false);
+  assert.equal(intentPublicationMatches(readyView, null, false), true);
+  assert.equal(intentPublicationMatches(notConfigured, null, true), true);
+  assert.equal(intentPublicationMatches(unavailable, null, true), true);
   const source = readFileSync(new URL("../src/app/dashboard/[siteSlug]/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /intentReviewRequested/);
   assert.match(source, /intentPublicationMatches/);
-  assert.match(source, /Классификация обновлена/);
+  assert.match(source, /Не удалось подтвердить версию классификации/);
 });

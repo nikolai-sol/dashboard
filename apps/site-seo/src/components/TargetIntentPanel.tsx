@@ -24,6 +24,15 @@ function unavailableCopy(intent: DashboardTargetIntentView) {
   return null;
 }
 
+function intentFooter(intent: DashboardTargetIntentView) {
+  if (intent.state === "not_configured") return <div className="site-seo-intent-footer"><span>Расчёт появится после публикации правил классификации.</span></div>;
+  if (intent.state === "unavailable") return <div className="site-seo-intent-footer"><span>Расчёт появится после восстановления классификации и данных выбранной недели.</span></div>;
+  return <div className="site-seo-intent-footer">
+    <span title="Доля = показы категории / показы всех доступных запросов выбранной недели.">Доли рассчитаны по поисковым показам выбранной недели</span>
+    <span title="Один человек может перейти несколько раз.">Клики — переходы из поиска, а не пользователи</span>
+  </div>;
+}
+
 export function TargetIntentPanel({ intent, navigation }: Readonly<{ intent: DashboardTargetIntentView; navigation?: IntentQueryNavigation }>) {
   return <section className="site-seo-panel site-seo-overview-panel site-seo-intent-panel" data-intent-state={intent.state}>
     <header className="site-seo-overview-panel-header">
@@ -38,10 +47,7 @@ export function TargetIntentPanel({ intent, navigation }: Readonly<{ intent: Das
       </div>
       {unavailableCopy(intent)}
       <IntentQueryDisclosures view={intent} navigation={navigation} />
-      <div className="site-seo-intent-footer">
-        <span title="Доля = показы категории / показы всех доступных запросов выбранной недели.">Доли рассчитаны по поисковым показам выбранной недели</span>
-        <span title="Один человек может перейти несколько раз.">Клики — переходы из поиска, а не пользователи</span>
-      </div>
+      {intentFooter(intent)}
     </div>
   </section>;
 }

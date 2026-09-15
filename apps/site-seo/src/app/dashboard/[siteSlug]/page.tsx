@@ -38,9 +38,10 @@ export default async function SiteSeoDashboardPage({ params, searchParams }: Rea
       : requested.selection;
     const request = { ...requested, selection };
     const model = await loadDashboardReadModel({ registration: runtime.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: runtime.execute });
+    const intentReviewRequested = ["intent_target_page", "intent_other_page", "intent_open", "intent_publication"].some((key) => url.searchParams.has(key));
     const expectedIntentPublication = typeof values.intent_publication === "string" ? values.intent_publication : null;
-    if (!intentPublicationMatches(model.targetIntent, expectedIntentPublication)) {
-      return <main className="site-seo-state-page" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}><section className="site-seo-state-card" style={{ width: "min(100%, 440px)", padding: 24, border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff" }}><h1>{runtime.registration.profile.title}</h1><p>Классификация обновлена. Вернитесь к обзору и откройте таблицу заново, чтобы не смешивать версии правил.</p></section></main>;
+    if (!intentPublicationMatches(model.targetIntent, expectedIntentPublication, intentReviewRequested)) {
+      return <main className="site-seo-state-page" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 }}><section className="site-seo-state-card" style={{ width: "min(100%, 440px)", padding: 24, border: "1px solid #e2e8f0", borderRadius: 14, background: "#fff" }}><h1>{runtime.registration.profile.title}</h1><p>Не удалось подтвердить версию классификации. Вернитесь к обзору и откройте таблицу заново, чтобы не смешивать версии правил.</p></section></main>;
     }
     const intentOpen = values.intent_open === "target" || values.intent_open === "other" ? values.intent_open : undefined;
     return <Dashboard profile={runtime.registration.profile} model={model} selection={request.selection} publicationId={request.publicationId} filters={request.filters} availableWeeks={availableWeeks} activeTab={typeof values.tab === "string" ? values.tab : undefined} intentPages={{ target: boundedIntentPage(values.intent_target_page), other: boundedIntentPage(values.intent_other_page) }} intentOpen={intentOpen} />;

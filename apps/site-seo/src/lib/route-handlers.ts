@@ -43,7 +43,7 @@ export function parseIntentQueryOptions(url: URL): IntentQueryOptions {
   if (category !== "target" && category !== "other") throw new Error("invalid intent category");
   const format = url.searchParams.get("intent_format") ?? "json";
   if (format !== "json" && format !== "csv" && format !== "xlsx") throw new Error("invalid intent format");
-  const expectedPublicationId = url.searchParams.get("intent_publication");
+  const expectedPublicationId = url.searchParams.get("intent_publication") || null;
   if (expectedPublicationId !== null && (expectedPublicationId.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(expectedPublicationId))) throw new Error("invalid intent publication");
   return {
     category,
@@ -171,7 +171,7 @@ export function createIntentQueryHandler(deps: DashboardJsonDependencies, option
       const model = await loadModel({ registration: deps.registration, claim: session, selection: request.selection, publicationId: request.publicationId, filters: request.filters, execute: deps.execute });
       const intent = model.targetIntent;
       if (intent.state !== "ready" || !intent.provenance) return Response.json({ error: "intent_classification_unavailable" }, { status: 503, ...PRIVATE_JSON });
-      if (request.intent.expectedPublicationId && request.intent.expectedPublicationId !== intent.provenance.publicationId) {
+      if (!request.intent.expectedPublicationId || request.intent.expectedPublicationId !== intent.provenance.publicationId) {
         return Response.json({ error: "intent_publication_changed", activePublicationId: intent.provenance.publicationId }, { status: 409, ...PRIVATE_JSON });
       }
       const rows = intent.queries.filter((row) => row.category === request.intent.category && row.impressions > 0);

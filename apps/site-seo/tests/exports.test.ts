@@ -225,6 +225,8 @@ test("bounds intent query pagination and rejects invalid categories and formats"
   });
   assert.throws(() => parseIntentQueryOptions(new URL("https://example.test?intent_category=noise")));
   assert.throws(() => parseIntentQueryOptions(new URL("https://example.test?intent_category=target&intent_format=pdf")));
+  assert.equal(parseIntentQueryOptions(new URL("https://example.test?intent_category=target")).expectedPublicationId, null);
+  assert.equal(parseIntentQueryOptions(new URL("https://example.test?intent_category=target&intent_publication=")).expectedPublicationId, null);
 });
 
 const intentModel = {
@@ -266,6 +268,27 @@ test("rejects stale publication tokens and foreign dashboard sessions before dis
   const unauthorized = await createIntentQueryHandler({ ...dependencies, getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 99, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }) }, { loadModel: async () => { reads += 1; return intentModel as never; } })({ ...readRequest, intent: { category: "other", page: 1, pageSize: 50, format: "csv", expectedPublicationId: "92" } });
   assert.equal(unauthorized.status, 401);
   assert.equal(reads, 1);
+});
+
+test("requires omitted, empty, stale and valid publication tokens according to the loaded intent state", async () => {
+  const dependencies = { registration: { profile: { dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [] } as never, bindings: [] }, credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer" as const, family: "site_seo" as const, dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }), execute: async () => { throw new Error("unused"); } };
+  const handler = createIntentQueryHandler(dependencies, { loadModel: async () => intentModel as never });
+  const options = (query: string) => parseIntentQueryOptions(new URL(`https://example.test?intent_category=target${query}`));
+
+  for (const query of ["", "&intent_publication=", "&intent_publication=old"]) {
+    const response = await handler({ ...readRequest, intent: options(query) });
+    assert.equal(response.status, 409, query || "omitted");
+    assert.deepEqual(await response.json(), { error: "intent_publication_changed", activePublicationId: "92" });
+  }
+  assert.equal((await handler({ ...readRequest, intent: options("&intent_publication=92") })).status, 200);
+
+  for (const state of ["not_configured", "unavailable"] as const) {
+    const nonReady = { ...intentModel, targetIntent: { ...intentModel.targetIntent, state, provenance: null, versionId: null } };
+    const response = await createIntentQueryHandler(dependencies, { loadModel: async () => nonReady as never })({ ...readRequest, intent: options("") });
+    assert.equal(response.status, 503, state);
+    assert.deepEqual(await response.json(), { error: "intent_classification_unavailable" });
+  }
 });
 
 test("downloads only the requested category with review fields and active publication", async () => {

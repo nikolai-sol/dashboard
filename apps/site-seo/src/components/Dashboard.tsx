@@ -30,8 +30,9 @@ export function resolveActiveTab(tabs: readonly DashboardTab[], requested?: stri
   return tabs.some((tab) => tab.id === requested) ? requested! : tabs[0]!.id;
 }
 
-export function intentPublicationMatches(model: DashboardReadModel["targetIntent"], expectedPublicationId: string | null): boolean {
-  return expectedPublicationId === null || model.provenance?.publicationId === expectedPublicationId;
+export function intentPublicationMatches(model: DashboardReadModel["targetIntent"], expectedPublicationId: string | null, reviewRequested: boolean): boolean {
+  if (model.state !== "ready" || !model.provenance || !reviewRequested) return true;
+  return expectedPublicationId !== null && expectedPublicationId !== "" && model.provenance.publicationId === expectedPublicationId;
 }
 
 export function Dashboard({ profile, model, selection, publicationId, filters, availableWeeks = [selection.traffic.primary], activeTab: requestedTab, intentPages = { target: 1, other: 1 }, intentOpen }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>>; availableWeeks?: readonly PeriodSelection["traffic"]["primary"][]; activeTab?: string; intentPages?: Readonly<{ target: number; other: number }>; intentOpen?: "target" | "other" }>) {
