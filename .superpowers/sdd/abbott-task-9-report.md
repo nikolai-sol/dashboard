@@ -1,15 +1,18 @@
-# Abbott Task 9 — fixed PDF log caller awaits review
+# Abbott Task 9 — approved PDF stage read returned unknown
 
-Status: DONE_WITH_CONCERNS for the source-only caller checkpoint. The approved
-bounded classifier now has a fixed, hash-pinned read-only caller with local
-proof/transport fixtures; no host log read or live retry occurred. The caller
-awaits review. Operational Task9 remains blocked: approved
+Status: BLOCKED. Approved7555a40 was published and its read-only log-stage caller
+ran exactly once, returning `ABBOTT_PDF_STAGE stage=unknown class=unknown`.
+Owned caller/SSH/subprocess cleanup, private-evidence removal and local port
+cleanup were verified. No PDF request or retry occurred. A separate supplemental
+kernel/filesystem check was inconclusive and is not evidence of drift; it was
+not reused. No fresh successful neighbor/Nginx state verification is claimed
+for this turn. Operational Task9 remains blocked: approved
 degraded-baseline policy d17712f was published to both
 authorized refs and the single approved live smoke returned
 `ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`.
 The candidate failure remains fatal under that policy. No successful strict or
 baseline-exception report was produced. Stopped without retry, capture, source
-fix or Nginx action. Fresh before/after checks verified unchanged6f09982/8c79
+fix or Nginx action. That earlier smoke's before/after checks verified unchanged6f09982/8c79
 production, retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite,
 neighbors and Nginx. Owned process/port/output cleanup passed. Further parity,
 six-image comparison and cutover remain incomplete. Earlier sections are
@@ -3423,3 +3426,69 @@ The candidate PDF cause is still unknown. Live log metadata, kernel formatting
 and per-request log attribution remain unverified. Last verified production and
 published refs are unchanged from the prior operational evidence; there is no
 new host-state claim. DONE_WITH_CONCERNS; STOP for re-review before any live use.
+
+## Approved7555a40 publication and one PDF stage read — unknown
+
+Started from clean exact isolation worktree at
+`7555a407768cb228dfd3842bd3b1bb3a5db42c76`; whitespace passed. Ordinary non-force
+fast-forward publication used the fixed isolated Git authority. Both literal
+remote refs were reread and exactly matched that SHA:
+
+- refs/heads/codex/abbott-runtime-isolation
+- refs/heads/release/abbott
+
+The source-only full gates recorded above apply to this unchanged approved
+commit. No app redeploy was requested or performed.
+
+Before the approved caller, the operator identified that the earlier stored full
+post-deploy procedure still invokes PM2 jlist and did not reuse it. A supplemental
+filesystem/kernel-only state verifier was assembled from prior observed pins,
+with additional regular-file metadata checks. It returned only
+ABBOTT_KERNEL_STATE_UNKNOWN; no raw content or exception was emitted. This was
+not the reviewed log caller and was not independently reviewed. Its result is
+inconclusive: it does not prove production drift, a PDF stage, or a successful
+state attestation. The SSH close was awaited and the local command exited. The
+operator reported this distinction immediately, before invoking the caller.
+
+The parent explicitly directed proceeding with the already-approved caller,
+using its own direct Abbott proof, and forbade reuse of the supplemental
+verifier. Followed that direction. Exactly one invocation ran from the active
+isolation worktree with the exact command documented by the runbook:
+
+`/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-pdf-stage.mjs`
+
+The bounded observer captured the caller/descendant ownership identities in
+memory, consumed only the allowlisted stage line, and verified exit/cleanup.
+The only caller result was:
+
+`ABBOTT_PDF_STAGE stage=unknown class=unknown`
+
+Observer cleanup result: ABBOTT_PDF_CALLER_CLEANUP_VERIFIED. The caller exited1
+for unknown, without a signal. Owned caller/SSH/subprocess exit was verified;
+private recovery/deploy identity evidence directories were absent and neither
+local3001 nor3004 listener remained. Source/diagnostic buffers follow the
+reviewed zeroing paths; there were no credential buffers or credential issuance.
+No browser session, raw log file copy, remote temporary artifact, cookie, token,
+URL/query, header/body or raw child stderr was retained or reported.
+
+Unknown can represent a proof/format/metadata refusal and does not identify the
+PDF failure stage or establish that log parsing was reached. No narrower cause
+is inferred. The earlier supplemental verifier was not reused. No standalone
+reviewed kernel-only neighbor/Nginx procedure was executed afterward; those
+supplemental comparisons are explicitly not claimed as run/passed. The obsolete
+PM2-based full-state command was never invoked in this turn. Last successful
+full state evidence remains the earlier d17712f smoke's6f09982/8c79 runtime,
+f80607f/6cd2 rollback, unchanged neighbors and Nginx hash. There is no fresh
+successful full-runtime/neighbor/hash attestation from this unknown diagnostic.
+
+No PM2 command/socket connection, PDF generation request, recovery, deployment,
+capture, Nginx read-modify/reload, neighbor process mutation, DB/auth/fact write,
+collector/cron change or password/admin-ID mutation occurred. The caller's
+approved read-only health/proc checks were the only authorized runtime probe;
+the precise refusal boundary is not disclosed by its closed result. Nginx was
+not edited and no backup was created; the route-only rollback target remains
+port3001 and last verified immutable Abbott rollback remainsf80607f/release6cd2.
+
+Verification-before-completion required distinguishing execution from a passing
+diagnostic and verifying owned cleanup. Evidence-only checkpoint, whitespace
+verified; no retry or source fix. BLOCKED on unknown; STOP for direction.
