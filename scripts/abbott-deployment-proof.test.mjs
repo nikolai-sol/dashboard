@@ -29,6 +29,13 @@ function fixture(){
  const options={io,hostname:()=> 'ybjqbzojln',getuid:()=>0,digest:b=>b.toString()==='nginx-fixture'?NGINX_HASH:HASH,verifyActive(r){calls.push('active');assert.deepEqual(r,record);},verifyBrowser(){calls.push('browser');return{archiveSha256:'fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'};}};
  return{options,files,links,metadata,calls,processes,receipt,receiptPath,fds,buffers,opened};
 }
+test('fixed proof brands every host boundary without reading exception content',async()=>{
+ const m=await api();
+ for(const [stage,file]of [['preflight_current',CONTROL+'/current.json'],['preflight_browser','/var/lib/dashboard-abbott/browser-cache/stamp.json'],['preflight_nginx',NGINX],['preflight_neighbor_combined','/proc/3722244/stat'],['preflight_neighbor_zaruku','/proc/791065/stat'],['preflight_neighbor_medroche','/proc/1870897/stat']]){
+  const f=fixture(),seen=[],read=f.options.io.openSync;f.options.notePhase=s=>seen.push(s);f.options.io.openSync=(p,...args)=>{if(p===file)throw Error('private-token https://private/?key=secret');return read(p,...args);};
+  assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.equal(seen.at(-1),stage);assert.doesNotMatch(JSON.stringify(seen),/private|secret|https/);
+ }
+});
 test('fixed preflight uses only filesystem/kernel reads and checks exact existing Abbott plus protected neighbors',async()=>{
  const m=await api();assert.equal(typeof m.createAbbottDeploymentProof,'function');const f=fixture(),p=m.createAbbottDeploymentProof(f.options);try{p.preflight();p.perimeter();}catch{assert.fail(JSON.stringify(f.opened.slice(-5)));}assert.deepEqual(f.calls,['active','browser']);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(x=>x===0)));
 });
@@ -98,8 +105,8 @@ test('proof is filesystem-only and real Abbott path wires it before any account/
  const proof=source.slice(source.indexOf('export function createAbbottDeploymentProof'),source.indexOf('// Based on'));
  assert.doesNotMatch(proof,/\b(?:execFileSync|spawn|fetch|createServer)\s*\(|\.(?:connect|writeFileSync|mkdirSync|renameSync|unlinkSync|chmodSync)\s*\(|\.pm2/);
  const transaction=source.slice(source.indexOf('async function transact(request'),source.indexOf('async function transactAcknowledged'));
- assert.ok(transaction.indexOf("if(scope==='abbott')")<transaction.indexOf('platform.deploymentPreflight()'));
- for(const operation of ['platform.account()','fs.mkdirSync(LOCK','platform.browser(account)'])assert.ok(transaction.indexOf('platform.deploymentPreflight()')<transaction.indexOf(operation));
+ assert.ok(transaction.indexOf("if(scope==='abbott')")<transaction.indexOf('platform.deploymentPreflight(phase)'));
+ for(const operation of ['platform.account()','fs.mkdirSync(LOCK','platform.browser(account)'])assert.ok(transaction.indexOf('platform.deploymentPreflight(phase)')<transaction.indexOf(operation));
  const wired=source.slice(source.indexOf('let abbottDeploymentProtection'),source.indexOf('  browser(account)'));
  assert.match(wired,/createAbbottDeploymentProof/);assert.match(wired,/verifyActive:record=>.*current\(\)/);assert.match(wired,/verifyBrowser:.*verifyBrowserInstallation/);assert.doesNotMatch(wired,/execFileSync|spawn|fetch/);
 });

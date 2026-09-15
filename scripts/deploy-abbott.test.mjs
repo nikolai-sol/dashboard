@@ -437,6 +437,19 @@ test('fresh Abbott activation deletes the proven predecessor and cannot retain i
   }finally{f.cleanup();}
 });
 
+test('acknowledged refusals carry the private boundary, never exception text or complete:none',async()=>{
+ for(const mode of ['pre_abort','current','browser','lock','prepare','activation_precheck']){const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),abort=new AbortController();
+  if(mode==='pre_abort')abort.abort();
+  if(mode==='current')f.platform.deploymentPreflight=()=>{throw Error('private-token');};
+  if(mode==='browser')f.platform.browser=()=>{throw Error('private-token');};
+  if(mode==='lock')fs.mkdirSync(f.map('/var/www/.dashboard-abbott-deploy.lock'));
+  if(mode==='prepare')f.platform.verify=()=>{throw Error('private-token');};
+  if(mode==='activation_precheck')f.platform.health=()=>{throw Error('private-token');};
+  const r=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},abort.signal,f.platform);
+  assert.equal(r.status,'REFUSED');assert.deepEqual(JSON.parse(JSON.stringify(r.diagnostic)),{stage:{pre_abort:'unknown',current:'preflight_current',browser:'preflight_browser',lock:'lock',prepare:'prepare',activation_precheck:'activation_precheck'}[mode],reason:'failed'});assert.doesNotMatch(JSON.stringify(r),/private-token/);
+ }finally{f.cleanup();}}
+});
 test('acknowledged worker returns only completed, restored or protected-review outcomes',async()=>{
  for(const mode of['success','pre_abort','compensated','rollback_failure','spoofed_error']){const f=fixture();try{
   assert.equal(typeof f.installer.transactAcknowledged,'function');const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),abort=new AbortController();
@@ -444,8 +457,20 @@ test('acknowledged worker returns only completed, restored or protected-review o
   if(mode==='rollback_failure'){const start=f.platform.startFresh;let n=0;f.platform.startFresh=async control=>{if(++n===2)throw Error('private');return start(control);};}
   if(mode==='spoofed_error')f.platform.verify=()=>{throw Error('runtime activation failed; attested predecessor restored');};
   const r=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},abort.signal,f.platform);
-  assert.equal(r.status,{success:'COMMITTED',pre_abort:'REFUSED',compensated:'RESTORED',rollback_failure:'REVIEW_REQUIRED',spoofed_error:'REFUSED'}[mode]);assert.equal(r.record===null,mode!=='success');assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),mode==='rollback_failure');assert.doesNotMatch(JSON.stringify(r),/private|restored/);
+  assert.equal(r.status,{success:'COMMITTED',pre_abort:'REFUSED',compensated:'RESTORED',rollback_failure:'REVIEW_REQUIRED',spoofed_error:'REFUSED'}[mode]);assert.equal(r.record===null,mode!=='success');assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),mode==='rollback_failure');assert.doesNotMatch(JSON.stringify(r),/private/);
+  assert.deepEqual(JSON.parse(JSON.stringify(r.diagnostic)),{success:{stage:'complete',reason:'none'},pre_abort:{stage:'unknown',reason:'failed'},compensated:{stage:'compensation',reason:'restored'},rollback_failure:{stage:'compensation',reason:'review_required'},spoofed_error:{stage:'prepare',reason:'failed'}}[mode]);
  }finally{f.cleanup();}}
+});
+
+for(const boundary of ['stop','delete','old_rename','candidate_rename','start','health','pointer'])test(`private phase precedes ${boundary} and exception contents never choose compensation status`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),terminal={status:'REFUSED',phase:'unknown'},seen=[];let hit=false;
+  const inject=()=>{if(hit)return;hit=true;seen.push(terminal.phase);throw Object.assign(Error('private-token'),{stage:'complete',reason:'none',status:'COMMITTED'});};
+  if(['stop','delete','start','health'].includes(boundary)){const name=boundary==='start'?'startFresh':boundary,method=f.platform[name];f.platform[name]=async(...args)=>{if(boundary!=='health'||args[0].sourceSha!==old.sourceSha)inject();return method(...args);};}
+  else{const rename=f.io.renameSync;f.io.renameSync=(from,to)=>{if(boundary==='pointer'?to==='/var/www/.dashboard-abbott-control/current.json':boundary==='old_rename'?from==='/var/www/dashboard-abbott':to==='/var/www/dashboard-abbott')inject();return rename(from,to);};}
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform,undefined,terminal));
+  assert.equal(hit,true);assert.deepEqual(seen,[boundary==='start'?'activation_start':boundary==='health'?'candidate_health':boundary==='pointer'?'pointer':'activation_stop']);assert.equal(terminal.phase,'compensation');assert.equal(terminal.status,'RESTORED');assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+ }finally{f.cleanup();}
 });
 
 for(const event of['signal','eof','connection_loss'])for(const phase of['stop','delete','old_rename','candidate_rename','start','publish'])for(const when of['before','after'])test(`acknowledged ${event} ${when} ${phase} waits for restored state and cleared lock`,async()=>{
@@ -455,7 +480,7 @@ for(const event of['signal','eof','connection_loss'])for(const phase of['stop','
   if(['stop','delete','start'].includes(phase)){const name=phase==='start'?'startFresh':phase,method=f.platform[name];f.platform[name]=async(...args)=>{if(when==='before')interrupt();const r=await method(...args);if(when==='after')interrupt();return r;};}
   else{const rename=f.io.renameSync;f.io.renameSync=(from,to)=>{const match=phase==='old_rename'?from==='/var/www/dashboard-abbott':phase==='candidate_rename'?to==='/var/www/dashboard-abbott':to==='/var/www/.dashboard-abbott-control/current.json';if(match&&when==='before')interrupt();rename(from,to);if(match&&when==='after')interrupt();};}
   const r=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},abort.signal,f.platform);
-  assert.equal(hit,true);assert.deepEqual(JSON.parse(JSON.stringify(r)),{status:'RESTORED',record:null});assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(f.platform.snapshot().registration.releaseId,old.id);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+  assert.equal(hit,true);assert.deepEqual(JSON.parse(JSON.stringify(r)),{status:'RESTORED',record:null,diagnostic:{stage:'compensation',reason:'restored'}});assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(f.platform.snapshot().registration.releaseId,old.id);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
  }finally{f.cleanup();}
 });
 test('unverifiable review journal never produces an acknowledged fail-closed outcome',async()=>{

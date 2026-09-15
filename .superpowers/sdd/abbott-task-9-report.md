@@ -1,4 +1,12 @@
-# Abbott Task 9 — acknowledged deployment refused
+# Abbott Task 9 — closed remote deployment diagnostics
+
+Current status: DONE_WITH_CONCERNS, source-only diagnostic checkpoint awaiting
+review. Strict status-paired remote phase/reason now survives the hash-bound
+result/ACK protocol; REFUSED can no longer be labeled complete/none. This does not
+fix or diagnose the underlying production refusal. No push or live action ran
+during this checkpoint. Details and fresh local gates are appended below.
+
+## Previous operational checkpoint — acknowledged deployment refused
 
 Current status: BLOCKED. Approved1ed80bd was published and the single authorized
 clean-environment deployment returned `ABBOTT_DEPLOY_REFUSED stage=complete reason=none`.
@@ -3775,3 +3783,65 @@ This turn performed no source change or new full build/test claim. The approved
 before completion restricted the outcome to the observed refusal and cleanup,
 not successful operational completion. The public route-only rollback target
 remains port3001; no route switch was attempted. STOP for review/direction.
+
+## Systematic Phase1 — remote deployment outcome diagnostics
+
+Source inspection confirmed the information-loss boundary: the worker returned
+only status/record, and the transport assigned complete/none to every parsed
+terminal result, including REFUSED. RED tests reproduced both missing worker
+phase information and its omission from the wire result. A separate RED test
+proved the public formatter could label REFUSED complete/none. No production
+root cause is inferred from these local reproductions.
+
+The canonical result envelope now contains only the bounded record and exact
+diagnostic object. The ACK repeats stage/reason alongside the existing bound
+capsule/payload digest, status and control ID. Canonical re-encoding rejects old
+frames, extra/duplicate fields, inconsistent pairings, non-enumerated values,
+forged records and malformed or oversized traffic. Fixed pairs are
+COMMITTED complete/none, RESTORED compensation/restored, REVIEW_REQUIRED
+compensation/review_required. REFUSED requires a closed remote phase and failed;
+unknown is the safe phase fallback. The formatter cannot emit complete/none for
+REFUSED. Existing UNACKNOWLEDGED transport failure diagnostics remain closed.
+
+Private phases are assigned before current-state/browser/Nginx and each known
+neighbor proof, lock/preparation, activation precheck/stop/start, candidate
+health, pointer publication and compensation. Existing perimeter checks retain
+their specific failed subphase; a successful perimeter restores its caller's
+phase. Verified compensation status takes precedence over the original failure
+stage. Neither exception text nor properties choose a phase or terminal status.
+The pre-entry loader refusal also supplies unknown/failed without exposing
+source text. Unverifiable worker/journal/lock completion remains unacknowledged.
+
+No authority, hash/path/ownership/listener check, transaction mutation order,
+compensation rule, process lifecycle budget, credential boundary, acceptance
+policy or non-Abbott path was weakened. There is no new host probe or command.
+The source checkpoint remains pinned to deployed6f09982/8c79 and predecessor
+f80607f/6cd2; no newly observed release exists to repin.
+
+Tests cover all six fixed host proof classes; pre-abort/current/browser/lock/
+prepare/activation-precheck refusals; private phase assignment before stop,
+delete, both activation renames, start, health and pointer boundaries; verified
+restored/review outcomes; forged secret-bearing diagnostic fields and exception
+properties; actual loader import failure; old/duplicate/mismatched frames;
+and the existing abort/EOF/signal, cleanup and strict trailing-control matrix.
+Focused deployment tests pass227/227. Final ordered full gate passes543/543
+authority tests, app/runtime-contract68/68, Abbott production build and exact
+routes. Post-build verification206/206 and data/UI/private-store111/111 pass;
+contract wiring and public-assets security pass. Root/focused TypeScript,
+combined production build, changed-source syntax and whitespace pass. Lint
+passes with0 errors and the same10 existing warnings.
+
+One separate app-test invocation overlapped the focused build's generated-output
+cleanup and encountered a missing middleware manifest. No source fix was made
+for that scheduling race; the ordered full build-then-test gate passed. Final
+post-build tests are run after build completion. No real browser, credential
+issuer, production SSH/probe/deploy/recovery, PDF request, smoke/capture, DB/auth/
+fact/collector/cron action, neighbor or Nginx mutation ran in this checkpoint.
+Private transport evidence directories remain absent and local3001/3004 have no
+listeners after the completed bounded fixture processes. Published refs remain the
+previously verified1ed80bd, and public routing has not been switched from3001.
+
+DONE_WITH_CONCERNS: systematic debugging/TDD isolated and instrumented the missing
+diagnostic boundary; completion verification supports this source checkpoint
+only. The live refusal, PDF failure, visual parity and cutover remain unresolved.
+STOP for review before publication or any live diagnostic retry.

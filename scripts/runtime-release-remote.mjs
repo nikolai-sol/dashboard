@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 // Fixed checkpoint authority, not a caller-selected inventory. This proof makes
 // no subprocess, supervisor/socket connection, network request or filesystem write.
-export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=()=>process.getuid(),digest=b=>createHash('sha256').update(b).digest('hex'),verifyActive,verifyBrowser}={}) {
+export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=()=>process.getuid(),digest=b=>createHash('sha256').update(b).digest('hex'),verifyActive,verifyBrowser,notePhase=()=>{}}={}) {
   const fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
   const record={scope:'abbott',id:'8c79caf495f147ad91b2174b9bc5f65c',sourceSha:'6f09982fb1e8068f02340ddfcb5c945fb02ebfd5',manifestDigest:'a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2',previousId:'6cd2f12e245a47dcbd5f6ce928c4ed83'};
@@ -63,21 +63,28 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     identity();link(proc+'/exe',executable,uid,gid);if(!stable(binary,io.lstatSync(executable))||!stable(boundary,io.lstatSync(proc)))fail();
   }
   function perimeter(){
+    notePhase('preflight_current');
     if(getuid()!==0||hostname()!=='ybjqbzojln'||read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim()!==boot)fail();
+    notePhase('preflight_nginx');
     const nginx=read('/etc/nginx/conf.d/dashboard-next.conf',1048576,{mode:0o644});
     if(digest(Buffer.from(nginx))!=='1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c')fail();
-    for(const[file,sha]of [['/var/www/dashboard/.release-source-sha','8f389a28df1c4b741ec33b7538f0354b74f5a40e'],['/var/www/dashboard-zaruku/.release-source-sha','af1948c8b9a0f70d8696afb9c8abc254408a5daa']])if(read(file,128).trim()!==sha)fail();
+    notePhase('preflight_neighbor_combined');
+    if(read('/var/www/dashboard/.release-source-sha',128).trim()!=='8f389a28df1c4b741ec33b7538f0354b74f5a40e')fail();
+    notePhase('preflight_neighbor_zaruku');
+    if(read('/var/www/dashboard-zaruku/.release-source-sha',128).trim()!=='af1948c8b9a0f70d8696afb9c8abc254408a5daa')fail();
+    notePhase('preflight_neighbor_medroche');
     ancestry('/var/www/dashboard-medroche');link('/var/www/dashboard-medroche',med);
-    for(const row of neighbors)kernel(row,row[4]+'/server.js');
+    for(const [i,row]of neighbors.entries()){notePhase(['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'][i]);kernel(row,row[4]+'/server.js');}
   }
   function preflight(){
+    notePhase('preflight_current');
     for(const [dir,mode]of [[control,0o700],['/var/www/dashboard-abbott-releases',0o711],['/var/www/dashboard-abbott-backups',0o711]]){
       ancestry(dir);const s=io.lstatSync(dir);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==0||s.gid!==0||(s.mode&0o7777)!==mode||io.realpathSync(dir)!==dir)fail();
     }
     const passwd=read('/etc/passwd',1048576).split('\n').map(l=>l.split(':')).filter(v=>v[0]==='dashboard-abbott'||v[2]==='982');
     const group=read('/etc/group',1048576).split('\n').map(l=>l.split(':')).filter(v=>v[0]==='dashboard-abbott'||v[2]==='984'||v[3]?.split(',').includes('dashboard-abbott'));
     if(passwd.length!==1||passwd[0].length!==7||passwd[0][0]!=='dashboard-abbott'||passwd[0][2]!=='982'||passwd[0][3]!=='984'||passwd[0][5]!=='/nonexistent'||passwd[0][6]!=='/usr/sbin/nologin'||group.length!==1||group[0].length!==4||group[0][0]!=='dashboard-abbott'||group[0][2]!=='984'||!['','dashboard-abbott'].includes(group[0][3]))fail();
-    perimeter();if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record)||read(root+'/.release-source-sha',128)!==record.sourceSha+'\n'||read(root+'/.release-runtime-scope',64)!=='abbott\n')fail();
+    perimeter();notePhase('preflight_current');if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record)||read(root+'/.release-source-sha',128)!==record.sourceSha+'\n'||read(root+'/.release-runtime-scope',64)!=='abbott\n')fail();
     if(digest(Buffer.from(read(control+'/'+record.id+'/trusted-runtime-manifest.json',2*1024*1024,{mode:0o600})))!==record.manifestDigest)fail();
     const launcher='/var/www/.dashboard-abbott-launcher.cjs';if(read(launcher,65536)!==read(control+'/'+record.id+'/deploy/abbott/start.cjs',65536))fail();
     const names=io.readdirSync(control);if(names.length>256)fail();const receipts=names.filter(n=>/^ownership-[a-f0-9-]{36}\.json$/.test(n)).map(n=>json(control+'/'+n)).filter(r=>r.record?.id===record.id);
@@ -87,9 +94,10 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     const reg=p.registration;if(!reg||!['dashboard-abbott',982].includes(reg.uid)||!['dashboard-abbott',984].includes(reg.gid)||!isDeepStrictEqual(reg,{appName:'dashboard-abbott',pmId:p.pmId,exec:'/usr/bin/env',cwd:p.cwd,args:['-i','PATH=/usr/local/bin:/usr/bin:/bin','/usr/bin/node',launcher],uid:reg.uid,gid:reg.gid,releaseId:record.id,sourceSha:record.sourceSha}))fail();
     kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
     verifyActive(record);
+    notePhase('preflight_browser');
     const stamp='/var/lib/dashboard-abbott/browser-cache/stamp.json',before=read(stamp,1048576,{gid:984,mode:0o640});
     if(verifyBrowser().archiveSha256!=='fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'||read(stamp,1048576,{gid:984,mode:0o640})!==before)fail();
-    perimeter();kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
+    perimeter();notePhase('preflight_current');kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
     if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record))fail();
   }
   const closed=fn=>()=>{try{return fn();}catch{fail();}};
@@ -442,9 +450,10 @@ async function verifyStagedArtifact(artifact, manifest, boot) {
 
 let abbottDeploymentProtection;
 const realPlatform = {
-  deploymentPreflight() {
+  deploymentPreflight(notePhase) {
     if(scope!=='abbott'||!browserPrerequisite)fail('Abbott deployment preflight unavailable');
     abbottDeploymentProtection=createAbbottDeploymentProof({
+      notePhase,
       verifyActive:record=>{if(!isDeepStrictEqual(current(),record))fail('Abbott active checkpoint drift');},
       verifyBrowser:()=>browserPrerequisite.verifyBrowserInstallation({contract:browserPrerequisite.contract,gid:984,checkExecutable:executable=>{
         // Existing immutable root:Abbott modes grant UID982 access without
@@ -676,6 +685,9 @@ function materialize(payload, id, old, platform, account, browserExecutable) {
 // Abbott changes registration rather than asking PM2 to merge retained env.
 // Every destructive command is addressed by a freshly re-proven registration.
 async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,preserveLock,terminal}) {
+  const phase=value=>{if(terminal)terminal.phase=value;};
+  phase('activation_precheck');
+  const perimeter=()=>{const previous=terminal?.phase;platform.assertDeploymentPerimeter();phase(previous);};
   const oldBackup=old?`${BACKUPS}/${old.id}`:null;
   const journalPath=`${CONTROL}/activation-${owner}.json`;
   const dir=p=>{owned(p,true);const s=fs.lstatSync(p);return{dev:String(s.dev),ino:String(s.ino)};};
@@ -706,7 +718,7 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     // exactly owned candidate serving. Process identity remains mandatory.
     lockProof();
     await stopRegistration(registration,proof,platform,account,lockProof,checkPerimeter?()=>{
-      platform.assertDeploymentPerimeter();provePredecessor();
+      perimeter();provePredecessor();
     }:undefined);
     if(proof)platform.exited(proof);
     const stopped=platform.registration(registration.pmId);
@@ -751,9 +763,10 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     await before();await checkpoint();await before();
     // No activation write or process/layout operation precedes this marker.
     // A missing registration is refusal, never an implicit successful stop.
-    guard();provePredecessor();platform.assertDeploymentPerimeter();provePredecessor();
+    guard();provePredecessor();perimeter();provePredecessor();
     mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';
     journal('prepared');await checkpoint();
+    phase('activation_stop');
     if(old)await remove(beforeProcess.registration,beforeProcess,true);
     else await noRegistration();
     journal('predecessor_removed');await checkpoint();
@@ -761,18 +774,19 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     if(old){tree(APP,old,oldDirectory,oldEnv);absent(oldBackup);if(platform.registration()!==null)fail('Abbott registration reappeared');fs.renameSync(APP,oldBackup);oldMoved=true;}
     tree(stage,record,candidateDirectory,envDigest);absent(APP);if(platform.registration()!==null)fail('Abbott registration reappeared');fs.renameSync(stage,APP);candidateMoved=true;
     journal('candidate_active');await checkpoint();tree(APP,record,candidateDirectory,envDigest);await noRegistration();
-    startAttempted=true;let startFailed=false;try{await platform.startFresh(`${CONTROL}/${record.id}`);}catch{startFailed=true;}
+    phase('activation_start');startAttempted=true;let startFailed=false;try{await platform.startFresh(`${CONTROL}/${record.id}`);}catch{startFailed=true;}
     capture(true);if(startFailed||!ownedProcess)fail('New deployment process was not established');
-    journal('candidate_started');await checkpoint();await platform.health(ownedProcess);await checkpoint();
+    journal('candidate_started');phase('candidate_health');await checkpoint();await platform.health(ownedProcess);await checkpoint();
     capture(true);tree(APP,record,candidateDirectory,envDigest);
     if(!isDeepStrictEqual(processProof(platform,account),ownedProcess))fail('Candidate readiness identity changed');
     if(old)tree(oldBackup,old,oldDirectory,oldEnv);
     await checkpoint();await platform.health(ownedProcess);capture(true);pointerProof();
-    platform.assertDeploymentPerimeter();publishPointer(record);pointerPublished=true;
+    perimeter();phase('pointer');publishPointer(record);pointerPublished=true;
     if(request.binding)durableFile(`${CONTROL}/ownership-${request.binding.runId}.json`,{version:1,binding:request.binding,transaction:owner,record,directory:directoryIdentity(),process:ownedProcess});
     await checkpoint();capture(true);tree(APP,record,candidateDirectory,envDigest);journal('committed');return record;
   }catch{
     if(!mutated)fail('Abbott activation refused before process mutation');
+    phase('compensation');
     try{
       // Cancellation cannot disable identity checks or the bounded compensation.
       lockProof();
@@ -791,12 +805,12 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
         const live=Number.isSafeInteger(restored.pid)&&restored.pid>0?processProof(platform,account):null;
         try{
           if(failed||!live||restored.status!=='online'||live.registration.releaseId!==old.id||live.sourceSha!==old.sourceSha)fail('Predecessor restart failed');
-          await platform.health(live);tree(APP,old,oldDirectory,oldEnv);pointerProof();platform.assertDeploymentPerimeter();
+          await platform.health(live);tree(APP,old,oldDirectory,oldEnv);pointerProof();perimeter();
           if(!isDeepStrictEqual(processProof(platform,account),live)||!isDeepStrictEqual(current(),old))fail('Predecessor restart identity changed');
-          platform.assertDeploymentPerimeter();
+          perimeter();
         }catch{await remove(restored.registration,live);throw Error();}
       }else{absent(APP);if(pointerPublished){owned(CURRENT);fs.unlinkSync(CURRENT);pointerPublished=false;}await noRegistration();}
-      if(!old)platform.assertDeploymentPerimeter();journal('restored');if(terminal)terminal.status='RESTORED';fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
+      if(!old)perimeter();journal('restored');if(terminal)terminal.status='RESTORED';fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
     }catch(error){
       if(error.message==='runtime activation failed; attested predecessor restored'||error.message==='runtime activation failed; service stopped')throw error;
       preserveLock();try{journal('review_required');if(terminal)terminal.status='REVIEW_REQUIRED';}catch{}
@@ -808,24 +822,29 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
 async function transact(request, platform = realPlatform, stagedGuard, terminal) {
   // The worker is supplied by the exact clean release source, never by remote disk.
   const guard = stagedGuard ?? (() => {});
+  const phase=value=>{if(terminal)terminal.phase=value;};
   guard();
   if(scope==='abbott'){
-    platform.deploymentPreflight();
+    phase('preflight_current');platform.deploymentPreflight(phase);
     guard();
+    phase('lock');
     if(fs.lstatSync(LOCK,{throwIfNoEntry:false}))fail('runtime deployment lock is already held or unsafe');
-    if(request.action==='inspect')return current();
+    if(request.action==='inspect'){phase('preflight_current');return current();}
   }
+  phase('preflight_current');
   if (process.getuid() !== DEPLOY_UID) fail('Privileged deploy account required');
   const account = platform.account();
   if(scope==='abbott'&&platform===realPlatform&&(account.uid!==982||account.gid!==984))fail('Abbott account checkpoint drift');
   if (!Number.isInteger(account.uid) || account.uid <= 0 || account.uid === DEPLOY_UID || !Number.isInteger(account.gid) || account.gid <= 0) fail('Dedicated runtime account and write separation required');
-  const browserExecutable=scope==='abbott'&&['deploy','rollback'].includes(request.action)?platform.browser(account):undefined;
+  phase('preflight_browser');const browserExecutable=scope==='abbott'&&['deploy','rollback'].includes(request.action)?platform.browser(account):undefined;
+  phase('lock');
   owned(BASE, true);
   const owner = randomUUID();
   let preserveLock=false;
   try { fs.mkdirSync(LOCK, { mode: 0o700 }); } catch { fail('runtime deployment lock is already held or unsafe'); }
   createFile(`${LOCK}/owner`, owner);
   try {
+    phase('prepare');
     for (const dir of [RELEASES, BACKUPS, CONTROL]) ensureDirectory(dir, HOST_DIRECTORY_MODES[dir]);
     if(request.action==='stop-owned')return await stopOwned(request.binding,platform,account,guard);
     const old = current();
@@ -946,17 +965,21 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
     owned(LOCK, true);
     if (stableRead(`${LOCK}/owner`, true).toString() !== owner || fs.readdirSync(LOCK).join() !== 'owner') fail('runtime lock ownership changed; preserved for recovery');
     if(!preserveLock){fs.unlinkSync(`${LOCK}/owner`); fs.rmdirSync(LOCK);}
-    }catch(error){if(terminal)terminal.status='UNACKNOWLEDGED';throw error;}
+    }catch(error){phase('lock');if(terminal)terminal.status='UNACKNOWLEDGED';throw error;}
   }
 }
 
 async function transactAcknowledged(request,signal,platform=realPlatform){
-  if(scope!=='abbott'||!['inspect','deploy','rollback'].includes(request?.action))return{status:'REFUSED',record:null};
+  if(scope!=='abbott'||!['inspect','deploy','rollback'].includes(request?.action))return{status:'REFUSED',record:null,diagnostic:{stage:'unknown',reason:'failed'}};
   // Only the transaction's own state transitions can certify compensation.
   // An exception message from a command or injected platform is never authority.
-  const terminal={status:'REFUSED'},guard=()=>{if(signal?.aborted)fail('Abbott activation cancelled');};
-  try{return{status:'COMMITTED',record:await transact(request,platform,guard,terminal)};}
-  catch{return{status:terminal.status,record:null};}
+  const terminal={status:'REFUSED',phase:'unknown'},guard=()=>{if(signal?.aborted)fail('Abbott activation cancelled');};
+  try{return{status:'COMMITTED',record:await transact(request,platform,guard,terminal),diagnostic:{stage:'complete',reason:'none'}};}
+  catch{
+    const stage=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(terminal.phase)?terminal.phase:'unknown';
+    const diagnostic=terminal.status==='RESTORED'?{stage:'compensation',reason:'restored'}:terminal.status==='REVIEW_REQUIRED'?{stage:'compensation',reason:'review_required'}:{stage,reason:'failed'};
+    return{status:terminal.status,record:null,diagnostic};
+  }
 }
 
 async function remoteMain(expectedDigest) {

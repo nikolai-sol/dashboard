@@ -445,6 +445,23 @@ review journal was written, not that an unowned replacement was stopped. Failed
 journal/lock proof or lost acknowledgement is UNACKNOWLEDGED, never cleanup
 success. Stop and inspect read-only; do not automatically retry or deploy.
 
+The diagnostic protocol checkpoint also binds a canonical `diagnostic` object
+beside the internal record and repeats its stage/reason in the terminal ACK.
+Old frames without diagnostics are rejected. Status pairs are fixed:
+COMMITTED=`complete/none`, RESTORED=`compensation/restored`, and
+REVIEW_REQUIRED=`compensation/review_required`. REFUSED requires `failed` with
+one of `preflight_current`, `preflight_browser`, `preflight_nginx`,
+`preflight_neighbor_combined`, `preflight_neighbor_zaruku`,
+`preflight_neighbor_medroche`, `lock`, `prepare`, `activation_precheck`,
+`activation_stop`, `activation_start`, `candidate_health`, `pointer`,
+`compensation` or `unknown`; REFUSED can never mean `complete/none`.
+The private phase is set immediately before an existing boundary, never inferred
+from exception text or properties. Successful perimeter subchecks restore their
+calling phase; failed subchecks retain their specific closed phase. A verified
+compensation outcome takes precedence over the original failed activation phase.
+No acceptance gate, host authority or deployment behavior is relaxed. This is
+Phase1 instrumentation only, pending review before any live diagnostic retry.
+
 Immediately after spawn, drains, exit handlers and deadlines remain installed
 through PID proof, upload, RUN and compensation. At 240 seconds the parent sends
 ABORT (or EOF before RUN), then allows 300 seconds for remote compensation before

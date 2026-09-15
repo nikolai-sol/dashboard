@@ -3,27 +3,33 @@ import{spawn,execFileSync}from'node:child_process';import{createHash}from'node:c
 const hash=b=>createHash('sha256').update(b).digest('hex');
 export const deploymentDigest=(source,payload)=>hash(hash(source)+':'+hash(payload));
 function validRecord(r){return r===null||r&&Object.keys(r).sort().join(',')==='id,manifestDigest,previousId,scope,sourceSha'&&r.scope==='abbott'&&['id','sourceSha','manifestDigest'].every(k=>typeof r[k]==='string')&&/^[a-f0-9]{32}$/.test(r.id)&&/^[a-f0-9]{40}$/.test(r.sourceSha)&&/^[a-f0-9]{64}$/.test(r.manifestDigest)&&(r.previousId===null||typeof r.previousId==='string'&&/^[a-f0-9]{32}$/.test(r.previousId));}
-export function encodeAbbottDeployResult(status,record,digest){
- if(!['COMMITTED','RESTORED','REFUSED','REVIEW_REQUIRED'].includes(status)||!validRecord(record)||status!=='COMMITTED'&&record!==null||!/^[a-f0-9]{64}$/.test(digest))throw Error('ABBOTT_DEPLOY_REFUSED');
+function validRemoteDiagnostic(status,d){
+ if(!d||Object.keys(d).sort().join(',')!=='reason,stage')return false;
+ if(status==='COMMITTED')return d.stage==='complete'&&d.reason==='none';
+ if(status==='RESTORED'||status==='REVIEW_REQUIRED')return d.stage==='compensation'&&d.reason===(status==='RESTORED'?'restored':'review_required');
+ return status==='REFUSED'&&d.reason==='failed'&&['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(d.stage);
+}
+export function encodeAbbottDeployResult(status,record,digest,diagnostic){
+ if(!validRemoteDiagnostic(status,diagnostic)||!validRecord(record)||status!=='COMMITTED'&&record!==null||!/^[a-f0-9]{64}$/.test(digest))throw Error('ABBOTT_DEPLOY_REFUSED');
  const canonical=record===null?null:{id:record.id,previousId:record.previousId,scope:'abbott',sourceSha:record.sourceSha,manifestDigest:record.manifestDigest};
- return `ABBOTT_DEPLOY_RESULT ${digest} ${JSON.stringify(canonical)}\nABBOTT_DEPLOY_ACK ${status} ${digest} ${record?.id??'none'}\n`;
+ return `ABBOTT_DEPLOY_RESULT ${digest} ${JSON.stringify({record:canonical,diagnostic:{stage:diagnostic.stage,reason:diagnostic.reason}})}\nABBOTT_DEPLOY_ACK ${status} ${digest} ${record?.id??'none'} ${diagnostic.stage} ${diagnostic.reason}\n`;
 }
 export function parseAbbottDeployResult(text,digest){
  if(typeof text!=='string'||Buffer.byteLength(text)>1024)return null;
- const m=/^ABBOTT_DEPLOY_RESULT ([a-f0-9]{64}) ([^\n]+)\nABBOTT_DEPLOY_ACK (COMMITTED|RESTORED|REFUSED|REVIEW_REQUIRED) ([a-f0-9]{64}) ([a-f0-9]{32}|none)\n$/.exec(text);if(!m||m[1]!==digest||m[4]!==digest)return null;
- try{const record=JSON.parse(m[2]);if(encodeAbbottDeployResult(m[3],record,digest)!==text)return null;return{status:m[3],record};}catch{return null;}
+ const m=/^ABBOTT_DEPLOY_RESULT ([a-f0-9]{64}) ([^\n]+)\nABBOTT_DEPLOY_ACK (COMMITTED|RESTORED|REFUSED|REVIEW_REQUIRED) ([a-f0-9]{64}) ([a-f0-9]{32}|none) ([a-z_]+) ([a-z_]+)\n$/.exec(text);if(!m||m[1]!==digest||m[4]!==digest)return null;
+ try{const envelope=JSON.parse(m[2]);if(Object.keys(envelope).sort().join(',')!=='diagnostic,record'||encodeAbbottDeployResult(m[3],envelope.record,digest,envelope.diagnostic)!==text)return null;return{status:m[3],record:envelope.record,diagnostic:envelope.diagnostic};}catch{return null;}
 }
-export const DEPLOY_STAGES=Object.freeze(['local_spawn','identity_proof','source_write','run_write','remote_startup','ack_framing','timeout','ssh_close','local_evidence','complete','unknown']);
-export const DEPLOY_REASONS=Object.freeze(['failed','unavailable','unverified','malformed','missing','oversized','stderr','deadline','nonzero','signal','none','unknown']);
+export const DEPLOY_STAGES=Object.freeze(['local_spawn','identity_proof','source_write','run_write','remote_startup','ack_framing','timeout','ssh_close','local_evidence','complete','unknown','preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation']);
+export const DEPLOY_REASONS=Object.freeze(['failed','unavailable','unverified','malformed','missing','oversized','stderr','deadline','nonzero','signal','none','unknown','restored','review_required']);
 export function safeDeployDiagnostic(value){return DEPLOY_STAGES.includes(value?.stage)&&DEPLOY_REASONS.includes(value?.reason)?{stage:value.stage,reason:value.reason}:{stage:'unknown',reason:'unknown'};}
-export function formatAbbottDeployResult(value){const status=['COMMITTED','RESTORED','REFUSED','REVIEW_REQUIRED','UNACKNOWLEDGED'].includes(value?.status)?value.status:'UNACKNOWLEDGED';const{stage,reason}=safeDeployDiagnostic(value?.diagnostic);return`ABBOTT_DEPLOY_${status} stage=${stage} reason=${reason}\n`;}
-export const ABBOTT_DEPLOY_LOADER=`import{createHash}from'node:crypto';const hash=${hash};\n${validRecord}\n${encodeAbbottDeployResult}\n`+String.raw`
+export function formatAbbottDeployResult(value){let status=['COMMITTED','RESTORED','REFUSED','REVIEW_REQUIRED','UNACKNOWLEDGED'].includes(value?.status)?value.status:'UNACKNOWLEDGED';let diagnostic=safeDeployDiagnostic(value?.diagnostic);if(status!=='UNACKNOWLEDGED'&&!validRemoteDiagnostic(status,value?.diagnostic)){if(status==='REFUSED')diagnostic={stage:'unknown',reason:'failed'};else{status='UNACKNOWLEDGED';diagnostic={stage:'unknown',reason:'unknown'};}}return`ABBOTT_DEPLOY_${status} stage=${diagnostic.stage} reason=${diagnostic.reason}\n`;}
+export const ABBOTT_DEPLOY_LOADER=`import{createHash}from'node:crypto';const hash=${hash};\n${validRecord}\n${validRemoteDiagnostic}\n${encodeAbbottDeployResult}\n`+String.raw`
 const abort=new AbortController();let pending=Buffer.alloc(0),source=null,payload=null,target=null,offset=0,expected=null,phase='source_header',sourceHash=null,payloadHash=null,running=false,finished=false,protocolBad=false,controlDone=false;
 const stop=()=>abort.abort();for(const s of['SIGINT','SIGTERM','SIGHUP'])process.on(s,stop);
 const timer=setTimeout(()=>{stop();if(!running)finish();},240000);
 function rejectPending(){protocolBad=true;stop();pending.fill(0);pending=Buffer.alloc(0);}
-function finish(result={status:'REFUSED',record:null}){if(finished)return;if(pending.length)rejectPending();finished=true;clearTimeout(timer);process.stdin.removeAllListeners();process.stdin.pause();for(const s of['SIGINT','SIGTERM','SIGHUP'])process.removeListener(s,stop);source?.fill(0);payload?.fill(0);target?.fill(0);let text='ABBOTT_DEPLOY_ACK REFUSED\n';try{if(result&&sourceHash&&payloadHash&&['COMMITTED','RESTORED','REFUSED','REVIEW_REQUIRED'].includes(result.status)){const terminal=protocolBad?{status:result.status==='REVIEW_REQUIRED'?'REVIEW_REQUIRED':'REFUSED',record:null}:result;text=encodeAbbottDeployResult(terminal.status,terminal.record,hash(sourceHash+':'+payloadHash));}}catch{}process.stdout.write(text,()=>process.stdin.destroy());}
-async function execute(){running=true;let entered=false;try{if(abort.signal.aborted)throw Error();const m=await import('data:text/javascript;base64,'+source.toString('base64'));if(abort.signal.aborted)throw Error();const request=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(payload));if(!['inspect','deploy','rollback'].includes(request?.action))throw Error();entered=true;const result=await m.run(abort.signal,request);finish(result);}catch{finish(entered?null:{status:'REFUSED',record:null});}}
+function finish(result={status:'REFUSED',record:null,diagnostic:{stage:'unknown',reason:'failed'}}){if(finished)return;if(pending.length)rejectPending();finished=true;clearTimeout(timer);process.stdin.removeAllListeners();process.stdin.pause();for(const s of['SIGINT','SIGTERM','SIGHUP'])process.removeListener(s,stop);source?.fill(0);payload?.fill(0);target?.fill(0);let text='ABBOTT_DEPLOY_ACK REFUSED\n';try{if(result&&sourceHash&&payloadHash&&['COMMITTED','RESTORED','REFUSED','REVIEW_REQUIRED'].includes(result.status)){const terminal=protocolBad?(result.status==='REVIEW_REQUIRED'?result:{status:'REFUSED',record:null,diagnostic:{stage:'unknown',reason:'failed'}}):result;text=encodeAbbottDeployResult(terminal.status,terminal.record,hash(sourceHash+':'+payloadHash),terminal.diagnostic);}}catch{}process.stdout.write(text,()=>process.stdin.destroy());}
+async function execute(){running=true;let entered=false;try{if(abort.signal.aborted)throw Error();const m=await import('data:text/javascript;base64,'+source.toString('base64'));if(abort.signal.aborted)throw Error();const request=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(payload));if(!['inspect','deploy','rollback'].includes(request?.action))throw Error();entered=true;const result=await m.run(abort.signal,request);finish(result);}catch{finish(entered?null:{status:'REFUSED',record:null,diagnostic:{stage:'unknown',reason:'failed'}});}}
 function invalid(){rejectPending();if(!running)finish();}
 function consume(chunk){if(finished||protocolBad){chunk.fill(0);return;}if(chunk.length+pending.length>1048576){chunk.fill(0);invalid();return;}const next=Buffer.concat([pending,chunk]);pending.fill(0);chunk.fill(0);pending=next;
 while(pending.length&&!finished){
@@ -51,7 +57,7 @@ export function runAbbottDeployTransport(source,payload,{signal,platform=real,on
    try{signal?.removeEventListener('abort',abort);}catch{invalid=true;}
    const exited=closed&&(pid===null||identity().kind==='absent');let result=exited&&!invalid&&dispatched&&runSent?parseAbbottDeployResult(output.toString(),digest):null;
    if(aborted&&result?.status==='COMMITTED')result=null;
-   if(!diagnostic){if(!exited)note('ssh_close','unverified');else if(result)note('complete','none');else note('ack_framing',output.length?'malformed':'missing');}
+   if(!diagnostic){if(!exited)note('ssh_close','unverified');else if(result)note(result.diagnostic.stage,result.diagnostic.reason);else note('ack_framing',output.length?'malformed':'missing');}
    try{evidence(closed,exited);}catch{result=null;}output.fill(0);for(const h of headers)h.fill(0);
    resolve({status:result?.status??'UNACKNOWLEDGED',record:result?.record??null,remoteAcknowledged:Boolean(result),sshExitVerified:exited,diagnostic});
   };
