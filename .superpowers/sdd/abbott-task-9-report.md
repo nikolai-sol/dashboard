@@ -1,9 +1,61 @@
-# Abbott Task 9 — bounded selected TLS include inventory source checkpoint
+# Abbott Task 9 — inventory-only listener authority correction
 
-Current status: DONE_WITH_CONCERNS. Source-only bounded path inventory replaces
-the caller's first-rejection result. It is not yet authorized for live use.
-Deployment acceptance is unchanged; no includes are loaded. Actual production
-include paths remain unknown. STOP for independent review; no live/push.
+Current status: DONE_WITH_CONCERNS. Inventory-only listener proof now rejects
+extra addresses, variable/unknown/duplicate options and malformed address forms.
+The shared deploy selector is unchanged. No includes are loaded, and no live
+call/push occurred. STOP for independent re-review before inventory execution.
+
+## Listener authority exactness follow-up — source-only
+
+Important review reproduced the shared selector treating any443 argument as
+TLS authority, including listen80 443 ssl and a variable followed by443 ssl.
+The new RED regression confirmed these yielded paths instead of refusing.
+The fix adds stricter checks only inside the inventory observer after the
+unchanged shared selector. No deploy parser or acceptance decision was edited.
+
+Every same-host server must have1–8 unambiguous literal listen directives.
+The selected target requires one address token:443, canonical dotted IPv4:443
+or [::]:443; exactly one ssl flag; optional default_server/http2/reuseport each
+at most once. Same-host other blocks require exact80 equivalents with only
+optional default_server/reuseport, no ssl/http2. Extra address tokens, variables,
+unknown flags/options, duplicate flags/literal addresses, leading-zero ports or
+IPv4 octets, out-of-range IPv4 and other forms refuse before collecting paths.
+The deliberately bounded option list is documented; other options do not gain
+implicit semantic approval. All failure output remains closed parser_ambiguity.
+
+GREEN:52/52 focused,845/845 full authority plus Abbott app/runtime and
+12routes/1prefix. New75-case differential against de0003e proves zero deployment
+acceptance/phase drift for both accepted and malformed listener forms. Existing
+320lexical+84include differential cases and327original cases/16approved rate
+deltas still pass. Tests cover IPv4/IPv6 flags, same-host HTTP confinement,
+mixed80/443, variables, missing/duplicate ssl, unknown/default_server/http2/
+reuseport options, count8/9, repeat endpoints and no partial result. Independent
+read-only review found no remaining findings and independently ran52/52.
+
+Both builds, root/focused typechecks, deploy-source/release-runtime, syntax and
+diff checks passed. Lint:0errors,10pre-existing warnings. Commands:
+
+```sh
+node --test --test-name-pattern='inventory listener address' scripts/abbott-nginx-readonly.test.mjs
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+npm run build
+npm run test:deploy-source
+npm run test:release-runtime
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+git diff --check
+```
+
+Only the analysis source hash was refreshed; reader hash, release pins, fixed
+transport and deploy lifecycle are unchanged. Owned test sessions exited and
+private evidence directories are absent. No live SSH/read, push, deploy/retry,
+smoke/capture, PDF, browser/credential, DB/auth/fact/collector/cron, neighbor or
+Nginx action occurred. Actual production include paths remain unknown. STOP for
+independent re-review; no automatic live invocation.
 
 ## Selected TLS include inventory — source-only checkpoint
 

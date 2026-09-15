@@ -15,6 +15,17 @@ not grant them deployment acceptance. Nested server blocks, malformed syntax,
 ambiguous TLS authority, or any invalid selected include refuse the whole result.
 No partial inventory is output. Other vhost include paths are not collected.
 
+Inventory-only listener proof is stricter than the unchanged deploy selector:
+each same-host server has1–8 literal listen directives, each with exactly one
+address token. The target uses443, canonical dotted IPv4:443 or [::]:443 and
+exactly one ssl flag; optional flags are default_server, http2 and reuseport,
+each at most once. Same-host siblings must use80, canonical dotted IPv4:80 or
+[::]:80, optionally default_server/reuseport, never ssl/http2. Repeated literal
+addresses, extra addresses, unknown options, variables, malformed IPv4 octets,
+leading-zero ports/octet forms and other listener syntax refuse the entire
+inventory. No additional Nginx listener option semantics are inferred. This
+observer-only proof does not change deployment validation or permit a live call.
+
 Each include must be non-block with exactly one unescaped, unambiguous absolute
 literal path rooted in /etc/nginx/ or /etc/letsencrypt/. Paths use only ASCII
 letters, digits, underscore, dot, hyphen and slash; no variable, glob, control,
