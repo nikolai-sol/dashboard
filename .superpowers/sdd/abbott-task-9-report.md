@@ -1119,3 +1119,73 @@ ten existing warnings. Ordered post-build tests avoided the prior build race.
 Temporary test children/fixtures retained their tested bounded cleanup; no real
 browser or SSH resource was created. STOP for dedicated re-review before push
 or any live smoke/capture retry. All earlier operational boundaries still apply.
+
+### Approved exact-parser live smoke — BLOCKED, 2026-09-15
+
+After parser approval, clean HEAD
+`7d5026949971a04a38588da19a33d0447407b988` was ordinary fast-forward pushed only
+to `refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`.
+Before each push, its literal remote predecessor was checked as an ancestor.
+Isolated Git lookups outside the checkout verified both exact remote refs at the
+approved SHA. No force push or other ref update occurred. Approved local gate
+counts remain the preceding checkpoint's 140 focused, 268 authority/artifact,
+108 auth/runtime and 111 contract tests plus build/typecheck/lint/artifact gates.
+
+No redeploy was needed: the complete diff since installed `f80607f` remains
+verification/bootstrap tooling and operational documentation, with no packaged
+application, launcher, dependency, runtime-contract or artifact-policy change.
+Shadow remains release `6cd2f12e245a47dcbd5f6ce928c4ed83`, source
+`f80607fbc8a693aa2c720b0976938e88732cdf1a`, with no predecessor. Current and
+immutable record agree and the trusted manifest digest remains
+`7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f`.
+
+Ran `node scripts/verify-abbott-shadow.mjs smoke` exactly once with the fixed
+`2026-09-01..2026-09-13` period, approved ephemeral in-memory/pipe credential
+issuer and deployed-manifest attestation. It exited 1 with only:
+
+`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=status`
+
+This identifies a PDF response-status gate; the exact status value, origin,
+audience and alias were not exposed or inferred. No raw response/PDF, header,
+token, private row, authorized URL or exception detail was inspected or saved.
+No full smoke pass is claimed and no smoke report/output directory was created.
+Capture was not started; no new screenshots, dimensions or diff result exist.
+No code fix or Nginx structural inserter was attempted after the failed gate.
+
+Owned SSH PID 31998, start `Tue Sep 15 03:55:45 2026`, returned normal
+`exitVerified: true`; its orchestrator parent was PID 31990. Independent local
+checks returned ESRCH for both exact PIDs, confirmed ports 3001/3004 free and zero
+smoke directories. The reviewed normal finally path clears retained credential,
+attestation and child-output buffers before returning. No credential file,
+standalone issuer/consumer, manual tunnel, signal or forced cleanup was used.
+No local browser was launched. Post-run kernel child inventories of combined
+PID 3722244 and Abbott PID 542693 each had zero descendants; no process was killed.
+
+Read-only preflight and post-cleanup proof matched host `ybjqbzojln`, root PM2
+daemon PID 1316, pinned kernel boot ID, PM2 pid-file IDs, kernel starts/cwds and
+all real/effective/saved/filesystem UID/GID values:
+
+| Runtime | PM2 ID / PID | Kernel start | UID / GID |
+| --- | --- | --- | --- |
+| dashboard-next | 1 / 3722244 | 122353749 | 0 / 0 |
+| dashboard-zaruku | 2 / 791065 | 131477500 | 984 / 991 |
+| dashboard-medroche | 4 / 1870897 | 139126198 | 983 / 983 |
+| dashboard-abbott | 5 / 542693 | 160900613 | 982 / 984 |
+
+Combined source remains `8f389a28df1c4b741ec33b7538f0354b74f5a40e` at
+`/var/www/dashboard`; Zaruku remains `af1948c8b9a0f70d8696afb9c8abc254408a5daa`
+at `/var/www/dashboard-zaruku`. MedRoche's release pointer still resolves to
+`/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone`.
+All cwds match the earlier full evidence. Abbott service identity/no-home/no-login,
+root-only credential input 0700/0600, root:GID984 app env0640 and single-link
+regular files remained correct. No values were output. Abbott's sole listener
+remained `127.0.0.1:3004`, and direct database health returned HTTP200 before and
+after smoke.
+
+Nginx remained a single-link regular file with exact SHA-256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c` before/after.
+No backup, config write, nginx test/reload, route change or cutover occurred.
+Public routing and its route-only rollback target remain port 3001. No neighbor
+restart/release, DB/admin/auth/fact mutation, migration, collector/cron change or
+credential rotation occurred. STOP at the failed PDF status gate. This sanitized
+evidence-only commit is local/unpushed.
