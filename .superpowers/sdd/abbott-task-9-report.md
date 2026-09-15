@@ -1,10 +1,9 @@
-# Abbott Task 9 — Nginx read outcome separation source checkpoint
+# Abbott Task 9 — Nginx parser ambiguity operational checkpoint
 
-Current status: DONE_WITH_CONCERNS. Source-only follow-up separates successful
-unknown-name analysis from closed reader/authority/metadata/parser/transport
-refusals. Known opaque block names can be diagnosed without visiting contents.
-The previous names=other/exit1 remains unresolved operational evidence, not a
-new host attestation. No retry, push or live action occurred. STOP for review.
+Current status: DONE_WITH_CONCERNS. One approved read-only caller at clean
+2c655055 returned parser_ambiguity/exit1 with verified owned transport/evidence
+cleanup. No names or partial inventory were returned. No retry, push, deploy,
+smoke, capture or Nginx edit occurred. STOP for direction.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4677,3 +4676,36 @@ No remote calls, live credentials, push, deploy, retry, smoke, capture, PDF,
 Nginx edit, database or neighbor action ran in this follow-up. Test subprocesses
 are local inert fixtures and verify their own exit. Production uncertainty from
 the prior operational entry remains. STOP for independent review before use.
+
+## Approved read-only call — parser ambiguity, 2026-09-15
+
+Parent approved exactly one invocation at clean exact HEAD
+2c6550551d18c8e31c4a803c9c51ac8a5fb93018. HEAD/worktree and absent private evidence
+were verified before running the unchanged reviewed command:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+The single command completed with exit1 and exactly:
+
+```text
+ABBOTT_NGINX_READ_REFUSED reason=parser_ambiguity
+```
+
+The reviewed wrapper preserves this remote reason only after zero SSH exit,
+exact PID/start capture, observed exit, verified PID absence and successful
+private identity evidence validation/removal. Otherwise the result would have
+been transport/framing/cleanup rather than parser_ambiguity. Independent local
+post-check found no exact caller or distinctive owned SSH loader, no private
+recovery/deploy evidence directory or contained temporary material, and no local
+listeners on3001/3004 (empty lsof, exit1). The owned command session is completed.
+No browser or tunnel was created. No raw configuration, args, paths, exception
+contents, stdout/stderr or secrets were exposed by the remote caller.
+
+The fixed file read reached analysis and the analyzer refused without any
+partial inventory. This does not identify which structural ambiguity occurred
+or attest current neighbor/release/lock/journal/browser/Nginx state beyond the
+caller's fixed-file metadata contract. No supplemental remote checks ran.
+No retry, push, deploy, recovery, smoke, capture, PDF request, Nginx edit or other
+host mutation occurred. Evidence-only local commit; STOP for direction.
