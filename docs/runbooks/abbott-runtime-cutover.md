@@ -1,83 +1,39 @@
 # Abbott isolated-runtime cutover runbook
 
-### Include rejection detail — source-only diagnostics, STOP for review
+### Foreign include boundary — source-only, STOP for review
 
-The approved bbc9531 deploy refused during initial inspect with
-preflight_nginx/include_route. This diagnostic-only follow-up retains a closed
-inner fragment cause instead of replacing every rejection with include_route:
-include_existing_abbott_route, include_existing_3004, include_variable_routing,
-include_regex_location, include_unsupported_location,
-include_unsupported_proxy_pass, include_unsupported_return,
-include_unsupported_add_header and include_unsupported_other. Forbidden fragment
-server/listen/server_name or nested include nodes use include_authority.
-Syntax remains include_syntax; unclassified or lexical ambiguity remains
-include_route. Other unsupported directive names collapse to the fixed other
-category; no name, argument, value, path or exception field is copied to output.
+Literal include directives in the selected `dashboards.adreports.ru` HTTPS
+server are external project boundaries. Abbott validates only that each
+directive is a non-block form with one unambiguous canonical absolute path under
+`/etc/nginx/` or `/etc/letsencrypt/`. It never opens, hashes, parses, snapshots,
+or splices the referenced file. Variables, globs, escapes, relative paths,
+traversal, extra arguments, and block forms refuse with the closed
+`preflight_nginx/include` reason.
 
-Nested fragment catch boundaries retain an already branded fixed reason. The
-worker and hash-bound ACK permit the ten new reasons only with REFUSED and
-preflight_nginx; forged/unlisted suffixes, wrong phases and success/compensation
-pairs refuse. Grammar, literal safety, selected authority, file snapshot, release
-pins and deployment lifecycle are unchanged. Source hash attestation is refreshed
-without invoking the reader. This source revision neither diagnoses the live
-fragment's exact rule nor authorizes a retry/read/deploy/push/Nginx action.
+The deployment proof still snapshots the containing
+`/etc/nginx/conf.d/dashboard-next.conf` bytes and metadata. Any main-file drift
+continues to latch `preflight_nginx/snapshot_drift`, even after reversion. Inline
+Abbott routes, port `3004`, variable/regex routing, malformed syntax, and
+authority-changing constructs remain fail-closed. Top-level `limit_req_zone`
+support remains a generic shared Nginx concern. This boundary change authorizes
+no live read, deploy, push, Nginx edit, or external project mutation.
 
 ### Selected main routing lexical guard — source-only follow-up
 
-Before reading or splicing any include, the selected main TLS subtree now
-requires literal lexical provenance for every location, proxy_pass, return and
-add_header directive and all its tokens. Backslashes, quote concatenation,
-ambiguous token boundaries and literal ASCII controls/DEL refuse with an existing
-closed unsupported_* reason. The rule applies with or without selected includes;
-it does not interpret dropped escapes as an unrelated route. Fragment nodes also
-reject literal ASCII controls/DEL in addition to the existing lexical guard.
+The selected main TLS subtree requires literal lexical provenance for every
+location, proxy_pass, return and add_header directive and all its tokens.
+Backslashes, quote concatenation, ambiguous token boundaries and literal ASCII
+controls/DEL refuse with an existing closed unsupported_* reason. The rule
+applies with or without selected include directives and does not interpret
+dropped escapes as an unrelated route.
 
 This is an intentional narrowing of old selected-routing acceptance: even a
 benign-looking escaped route is refused because exact Nginx equivalence has not
 been proven. Plain literals and whole unescaped single/double-quoted literals
 remain supported; inactive HTTP/unrelated vhosts retain their previous behavior.
 Selected metadata directives outside this routing set are not broadly tightened.
-No include path, runtime pin, transport schema or lifecycle changes in this fix.
-The earlier no-include baseline statement is subject to this explicit lexical
-safety correction. STOP for independent review; no live command authorized.
-
-### Fixed two-snippet perimeter support — source-only, STOP for review
-
-The deployment proof now conditionally supports only the observed selected-TLS
-include pair:
-
-- `/etc/nginx/snippets/coopervision-market-path.conf`
-- `/etc/nginx/snippets/reportingdash-public-coopervision-market-intelligence-c.conf`
-
-With no selected include, the baseline validator is unchanged and neither file
-is read. If any selected include exists, both exact unescaped literal paths must
-occur once each, with no extra arguments, block form, duplicate or third path.
-An invalid pair refuses before either file is opened. This is not a general
-include resolver and never follows includes from a fragment.
-
-Each fixed file must be root:root, regular, one link, exact mode0644, at most
-65,536 bytes, valid UTF-8, with non-symlink root-owned non-writable ancestry.
-Mode0644 is the conservative required convention, not a live observed fact.
-The proof uses bounded O_NOFOLLOW reads and stable descriptor/path metadata;
-file bytes, SHA256, metadata and ancestor identities remain in the single
-in-memory transaction snapshot. Both files are reread/rechecked at every existing
-perimeter boundary, including pre-stop, post-health/pre-pointer and compensation.
-Observed drift latches refusal even after reversion. No snapshots are accepted
-from the caller or stored in a temporary file; read/hash buffers are zeroed.
-
-Fragments are parsed and spliced at their include positions under the existing
-selected-server/location grammar. Every fragment node must have unambiguous
-literal lexical provenance; escapes/quote concatenation refuse. Nested includes,
-server/listen/server_name authority, unsupported blocks/directives, regex or
-variable routing, Abbott aliases/assets/3004 and non-3001/2/3 proxy targets refuse.
-The main parser and inactive-vhost acceptance are otherwise unchanged. Reader
-transport source hashes are refreshed only to attest the changed analyzer source.
-
-Closed additional preflight_nginx reasons are include_metadata, include_utf8,
-include_syntax, include_route and include_snapshot_drift. They expose no contents,
-arguments, paths or exception details. Existing status/ACK pairing remains strict.
-Source tests do not establish that either production fragment will pass. This
-checkpoint authorizes no remote read, push, deploy, smoke, capture or Nginx edit.
+Runtime pins and lifecycle are otherwise unchanged. STOP for independent review;
+no live command is authorized.
 
 ### Selected TLS include path inventory — source-only, STOP for review
 
@@ -119,27 +75,16 @@ Both remote and local framing validate exact schema, ordering, bounds and JSON
 serialization. Fixed SSH, hash authority, bounded streams/time, owned PID/start,
 private evidence cleanup and zeroing remain unchanged. The server reads only
 the fixed dashboard-next.conf file; no include traversal, Nginx/PM2 call or host
-write occurs. Deployment acceptance, release pins and lifecycle are unchanged.
+write occurs. Release pins and lifecycle are unchanged.
 
 ### Selected include classification — source-only, STOP for review
 
-The first-rejection reader refines selected include into exactly these diagnostic
-categories: selected_include_letsencrypt_options for the literal
-/etc/letsencrypt/options-ssl-nginx.conf; selected_include_ssl_params for
-/etc/nginx/snippets/ssl-params.conf; selected_include_proxy_params for
-/etc/nginx/proxy_params; selected_include_mime_types for /etc/nginx/mime.types.
-Mapping requires a non-block directive with exactly one parsed argument matching
-the literal path. Observer-only lexical provenance also requires no escapes,
-no quote concatenation, and unambiguous ASCII token boundaries. A plain literal
-or one whole unescaped single/double-quoted literal can match; an adjacent
-comment without whitespace or non-ASCII boundary cannot. Deployment token
-values and acceptance are unchanged. There is no filesystem resolution,
-normalization or include read. Globs, variables, relative paths,
-extra/missing arguments, blocks and every other path map selected_include_other.
-Only the category enters output, never arguments or paths. The old generic
-selected_include wire code is no longer accepted. This changes diagnostics only:
-all includes still fail deployment validation. It grants no authority to load
-includes, expand grammar, deploy, or edit Nginx. Live use requires separate approval.
+Canonical literal selected includes are accepted as opaque boundaries and
+produce no first-rejection code. Invalid include shapes map only to
+`selected_include_other`; the classifier does not categorize particular paths
+or infer ownership from them. There is no filesystem resolution, normalization,
+or include read. This grants no authority to load includes, expand their grammar,
+deploy, or edit Nginx. Live use requires separate approval.
 
 ### Bounded rate-limiter preflight grammar — STOP for review
 
@@ -156,7 +101,7 @@ underscore and contain at most64 letters/digits/underscores/hyphens. Sizes use
 positive decimal bytes or k/K/m/M and must be64KiB–1GiB; numeric size component
 has at most10digits. Rates are positive decimal integers at most1,000,000.
 At most64 unique declarations are permitted. Empty/combined/encoded/route-like
-keys, duplicate zones/args, blocks, includes, unknown options, dynamic rate/zone,
+keys, duplicate zones/args, blocks, unknown options, dynamic rate/zone,
 sync, and the existing Abbott/3004 markers remain refused.
 
 Within the selected TLS server and proven literal locations, limit_req requires

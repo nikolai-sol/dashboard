@@ -16,11 +16,9 @@ function selectAbbottNginxTls(nodes,fail){
     for(const n of hostBlocks.filter(n=>n!==targets[0])){const listens=n.children.filter(x=>x.name==='listen');if(!listens.length||listens.some(x=>x.block||x.args.includes('ssl')||! /^(?:80|\[::\]:80|[0-9.]+:80)$/.test(x.args[0])))fail();}
     return targets[0];
 }
-const ABBOTT_FIXED_NGINX_INCLUDES=Object.freeze(['/etc/nginx/snippets/coopervision-market-path.conf','/etc/nginx/snippets/reportingdash-public-coopervision-market-intelligence-c.conf']);
-function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=null,onInventory=null,resolveIncludes=null){
-    const lexical=true,rejected=new WeakMap(),fragmentNodes=new WeakSet(),fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
+function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=null,onInventory=null){
+    const lexical=true,rejected=new WeakMap(),fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
     const refuse=code=>{nginxReason(code);const error=Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');rejected.set(error,code);throw error;};
-    const fragmentRefusal=code=>{const inner=['existing_abbott_route','existing_3004','variable_routing','regex_location','unsupported_location','unsupported_proxy_pass','unsupported_return','unsupported_add_header'],prefixed=[...inner.map(n=>'include_'+n),'include_unsupported_other'];refuse(prefixed.includes(code)?code:inner.includes(code)?'include_'+code:typeof code==='string'&&code.startsWith('unsupported_')?'include_unsupported_other':'include_route');};
     nginxReason('syntax');
     if(!onInventory&&/abbott/i.test(text)||/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/.test(text))refuse(/abbott/i.test(text)?'existing_abbott_route':'syntax');
     const tokens=[],literalTokens=new WeakSet(),ambiguousGaps=new Set();let word='',quote=null,started=false,wordStart=0;
@@ -60,19 +58,9 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     }
     nginxReason('tls_count');
     const targets=[selectAbbottNginxTls(nodes,fail)];
-    // Check the entire selected main subtree before any include read/splice, not
-    // only the fragments. A containing location can otherwise hide a numeric alias.
+    // Check the entire selected main subtree. Included files are opaque external
+    // boundaries and are never resolved or spliced into Abbott's semantic model.
     const routingLexemes=list=>{for(const n of list){if(['location','proxy_pass','return','add_header'].includes(n.name)&&(!literalNodes.has(n)||n.args.some(a=>/[\x00-\x1f\x7f]/.test(a))))refuse(unsupportedName(n,true));routingLexemes(n.children);}};routingLexemes(targets[0].children);
-    if(resolveIncludes){const references=[];const collect=list=>{for(const n of list){if(n.name==='include')references.push(n);collect(n.children);}};collect(targets[0].children);
-      if(references.length){if(references.length!==2||references.some(n=>n.block||n.args.length!==1||!literalNodes.has(n)||!ABBOTT_FIXED_NGINX_INCLUDES.includes(n.args[0]))||new Set(references.map(n=>n.args[0])).size!==2)refuse('include');
-        const texts=resolveIncludes();if(!(texts instanceof Map)||texts.size!==2||ABBOTT_FIXED_NGINX_INCLUDES.some(p=>!texts.has(p)))refuse('include');const parsed=new Map();
-        for(const file of ABBOTT_FIXED_NGINX_INCLUDES){const content=texts.get(file);if(typeof content!=='string'||Buffer.byteLength(content)>65536)refuse('include_syntax');if(/abbott/i.test(content))refuse('include_existing_abbott_route');
-          let fragment,literals;try{[fragment,literals]=analyzeAbbottNginxText(content,()=>{},null,null,(n,l)=>[n,l]);}catch{refuse('include_syntax');}
-          const mark=list=>{for(const n of list){if(!literals.has(n)||n.args.some(a=>/[\x00-\x1f\x7f]/.test(a)))refuse('include_route');if(['include','server','listen','server_name'].includes(n.name))refuse('include_authority');fragmentNodes.add(n);mark(n.children);}};mark(fragment);parsed.set(file,fragment);
-        }
-        const splice=list=>list.flatMap(n=>{if(n.name==='include')return parsed.get(n.args[0]);n.children=splice(n.children);return[n];});targets[0].children=splice(targets[0].children);
-      }
-    }
     const passive=new Set(['listen','server_name','ssl_certificate','ssl_certificate_key','ssl_protocols','ssl_ciphers','ssl_prefer_server_ciphers','ssl_session_cache','ssl_session_timeout','ssl_session_tickets','ssl_dhparam','ssl_stapling','ssl_stapling_verify','ssl_trusted_certificate','resolver','resolver_timeout','access_log','error_log','client_max_body_size','client_body_timeout','send_timeout','keepalive_timeout','proxy_http_version','proxy_set_header','proxy_read_timeout','proxy_connect_timeout','proxy_send_timeout','proxy_buffering','proxy_request_buffering','proxy_cache_bypass','proxy_no_cache','proxy_buffers','proxy_buffer_size','proxy_busy_buffers_size','add_header','expires','etag','gzip','gzip_types']);
     const validLimit=n=>{if(n.block||n.args.length<1||n.args.length>3)return false;const seen=new Set();let name;
       for(const arg of n.args){if(arg==='nodelay'){if(seen.has('delay'))return false;seen.add('delay');continue;}
@@ -86,7 +74,10 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
       if(segments.some((part,i)=>part==='_next-abbott'||part==='dashboard'&&(segments[i+1]==='abbott'||Number(segments[i+1])===18)))refuse('existing_abbott_route');
     };
     const visit=(list,context='root',selected=false,location=null)=>{const appliedZones=new Set();for(const n of list){try{nginxReason('unknown');let childLocation=location;const active=selected||n===targets[0],args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))refuse(/abbott/i.test(n.name+' '+args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args)?'existing_abbott_route':'existing_3004');
-      // Only the fixed, separately attested pair was spliced above; all remaining includes refuse.
+      if(active&&n.name==='include'){
+        if(n.block||n.args.length!==1||!literalNodes.has(n)||!canonicalAbbottIncludePaths(n.args))refuse('include');
+        continue;
+      }
       if(active&&(n.name==='limit_req_zone'&&(context!=='root'||!zoneNodes.has(n))||n.name==='limit_req'&&!['server','location'].includes(context)))refuse(unsupported(n,active));
       if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))refuse(unsupported(n,active));
       if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))refuse(unsupported(n,active));
@@ -114,11 +105,11 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
         }else if(!passive.has(n.name))refuse(unsupported(n,active));
       }
       visit(n.children,n.name,active,childLocation);
-      }catch(error){const code=rejected.get(error);if(fragmentNodes.has(n))fragmentRefusal(code);if(onFirstRejection&&selected&&!['server','location'].includes(n.name)&&['server','location'].includes(context)&&typeof code==='string'&&(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))onFirstRejection('selected',n.name,n.args,n.block,literalNodes.has(n));if(!onUnsupported||!(selected||n===targets[0])||n.block&&!['server','location'].includes(context)||['server','location'].includes(n.name)||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
+      }catch(error){const code=rejected.get(error);if(onFirstRejection&&selected&&!['server','location'].includes(n.name)&&['server','location'].includes(context)&&typeof code==='string'&&(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))onFirstRejection('selected',n.name,n.args,n.block,literalNodes.has(n));if(!onUnsupported||!(selected||n===targets[0])||n.block&&!['server','location'].includes(context)||['server','location'].includes(n.name)||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
     }};visit(nodes);
   }
 
-export function validateAbbottNginxText(text,note=()=>{},resolveIncludes=null){analyzeAbbottNginxText(text,note,null,null,null,resolveIncludes);}
+export function validateAbbottNginxText(text,note=()=>{}){analyzeAbbottNginxText(text,note,null);}
 export function canonicalAbbottIncludePaths(paths){return Array.isArray(paths)&&paths.length<=8&&paths.every((v,i)=>typeof v==='string'&&v.length<=256&&/^\/etc\/(?:nginx|letsencrypt)\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(v)&&!v.split('/').some(s=>s==='.'||s==='..')&&(i===0||paths[i-1]<v));}
 export function inventoryAbbottNginxIncludes(text){try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();return analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes)=>{
  const fail=()=>{throw Error();},walk=(list,depth=0,parent=null)=>{for(const n of list){if(n.name==='server'&&(n.block||depth===0)&&(depth!==0||!n.block||n.args.length||!literalNodes.has(n)))fail();if(['listen','server_name'].includes(n.name)&&(depth!==1||parent!=='server'||n.block||!literalNodes.has(n)))fail();walk(n.children,depth+1,n.name);}};walk(nodes);
@@ -136,9 +127,8 @@ export function inventoryAbbottNginxIncludes(text){try{if(typeof text!=='string'
  });}catch{return{reason:'parser_ambiguity'};}}
 export function abbottNginxDiagnosticNames(){return ["add_header","alias","auth_basic","auth_basic_user_file","auth_request","autoindex","charset","client_body_buffer_size","client_body_in_file_only","client_body_temp_path","client_header_buffer_size","client_max_body_size","default_type","deny","directio","disable_symlinks","empty_gif","error_page","etag","expires","fastcgi_buffer_size","fastcgi_buffers","fastcgi_cache","fastcgi_index","fastcgi_param","fastcgi_pass","fastcgi_read_timeout","gzip_buffers","gzip_comp_level","gzip_disable","gzip_http_version","gzip_min_length","gzip_proxied","gzip_static","gzip_vary","http2","http2_max_concurrent_streams","if","include","index","internal","large_client_header_buffers","limit_conn","limit_conn_status","limit_except","limit_rate","limit_req","limit_req_status","location","log_not_found","map","max_ranges","more_clear_headers","more_set_headers","open_file_cache","open_file_cache_errors","open_file_cache_min_uses","open_file_cache_valid","other","port_in_redirect","proxy_cache","proxy_cache_background_update","proxy_cache_key","proxy_cache_lock","proxy_cache_revalidate","proxy_cache_use_stale","proxy_cache_valid","proxy_cookie_domain","proxy_cookie_flags","proxy_cookie_path","proxy_headers_hash_bucket_size","proxy_headers_hash_max_size","proxy_hide_header","proxy_ignore_headers","proxy_intercept_errors","proxy_max_temp_file_size","proxy_next_upstream","proxy_pass","proxy_pass_header","proxy_redirect","proxy_ssl_name","proxy_ssl_server_name","proxy_ssl_verify","proxy_temp_path","recursive_error_pages","reset_timedout_connection","return","rewrite","root","satisfy","sendfile","sendfile_max_chunk","server","server_name_in_redirect","server_tokens","set","ssi","ssl_buffer_size","ssl_client_certificate","ssl_conf_command","ssl_early_data","ssl_ecdh_curve","ssl_reject_handshake","ssl_verify_client","sub_filter","sub_filter_once","tcp_nodelay","tcp_nopush","try_files","types","types_hash_max_size","underscores_in_headers","uwsgi_param","uwsgi_pass","valid_referers"];}
 export function diagnoseAbbottNginxText(text){const names=new Set(),known=new Set(abbottNginxDiagnosticNames());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},name=>names.add(known.has(name)?name:'other'));return [...names].sort();}catch{return {reason:'parser_ambiguity'};}}
-const nginxIncludeCategories=Object.freeze([['/etc/letsencrypt/options-ssl-nginx.conf','letsencrypt_options'],['/etc/nginx/snippets/ssl-params.conf','ssl_params'],['/etc/nginx/proxy_params','proxy_params'],['/etc/nginx/mime.types','mime_types']]);
-export function abbottNginxFirstRejectionCodes(){return ['none',...['upstream','map','geo','split_clients','log_format','proxy_cache_path','limit_req_zone','limit_conn_zone','other'].map(n=>'top_'+n),...abbottNginxDiagnosticNames().filter(n=>n!=='include').map(n=>'selected_'+n),...[...nginxIncludeCategories.map(([,category])=>category),'other'].map(n=>'selected_include_'+n)];}
-export function classifyAbbottNginxFirstRejection(text){let first;const known=new Set(abbottNginxFirstRejectionCodes());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},null,(context,name,args,block,literal)=>{if(context==='selected'&&name==='include'){const category=literal&&!block&&args?.length===1?nginxIncludeCategories.find(([literal])=>literal===args[0])?.[1]:null;first??='selected_include_'+(category??'other');}else first??=known.has(context+'_'+name)?context+'_'+name:context+'_other';});return {rejection:'none'};}catch{return first?{rejection:first}:{reason:'parser_ambiguity'};}}
+export function abbottNginxFirstRejectionCodes(){return ['none',...['upstream','map','geo','split_clients','log_format','proxy_cache_path','limit_req_zone','limit_conn_zone','other'].map(n=>'top_'+n),...abbottNginxDiagnosticNames().filter(n=>n!=='include').map(n=>'selected_'+n),'selected_include_other'];}
+export function classifyAbbottNginxFirstRejection(text){let first;const known=new Set(abbottNginxFirstRejectionCodes());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},null,(context,name)=>{first??=context==='selected'&&name==='include'?'selected_include_other':known.has(context+'_'+name)?context+'_'+name:context+'_other';});return {rejection:'none'};}catch{return first?{rejection:first}:{reason:'parser_ambiguity'};}}
 
 // Fixed checkpoint authority, not a caller-selected inventory. This proof makes
 // no subprocess, supervisor/socket connection, network request or filesystem write.
@@ -210,9 +200,6 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     identity();reason('executable');link(proc+'/exe',executable,uid,gid);if(!stable(binary,stat(executable)))fail();reason('proc_metadata');if(!stable(boundary,stat(proc)))fail();
     return{pid,start:observedStart,uid,gid,cwd,executable,command,binary:metadata(binary),directory:metadata(boundary),listener:listeners[0]};
   }
-  function includeParents(file){ancestry(file);const result=[];for(let p=path.dirname(file);p!=='/';p=path.dirname(p))result.push([p,metadata(stat(p))]);return result;}
-  function readFixedIncludes(){const records=[];for(const file of ABBOTT_FIXED_NGINX_INCLUDES){nginxReason('include_metadata');const parents=includeParents(file),before=metadata(stat(file)),bytes=read(file,65536,{mode:0o644,utf8Reason:'include_utf8'});nginxReason('include_metadata');if(!isDeepStrictEqual(before,metadata(stat(file)))||!isDeepStrictEqual(parents,includeParents(file)))fail();const buffer=Buffer.from(bytes);let hash;try{hash=digest(buffer);}finally{buffer.fill(0);}records.push({file,bytes,hash,metadata:before,parents});}return records;}
-  function recheckIncludes(records){nginxReason('include_metadata');for(const r of records)if(!isDeepStrictEqual(r.metadata,metadata(stat(r.file)))||!isDeepStrictEqual(r.parents,includeParents(r.file)))fail();}
   function listenerTable(){
     const result=[];for(const table of ['tcp','tcp6']){
       const text=read('/proc/1/net/'+table,2*1024*1024,{proc:true}),address=new RegExp('^[0-9A-F]{'+(table==='tcp'?8:32)+'}:[0-9A-F]{4}$');
@@ -239,10 +226,10 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   function perimeter(){
     phase('preflight_current');if(getuid()!==0||hostname()!=='ybjqbzojln')fail();
     const observedBoot=read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim();if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(observedBoot))fail();if(boot&&boot!==observedBoot)fail();boot=observedBoot;
-    phase('preflight_nginx','metadata');const nginxPath='/etc/nginx/conf.d/dashboard-next.conf',nginxMeta=metadata(stat(nginxPath)),nginx=read(nginxPath,1048576,{mode:0o644});let includes=[];
-    validateAbbottNginxText(nginx,nginxReason,()=>{includes=readFixedIncludes();recheckIncludes(includes);if(perimeterSnapshot){nginxReason('include_snapshot_drift');if(!isDeepStrictEqual(includes,perimeterSnapshot.nginx.includes))fail();}return new Map(includes.map(r=>[r.file,r.bytes]));});
+    phase('preflight_nginx','metadata');const nginxPath='/etc/nginx/conf.d/dashboard-next.conf',nginxMeta=metadata(stat(nginxPath)),nginx=read(nginxPath,1048576,{mode:0o644});
+    validateAbbottNginxText(nginx,nginxReason);
     nginxReason('metadata');
-    if(!isDeepStrictEqual(nginxMeta,metadata(stat(nginxPath))))fail();const nginxRecord={bytes:nginx,hash:digest(Buffer.from(nginx)),metadata:nginxMeta,includes};
+    if(!isDeepStrictEqual(nginxMeta,metadata(stat(nginxPath))))fail();const nginxRecord={bytes:nginx,hash:digest(Buffer.from(nginx)),metadata:nginxMeta};
     phase('preflight_neighbor_combined','listener');const discovered=discover(),neighbors=[];
     for(const [name,uid,gid,fixedCwd,port]of neighborPolicies){
       phase('preflight_neighbor_'+name,'listener');const listener=discovered.find(r=>r.port===port);if(!listener||listener.uid!==uid)fail();
@@ -257,7 +244,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       reason('cwd');if(!stable(cwdDirectory,stat(cwd)))fail();
       neighbors.push({name,release,process,listener,cwdDirectory:metadata(cwdDirectory)});
     }
-    if(includes.length){phase('preflight_nginx','include_metadata');recheckIncludes(includes);}const snapshot={boot:observedBoot,nginx:nginxRecord,neighbors};
+    const snapshot={boot:observedBoot,nginx:nginxRecord,neighbors};
     if(perimeterSnapshot){
       phase('preflight_nginx','snapshot_drift');if(!isDeepStrictEqual(snapshot.nginx,perimeterSnapshot.nginx))fail();
       for(let i=0;i<neighbors.length;i++){phase('preflight_neighbor_'+neighbors[i].name,'unknown');if(!isDeepStrictEqual(neighbors[i],perimeterSnapshot.neighbors[i]))fail();}
@@ -1166,7 +1153,7 @@ async function transactAcknowledged(request,signal,platform=realPlatform){
   catch{
     const stage=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(terminal.phase)?terminal.phase:'unknown';
     const neighbor=['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'].includes(stage);
-    const specific=neighbor?['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']:stage==='preflight_nginx'?['metadata','utf8','syntax','tls_count','include_metadata','include_utf8','include_syntax','include_route','include_existing_abbott_route','include_existing_3004','include_variable_routing','include_regex_location','include_unsupported_location','include_unsupported_proxy_pass','include_unsupported_return','include_unsupported_add_header','include_unsupported_other','include_authority','include_snapshot_drift','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown','unsupported_location','unsupported_proxy_pass','unsupported_return','unsupported_add_header','unsupported_root','unsupported_alias','unsupported_index','unsupported_try_files','unsupported_error_page','unsupported_proxy_redirect','unsupported_proxy_cache','unsupported_ssl_ecdh_curve','unsupported_ssl_conf_command','unsupported_client_body_buffer_size','unsupported_charset','unsupported_gzip_vary','unsupported_if','unsupported_other']:null;
+    const specific=neighbor?['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']:stage==='preflight_nginx'?['metadata','utf8','syntax','tls_count','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown','unsupported_location','unsupported_proxy_pass','unsupported_return','unsupported_add_header','unsupported_root','unsupported_alias','unsupported_index','unsupported_try_files','unsupported_error_page','unsupported_proxy_redirect','unsupported_proxy_cache','unsupported_ssl_ecdh_curve','unsupported_ssl_conf_command','unsupported_client_body_buffer_size','unsupported_charset','unsupported_gzip_vary','unsupported_if','unsupported_other']:null;
     const reason=specific?(specific.includes(terminal.reason)?terminal.reason:'unknown'):'failed';
     const diagnostic=terminal.status==='RESTORED'?{stage:'compensation',reason:'restored'}:terminal.status==='REVIEW_REQUIRED'?{stage:'compensation',reason:'review_required'}:{stage,reason};
     return{status:terminal.status,record:null,diagnostic};
