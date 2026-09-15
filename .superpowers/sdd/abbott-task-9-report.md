@@ -1,4 +1,14 @@
-# Abbott Task 9 — closed neighbor preflight subreasons
+# Abbott Task 9 — combined release-record preflight refusal
+
+Current status: BLOCKED. Approved5b17026 was published to both authorized refs.
+One acknowledged deployment returned
+`ABBOTT_DEPLOY_REFUSED stage=preflight_neighbor_combined reason=release_record`.
+The fixed read-only preflight stopped before lock/write/PM2 actions. Transport
+exit, private evidence removal and local port cleanup were verified. No retry,
+source/pin change, live follow-up read, smoke/capture or Nginx action followed.
+Details are appended below; preceding checkpoints are historical.
+
+## Previous source checkpoint — closed neighbor preflight subreasons
 
 Current status: DONE_WITH_CONCERNS, source-only Phase1 checkpoint pending review.
 The fixed neighbor proof now carries a precise closed subreason through the
@@ -3988,3 +3998,42 @@ historical active6f09982/8c79, predecessor f80607f/6cd2 and public3001 remain
 historical operational evidence rather than a fresh successful attestation.
 Systematic debugging and TDD supplied diagnostic coverage, not an operational
 fix. DONE_WITH_CONCERNS: STOP for review before publication or any live retry.
+
+## Approved operational attempt at5b17026 — release-record refusal
+
+The active isolated worktree was clean at
+`5b17026950a9ea7cb900fa82426eebdfd2e34865`. Ordinary non-force pushes updated only
+the authorized feature and release refs. Literal isolated remote-ref lookups
+verified `refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`
+both at that exact SHA.
+
+Exactly one fixed clean-environment command ran from the active isolated worktree:
+`/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott`.
+It exited1 with:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_neighbor_combined reason=release_record`
+
+The initial read-only inspect transaction refused at the combined runtime's
+fixed source-record boundary. This category includes the fixed file's ancestry,
+metadata/stability/read checks and expected source-SHA equality; it does not
+identify which of those checks failed and does not establish that the combined
+runtime was changed. No raw record or value was output or separately inspected.
+The Nginx check is ordered before this boundary, but the remaining host preflight
+did not complete. No successful full current/browser/neighbor attestation is
+claimed. The fixed preflight precedes lock creation, directory/file writes and
+PM2 calls; this attempt never reached candidate preparation or activation.
+
+The accepted REFUSED required the exact hash/status-paired remote ACK, captured
+SSH PID/start ownership, observed and verified exit, and successful private
+identity-evidence cleanup. The session zeroed source/payload buffers. The owned
+local command exited; a separate local-only check confirmed exact deploy/recovery
+evidence directories absent and no local3001/3004 listeners. No real browser,
+forward or credential process was launched.
+
+No retry, fix, pin update or additional production read ran. No PDF request,
+smoke/capture, recovery, database/auth/fact/collector/cron, neighbor process or
+Nginx action occurred. Historical active6f09982/8c79 and predecessor f80607f/6cd2
+remain historical records, not newly attested by this incomplete preflight.
+Public route-only rollback remains3001 and no switch was attempted. This commit
+contains sanitized operational evidence only; no new full local gate claim.
+BLOCKED: STOP for review/direction at the closed release_record boundary.
