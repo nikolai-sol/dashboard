@@ -1653,3 +1653,59 @@ STOP for re-review. No live SSH, recovery, deployment, credential use, browser,
 push or Nginx operation occurred. The last attested interrupted host state above
 is not asserted repaired or freshly revalidated by this local-only checkpoint.
 The authorized public rollback route remains combined127.0.0.1:3001.
+
+### Approved single recovery attempt: UNACKNOWLEDGED (2026-09-15)
+
+Checkpoint A received explicit execution approval. The clean local HEAD was
+278fd2da2f8d4b11b7204206323f0e62c41a15a9. Fresh transport/entrypoint tests passed
+16/16 before publication; the full local gate results are recorded immediately
+above. Isolated literal remote lookup verified both existing authorized refs
+were ancestors, then ordinary non-force pushes advanced only
+refs/heads/codex/abbott-runtime-isolation and refs/heads/release/abbott to that
+exact HEAD. Both literal remote SHAs were independently verified equal to HEAD.
+The temporary outside-repository ref-proof directory was removed.
+
+Exactly one invocation of the approved fixed entrypoint ran with /usr/bin/env
+-i and the pinned absolute Node executable, no arguments or ambient authority.
+It exited1 with only ABBOTT_RECOVERY_UNACKNOWLEDGED. There was no trusted terminal
+recovery acknowledgement. No retry, code fix, deployment, credential issuance,
+smoke, capture, DB/admin change or Nginx operation followed. This status is not
+restoration or proof of remote cleanup.
+
+Independent read-only post-result evidence established:
+
+- Active regular root:root0755 directory still contains candidate9aaed34;
+  the root:root0755 backup still contains oldf80607f. Both complete trees pass
+  the unchanged worker record/manifest/tree attesters. Candidate control remains
+  e9e548a6414c4d8c836c7715c66f37ad/manifest a62b6297cdc903ed4d0e94357e7dfbe8d552ed4bf76db95be6582d913433c74b.
+- current.json remains byte-identical to old6cd2f12e245a47dcbd5f6ce928c4ed83,
+  sourcef80607fbc8a693aa2c720b0976938e88732cdf1a, manifest
+  7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f.
+  PM2 ID5/PID714550/start162192969 still has that old registration binding.
+  Kernel UID982/GID984, exact app cwd and sole127.0.0.1:3004 listener pass;
+  bounded direct health returns200 with the expected Abbott connected body.
+- Recovery lock, journal, journal.next and candidate quarantine are absent.
+  Thus the interrupted layout remains unchanged; the attempt is not reported
+  as having reached any recovery mutation phase.
+- Browser cache full inventory/permissions, package/build/source contract,
+  first-install archive SHA fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04,
+  and executable access as dashboard-abbott pass. No browser staging entries.
+  Account no-home/no-login and root-only secret-input/rendered-env metadata pass;
+  no secret values were emitted.
+- Neighbors unchanged: dashboard-next ID1/PID3722244/start122353749/source8f389a2;
+  dashboard-zaruku ID2/PID791065/start131477500/sourceaf1948c;
+  dashboard-medroche ID4/PID1870897/start139126198/release13d68b0b2c820ba5d223f254bc4eba6d0cf24418.
+  Exact previously recorded cwd/UID/GID/release pointers and boot/PM2 daemon pass.
+  Nginx hash remains1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c.
+
+Cleanup evidence is limited precisely: the invocation exited before its exact
+transient local/SSH PIDs could be recorded. Subsequent local inventories found
+zero matching recovery entrypoints, zero recovery SSH transports, and zero
+listeners on local3001/3004. The remote recovery-loader inventory is zero.
+The combined and Abbott runtime child counts are zero. All read-only tool
+sessions exited. No browser/forward was created. These inventories do not
+replace the missing PID/start-specific proof or remote acknowledgement.
+
+BLOCKED at ABBOTT_RECOVERY_UNACKNOWLEDGED. Public routing remains on combined3001;
+the predecessor backup is preserved and candidate activation is still
+inconsistent. Await separate direction; no speculative recovery or retry.
