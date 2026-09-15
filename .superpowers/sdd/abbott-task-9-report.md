@@ -1,9 +1,9 @@
-# Abbott Task 9 — standalone read-only Nginx inventory source checkpoint
+# Abbott Task 9 — standalone read-only Nginx inventory operational checkpoint
 
-Current status: DONE_WITH_CONCERNS. Standalone bounded read-only Nginx name caller
-is implemented locally and awaits review. The previous approved b273294 live
-refusal remains preflight_nginx/unsupported_other; supplemental remote checks
-were not completed. No new live read, deploy, push or Nginx action occurred.
+Current status: DONE_WITH_CONCERNS. One approved standalone read-only Nginx caller
+at clean0ec4a305 returned names=other, exit1. Local absence checks passed; the
+closed result does not identify the refusal boundary or attest remote state.
+No retry, push, deploy, smoke, capture or Nginx edit occurred. STOP for direction.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4575,3 +4575,37 @@ active6f09982/8c79, predecessor f80607f/6cd2 and route-only rollback3001 remain 
 not newly attested by this source work. The preceding unsupported_other refusal
 and incomplete supplemental remote checks remain explicitly unresolved. STOP
 for independent source review before any standalone diagnostic invocation.
+
+## Approved standalone caller — one operational invocation, 2026-09-15
+
+Reviewed clean HEAD0ec4a3057b10a66b16c1d652f3c24855d2cde4d1 and exact worktree
+were verified before execution. The requested npm alias did not exist. Parent
+explicitly confirmed substituting the already-reviewed runbook command, without
+source changes or additional environment:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+Exactly one invocation completed with exit1 and only this closed output:
+
+```text
+ABBOTT_NGINX_UNSUPPORTED names=other
+```
+
+No retry ran. Post-exit local bounded process inventory found neither the exact
+caller invocation nor its distinctive SSH loader. The exclusive private recovery
+and deploy evidence directories, including their identity temporary material,
+were absent. Local listener check for3001/3004 was empty (lsof exit1). The owned
+command session completed; no browser or port forward was created. No secret or
+raw remote stdout/stderr/config was emitted or persisted by the operator.
+
+Limitations: other/exit1 can represent unknown syntax/name or a local/transport/
+remote refusal. This output provides no separate verified-cleanup acknowledgement;
+private evidence absence and process absence prove present local absence, not
+which transient SSH identity was captured or which remote boundary completed.
+Do not infer a successful config read or fresh remote state attestation. No
+supplemental remote active/release/lock/journal/browser/neighbor/Nginx hash checks
+were run. The preceding preflight_nginx/unsupported_other remains historical.
+No push, deploy, recovery, smoke, capture, PDF request, Nginx edit or other host
+mutation was attempted. This commit changes sanitized evidence only. STOP.
