@@ -1,6 +1,6 @@
 # Abbott isolated-runtime cutover runbook
 
-### Fixed deployment preflight checkpoint — review required, no deployment yet
+### Transaction perimeter snapshot checkpoint — critical review required
 
 Approved `ece704e` was published to both authorized refs, but no production
 command was dispatched. Source inspection established that the earlier worker
@@ -19,23 +19,40 @@ request. Abbott `inspect` now returns through that proof without creating a lock
 an existing lock still refuses. Subsequent activation retains its existing
 process identity and health gates.
 
-Evidence-pinned neighbors are:
+Abbott current/previous authority remains fixed. Neighbor identity is captured
+once in the transaction's private memory, not taken from historical evidence,
+caller input, a transport frame or a temporary file. Semantic neighbor contracts:
 
-| Runtime | PID / start / UID / GID | Cwd and release authority |
+| Runtime | UID / GID / port | Cwd and release authority |
 | --- | --- | --- |
-| combined | 3722244 / 122353749 / 0 / 0 | `/var/www/dashboard`; source8f389a28df1c4b741ec33b7538f0354b74f5a40e |
-| Zaruku | 791065 / 131477500 / 984 / 991 | `/var/www/dashboard-zaruku/apps/zaruku`; sourceaf1948c8b9a0f70d8696afb9c8abc254408a5daa |
-| MedRoche | 1870897 / 139126198 / 983 / 983 | immutable13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone/apps/site-seo |
+| combined | 0 / 0 / 3001 | `/var/www/dashboard`; root-owned regular `.release-source-sha`, valid40-hex SHA |
+| Zaruku | 984 / 991 / 3002 | `/var/www/dashboard-zaruku/apps/zaruku`; root-owned regular root `.release-source-sha`, valid40-hex SHA |
+| MedRoche | 983 / 983 / 3003 | `/var/www/dashboard-medroche-releases/<40-hex SHA>/standalone/apps/site-seo`; exact root-owned `/var/www/dashboard-medroche` pointer to that standalone root |
 
 Each must own its single expected IPv4 loopback listener3001/3002/3003, proven
-from bounded kernel TCP tables and that PID's socket descriptors. Node binary
+from bounded `/proc/1/net/tcp{,6}` tables and direct numeric PID/socket-descriptor
+discovery. No PM2, ss or other subprocess performs discovery. Bounds are8192
+proc entries,4096 numeric PIDs,4096 descriptors per PID and65536 total descriptors;
+TCP tables are bounded to2MiB each. Multiple owners, wildcard/IPv6 alternatives,
+scan overflow and unsafe metadata refuse. Unrelated processes/socket activity
+within these bounds do not become snapshot authority. Node binary
 and command checks are semantic, not invented historical byte pins: an absolute
 root-owned non-writable regular Node executable, plus the source-established
 Next16.1.6 title or exact server/launcher argv shape. No raw argv or environment
 is output. Source records and the exact MedRoche root-owned immutable pointer
-are independently checked. Nginx remains the stable regular root-owned0644
-`/etc/nginx/conf.d/dashboard-next.conf` with SHA256
-`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+are independently checked. Process cwd/release ancestry must also be root-owned,
+nonwritable, real directories. The snapshot captures boot, PID/start/UID/GID,
+cwd/executable/cmdline, directory/binary metadata, listener inode, and release
+bytes/target plus stable metadata. Nginx remains the stable regular root-owned0644
+`/etc/nginx/conf.d/dashboard-next.conf`: its current bytes/hash/metadata are
+captured only after bounded structural validation finds exactly one TLS server
+whose server_name tokens include `dashboards.adreports.ru`. Composite aliases
+and a separate HTTP redirect are accepted, including quoted brace data and
+braced Nginx variables. Malformed block/directive structure, Abbott markers,
+case-insensitive Abbott/18 locations or3004 upstreams refuse. Any `include`
+directive refuses: included files are outside this fixed single-file snapshot,
+even if the existing include would otherwise be valid Nginx configuration.
+Extending that scope would require separate review. No config is edited.
 
 Neighbor/Nginx proof repeats immediately before predecessor PM2 stop, after
 candidate health immediately before pointer promotion, and at compensation
@@ -43,14 +60,17 @@ completion. The first activation gate re-proves predecessor presence/identity
 and perimeter before setting the mutation marker and writing the prepared
 journal. Refusal at that gate performs no activation mutation. Once the marker
 is set, every later failure enters compensation even if no stop command ran.
-Post-health drift
-prevents promotion and enters owned compensation; unverified compensation
+Post-health drift prevents promotion and enters owned compensation. Any detected
+snapshot failure is latched, even if another deployment subsequently reverts its
+change; compensation cannot claim an unchanged perimeter afterward. Unverified compensation
 retains the lock/review journal and leaves the provably owned runtime stopped.
 No neighbor or Nginx mutation is introduced. Non-Abbott transactions keep their
 existing path. All CLI diagnostics remain closed and contain no raw proof data.
 
-This is a fixed current-state checkpoint, not a dynamic inventory. A successful
-successor activation requires separately reviewed checkpoint re-pinning before
+This is a fixed Abbott checkpoint plus one dynamic transaction perimeter, not
+recapture at every activation boundary. Legitimate neighbor updates completed
+before capture are accepted; exact in-memory comparisons reject concurrent ones.
+A successful Abbott successor activation requires separately reviewed Abbott checkpoint re-pinning before
 another deployment or standalone rollback through this entrypoint. Internal
 failure compensation remains available within the transaction. STOP for source
 review; this documentation does not authorize a new probe, deployment or retry.

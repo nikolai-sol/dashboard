@@ -30,18 +30,18 @@ incident contract; this change is the normal Abbott deploy preflight only.
 
 ## Implementation sequence
 
-- [ ] Add fake-proc/Nginx fixtures and RED tests: valid neighbor release/PID/commit
+- [x] Add fake-proc/Nginx fixtures and RED tests: valid neighbor release/PID/commit
   changes before capture pass; the same changes after capture refuse. Update
   historical-pin tests to assert captured snapshot invariants instead.
-- [ ] Implement bounded listener discovery, semantic process/release validation,
+- [x] Implement bounded listener discovery, semantic process/release validation,
   structural Nginx sanity and exact in-memory snapshot comparison in
   `scripts/runtime-release-remote.mjs`. Reuse existing closed diagnostics,
   nofollow reads and activation/compensation boundaries.
-- [ ] Cover multiple owners, wildcard/IPv6 listeners, PID/fd scan limits,
+- [x] Cover multiple owners, wildcard/IPv6 listeners, PID/fd scan limits,
   proc disappearance/reuse/races, malformed source SHA, bad symlinks, byte and
   metadata drift, Nginx aliases/HTTP-vs-TLS/markers/routes. Prove zero mutation on
   initial refusal and review-lock preservation for post-mutation drift.
-- [ ] Run focused tests, `npm run test:abbott-runtime`, post-build verification,
+- [x] Run focused tests, `npm run test:abbott-runtime`, post-build verification,
   contract/security checks, combined build, root/focused TypeScript and lint.
   Update runbook/report, commit, and stop for critical review. No push/live use.
 

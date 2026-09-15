@@ -1,4 +1,13 @@
-# Abbott Task 9 — combined release-record preflight refusal
+# Abbott Task 9 — transaction perimeter source checkpoint
+
+Current status: DONE_WITH_CONCERNS, source-only architecture correction pending critical review.
+Abbott release pins remain fixed; normal deployment now captures one semantically
+validated neighbor/Nginx snapshot in private transaction memory and rechecks it
+exactly. This checkpoint has run no push, SSH, deployment, smoke or Nginx action.
+The preceding operational refusal remains historical evidence, not a successful
+new host attestation. Final local gate evidence is appended below.
+
+## Previous operational checkpoint — combined release-record refusal
 
 Current status: BLOCKED. Approved5b17026 was published to both authorized refs.
 One acknowledged deployment returned
@@ -4037,3 +4046,78 @@ remain historical records, not newly attested by this incomplete preflight.
 Public route-only rollback remains3001 and no switch was attempted. This commit
 contains sanitized operational evidence only; no new full local gate claim.
 BLOCKED: STOP for review/direction at the closed release_record boundary.
+
+## Transaction perimeter architecture correction — source-only review checkpoint
+
+The approved design is recorded in plan commit e686246. Normal Abbott deployment
+no longer treats historical neighbor PIDs, starts, source SHAs, MedRoche release
+ID, boot UUID or Nginx hash as present-day authority. Fixed Abbott current/source/
+manifest/previous pins, account and browser prerequisites are unchanged. The
+sealed historical interrupted-recovery command is unchanged.
+
+The existing read-only preflight captures one private in-memory perimeter before
+account subprocesses, lock/directory/file creation or PM2 access. Bounded direct
+kernel TCP tables and numeric PID/fd discovery require exactly one owner of each
+IPv4 loopback listener3001/3002/3003. Fixed semantic UID/GID/cwd contracts,
+root-owned nonwritable Node binary/server command shape, valid nofollow source
+SHA files and the exact root-owned immutable MedRoche pointer remain mandatory.
+Snapshot fields include boot, PID/start, UID/GID, cwd/executable/cmdline, selected
+listener/inode, root cwd/binary/process metadata and release bytes/target/metadata.
+Unrelated process/socket activity is not snapshot authority; scan overflow,
+ambiguous owners, unsafe metadata and unresolvable proc races refuse.
+
+Nginx is read as a stable root-owned0644 regular nofollow file, bounded to1MiB.
+Structural sanity requires exactly one TLS server with the exact target hostname
+among server_name tokens; separate HTTP and composite aliases are accepted.
+Malformed syntax, unexpected Abbott markers/routes, dashboard18 locations and
+3004 targets refuse. Opaque `include` directives also refuse, including otherwise
+valid configurations, because included files are outside this single-file
+snapshot; expanding that contract needs separate review. UTF-8 decoding is
+strict, so distinct invalid byte sequences cannot normalize to one snapshot.
+The current bytes/hash/stable metadata are held in memory;
+there is no historical-hash comparison or config edit. No snapshot is accepted
+from a caller, environment, transport frame or temporary file.
+
+Exact comparisons reuse the existing gates immediately before activation/stop,
+after candidate health before pointer promotion and at compensation completion.
+A detected proof failure is latched for the transaction, so later reversion by
+another deployment cannot make compensation claim an unchanged perimeter.
+Initial refusal has zero mutation/platform commands; persistent post-mutation
+drift preserves the reviewed stopped-Abbott/review-lock/journal behavior. No
+non-Abbott deployment or supervisor behavior changed.
+
+TDD evidence: the initial valid-prior-source-update regression failed against
+historical pins. Expanded tests then exposed missing cwd-directory metadata and
+ownership checks, and an unlatched change/reversion; those RED failures passed
+after the narrow fixes. Synthetic coverage includes all three replacement PIDs,
+starts and source/pointer contracts, exact subsequent byte/metadata/identity
+drift, socket-owner ambiguity, IPv4/IPv6/wildcard/port encoding, scan limits,
+proc/fd races and symlinks, malformed records, Nginx aliases/markers/structure,
+buffer cleanup and existing worker compensation boundaries.
+
+An independent read-only review identified two Important Nginx issues: quoted
+brace/variable token handling and an accepted case-insensitive dashboard18 route
+or opaque include. New regressions failed before the fixes. The parser now keeps
+syntax and word tokens distinct, validates block/directive forms, and rejects
+those route/include cases. Focused re-review reported no remaining Important or
+Critical finding; the include limitation is now documented. A Linux fixture also
+models zero-sized proc files and shared namespace TCP tables. One overlapping
+local test run hit a generated artifact during rebuild; final verification was
+rerun in order after the build, without a product-code workaround.
+
+Fresh local gates: focused proof/deploy/transport/session289/289; ordered Abbott
+production build and full authority suite605/605; app/runtime contracts68/68;
+post-build issuer/attestation/smoke/capture/privacy/cleanup206/206; Abbott contract
+111/111. Deploy-source and release-runtime shell suites, exact route verification,
+contract wiring and public-assets security passed. Combined production build,
+root and focused TypeScript, syntax and whitespace checks passed. Lint has0
+errors and the same10 existing warnings. All owned fixture commands exited;
+exact deploy/recovery private-evidence directories and local3001/3004 listeners
+are absent. No real browser or credential process was launched.
+
+No push, live SSH/probe/deploy/recovery, PDF request, smoke/capture, DB/auth/fact/
+collector/cron, neighbor or Nginx action ran. Published refs remain last verified
+5b17026. Active6f09982/8c79 and predecessor f80607f/6cd2 are historical production
+evidence, not a fresh host attestation. Public route rollback target remains3001.
+TDD, the approved plan and verification-before-completion guided this checkpoint.
+DONE_WITH_CONCERNS: STOP for critical review before publication or any live use.

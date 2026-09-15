@@ -17,9 +17,10 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   const stat=file=>{try{return io.lstatSync(file);}catch(error){if(/^\/proc\/[1-9][0-9]*$/.test(file)&&error?.code==='ENOENT')reason('pid_absent');throw error;}};
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
   const record={scope:'abbott',id:'8c79caf495f147ad91b2174b9bc5f65c',sourceSha:'6f09982fb1e8068f02340ddfcb5c945fb02ebfd5',manifestDigest:'a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2',previousId:'6cd2f12e245a47dcbd5f6ce928c4ed83'};
-  const boot='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e',med='/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone';
-  const neighbors=[[3722244,'122353749',0,0,'/var/www/dashboard',3001],[791065,'131477500',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],[1870897,'139126198',983,983,med+'/apps/site-seo',3003]];
+  let boot,perimeterSnapshot,invalid=false;
+  const neighborPolicies=[['combined',0,0,'/var/www/dashboard',3001],['zaruku',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],['medroche',983,983,null,3003]];
   const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
+  const metadata=s=>Object.fromEntries(['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].map(k=>[k,s[k]]));
   function ancestry(file,uid=0,gid=0){
     for(let dir=path.dirname(file);dir!=='/';dir=path.dirname(dir)){
       const s=stat(dir),proc=/^\/proc\/[1-9][0-9]*(?:\/|$)/.test(dir);
@@ -35,7 +36,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       if(!a.isFile()||a.isSymbolicLink()||a.nlink!==1||a.uid!==uid||a.gid!==gid||a.mode&0o022||mode!==undefined&&(a.mode&0o7777)!==mode||!proc&&(a.size>max||io.realpathSync(file)!==file))fail();
       fd=io.openSync(file,io.constants.O_RDONLY|io.constants.O_NOFOLLOW);if(!stable(a,io.fstatSync(fd)))fail();
       bytes=Buffer.alloc(max+1);let n=0;while(n<bytes.length){const count=io.readSync(fd,bytes,n,bytes.length-n,n);if(!Number.isSafeInteger(count)||count<0||count>bytes.length-n)fail();if(!count)break;n+=count;}
-      if(n>max||!proc&&n!==a.size||!stable(a,io.fstatSync(fd))||!stable(a,stat(file)))fail();return bytes.subarray(0,n).toString('utf8');
+      if(n>max||!proc&&n!==a.size||!stable(a,io.fstatSync(fd))||!stable(a,stat(file)))fail();return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes.subarray(0,n));
     }finally{bytes?.fill(0);if(fd!==undefined)io.closeSync(fd);}
   }
   const json=file=>JSON.parse(read(file,8192,{mode:0o600}));
@@ -44,10 +45,11 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     reason('proc_metadata');
     const proc='/proc/'+pid,meta={uid,gid,proc:true};ancestry(proc+'/stat',uid,gid);
     const boundary=stat(proc);if(boundary.uid!==uid||boundary.gid!==gid){reason('uid_gid');fail();}if(!boundary.isDirectory()||boundary.isSymbolicLink()||io.realpathSync(proc)!==proc)fail();
+    let observedStart=start;
     const identity=()=>{
       const text=read(proc+'/stat',8192,meta),close=text.lastIndexOf(')'),v=text.slice(close+2).trim().split(/\s+/);
       if(!text.startsWith(pid+' (')||close<0||!['R','S','D','I'].includes(v[0]))fail();
-      reason('start_mismatch');if(v[19]!==start)fail();
+      reason('start_mismatch');if(observedStart===null){if(!/^[1-9][0-9]{0,19}$/.test(v[19]))fail();observedStart=v[19];}if(v[19]!==observedStart)fail();
       const status=read(proc+'/status',8192,meta);
       reason('uid_gid');
       for(const[field,value]of [['Uid',uid],['Gid',gid]]){const rows=status.split('\n').filter(l=>l.startsWith(field+':'));if(rows.length!==1||rows[0].trim().split(/\s+/).slice(1).join(',')!==[value,value,value,value].join(','))fail();}
@@ -72,20 +74,76 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     }
     reason('listener');if(listeners.length!==1||listeners[0][0]!=='tcp'||listeners[0][1]!=='0100007F:'+portHex||!sockets.has(listeners[0][2]))fail();
     identity();reason('executable');link(proc+'/exe',executable,uid,gid);if(!stable(binary,stat(executable)))fail();reason('proc_metadata');if(!stable(boundary,stat(proc)))fail();
+    return{pid,start:observedStart,uid,gid,cwd,executable,command,binary:metadata(binary),directory:metadata(boundary),listener:listeners[0]};
+  }
+  function nginxSanity(text){
+    if(/abbott/i.test(text)||/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/.test(text))fail();
+    const tokens=[];let word='',quote=null,started=false;
+    const flush=()=>{if(started){tokens.push({word});word='';started=false;}if(tokens.length>32768)fail();};
+    for(let i=0;i<text.length;i++){const c=text[i];if(quote){if(c==='\\'){if(++i>=text.length)fail();word+=text[i];}else if(c===quote)quote=null;else word+=c;continue;}
+      if(c==='"'||c==="'"){quote=c;started=true;continue;}if(c==='#'){flush();while(i<text.length&&text[i]!=='\n')i++;continue;}
+      if(c==='\\'){if(++i>=text.length)fail();word+=text[i];started=true;continue;}
+      if(c==='$'&&text[i+1]==='{'){const end=text.indexOf('}',i+2);if(end<0||! /^[A-Za-z0-9_]+$/.test(text.slice(i+2,end)))fail();word+=text.slice(i,end+1);i=end;started=true;continue;}
+      if(/\s/.test(c)){flush();continue;}if('{};'.includes(c)){flush();tokens.push({syntax:c});}else{word+=c;started=true;}
+    }flush();if(quote)fail();
+    const nodes=[],stack=[nodes];let directive=[];
+    for(const token of tokens){if(token.syntax==='{'||token.syntax===';'){if(!directive.length||!directive[0])fail();const node={name:directive[0],args:directive.slice(1),block:token.syntax==='{',children:[]};stack.at(-1).push(node);directive=[];if(node.block){stack.push(node.children);if(stack.length>32)fail();}}
+      else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else directive.push(token.word);
+    }if(stack.length!==1||directive.length)fail();
+    let tls=0;const visit=list=>{for(const n of list){const args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))fail();
+      // Includes are outside this single-file snapshot: never silently authorize them.
+      if(n.name==='include'||['listen','server_name'].includes(n.name)&&n.block||n.name==='location'&&(!n.block||!n.args.length)||n.name==='server'&&n.block&&n.args.length)fail();
+      if(n.name==='server'&&n.block&&n.children.some(x=>x.name==='server_name'&&x.args.includes('dashboards.adreports.ru'))&&n.children.some(x=>x.name==='listen'&&x.args.includes('ssl')&&x.args.some(v=>/^(?:443|\[::\]:443|[0-9.]+:443)$/.test(v))))tls++;
+      visit(n.children);
+    }};visit(nodes);if(tls!==1)fail();
+  }
+  function listenerTable(){
+    const result=[];for(const table of ['tcp','tcp6']){
+      const text=read('/proc/1/net/'+table,2*1024*1024,{proc:true}),address=new RegExp('^[0-9A-F]{'+(table==='tcp'?8:32)+'}:[0-9A-F]{4}$');
+      reason('listener');
+      for(const line of text.trim().split('\n').slice(1)){const v=line.trim().split(/\s+/);if(v.length<10||!address.test(v[1])||!address.test(v[2])||! /^[0-9A-F]{2}$/.test(v[3])||! /^\d+$/.test(v[7])||! /^\d+$/.test(v[9]))fail();
+        const port=Number.parseInt(v[1].split(':')[1],16);if(v[3]==='0A'&&[3001,3002,3003].includes(port))result.push({port,table,address:v[1],uid:Number(v[7]),inode:v[9]});
+      }
+    }
+    reason('listener');result.sort((a,b)=>a.port-b.port);if(result.length!==3||new Set(result.map(r=>r.inode)).size!==3||result.some((r,i)=>r.port!==3001+i||r.table!=='tcp'||r.address!=='0100007F:'+r.port.toString(16).toUpperCase().padStart(4,'0')||! /^[1-9][0-9]*$/.test(r.inode)))fail();return result;
+  }
+  function discover(){
+    const listeners=listenerTable(),owners=new Map(listeners.map(r=>[r.inode,new Set()]));
+    reason('proc_metadata');const entries=io.readdirSync('/proc');if(entries.length>8192)fail();const pids=entries.filter(n=>/^[1-9][0-9]{0,9}$/.test(n));if(pids.length>4096)fail();let total=0;
+    for(const name of pids){const proc='/proc/'+name;try{
+      const directory=stat(proc);if(!directory.isDirectory()||directory.isSymbolicLink()||io.realpathSync(proc)!==proc)fail();
+      const fd=proc+'/fd',s=stat(fd);if(!s.isDirectory()||s.isSymbolicLink()||io.realpathSync(fd)!==fd)fail();
+      const names=io.readdirSync(fd);total+=names.length;if(names.length>4096||total>65536||names.some(n=>!/^\d{1,10}$/.test(n)))fail();
+      for(const n of names){const file=fd+'/'+n;try{const before=stat(file);if(!before.isSymbolicLink())fail();const target=io.readlinkSync(file);if(!stable(before,stat(file)))fail();const m=/^socket:\[([1-9][0-9]*)\]$/.exec(target);if(m&&owners.has(m[1]))owners.get(m[1]).add(Number(name));}catch(error){if(error?.code!=='ENOENT')throw error;}}
+      if(!stable(directory,stat(proc)))fail();
+    }catch(error){if(error?.code!=='ENOENT')throw error;}}
+    if(!isDeepStrictEqual(listenerTable(),listeners))fail();
+    return listeners.map(r=>{phase('preflight_neighbor_'+neighborPolicies.find(p=>p[4]===r.port)[0],'listener');const ids=[...owners.get(r.inode)];if(ids.length!==1)fail();return{...r,pid:ids[0]};});
   }
   function perimeter(){
-    phase('preflight_current');
-    if(getuid()!==0||hostname()!=='ybjqbzojln'||read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim()!==boot)fail();
-    phase('preflight_nginx');
-    const nginx=read('/etc/nginx/conf.d/dashboard-next.conf',1048576,{mode:0o644});
-    if(digest(Buffer.from(nginx))!=='1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c')fail();
-    phase('preflight_neighbor_combined','release_record');
-    if(read('/var/www/dashboard/.release-source-sha',128).trim()!=='8f389a28df1c4b741ec33b7538f0354b74f5a40e')fail();
-    phase('preflight_neighbor_zaruku','release_record');
-    if(read('/var/www/dashboard-zaruku/.release-source-sha',128).trim()!=='af1948c8b9a0f70d8696afb9c8abc254408a5daa')fail();
-    phase('preflight_neighbor_medroche','release_record');
-    ancestry('/var/www/dashboard-medroche');link('/var/www/dashboard-medroche',med);
-    for(const [i,row]of neighbors.entries()){phase(['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'][i]);kernel(row,row[4]+'/server.js');}
+    phase('preflight_current');if(getuid()!==0||hostname()!=='ybjqbzojln')fail();
+    const observedBoot=read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim();if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(observedBoot))fail();if(boot&&boot!==observedBoot)fail();boot=observedBoot;
+    phase('preflight_nginx');const nginxPath='/etc/nginx/conf.d/dashboard-next.conf',nginx=read(nginxPath,1048576,{mode:0o644});nginxSanity(nginx);
+    const nginxRecord={bytes:nginx,hash:digest(Buffer.from(nginx)),metadata:metadata(stat(nginxPath))};
+    phase('preflight_neighbor_combined','listener');const discovered=discover(),neighbors=[];
+    for(const [name,uid,gid,fixedCwd,port]of neighborPolicies){
+      phase('preflight_neighbor_'+name,'listener');const listener=discovered.find(r=>r.port===port);if(!listener||listener.uid!==uid)fail();
+      reason('cwd');const cwd=io.realpathSync('/proc/'+listener.pid+'/cwd');
+      if(fixedCwd?cwd!==fixedCwd:!/^\/var\/www\/dashboard-medroche-releases\/[a-f0-9]{40}\/standalone\/apps\/site-seo$/.test(cwd))fail();
+      ancestry(cwd+'/server.js');const cwdDirectory=stat(cwd);
+      if(!cwdDirectory.isDirectory()||cwdDirectory.isSymbolicLink()||cwdDirectory.uid!==0||cwdDirectory.gid!==0||cwdDirectory.mode&0o022||io.realpathSync(cwd)!==cwd)fail();
+      reason('release_record');let release;
+      if(name==='medroche'){const target=cwd.slice(0,-'/apps/site-seo'.length),file='/var/www/dashboard-medroche';ancestry(file);link(file,target);release={target,metadata:metadata(stat(file))};}
+      else{const file=name==='combined'?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha',bytes=read(file,128);if(!/^[a-f0-9]{40}\n?$/.test(bytes))fail();release={bytes,metadata:metadata(stat(file))};}
+      const process=kernel([listener.pid,null,uid,gid,cwd,port],cwd+'/server.js');if(process.listener[2]!==listener.inode)fail();
+      reason('cwd');if(!stable(cwdDirectory,stat(cwd)))fail();
+      neighbors.push({name,release,process,listener,cwdDirectory:metadata(cwdDirectory)});
+    }
+    const snapshot={boot:observedBoot,nginx:nginxRecord,neighbors};
+    if(perimeterSnapshot){
+      phase('preflight_nginx');if(!isDeepStrictEqual(snapshot.nginx,perimeterSnapshot.nginx))fail();
+      for(let i=0;i<neighbors.length;i++){phase('preflight_neighbor_'+neighbors[i].name,'unknown');if(!isDeepStrictEqual(neighbors[i],perimeterSnapshot.neighbors[i]))fail();}
+    }else perimeterSnapshot=snapshot;
   }
   function preflight(){
     phase('preflight_current');
@@ -111,7 +169,8 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     perimeter();phase('preflight_current');kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
     if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record))fail();
   }
-  const closed=fn=>()=>{try{return fn();}catch{fail();}};
+  // A concurrent change cannot be forgiven by a later reversion during rollback.
+  const closed=fn=>()=>{try{if(invalid)fail();return fn();}catch{invalid=true;fail();}};
   return{preflight:closed(preflight),perimeter:closed(perimeter)};
 }
 

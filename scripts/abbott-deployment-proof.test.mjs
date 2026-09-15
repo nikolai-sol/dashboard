@@ -1,8 +1,9 @@
-import test from'node:test';import assert from'node:assert/strict';import fs from'node:fs';
+import test from'node:test';import assert from'node:assert/strict';import fs from'node:fs';import{createHash}from'node:crypto';
 const api=()=>import('./runtime-release-remote.mjs');
 const ID='8c79caf495f147ad91b2174b9bc5f65c',SHA='6f09982fb1e8068f02340ddfcb5c945fb02ebfd5',HASH='a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2';
 const NGINX='/etc/nginx/conf.d/dashboard-next.conf',ROOT='/var/www/dashboard-abbott',CONTROL='/var/www/.dashboard-abbott-control';
-const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e',NGINX_HASH='1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c';
+const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e';
+const NGINX_TEXT='server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; location / { proxy_pass http://127.0.0.1:3001; } }\n';
 function fixture(){
  const med='/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone';
  const record={scope:'abbott',id:ID,sourceSha:SHA,manifestDigest:HASH,previousId:'6cd2f12e245a47dcbd5f6ce928c4ed83'};
@@ -20,15 +21,22 @@ function fixture(){
   files.set(p+'/cmdline','next-server (v16.1.6)\0\0');links.set(p+'/cwd',cwd);links.set(p+'/exe','/usr/bin/node');links.set(p+'/fd/10',`socket:[${port}]`);
   files.set(p+'/net/tcp',`  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 0100007F:${port.toString(16).toUpperCase().padStart(4,'0')} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 ${uid} 0 ${port} 1 0000000000000000 100 0 0 10 0\n`);files.set(p+'/net/tcp6','  sl  local_address remote_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n');
  }
+ files.set(NGINX,NGINX_TEXT);
+ files.set('/proc/1/net/tcp','header\n'+processes.map(([pid])=>files.get('/proc/'+pid+'/net/tcp').split('\n')[1]).join('\n')+'\n');files.set('/proc/1/net/tcp6','header\n');
  const metadata=new Map(),fds=new Map(),buffers=[],opened=[],calls=[];let serial=1;
  function stat(p){const file=files.has(p),link=links.has(p),pid=Number(/^\/proc\/(\d+)/.exec(p)?.[1]),[uid,gid]=owners.get(pid)??[0,0],net=p.includes('/net');return{dev:1,ino:2,size:file?Buffer.byteLength(files.get(p)):0,uid:net?0:uid,gid:net?0:gid,mode:link?0o120777:file?0o100600:0o40755,nlink:1,mtimeMs:1,ctimeMs:1,isFile:()=>file,isDirectory:()=>!file&&!link,isSymbolicLink:()=>link,...metadata.get(p)};}
- const io={constants:fs.constants,lstatSync:stat,fstatSync:fd=>stat(fds.get(fd)),realpathSync:p=>links.get(p)??p,readlinkSync:p=>links.get(p),readdirSync:p=>p===CONTROL?[receiptPath.split('/').at(-1)]:p.endsWith('/fd')?['10']:[],openSync(p,flags){assert.equal(flags,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);opened.push(p);fds.set(++serial,p);return serial;},readSync(fd,b,o,l,pos){buffers.push(b);return Buffer.from(files.get(fds.get(fd))).copy(b,o,pos,pos+l);},closeSync:fd=>fds.delete(fd)};
+ const io={constants:fs.constants,lstatSync:stat,fstatSync:fd=>stat(fds.get(fd)),realpathSync:p=>links.get(p)??p,readlinkSync:p=>links.get(p),readdirSync:p=>p===CONTROL?[receiptPath.split('/').at(-1)]:p==='/proc'?['1','self','net',...processes.map(r=>String(r[0]))]:p==='/proc/1/fd'?[]:p.endsWith('/fd')?['10']:[],openSync(p,flags){assert.equal(flags,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);opened.push(p);fds.set(++serial,p);return serial;},readSync(fd,b,o,l,pos){buffers.push(b);return Buffer.from(files.get(fds.get(fd))).copy(b,o,pos,pos+l);},closeSync:fd=>fds.delete(fd)};
  for(const file of[NGINX,'/var/www/dashboard/.release-source-sha','/var/www/dashboard-zaruku/.release-source-sha'])metadata.set(file,{mode:0o100644});
  metadata.set('/usr/bin/node',{mode:0o100755});metadata.set('/var/lib/dashboard-abbott/browser-cache/stamp.json',{mode:0o100640,gid:984});
  metadata.set(CONTROL,{mode:0o40700});metadata.set('/var/www/dashboard-abbott-releases',{mode:0o40711});metadata.set('/var/www/dashboard-abbott-backups',{mode:0o40711});
- const options={io,hostname:()=> 'ybjqbzojln',getuid:()=>0,digest:b=>b.toString()==='nginx-fixture'?NGINX_HASH:HASH,verifyActive(r){calls.push('active');assert.deepEqual(r,record);},verifyBrowser(){calls.push('browser');return{archiveSha256:'fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'};}};
- return{options,files,links,metadata,calls,processes,receipt,receiptPath,fds,buffers,opened};
+ const options={io,hostname:()=> 'ybjqbzojln',getuid:()=>0,digest:b=>b.toString()==='manifest-fixture'?HASH:createHash('sha256').update(b).digest('hex'),verifyActive(r){calls.push('active');assert.deepEqual(r,record);},verifyBrowser(){calls.push('browser');return{archiveSha256:'fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'};}};
+ return{options,files,links,metadata,calls,processes,owners,receipt,receiptPath,fds,buffers,opened};
 }
+test('legitimate neighbor source update before snapshot is accepted, then pinned for the transaction',async()=>{
+ const m=await api(),f=fixture();f.files.set('/var/www/dashboard/.release-source-sha','a'.repeat(40)+'\n');
+ const proof=m.createAbbottDeploymentProof(f.options);assert.doesNotThrow(()=>proof.preflight());
+ f.files.set('/var/www/dashboard/.release-source-sha','b'.repeat(40)+'\n');assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+});
 test('fixed proof brands every host boundary without reading exception content',async()=>{
  const m=await api();
  for(const [stage,file]of [['preflight_current',CONTROL+'/current.json'],['preflight_browser','/var/lib/dashboard-abbott/browser-cache/stamp.json'],['preflight_nginx',NGINX],['preflight_neighbor_combined','/proc/3722244/stat'],['preflight_neighbor_zaruku','/proc/791065/stat'],['preflight_neighbor_medroche','/proc/1870897/stat']]){
@@ -43,7 +51,7 @@ test('fixed preflight uses only filesystem/kernel reads and checks exact existin
 for(const index of [0,1,2])for(const reason of ['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata'])test(`neighbor${index} closed subreason ${reason}`,async()=>{
  const m=await api(),f=fixture(),[pid,start]=f.processes[index],p='/proc/'+pid,seen=[];f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
  if(reason==='pid_absent'){const stat=f.options.io.lstatSync;f.options.io.lstatSync=(file,...a)=>{if(file===p)throw Object.assign(Error('private-token'),{code:'ENOENT'});return stat(file,...a);};}
- if(reason==='start_mismatch')f.files.set(p+'/stat',f.files.get(p+'/stat').replace(start,'999999'));
+ if(reason==='start_mismatch'){const read=f.options.io.readSync;f.options.io.readSync=(...a)=>{const n=read(...a);if(f.opened.at(-1)===p+'/cmdline')f.files.set(p+'/stat',f.files.get(p+'/stat').replace(start,'999999'));return n;};}
  if(reason==='uid_gid')f.files.set(p+'/status','Uid:\t9\t9\t9\t9\nGid:\t9\t9\t9\t9\n');
  if(reason==='cwd')f.links.set(p+'/cwd','/private-token');
  if(reason==='release_record'){if(index===2)f.links.set('/var/www/dashboard-medroche','/private-token');else f.files.set(index===0?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha','private-token');}
@@ -51,7 +59,7 @@ for(const index of [0,1,2])for(const reason of ['pid_absent','start_mismatch','u
  if(reason==='cmdline')f.files.set(p+'/cmdline','private-token\0');
  if(reason==='listener')f.links.set(p+'/fd/10','socket:[999999]');
  if(reason==='proc_metadata')f.metadata.set(p+'/stat',{nlink:2});
- assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'][index],reason});assert.doesNotMatch(JSON.stringify(seen),/private-token|999999/);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+ assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'][index],reason:reason==='pid_absent'?'listener':reason});assert.doesNotMatch(JSON.stringify(seen),/private-token|999999/);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
 });
 test('neighbor PID absence is not guessed from permissions or missing proc child files',async()=>{
  const m=await api();for(const mode of ['permission','child_missing','pid_owner']){const f=fixture(),seen=[],stat=f.options.io.lstatSync;f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
@@ -74,7 +82,7 @@ test('Linux four-digit ports3001-3004 detect IPv6 listeners and reject malformed
 test('fixed proof refuses source, receipt, nginx, kernel, listener, binary and browser drift without child calls',async()=>{
  const m=await api();assert.equal(typeof m.createAbbottDeploymentProof,'function');
  for(const mode of ['source','receipt','nginx_hash','symlink','hardlink','owner','mode','directory_mode','oversize','pid_reuse','uid','gid','cwd','exe','cmdline','listener_foreign','listener_wildcard','listener_duplicate','listener_uid','browser','account']){
-  const f=fixture(),p='/proc/791065';
+  const f=fixture(),p='/proc/791065',proof=m.createAbbottDeploymentProof(f.options);if(mode==='pid_reuse')proof.preflight();
   if(mode==='source')f.files.set('/var/www/dashboard/.release-source-sha','wrong');
   if(mode==='receipt'){f.receipt.process.sourceSha='f'.repeat(40);f.files.set(f.receiptPath,JSON.stringify(f.receipt));}
   if(mode==='nginx_hash')f.files.set(NGINX,'secret');
@@ -95,7 +103,7 @@ test('fixed proof refuses source, receipt, nginx, kernel, listener, binary and b
   if(mode==='listener_uid')f.files.set(p+'/net/tcp',f.files.get(p+'/net/tcp').replace(' 984 0 ',' 0 0 '));
   if(mode==='account')f.files.set('/etc/passwd','dashboard-abbott:x:0:984::/nonexistent:/usr/sbin/nologin\n');
   if(mode==='browser')f.options.verifyBrowser=()=>{throw Error('private-secret');};
-  assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},mode);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(x=>x===0)));
+  assert.throws(()=>mode==='pid_reuse'?proof.perimeter():m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},mode);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(x=>x===0)));
  }
 });
 test('stable nofollow reads reject replacement during read and same PID start drift during perimeter',async()=>{
@@ -116,7 +124,7 @@ test('semantic Node contract rejects writable binaries and arbitrary argv; fixed
 
 test('each neighbor and each current checkpoint identity is mandatory, never inferred from another process',async()=>{
  const m=await api();
- for(const pid of [3722244,791065,1870897]){const f=fixture();f.files.set('/proc/'+pid+'/stat',f.files.get('/proc/'+pid+'/stat').replace(/\d+$/,'999'));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});}
+ for(const pid of [3722244,791065,1870897]){const f=fixture(),proof=m.createAbbottDeploymentProof(f.options);proof.preflight();f.files.set('/proc/'+pid+'/stat',f.files.get('/proc/'+pid+'/stat').replace(/\d+$/,'999'));assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});}
  for(const field of ['scope','id','sourceSha','manifestDigest','previousId']){const f=fixture(),r=JSON.parse(f.files.get(CONTROL+'/current.json'));r[field]='private-secret';f.files.set(CONTROL+'/current.json',JSON.stringify(r));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});}
  const f=fixture();f.options.verifyActive=()=>{throw Object.assign(Error('private-secret'),{stderr:'private-secret',stdout:'private-secret'});};assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
 });
@@ -130,4 +138,102 @@ test('proof is filesystem-only and real Abbott path wires it before any account/
  for(const operation of ['platform.account()','fs.mkdirSync(LOCK','platform.browser(account)'])assert.ok(transaction.indexOf('platform.deploymentPreflight(phase)')<transaction.indexOf(operation));
  const wired=source.slice(source.indexOf('let abbottDeploymentProtection'),source.indexOf('  browser(account)'));
  assert.match(wired,/createAbbottDeploymentProof/);assert.match(wired,/verifyActive:record=>.*current\(\)/);assert.match(wired,/verifyBrowser:.*verifyBrowserInstallation/);assert.doesNotMatch(wired,/execFileSync|spawn|fetch/);
+});
+
+function replacePid(f,index,pid,start){
+ const row=f.processes[index],old=row[0],from='/proc/'+old,to='/proc/'+pid;
+ for(const map of [f.files,f.links,f.metadata])for(const [key,value]of [...map])if(key===from||key.startsWith(from+'/')){map.delete(key);map.set(to+key.slice(from.length),value);}
+ f.owners.set(pid,f.owners.get(old));f.owners.delete(old);row[0]=pid;row[1]=start;
+ f.files.set(to+'/stat',f.files.get(to+'/stat').replace(/^\d+/,String(pid)).replace(/\d+$/,start));
+}
+test('new valid neighbor PIDs, starts and release pointers are captured, never historical authority',async()=>{
+ const m=await api();for(const index of [0,1,2]){
+  const f=fixture();replacePid(f,index,50000+index,'900000');
+  if(index<2)f.files.set(index===0?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha','c'.repeat(40)+'\n');
+  else {const target='/var/www/dashboard-medroche-releases/'+'d'.repeat(40)+'/standalone';f.links.set('/var/www/dashboard-medroche',target);f.links.set('/proc/50002/cwd',target+'/apps/site-seo');}
+  const proof=m.createAbbottDeploymentProof(f.options);proof.preflight();replacePid(f,index,60000+index,'900001');assert.throws(()=>proof.perimeter());
+ }
+});
+test('every captured neighbor field and release metadata stays exact throughout the transaction',async()=>{
+ const m=await api();for(const mode of ['source','release_inode','release_mode','binary_inode','command','cwd_inode','start','boot','listener_inode','med_pointer']){
+  const f=fixture(),proof=m.createAbbottDeploymentProof(f.options);proof.preflight();
+  if(mode==='source')f.files.set('/var/www/dashboard-zaruku/.release-source-sha','e'.repeat(40)+'\n');
+  if(mode==='release_inode')f.metadata.set('/var/www/dashboard/.release-source-sha',{mode:0o100644,ino:20});
+  if(mode==='release_mode')f.metadata.set('/var/www/dashboard/.release-source-sha',{mode:0o100600});
+  if(mode==='binary_inode')f.metadata.set('/usr/bin/node',{mode:0o100755,ino:20});
+  if(mode==='command')f.files.set('/proc/791065/cmdline','/usr/bin/node\0/var/www/dashboard-zaruku/apps/zaruku/server.js\0');
+  if(mode==='cwd_inode')f.metadata.set('/var/www/dashboard-zaruku/apps/zaruku',{ino:20});
+  if(mode==='start')f.files.set('/proc/791065/stat',f.files.get('/proc/791065/stat').replace(/\d+$/,'900001'));
+  if(mode==='boot')f.files.set('/proc/sys/kernel/random/boot_id','2c736efb-eaa2-42d9-b247-bd1a2ef36a4e\n');
+  if(mode==='listener_inode'){for(const p of ['/proc/1/net/tcp','/proc/791065/net/tcp'])f.files.set(p,f.files.get(p).replace(' 3002 1 ',' 93002 1 '));f.links.set('/proc/791065/fd/10','socket:[93002]');}
+  if(mode==='med_pointer')f.metadata.set('/var/www/dashboard-medroche',{ino:20});
+  assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},mode);
+ }
+});
+test('neighbor cwd and release ancestry are root-owned nonwritable real directories',async()=>{
+ const m=await api();for(const file of ['/var/www/dashboard-zaruku/apps/zaruku','/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone/apps'])for(const mode of ['owner','write','symlink']){
+  const f=fixture();if(mode==='symlink')f.links.set(file,'/elsewhere');else f.metadata.set(file,mode==='owner'?{uid:983}:{mode:0o40777});assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},file+'/'+mode);
+ }
+});
+test('bounded discovery refuses ambiguous socket ownership, scan overflow and proc races',async()=>{
+ const m=await api();for(const mode of ['duplicate_owner','entries','pids','fds','total_fds','proc_link','fd_link','fd_race','listener_race']){
+  const f=fixture(),list=f.options.io.readdirSync,stat=f.options.io.lstatSync;
+  if(mode==='duplicate_owner'){f.processes.push([999,'100',0,0,'/',999]);f.links.set('/proc/999/fd/10','socket:[3001]');}
+  if(mode==='entries')f.options.io.readdirSync=p=>p==='/proc'?Array(8193).fill('unrelated'):list(p);
+  if(mode==='pids')f.options.io.readdirSync=p=>p==='/proc'?Array.from({length:4097},(_,i)=>String(i+1)):list(p);
+  if(mode==='fds')f.options.io.readdirSync=p=>p==='/proc/1/fd'?Array.from({length:4097},(_,i)=>String(i)):list(p);
+  if(mode==='total_fds'){f.options.io.readdirSync=p=>p==='/proc'?Array.from({length:17},(_,i)=>String(90000+i)):p.endsWith('/fd')?Array.from({length:4096},(_,i)=>String(i)):list(p);f.options.io.lstatSync=p=>/\/fd\/\d+$/.test(p)?{...stat(p),isDirectory:()=>false,isSymbolicLink:()=>true}:stat(p);f.options.io.readlinkSync=()=>'/unrelated';}
+  if(mode==='proc_link')f.links.set('/proc/791065','/proc/999');
+  if(mode==='fd_link')f.links.set('/proc/791065/fd','/private');
+  if(mode==='fd_race'){const link=f.options.io.readlinkSync;f.options.io.readlinkSync=p=>{const target=link(p);if(p==='/proc/791065/fd/10')f.metadata.set(p,{ino:999});return target;};}
+  if(mode==='listener_race')f.options.io.readdirSync=p=>{const names=list(p);if(p==='/proc')f.files.set('/proc/1/net/tcp',f.files.get('/proc/1/net/tcp').replace(' 3001 1 ',' 999 1 '));return names;};
+  assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},mode);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+ }
+});
+test('unrelated bounded processes and socket changes do not become perimeter authority',async()=>{
+ const m=await api(),f=fixture(),proof=m.createAbbottDeploymentProof(f.options);proof.preflight();
+ f.processes.push([999,'100',0,0,'/',999]);f.links.set('/proc/999/fd/10','socket:[99999]');proof.perimeter();
+ f.links.set('/proc/999/fd/10','/unrelated');proof.perimeter();
+});
+test('Nginx accepts a valid current composite HTTP/TLS config and pins exact bytes plus metadata',async()=>{
+ const m=await api();for(const mode of ['bytes','inode','mtime']){const f=fixture();f.files.set(NGINX,'# new preexisting deployment\n'+NGINX_TEXT.replace('alias.example','another.example'));const proof=m.createAbbottDeploymentProof(f.options);proof.preflight();
+  if(mode==='bytes')f.files.set(NGINX,f.files.get(NGINX)+'# subsequent change\n');else f.metadata.set(NGINX,{mode:0o100644,[mode==='inode'?'ino':'mtimeMs']:20});assert.throws(()=>proof.perimeter());
+ }
+});
+test('Nginx structural sanity refuses absent/multiple TLS, Abbott routes/markers and malformed syntax',async()=>{
+ const m=await api();for(const text of [NGINX_TEXT.replace('443 ssl','80'),NGINX_TEXT+NGINX_TEXT,NGINX_TEXT+'# ABBOTT BEGIN\n',NGINX_TEXT.replace('3001','3004'),NGINX_TEXT.replace('location /','location /dashboard/18'),NGINX_TEXT.replace('location /','location /_next-abbott'),NGINX_TEXT+'{',NGINX_TEXT+'\0',NGINX_TEXT.replace('dashboards.adreports.ru','other.example').replace('dashboards.adreports.ru','other.example')]){const f=fixture();f.files.set(NGINX,text);assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight());}
+});
+test('normal deployment perimeter contains no historical neighbor PID, release, boot or Nginx digest',()=>{
+ const source=fs.readFileSync(new URL('./runtime-release-remote.mjs',import.meta.url),'utf8').split('// Based on')[0];
+ for(const value of ['3722244','791065','1870897','122353749','131477500','139126198','13d68b0b2c820ba5d223f254bc4eba6d0cf24418','8f389a28df1c4b741ec33b7538f0354b74f5a40e','af1948c8b9a0f70d8696afb9c8abc254408a5daa','1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c',BOOT])assert.ok(!source.includes(value));
+ assert.match(source,/let boot,perimeterSnapshot/);assert.doesNotMatch(source,/snapshot.*(?:write|env|stdin)/i);
+});
+test('a detected perimeter change latches refusal even if the other deployment later reverts it',async()=>{
+ const m=await api(),f=fixture(),proof=m.createAbbottDeploymentProof(f.options);proof.preflight();const original=f.files.get(NGINX);
+ f.files.set(NGINX,original+'# concurrent change\n');assert.throws(()=>proof.perimeter());f.files.set(NGINX,original);assert.throws(()=>proof.perimeter());
+});
+test('global kernel inventory refuses wildcard/IPv6/duplicate or malformed protected listeners',async()=>{
+ const m=await api();for(const mode of ['wildcard','ipv6','duplicate','missing','inode_collision','short','long','lower']){
+  const f=fixture(),file='/proc/1/net/tcp',original=f.files.get(file),row=original.split('\n')[1];
+  if(mode==='wildcard')f.files.set(file,original.replace('0100007F:0BB9','00000000:0BB9'));
+  if(mode==='ipv6')f.files.set('/proc/1/net/tcp6','header\n'+row.replace('0100007F:','00000000000000000000000001000000:').replace('00000000:0000','00000000000000000000000000000000:0000')+'\n');
+  if(mode==='duplicate')f.files.set(file,original+row+'\n');
+  if(mode==='missing')f.files.set(file,original.replace(row+'\n',''));
+  if(mode==='inode_collision')f.files.set(file,original.replace(' 3002 1 ',' 3001 1 '));
+  if(['short','long','lower'].includes(mode))f.files.set(file,original.replace('0BB9',{short:'BB9',long:'00BB9',lower:'0bb9'}[mode]));
+  assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},mode);
+ }
+});
+test('Nginx syntax distinguishes quoted braces and variable data from directive/block tokens',async()=>{
+ const m=await api();for(const value of ['add_header X-Debug "}";','return 301 https://${host}$request_uri;']){const f=fixture();f.files.set(NGINX,NGINX_TEXT.replace('return 301 https://$host$request_uri;',value));assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight(),value);}
+});
+for(const value of ['location ~* ^/DASHBOARD/18 { proxy_pass http://127.0.0.1:3001; }','include /etc/nginx/locations-enabled/*.conf;','listen 443 ssl {}','server_name dashboards.adreports.ru {}','location /;'])test('Nginx refuses opaque route/block: '+value,async()=>{const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace('location / { proxy_pass http://127.0.0.1:3001; }',value));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});});
+test('Linux zero-size proc files and shared namespace TCP tables preserve selected owner proof',async()=>{
+ const m=await api(),f=fixture(),table=f.files.get('/proc/1/net/tcp');
+ for(const [file]of f.files)if(file.startsWith('/proc/'))f.metadata.set(file,{size:0});
+ for(const [pid]of f.processes)f.files.set('/proc/'+pid+'/net/tcp',table);
+ const proof=m.createAbbottDeploymentProof(f.options);proof.preflight();proof.perimeter();assert.equal(f.fds.size,0);
+});
+test('snapshot rejects invalid UTF-8 instead of normalizing distinct config bytes',async()=>{
+ const m=await api(),f=fixture();f.files.set(NGINX,Buffer.concat([Buffer.from(NGINX_TEXT+'# '),Buffer.from([0xff]),Buffer.from('\n')]));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
 });
