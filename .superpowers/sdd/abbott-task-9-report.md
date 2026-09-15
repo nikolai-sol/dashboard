@@ -1930,3 +1930,49 @@ push, credential, browser, deploy, smoke/capture or Nginx operation occurred.
 The existing interrupted host state and last published385e761 refs were not
 changed or freshly revalidated by this local-only checkpoint. Root cause of
 the startup refusal remains unknown pending an explicitly approved stage.
+
+### Approved staged inert matrix execution (2026-09-15)
+
+Fresh focused startup/evidence/diagnostic/wrapper tests passed:18/18. Clean
+approved HEAD aeb2c4e9e5e55e552510be5078a21a1371a161ec was published by ordinary
+fast-forward pushes only to codex/abbott-runtime-isolation and release/abbott.
+Both literal remote refs were reread through isolated Git authority and equal
+that exact HEAD. No other ref was changed.
+
+Executed each approved fixed stage exactly once, separately, through the exact
+clean-env installed-Node CLI. Closed results only:
+
+```
+ABBOTT_STARTUP_STAGE stage=ssh result=stderr_unknown category=none
+ABBOTT_STARTUP_STAGE stage=node result=stderr_unknown category=none
+ABBOTT_STARTUP_STAGE stage=loader result=stderr_unknown category=none
+```
+
+Each stage exited refused. No raw stderr/stdout, lengths, hashes or exception
+text were inspected or retained. The matrix does not establish a root cause;
+the first inert stage already refuses without Node. No recovery source/RUN
+was sent, and no recovery was attempted.
+
+For each stage, an independent bounded observer captured its private child and
+parent identity metadata in memory, verified both processes absent after exit,
+and verified the protected evidence file/directory removed. All three emitted
+ABBOTT_LOCAL_PRIVATE_EVIDENCE_CLEANUP_VERIFIED. All six stage/observer sessions
+were reaped. Subsequent checks emitted ABBOTT_LOCAL_VERIFICATION_PORTS_CLEAR
+and ABBOTT_REMOTE_RECOVERY_INVENTORY_CLEAR. No browser or credential resources
+were created.
+
+The bounded read-only post-matrix proof emitted
+ABBOTT_POST_MATRIX_STATE_VERIFIED. The known interrupted layout is unchanged:
+active candidate9aaed34; sealed oldf806 backup and old6cd2 current pointer;
+quarantine, deploy lock, recovery journal and next file absent. Exact pinned
+Abbott kernel identity/UID/GID/cwd, sole loopback3004 listener and health200
+remain unchanged. All three neighbor PID/start/cwd/UID/GID/release proofs and
+the prior exact Nginx config hash pass unchanged. Account and secret-file
+metadata pass. These are narrow marker/metadata checks, not a fresh full-tree
+or browser attestation, PM2-environment read, or evidence of restored activation.
+
+BLOCKED: all three inert stages returned the closed stderr_unknown result.
+No speculative fix or retry, recovery, deployment, token issuance, smoke,
+capture or Nginx action followed. Public routing remains combined3001 and the
+interrupted Abbott state remains unresolved. Stop for direction with this
+sanitized evidence-only commit; no publication of the evidence commit.
