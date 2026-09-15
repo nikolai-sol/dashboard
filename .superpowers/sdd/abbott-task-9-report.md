@@ -1,9 +1,58 @@
-# Abbott Task 9 — fixed include refusal diagnostics checkpoint
+# Abbott Task 9 — refined include diagnostic refusal evidence
 
-Current source status: DONE_WITH_CONCERNS; diagnostics-only follow-up verified,
-STOP for independent review. Live deployment remains blocked at the prior
-bbc9531 initial-inspect preflight_nginx/include_route refusal, before mutation.
-No diagnostic retry, new runtime record/pins or fresh remote attestation.
+Current status: BLOCKED. One approved deploy at cleand91e217 returned the fallback
+preflight_nginx/include_route during initial inspect, before mutation. Owned
+cleanup verified; no narrower live reason, new runtime record or complete remote
+perimeter attestation. STOP, no retry.
+
+## Approved single diagnostic deploy atd91e217
+
+Verified exact clean HEADd91e2177a1df5ed0a60110f3ac8fd315607b1f1c, branch/worktree/
+Git directory/backlink and installed Node realpath. Local origin matched the fixed
+repository; include/rewrite/pushurl/push/mirror/worktree-config redirection was
+absent. Isolated remote lookup outside every repository used disabled system/
+global Git configuration and fixed SSH. Both existing authorized refs were
+ancestors. Ordinary non-force pushes updated only
+refs/heads/codex/abbott-runtime-isolation and refs/heads/release/abbott to that exact
+SHA; a second literal lookup verified both. The owned empty lookup directory was
+removed and absence verified. No other ref changed.
+
+Exactly one command ran from the clean active worktree:
+
+```sh
+/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott
+```
+
+Exit1; exact closed line:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=include_route`
+
+The refined vocabulary did not yield a narrower reason. This is the retained
+fallback category, not evidence for one specific directive/value or an inferred
+relaxation. No config/include contents, arguments, environment, credentials or
+PM2 data were printed. The initial inspect refused at fragment validation after
+the fixed pair's bounded metadata/UTF-8 reads, before the neighbor snapshot,
+current/full-artifact/browser checks, lock inspection/creation, account/PM2
+operations, candidate build or activation. No runtime/neighbor/Nginx mutation
+occurred in this invocation. No follow-up diagnosis or retry ran.
+
+Canonical acknowledged REFUSED requires exact digest/status/diagnostic-paired
+terminal ACK, owned SSH PID/start capture, observed/verified exit and completed
+private evidence removal. The reviewed session zeroed transport buffers. Local
+deploy process exited1; local-only checks confirmed fixed deploy and recovery
+evidence directories absent and no3001/3004 TCP listeners. No forward, browser,
+credential or candidate temporary boot process was created. Git lookup cleanup
+also verified. Source remained clean before this evidence-only update.
+
+Limitations: no new release/source/control/manifest/predecessor pins exist.
+Historical6f09982/8c79 and predecessorf80607f/6cd2 remain historical, not fresh
+attestation. Remote lock/journal/temp absence, health3004, neighbor identities and
+complete main+include Nginx snapshot equality were not independently rechecked:
+preflight stopped before those gates. No supplemental remote verifier was used;
+these checks remain unperformed. The refusal is not a claimed full unchanged-state
+attestation. No push of this evidence commit, additional deploy/recovery,
+smoke/capture/PDF, DB/auth/fact/cron or Nginx edit/test/reload occurred. Route-only
+rollback remains3001. STOP for direction.
 
 ## Finite include inner-reason refinement — source-only TDD
 
