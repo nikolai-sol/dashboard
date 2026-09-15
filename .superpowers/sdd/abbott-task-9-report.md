@@ -863,3 +863,45 @@ this correction turn. The last production evidence remains the preceding failed
 attempt's verified unchanged runtime/Nginx identities and exited owned processes.
 Live smoke and visual acceptance are still outstanding; this code checkpoint
 does not convert either failed gate into a pass.
+
+### Approved corrected smoke attempt — BLOCKED, 2026-09-15
+
+The startup correction received dedicated approval. Clean HEAD
+`b4252b86e9c832231cd6c3d60514a26e54d44cc4` was ordinary fast-forward pushed to only
+`refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`;
+isolated literal remote lookups verified both exact SHAs afterward. The preceding
+checkpoint records its passing local gates. No app redeploy was needed or run;
+the fixed smoke still attests deployed release `6cd2f12e245a47dcbd5f6ce928c4ed83`,
+source `f80607fbc8a693aa2c720b0976938e88732cdf1a` and its pinned manifest.
+
+Executed only `node scripts/verify-abbott-shadow.mjs smoke`, with the unchanged
+fixed period `2026-09-01..2026-09-13` and strict in-memory/pipe issuer transport.
+It exited 1 with the sole fixed diagnostic `ABBOTT_VERIFICATION_REFUSED`.
+No `abbott-runtime-smoke.json` or smoke output directory was produced. The
+diagnostic does not identify the failing subgate; no data/PDF/privacy/alias/asset
+mismatch category is inferred and none of those acceptance checks is claimed.
+Unlike the first attempt, the operation returned through normal cleanup rather
+than stalling on module loading.
+
+The orchestrator recorded owned SSH PID 19139, start
+`Tue Sep 15 03:16:21 2026`, then `exitVerified: true`; its parent was PID 19131.
+Normal finally clears retained credential, attestation, capsule and returned
+child-output buffers before the forward-close attestation. An independent check
+confirmed ESRCH for both PIDs, local forwarding ports 3001/3004 free, and zero
+smoke output directories. No manual process signal/escalation was needed. No
+credential was written to file, argv, environment, report or tool output.
+
+Read-only checks before and after matched the exact host/boot, PM2 pid-file IDs,
+kernel PIDs/start times/cwds, UID/GID sets, release pointers and source stamps:
+dashboard-next ID1/PID3722244/start122353749/source8f389a28; dashboard-zaruku
+ID2/PID791065/start131477500/sourceaf1948c8; dashboard-medroche
+ID4/PID1870897/start139126198/immutable13d68b0b; dashboard-abbott
+ID5/PID542693/start160900613/sourcef80607f. Their full paths and SHAs remain those
+listed in the preceding operational evidence. Exact Nginx SHA-256 stayed
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+
+STOP on the failed smoke gate. No retry or visual-diagnostic implementation was
+performed. No Nginx backup/edit/test/reload/cutover, deploy, neighbor restart,
+DB/auth/admin mutation, credential rotation, collector or cron action occurred.
+Public route rollback target remains port 3001. Both smoke and the prior visual
+gate remain unpassed. This evidence-only update is local/unpushed.
