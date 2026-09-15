@@ -1,9 +1,9 @@
-# Abbott Task 9 — Nginx preflight diagnostics source checkpoint
+# Abbott Task 9 — Nginx unsupported-directive deployment refusal
 
-Current status: DONE_WITH_CONCERNS. Source-only closed Nginx boundary diagnostics
-are complete and awaiting re-review. Approved e719ad6 remains the last published
-commit and its preflight_nginx/failed refusal remains the latest live result.
-No retry, pin update, smoke, capture or Nginx change followed.
+Current status: BLOCKED. Approved ae5634f was published to both authorized refs;
+the single acknowledged deploy returned preflight_nginx/unsupported_directive
+before mutation. Cleanup verified. No retry, pin update, smoke, capture or
+Nginx change followed.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4372,3 +4372,43 @@ checkpoint did not publish any ref or attest new host state. Historical active
 6f09982/8c79 and predecessor f80607f/6cd2 are unchanged as report history only;
 public route-only rollback remains3001. STOP for parent re-review before one
 separately authorized diagnostic deploy. No automatic retry is authorized.
+
+## Approved operational attempt at ae5634f — unsupported-directive refusal
+
+The active isolated feature worktree was clean at
+`ae5634f85df99c43b6498b9aebfd7959cb7b8232`. Ordinary non-force fast-forward pushes
+updated only `refs/heads/codex/abbott-runtime-isolation` and
+`refs/heads/release/abbott` frome719ad6. An isolated Git lookup outside every
+repository, with system/global configuration disabled, verified both literal
+remote refs at the exact approved SHA; its owned empty temporary directory was
+removed. The preceding checkpoint records the approved full local gates; this
+operational turn does not claim another full test run.
+
+Exactly one approved fixed command ran from that clean active worktree:
+`/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott`.
+It exited1 with:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=unsupported_directive`
+
+The initial read-only inspect transaction refused within the existing restricted
+Nginx semantic contract. This category can represent an unsupported directive,
+context, literal location/proxy URI or header/return shape; it does not identify
+the specific live construct and is not evidence of a config change. No raw
+configuration, values or exception text were output or separately inspected.
+The preflight precedes lock creation, candidate build/preparation, filesystem
+writes and PM2 calls. The complete current/browser/perimeter proof did not
+finish, so no fresh full deployed or neighbor attestation is claimed.
+
+Accepted REFUSED required the exact digest/status-paired terminal ACK, captured
+SSH PID/start ownership, observed and verified exit, and successful private
+identity-evidence cleanup. Source/payload buffers were zeroed by the session.
+The local command exited. Independent local-only checks found the exact private
+deploy/recovery evidence directories absent and no local3001/3004 listeners.
+No browser, forward or credential session was created.
+
+No retry, source fix, pin update, additional host read, recovery, PDF request,
+smoke/capture, DB/auth/fact/collector/cron, neighbor or Nginx mutation followed.
+Historical active6f09982/8c79 and predecessor f80607f/6cd2 remain historical
+evidence, not newly attested by this incomplete preflight. Public route-only
+rollback remains3001. BLOCKED: STOP for review/direction at the closed
+unsupported_directive boundary.
