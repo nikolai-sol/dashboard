@@ -1,8 +1,9 @@
-# Abbott Task 9 — approved deployment stopped at Nginx preflight
+# Abbott Task 9 — Nginx preflight diagnostics source checkpoint
 
-Current status: BLOCKED. Approved e719ad6 was published to both authorized refs;
-the single acknowledged deploy refused at preflight_nginx/failed before mutation.
-Cleanup verified. No retry, pin update, smoke, capture or Nginx change followed.
+Current status: DONE_WITH_CONCERNS. Source-only closed Nginx boundary diagnostics
+are complete and awaiting re-review. Approved e719ad6 remains the last published
+commit and its preflight_nginx/failed refusal remains the latest live result.
+No retry, pin update, smoke, capture or Nginx change followed.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4331,3 +4332,43 @@ mutation or Nginx edit/reload occurred. Historical active6f09982/8c79 and
 predecessor f80607f/6cd2 remain historical evidence. Public route-only rollback
 remains3001; routing was not switched. BLOCKED: STOP for review/direction at
 the closed Nginx preflight boundary.
+
+## Nginx preflight Phase1 diagnostics — source-only review checkpoint
+
+Receiving-code-review and TDD skills guided this correction. Twenty new RED
+cases reproduced missing private boundary labels, missing status-paired wire
+support and generic worker outcomes. Private markers now distinguish metadata,
+utf8, syntax, tls_count, include, nested_server, variable_routing, regex_location,
+unsupported_directive, existing_abbott_route, existing_3004, snapshot_drift and
+unknown. Existing acceptance predicates, current Abbott pins, dynamic perimeter
+capture/recheck, compensation and SSH lifecycle are unchanged. No cause of the
+live Nginx refusal is inferred from these synthetic tests.
+
+Nginx REFUSED requires exactly one closed reason; old failed pairs refuse.
+Worker terminal normalization preserves only private allowlisted labels, ignoring
+all exception properties. Exact canonical JSON and digest/status-bound ACK checks
+reject extras, duplicates, forged/secret values and wrong terminal pairs. The
+ACK lexical reason grammar permits digits solely to transport utf8/existing_3004;
+exact enum and status validation remain mandatory. No raw configuration, path,
+URL, message, stdout/stderr or source content enters diagnostics. Snapshot drift
+means an exact mismatch after successful semantic read; invalid rereads retain
+their own earlier boundary category. Conservative comment/opaque-route refusal
+is explicitly unchanged, not silently relaxed to make the deployment proceed.
+
+GREEN evidence: focused proof/deploy/transport/session455/455 and full
+authority771/771 passed. Abbott production build and app/runtime suite, exact
+12-route/one-prefix verification, contract111/111, contract wiring and public
+assets security passed. Post-build issuer/compare/capture/smoke/asset/bounded-child/
+diagnostic regressions175/175 passed. Combined production build, root/focused
+typechecks, deploy-source/release-runtime shell suites, syntax and whitespace
+passed. Lint has0 errors and the same10 existing warnings. Independent read-only
+review found no Critical, Important or Minor findings and separately passed71
+focused diagnostic/worker/framing/local-loader tests.
+
+All owned fixture commands exited. Private deploy/recovery evidence directories
+are absent. No live SSH, credential, forward, browser, PDF request, deployment,
+recovery, DB/auth/fact/collector/cron, neighbor or Nginx action ran. This source
+checkpoint did not publish any ref or attest new host state. Historical active
+6f09982/8c79 and predecessor f80607f/6cd2 are unchanged as report history only;
+public route-only rollback remains3001. STOP for parent re-review before one
+separately authorized diagnostic deploy. No automatic retry is authorized.

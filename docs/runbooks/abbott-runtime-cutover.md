@@ -1,5 +1,27 @@
 # Abbott isolated-runtime cutover runbook
 
+### Nginx preflight reason diagnostics — STOP for review
+
+Approved e719ad6 reached the read-only Nginx boundary and returned only
+`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=failed`; it did not reach
+activation. The source-only diagnostic correction does not change acceptance.
+Private labels now distinguish `metadata`, `utf8`, `syntax`, `tls_count`,
+`include`, `nested_server`, `variable_routing`, `regex_location`,
+`unsupported_directive`, `existing_abbott_route`, `existing_3004`,
+`snapshot_drift`, and `unknown`. They identify the rejecting boundary, not a
+disclosed directive/value or proof of a production config change. Snapshot drift
+is an exact comparison failure after a semantically valid re-read; an invalid
+re-read retains its own earlier boundary reason. The existing conservative
+parser still refuses Abbott text in comments and ambiguous/unsupported routes.
+
+Only REFUSED may pair with this stage and exactly one listed reason. The old
+generic failed pair, extras, duplicate fields and malformed/digest-mismatched
+frames refuse. The worker never reads diagnostics from exception properties;
+stdout/stderr, config bytes, paths, values and URLs never enter public output.
+Unknown private labels become unknown. Other terminal status pairs and SSH
+lifecycle are unchanged. Review this commit before one separately authorized
+diagnostic deploy; do not run a config read, edit, retry or alternate verifier.
+
 ### Transaction perimeter snapshot checkpoint — critical review required
 
 Approved `ece704e` was published to both authorized refs, but no production
@@ -517,7 +539,7 @@ beside the internal record and repeats its stage/reason in the terminal ACK.
 Old frames without diagnostics are rejected. Status pairs are fixed:
 COMMITTED=`complete/none`, RESTORED=`compensation/restored`, and
 REVIEW_REQUIRED=`compensation/review_required`. REFUSED requires `failed` with
-one of `preflight_current`, `preflight_browser`, `preflight_nginx`,
+one of `preflight_current`, `preflight_browser`,
 `lock`, `prepare`, `activation_precheck`,
 `activation_stop`, `activation_start`, `candidate_health`, `pointer`,
 `compensation` or `unknown`; REFUSED can never mean `complete/none`.
@@ -538,6 +560,10 @@ the exact process directory is `pid_absent`; permissions and missing proc child
 files do not imply PID absence. Full filesystem/identity/listener acceptance is
 unchanged. These reasons are valid only with REFUSED plus a neighbor phase;
 verified compensation still uses its canonical compensation pair.
+
+`preflight_nginx` requires one of the thirteen closed boundary reasons listed
+at the top of this runbook, never `failed`; this diagnostic extension changes
+neither the parser's acceptance nor the fixed snapshot lifecycle.
 
 A local cooperative-abort timeout does not override a later exact, verified
 terminal ACK. Once framing/digest/status pairing and SSH exit are valid, the

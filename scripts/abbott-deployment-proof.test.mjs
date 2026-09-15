@@ -325,6 +325,33 @@ test('Nginx proxy URI requires a proven location context',async()=>{
  const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'proxy_pass http://127.0.0.1:3001;'));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
 });
 const locationIdentifiers={canonical:'18',leading_zero:'018',hex:'0x12',positive:'+18',decimal:'18.0',trailing_dot:'18.',scientific:'1.8e1',scientific_plus:'1.8e+1',binary:'0b10010',octal:'0o22',space:' 18 ',tab:'\t18\t',unicode_space:'\u00a018\u00a0',alias:'abbott',alias_case:'ABBOTT',alias_space:' abbott '};
+const nginxDiagnostics=[
+ ['metadata',f=>f.metadata.set(NGINX,{mode:0o100600})],
+ ['metadata',f=>f.links.set(NGINX,'/private-token')],
+ ['metadata',f=>{const open=f.options.io.openSync;f.options.io.openSync=(p,...args)=>{if(p===NGINX)throw Object.assign(Error('private-token'),{reason:'syntax',stdout:'private-token'});return open(p,...args);};}],
+ ['utf8',f=>f.files.set(NGINX,Buffer.concat([Buffer.from(NGINX_TEXT),Buffer.from([255])]))],
+ ['syntax',f=>f.files.set(NGINX,NGINX_TEXT+'"private-token')],
+ ['tls_count',f=>f.files.set(NGINX,NGINX_TEXT.replace('443 ssl','80'))],
+ ['include',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'include /private-token;'))],
+ ['nested_server',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location / { server { listen 80; } }'))],
+ ['nested_server',f=>f.files.set(NGINX,'upstream hidden { '+NGINX_TEXT+' }')],
+ ['variable_routing',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location / { proxy_pass http://$private_token; }'))],
+ ['variable_routing',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'set $target private-token;'))],
+ ['regex_location',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location ~* ^/private-token { return 404; }'))],
+ ['unsupported_directive',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'private_token value;'))],
+ ['existing_abbott_route',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location = /dashboard/018 { return 404; }'))],
+ ['existing_abbott_route',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location = /status { proxy_pass http://127.0.0.1:3001/api/dashboard/0x12; }'))],
+ ['existing_abbott_route',f=>f.files.set(NGINX,NGINX_TEXT+'# ABBOTT private-token\n')],
+ ['existing_3004',f=>f.files.set(NGINX,NGINX_TEXT.replace(':3001',':3004'))],
+];
+for(const [index,[reason,alter]]of nginxDiagnostics.entries())test('Nginx private closed boundary '+index+'/'+reason,async()=>{
+ const m=await api(),f=fixture(),seen=[];f.options.notePhase=(stage,reason)=>seen.push({stage,reason});alter(f);
+ assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:'preflight_nginx',reason});assert.deepEqual(f.calls,[]);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));assert.doesNotMatch(JSON.stringify(seen),/private-token|private_token|http|value/);
+});
+test('Nginx exact transaction recheck has private snapshot_drift diagnostic',async()=>{
+ const m=await api(),f=fixture(),seen=[];f.options.notePhase=(stage,reason)=>seen.push({stage,reason});const proof=m.createAbbottDeploymentProof(f.options);proof.preflight();f.files.set(NGINX,NGINX_TEXT+'# private-token\n');
+ assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:'preflight_nginx',reason:'snapshot_drift'});assert.doesNotMatch(JSON.stringify(seen),/private-token/);assert.equal(f.fds.size,0);
+});
 for(const mode of ['prefix','exact'])for(const[label,id]of Object.entries(locationIdentifiers))test('Nginx location normalizes numeric alias: '+mode+'/'+label,async()=>{
  const m=await api(),f=fixture(),seen=[];f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location ${mode==='exact'?'= ':''}"/api/dashboard/${id}" { proxy_pass http://127.0.0.1:3001; }`));f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
  assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(f.calls,[]);assert.equal(seen.at(-1).stage,'preflight_nginx');assert.equal(f.fds.size,0);

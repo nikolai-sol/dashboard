@@ -14,6 +14,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   let currentPhase='preflight_current';
   const phase=(stage,reason='failed')=>{currentPhase=stage;notePhase(stage,reason);};
   const reason=value=>{if(['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'].includes(currentPhase))notePhase(currentPhase,value);};
+  const nginxReason=value=>{if(currentPhase==='preflight_nginx')notePhase(currentPhase,value);};
   const stat=file=>{try{return io.lstatSync(file);}catch(error){if(/^\/proc\/[1-9][0-9]*$/.test(file)&&error?.code==='ENOENT')reason('pid_absent');throw error;}};
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
   const record={scope:'abbott',id:'8c79caf495f147ad91b2174b9bc5f65c',sourceSha:'6f09982fb1e8068f02340ddfcb5c945fb02ebfd5',manifestDigest:'a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2',previousId:'6cd2f12e245a47dcbd5f6ce928c4ed83'};
@@ -36,7 +37,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       if(!a.isFile()||a.isSymbolicLink()||a.nlink!==1||a.uid!==uid||a.gid!==gid||a.mode&0o022||mode!==undefined&&(a.mode&0o7777)!==mode||!proc&&(a.size>max||io.realpathSync(file)!==file))fail();
       fd=io.openSync(file,io.constants.O_RDONLY|io.constants.O_NOFOLLOW);if(!stable(a,io.fstatSync(fd)))fail();
       bytes=Buffer.alloc(max+1);let n=0;while(n<bytes.length){const count=io.readSync(fd,bytes,n,bytes.length-n,n);if(!Number.isSafeInteger(count)||count<0||count>bytes.length-n)fail();if(!count)break;n+=count;}
-      if(n>max||!proc&&n!==a.size||!stable(a,io.fstatSync(fd))||!stable(a,stat(file)))fail();return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes.subarray(0,n));
+      if(n>max||!proc&&n!==a.size||!stable(a,io.fstatSync(fd))||!stable(a,stat(file)))fail();nginxReason('utf8');return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes.subarray(0,n));
     }finally{bytes?.fill(0);if(fd!==undefined)io.closeSync(fd);}
   }
   const json=file=>JSON.parse(read(file,8192,{mode:0o600}));
@@ -77,7 +78,9 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     return{pid,start:observedStart,uid,gid,cwd,executable,command,binary:metadata(binary),directory:metadata(boundary),listener:listeners[0]};
   }
   function nginxSanity(text){
-    if(/abbott/i.test(text)||/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/.test(text))fail();
+    const refuse=code=>{nginxReason(code);fail();};
+    nginxReason('syntax');
+    if(/abbott/i.test(text)||/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/.test(text))refuse(/abbott/i.test(text)?'existing_abbott_route':'syntax');
     const tokens=[];let word='',quote=null,started=false;
     const flush=()=>{if(started){tokens.push({word});word='';started=false;}if(tokens.length>32768)fail();};
     for(let i=0;i<text.length;i++){const c=text[i];if(quote){if(c==='\\'){if(++i>=text.length)fail();word+=text[i];}else if(c===quote)quote=null;else word+=c;continue;}
@@ -91,7 +94,12 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else directive.push(token.word);
     }if(stack.length!==1||directive.length)fail();
     // conf.d is already in the HTTP context. A nested server cannot supply TLS authority.
-    if(nodes.some(n=>n.name!=='server'||!n.block||n.args.length))fail();
+    const unsupported=n=>n.name==='include'?'include':['set','map','rewrite'].includes(n.name)?'variable_routing':n.name==='server'?'nested_server':'unsupported_directive';
+    if(nodes.some(n=>n.name!=='server'||!n.block||n.args.length)){
+      const n=nodes.find(n=>n.name!=='server'||!n.block||n.args.length),containsServer=n=>n.children.some(c=>c.name==='server'||containsServer(c));
+      refuse(containsServer(n)?'nested_server':unsupported(n));
+    }
+    nginxReason('tls_count');
     const hostBlocks=nodes.filter(n=>n.children.some(x=>x.name==='server_name'&&!x.block&&x.args.some(v=>v.toLowerCase().replace(/\.$/,'')==='dashboards.adreports.ru')));
     const targets=hostBlocks.filter(n=>n.children.some(x=>x.name==='listen'&&!x.block&&x.args.includes('ssl')&&x.args.some(v=>/^(?:443|\[::\]:443|[0-9.]+:443)$/.test(v))));
     if(targets.length!==1)fail();
@@ -100,35 +108,35 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     for(const n of hostBlocks.filter(n=>n!==targets[0])){const listens=n.children.filter(x=>x.name==='listen');if(!listens.length||listens.some(x=>x.block||x.args.includes('ssl')||! /^(?:80|\[::\]:80|[0-9.]+:80)$/.test(x.args[0])))fail();}
     const passive=new Set(['listen','server_name','ssl_certificate','ssl_certificate_key','ssl_protocols','ssl_ciphers','ssl_prefer_server_ciphers','ssl_session_cache','ssl_session_timeout','ssl_session_tickets','ssl_dhparam','ssl_stapling','ssl_stapling_verify','ssl_trusted_certificate','resolver','resolver_timeout','access_log','error_log','client_max_body_size','client_body_timeout','send_timeout','keepalive_timeout','proxy_http_version','proxy_set_header','proxy_read_timeout','proxy_connect_timeout','proxy_send_timeout','proxy_buffering','proxy_request_buffering','proxy_cache_bypass','proxy_no_cache','proxy_buffers','proxy_buffer_size','proxy_busy_buffers_size','add_header','expires','etag','gzip','gzip_types']);
     const unrelatedPath=literal=>{
-      if(literal&&(literal.includes('//')||path.posix.normalize(literal)!==literal))fail();
+      if(literal&&(literal.includes('//')||path.posix.normalize(literal)!==literal))refuse('unsupported_directive');
       const segments=literal.toLowerCase().split('/').filter(Boolean);
-      if(segments.some((part,i)=>part==='_next-abbott'||part==='dashboard'&&(segments[i+1]==='abbott'||Number(segments[i+1])===18)))fail();
+      if(segments.some((part,i)=>part==='_next-abbott'||part==='dashboard'&&(segments[i+1]==='abbott'||Number(segments[i+1])===18)))refuse('existing_abbott_route');
     };
-    const visit=(list,context='root',selected=false,location=null)=>{for(const n of list){let childLocation=location;const args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))fail();
+    const visit=(list,context='root',selected=false,location=null)=>{for(const n of list){nginxReason('unknown');let childLocation=location;const args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))refuse(/abbott/i.test(n.name+' '+args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args)?'existing_abbott_route':'existing_3004');
       // Includes are outside this single-file snapshot: never silently authorize them.
-      if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))fail();
+      if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))refuse(unsupported(n));
       const active=selected||n===targets[0];
-      if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))fail();
+      if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))refuse(unsupported(n));
       if(active&&n.name!=='server'){
         if(n.name==='location'){
           const literal=n.args.length===1?n.args[0]:n.args.length===2&&n.args[0]==='='?n.args[1]:null;
-          if(!literal||!/^\/[A-Za-z0-9_./-]*$/.test(literal))fail();
+          if(!literal||!/^\/[A-Za-z0-9_./-]*$/.test(literal))refuse(args.includes('$')?'variable_routing':n.args.some(v=>['~','~*','^~'].includes(v))?'regex_location':'unsupported_directive');
           unrelatedPath(literal);
           childLocation={literal,exact:n.args.length===2};
         }else if(n.name==='proxy_pass'){
           // Only the three literal, independently protected loopback runtimes.
           const target=n.args.length===1&&/^http:\/\/127\.0\.0\.1:300[123](\/[A-Za-z0-9_./~-]*)?$/.exec(n.args[0]);
-          if(!target||!location)fail();const uri=target[1]??'';
+          if(!target||!location)refuse(args.includes('$')?'variable_routing':'unsupported_directive');const uri=target[1]??'';
           // Never normalize an ambiguous rewrite into apparent unrelated authority.
           unrelatedPath(uri);
           // Prefix replacement appends unmatched request bytes. Only identity
           // replacement is provable here; other static rewrites require exact locations.
-          if(uri&&!location.exact&&uri!==location.literal)fail();
+          if(uri&&!location.exact&&uri!==location.literal)refuse('unsupported_directive');
         }else if(n.name==='return'){
-          if(n.args.length!==1||! /^[1-5][0-9]{2}$/.test(n.args[0]))fail();
+          if(n.args.length!==1||! /^[1-5][0-9]{2}$/.test(n.args[0]))refuse(args.includes('$')?'variable_routing':'unsupported_directive');
         }else if(n.name==='add_header'){
-          if(![2,3].includes(n.args.length)||n.args.length===3&&n.args[2]!=='always'||! /^[A-Za-z0-9-]+$/.test(n.args[0])||['location','refresh'].includes(n.args[0].toLowerCase()))fail();
-        }else if(!passive.has(n.name))fail();
+          if(![2,3].includes(n.args.length)||n.args.length===3&&n.args[2]!=='always'||! /^[A-Za-z0-9-]+$/.test(n.args[0])||['location','refresh'].includes(n.args[0].toLowerCase()))refuse(n.args[0]?.includes('$')?'variable_routing':'unsupported_directive');
+        }else if(!passive.has(n.name))refuse(unsupported(n));
       }
       visit(n.children,n.name,active,childLocation);
     }};visit(nodes);
@@ -159,7 +167,8 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   function perimeter(){
     phase('preflight_current');if(getuid()!==0||hostname()!=='ybjqbzojln')fail();
     const observedBoot=read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim();if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(observedBoot))fail();if(boot&&boot!==observedBoot)fail();boot=observedBoot;
-    phase('preflight_nginx');const nginxPath='/etc/nginx/conf.d/dashboard-next.conf',nginx=read(nginxPath,1048576,{mode:0o644});nginxSanity(nginx);
+    phase('preflight_nginx','metadata');const nginxPath='/etc/nginx/conf.d/dashboard-next.conf',nginx=read(nginxPath,1048576,{mode:0o644});nginxSanity(nginx);
+    nginxReason('metadata');
     const nginxRecord={bytes:nginx,hash:digest(Buffer.from(nginx)),metadata:metadata(stat(nginxPath))};
     phase('preflight_neighbor_combined','listener');const discovered=discover(),neighbors=[];
     for(const [name,uid,gid,fixedCwd,port]of neighborPolicies){
@@ -177,7 +186,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     }
     const snapshot={boot:observedBoot,nginx:nginxRecord,neighbors};
     if(perimeterSnapshot){
-      phase('preflight_nginx');if(!isDeepStrictEqual(snapshot.nginx,perimeterSnapshot.nginx))fail();
+      phase('preflight_nginx','snapshot_drift');if(!isDeepStrictEqual(snapshot.nginx,perimeterSnapshot.nginx))fail();
       for(let i=0;i<neighbors.length;i++){phase('preflight_neighbor_'+neighbors[i].name,'unknown');if(!isDeepStrictEqual(neighbors[i],perimeterSnapshot.neighbors[i]))fail();}
     }else perimeterSnapshot=snapshot;
   }
@@ -1084,7 +1093,8 @@ async function transactAcknowledged(request,signal,platform=realPlatform){
   catch{
     const stage=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(terminal.phase)?terminal.phase:'unknown';
     const neighbor=['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'].includes(stage);
-    const reason=neighbor?(['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown'].includes(terminal.reason)?terminal.reason:'unknown'):'failed';
+    const specific=neighbor?['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']:stage==='preflight_nginx'?['metadata','utf8','syntax','tls_count','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown']:null;
+    const reason=specific?(specific.includes(terminal.reason)?terminal.reason:'unknown'):'failed';
     const diagnostic=terminal.status==='RESTORED'?{stage:'compensation',reason:'restored'}:terminal.status==='REVIEW_REQUIRED'?{stage:'compensation',reason:'review_required'}:{stage,reason};
     return{status:terminal.status,record:null,diagnostic};
   }

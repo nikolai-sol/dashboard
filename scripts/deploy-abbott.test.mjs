@@ -457,6 +457,13 @@ test('acknowledged worker preserves only exact neighbor subreasons from private 
   assert.deepEqual(JSON.parse(JSON.stringify(r)),{status:'REFUSED',record:null,diagnostic:{stage,reason:reason==='private-token'?'unknown':reason}});assert.doesNotMatch(JSON.stringify(r),/private-token/);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
  }finally{f.cleanup();}}
 });
+test('acknowledged worker carries only closed Nginx proof markers through REFUSED',async()=>{
+ for(const reason of ['metadata','utf8','syntax','tls_count','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown','failed','private-token']){const f=fixture();try{
+  f.platform.deploymentPreflight=note=>{note('preflight_nginx',reason);throw Object.assign(Error('private-token'),{stage:'complete',reason:'none',stderr:'private-token'});};
+  const r=await f.installer.transactAcknowledged({action:'inspect'},new AbortController().signal,f.platform);
+  assert.deepEqual(JSON.parse(JSON.stringify(r)),{status:'REFUSED',record:null,diagnostic:{stage:'preflight_nginx',reason:['failed','private-token'].includes(reason)?'unknown':reason}});assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);assert.doesNotMatch(JSON.stringify(r),/private-token/);
+ }finally{f.cleanup();}}
+});
 test('acknowledged worker returns only completed, restored or protected-review outcomes',async()=>{
  for(const mode of['success','pre_abort','compensated','rollback_failure','spoofed_error']){const f=fixture();try{
   assert.equal(typeof f.installer.transactAcknowledged,'function');const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),abort=new AbortController();
