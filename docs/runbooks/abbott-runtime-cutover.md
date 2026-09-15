@@ -219,6 +219,66 @@ npm run deploy:abbott
 
 `deploy:abbott` installs and starts only `dashboard-abbott`; it does not edit or reload Nginx. Verify the direct listener before authorization:
 
+#### Interrupted activation recovery checkpoint (not yet authorized to execute)
+
+The 2026-09-15 attempt left candidate `9aaed34` at the active directory while
+PM2 registration and current pointer retained predecessor `f80607f`. The
+candidate and sealed predecessor backup both attest. Health alone does not
+prove release consistency. Do not rerun deploy, use ordinary rollback, update
+the asset pin, or promote the candidate pointer in this state.
+
+Only after the dedicated recovery source review and explicit execution approval,
+use this single local command from the clean fixed isolation worktree:
+
+```bash
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/recover-abbott-activation.mjs
+```
+
+No arguments, environment overrides, standalone remote invocation, source edits
+or alternate SSH command are allowed. The recovery pins candidate control
+`e9e548a6414c4d8c836c7715c66f37ad`/manifest
+`a62b6297cdc903ed4d0e94357e7dfbe8d552ed4bf76db95be6582d913433c74b`, old control
+`6cd2f12e245a47dcbd5f6ce928c4ed83`/manifest
+`7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f`, and exact
+observed Abbott ID5/PID714550/start162192969/UID982/GID984 with predecessor
+binding. Host, boot, source/parser proof, neighbor identities, Nginx hash, trees,
+env overlays, listener and kernel identity must match before and under the lock.
+
+It stops only the pinned Abbott registration, verifies process/listener exit,
+parks the candidate with an atomic rename and atomically restores the sealed
+backup at the active path. Only the old protected control may restart Abbott.
+Old artifact, pointer, binding, identity, health, listener and neighbors must all
+pass before the lock is removed. The candidate remains preserved at the fixed
+`/var/www/dashboard-abbott-releases/e9e548a6414c4d8c836c7715c66f37ad-interrupted-recovery`
+path. The root-only journal is
+`/var/www/.dashboard-abbott-control/interrupted-recovery-e9e548a6414c4d8c836c7715c66f37ad.json`.
+
+Cancellation after mutation stops only the captured Abbott process and attempts
+guarded layout compensation. It never restarts mismatched candidate code. Any
+failure retains the journal and lock plus both trees for review; compensation
+itself may refuse if inode/ownership/precondition evidence drifted. Do not remove
+these files or improvise a recovery. A pre-mutation refusal after taking the
+lock may conservatively leave the root-only lock for review as well.
+
+The recovery-only SSH transport pins host/IP/root/key/known-hosts, disables
+config/proxies/agents/multiplexing, and sends a bounded hash-bound source frame.
+It contains no credentials. Local signals send an explicit abort control line;
+remote EOF/abort triggers compensation. Local signal handlers remain installed
+until acknowledgement and verified SSH exit or the bounded failure deadline.
+The remote watchdog is90seconds; local acknowledgement deadline300seconds,
+identity-checked SSH TERM/KILL grace60seconds and final exit wait5seconds.
+
+Only `ABBOTT_RECOVERY_RESTORED` acknowledges complete predecessor restoration.
+`ABBOTT_RECOVERY_REVIEW_REQUIRED` acknowledges a terminal attempt requiring
+inspection, not successful cleanup. `ABBOTT_RECOVERY_UNACKNOWLEDGED` means no
+trusted terminal acknowledgement and must never be reported as remote cleanup.
+`ABBOTT_RECOVERY_REFUSED` is not restoration. After any result, independently
+verify the safe host state and task-owned process exit. No Nginx change, smoke,
+token issuance, capture or PM2 update implementation belongs to this checkpoint.
+The PM2 release-binding update defect is a separate checkpoint after recovery.
+
+#### Normal shadow health check (not a recovery substitute)
+
 ```bash
 test "$(ssh beget 'curl --fail --silent --show-error http://127.0.0.1:3004/api/health')" = \
   '{"ok":true,"scope":"abbott","database":"connected"}'

@@ -228,8 +228,14 @@ function fixture() {
     async assertNoListener() { assert.equal(listening, false, 'candidate listener must be absent before restoration'); events.push(['no-listener']); },
     async start(control) {
       events.push(['start', control]);
+      const previousRegistration = processRow?.pm2_env;
       processRow = { name: 'dashboard-abbott', pid: ++serial, pm_id: serial, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'], uid: 'dashboard-abbott', gid: 'dashboard-abbott', RUNTIME_RELEASE_ID: path.basename(control), RUNTIME_RELEASE_SOURCE_SHA: fs.readFileSync(map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), status: 'online' } };
       startup = nextStartup; nextStartup = 'ready'; listening = startup === 'ready';
+      if (startup === 'retained:predecessor') {
+        processRow.pm2_env.RUNTIME_RELEASE_ID = previousRegistration.RUNTIME_RELEASE_ID;
+        processRow.pm2_env.RUNTIME_RELEASE_SOURCE_SHA = previousRegistration.RUNTIME_RELEASE_SOURCE_SHA;
+        listening = true;
+      }
       if (startup.startsWith('early:')) {
         processRow.pid = 0;
         processRow.pm2_env.status = startup === 'early:waiting restart' ? 'waiting restart' : 'errored';
@@ -310,6 +316,27 @@ for (const mode of ['delayed', 'timeout', 'fail', 'exited']) test(`candidate own
     assert.equal(restored.sourceSha, (mode === 'delayed' ? 'b' : 'a').repeat(40));
     assert.equal(f.installer.inspectActiveRuntime().sourceSha, restored.sourceSha);
     assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')), false);
+  } finally { f.cleanup(); }
+});
+
+test('live replacement PID retaining predecessor binding requires recovery review, not pointer promotion or automatic stop', async () => {
+  const f = fixture();
+  try {
+    const old = await f.installer.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload('a'.repeat(40)) }, f.platform);
+    f.nextStartup('retained:predecessor');
+    await assert.rejects(f.installer.transact({ action: 'deploy', expectedActiveSha: old.sourceSha, payload: f.payload('b'.repeat(40)) }, f.platform), /ownership requires review/);
+    assert.equal(f.events.filter(event => event[0] === 'start').length, 2);
+    assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
+    assert.equal(f.platform.registration().registration.releaseId, old.id);
+    assert.equal(f.platform.registration().pid, 12);
+    assert.equal(JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json'))).id, old.id);
+    assert.equal(fs.readFileSync(f.map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), 'b'.repeat(40));
+    assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${old.id}/.release-source-sha`), 'utf8').trim(), old.sourceSha);
+    assert.throws(() => f.installer.inspectActiveRuntime(), /external authority/);
+    assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')), false);
+    await assert.rejects(f.installer.transact({ action: 'rollback', expectedActiveSha: old.sourceSha }, f.platform), /external authority/);
+    assert.equal(f.events.filter(event => event[0] === 'start').length, 2);
+    assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
   } finally { f.cleanup(); }
 });
 

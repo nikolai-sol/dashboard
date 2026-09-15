@@ -1476,3 +1476,148 @@ No browser or credential resource was created. No Nginx backup was needed;
 public routing and route-only rollback target remain combined port3001.
 The parent authorized a narrow new-release attestation pin update after a
 successful deploy, but that prerequisite was not reached.
+
+### Clean invocation retry and interrupted activation — 2026-09-15
+
+The owner authorized an invocation-only retry without weakening source guards.
+Local no-network proof used `/usr/bin/env -i` and verified absolute Node
+`/opt/homebrew/Cellar/node/25.6.1_1/bin/node`; no variables were supplied.
+macOS automatically adds only `__CF_USER_TEXT_ENCODING`; the reviewed prohibited
+key scan passed. Four bootstrap tests passed in this clean environment.
+
+The single approved retry returned `ABBOTT_BROWSER_CREATED`. Bootstrap PID63337
+and owned SSH63346 (ps start `Tue Sep 15 04:58:34 2026`) exited and were
+independently verified ESRCH. Independent
+read-only verification confirmed core24.39.1, browsers2.13.0, Linux
+chrome-headless-shell146.0.7680.76, official Chrome-for-Testing source, full
+immutable file inventory and archive SHA-256
+`fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04`.
+UID982/GID984 execute/access and bounded ldd checks passed. The exact browser
+parent contained only browser-cache, no staging residue. No detached downloader
+was used; the awaited download/extraction/SSH pipeline completed and exited.
+
+Per explicit approval, deployment used a temporary detached worktree at exact
+`9aaed34feeb9b73b4d177dccab5a2b750776b4c3`, preserving branch c74aaa2.
+The normal fixed `npm run deploy:abbott` returned only
+`Refusing fixed runtime operation`. It reached activation after its build,
+local gates and staged artifact verification, but did not publish a successful
+release receipt. Deployment parent63995 and worker64005 exited. The temporary
+worktree was removed with normal git worktree remove; its parent directory and
+Git registration were independently verified absent. No source changes or
+force operation occurred there.
+
+CORRECTION: an early progress message inferred predecessor restoration from
+the old current.json pointer plus health. That inference is explicitly
+retracted. Pointer-only preflight did not prove the active artifact identity.
+Subsequent exact filesystem and PM2 evidence proves interrupted activation:
+
+- Active regular directory `/var/www/dashboard-abbott` is candidate9aaed34,
+  control `e9e548a6414c4d8c836c7715c66f37ad`, manifest
+  `a62b6297cdc903ed4d0e94357e7dfbe8d552ed4bf76db95be6582d913433c74b`.
+- Current pointer still equals immutable predecessor6cd2/f806/7b9a record.
+- Exact backup `/var/www/dashboard-abbott-backups/6cd2f12e245a47dcbd5f6ce928c4ed83`
+  contains f806. Both candidate and backup complete trees independently pass
+  the worker's unchanged readRecord/attestTree read-only authority checks.
+- PM2 ID5/PID714550/start162192969 is online, UID982/GID984, exact fixed launch
+  and cwd, sole loopback3004 listener, direct database health200. Its registration
+  retains predecessor source f806/release6cd2, not candidate binding.
+- Candidate rendered browser env matches the fixed executable path in the
+  renderer's single-quoted format; root:GID9840640 single-link metadata passes.
+  An initial double-quote comparison was corrected read-only; it was a probe
+  format error, not an env defect. No values were printed.
+- Deploy lock is absent; no parked verification env remains. One ownership
+  receipt predates this failed activation; no candidate-success receipt exists.
+
+The deterministic refusal boundary is the new-registration check, before
+ownedRegistration assignment. The recovery catch then refuses to stop a
+registration not bound to the candidate, leaving candidate files, old pointer
+and preserved backup. A synthetic real-worker regression reproduces an online
+replacement PID retaining predecessor binding: no automatic stop/promotion,
+backup intact, pointer unchanged, lock removed, and ordinary inspect/rollback
+refusing the active-versus-pointer mismatch. All37 focused deploy tests passed.
+Installed PM2 is5.3.1; its static env-merge code was inspected read-only, but the
+deeper cause of the retained binding is not yet claimed resolved.
+
+Neighbors remain ID1/PID3722244/start122353749, ID2/PID791065/start131477500,
+ID4/PID1870897/start139126198 with unchanged source/release/cwd/UID/GID.
+Nginx remains SHA-256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+Abbott/combined children are zero. Read-only diagnosis SSH sessions exited.
+No token, browser session, smoke/capture, screenshot, PDF retry, pin update or
+Nginx action followed. Public routing/route rollback remains combined3001.
+Pointer-only promotion is unsafe; ordinary deploy/rollback is also blocked by
+the verified inconsistency. A separately reviewed exact-state recovery command
+is now authorized for local implementation only, not execution.
+
+### Checkpoint A — fixed interrupted-activation recovery implementation
+
+The owner approved the rollback design and its conservative failure semantics:
+verify the exact observed state, take only the Abbott lock, stop the exact
+stale-bound Abbott process, park the candidate, restore the sealed predecessor,
+restart only old protected control, and verify every authority before unlock.
+No candidate pointer promotion or normal deploy-path weakening is included.
+Checkpoint B (PM2 binding update correction) is deferred until host recovery.
+
+Implemented the recovery-only module and fixed local entrypoint. The unchanged
+worker tree/record attesters and PM2 adapter are exposed to this dedicated path;
+normal current()/deploy/rollback inconsistency gates remain intact. The new
+path pins candidate e9e548/9aaed34/a62b, predecessor6cd2/f806/7b9a, ID5/PID714550/
+start162192969/UID982/GID984, host/boot/daemon, all three neighbor identities,
+Nginx hash and fixed filesystem locations. Every full tree and env overlay is
+rechecked around atomic renames; inode identities and env digests stay bound
+in memory. No environment value enters output/journal. There is no DB write,
+browser operation, candidate promotion or non-Abbott PM2 target.
+
+Recovery succeeds only with old app stamp/current pointer/registration, fixed
+listener/health and unchanged perimeter. It retains candidate code in a fixed
+quarantine and a root-only completed journal. Failure or cancellation after a
+possible stop attempts to stop only the captured registration and compensate
+file layout under exact atomic preconditions. It never restarts mismatched
+candidate code. If ownership changed, it does not kill an unowned replacement;
+it retains the lock/journal and available trees for manual review. Failed
+compensation is explicitly not successful recovery. Before-mutation refusal
+after acquiring the lock can also conservatively preserve it.
+
+The initial shared-child wrapper was replaced before use by the owner-approved
+recovery-only bidirectional transport: fixed SSH alias/IP/root/private-key path/
+known-hosts path, no config, proxy, agent, multiplexing or redirect authority.
+The local key and known-hosts contents are never read by our diagnostics; SSH
+uses their fixed protected paths. A bounded source-length/SHA-256 frame and RUN
+line precede execution; explicit ABORT and EOF feed the remote controller.
+No credential frame is used. Remote final statuses are closed enums emitted
+only after the recovery promise terminates. The local parent waits for the
+exact acknowledgement and verified SSH exit, rejects stderr/extra/oversized/
+forged output or bad exit, and retains handlers through bounded cleanup.
+Only a matching owned SSH PID/start may receive deadline TERM/KILL. Missing ack
+is UNACKNOWLEDGED, never remote-cleanup evidence.
+
+TDD covered the absent engine/entrypoint/transport, phase failures after stop,
+both renames, restart and health/identity/listener checks, actual adapter inode
+restoration, zero-write pin/host/source/metadata/tree/pointer/UID/GID/neighbor/
+Nginx/listener refusals, signals, restart error after spawn, compensation failure,
+EOF/abort framing, truncated/oversized source, forged/late output, lost ack,
+hung SSH, PID replacement, and failed SSH exit despite an apparent success ack.
+All host/filesystem/process adapters used isolated fixtures; the actual loader
+tests launched only short-lived local Node children and verified each exit.
+An initial loader stdin-lifecycle regression was caught RED and fixed; the
+signal tests use a readiness pipe rather than timing assumptions. Concurrent
+build-dependent typecheck/smoke probes encountered transient missing generated
+files and were rerun serially after build completion; no source workaround.
+
+STOP for dedicated source review. The command has NOT been executed or pushed.
+The live interrupted state recorded above is unchanged by this implementation.
+No recovery acknowledgement, restored runtime, new asset pin, smoke/capture or
+Nginx change is claimed. The public rollback route remains combined3001.
+
+Final Checkpoint A local evidence: build and67 app/runtime tests passed; the
+refreshed full authority/artifact/bootstrap/recovery suite passed311 tests,
+including27 focused recovery tests and the new retained-binding regression.
+The61 smoke/attestation/orchestrator/capture regressions passed after the build.
+Root and Abbott typechecks passed serially; lint had zero errors and ten
+pre-existing warnings. The exact12-route/one-prefix validator, artifact scan
+(2,870 files/82 text files), trusted artifact verification, all changed-script
+syntax checks, compiled capsule syntax and git whitespace check passed.
+The final recovery reader regression proves metadata-to-descriptor replacement
+refuses before any writes. All test/build tool sessions ended; loader tests
+independently verified their exact local Node child PIDs absent. No browser or
+live SSH/recovery process was created during this implementation checkpoint.

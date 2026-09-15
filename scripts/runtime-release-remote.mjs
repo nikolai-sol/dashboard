@@ -700,5 +700,8 @@ async function remoteMain(expectedDigest) {
 
 return { safeRelative, readPinned, renderEnvironment, parseRuntimeSecrets, serializeRuntimeSecrets,
   assertRuntimeProcess, captureRuntimeIdentity, captureRuntimeRegistration, releaseCommandEnvironment, assertRuntimeListener, normalizeBootEnvironment, inspectActiveRuntime: current,
+  // Fixed interrupted-activation recovery uses the same attesters/PM2 adapter.
+  // This does not add a normal deploy action or relax current() consistency.
+  interruptedRecoveryTools: () => ({ readRecord, attestTree, platform: realPlatform }),
   transact, remoteMain, ENV_KEYS, HOST_DIRECTORY_MODES };
 }
