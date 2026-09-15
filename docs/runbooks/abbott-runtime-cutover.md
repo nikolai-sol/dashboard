@@ -276,10 +276,13 @@ captured only after bounded structural validation finds exactly one TLS server
 whose server_name tokens include `dashboards.adreports.ru`. Composite aliases
 and a separate HTTP redirect are accepted, including quoted brace data and
 braced Nginx variables. Malformed block/directive structure, Abbott markers,
-case-insensitive Abbott/18 locations or3004 upstreams refuse. Any `include`
-directive refuses: included files are outside this fixed single-file snapshot,
-even if the existing include would otherwise be valid Nginx configuration.
-Extending that scope would require separate review. No config is edited.
+case-insensitive Abbott/18 locations or3004 upstreams refuse. A canonical
+absolute literal `include` under `/etc/nginx/` or `/etc/letsencrypt/` is accepted
+as an opaque boundary and its target is never opened. Malformed, dynamic, or
+noncanonical include shapes refuse. Changes confined to an included file are
+outside Abbott's single-file snapshot and remain a shared-edge operational risk
+caught by normal Nginx validation and smoke checks, not by Abbott proof
+isolation. No config is edited.
 
 Nginx context/routing re-review correction: this conf.d file must contain only
 top-level `server {}` blocks. A server nested in location/if/upstream/http or any
