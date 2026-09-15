@@ -207,6 +207,10 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
   const forwardFailed = () => { if (!tearingDown){failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'forward','failed');controller.abort();} };
   const active = () => { if (controller.signal.aborted) refuse(); };
   const checkForward = () => { active(); platform.verifyForward(proof); active(); };
+  const eraseGuarded = value => {
+    try { erase(value); }
+    catch { passed=false;failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'cleanup','guarded_cleanup'); }
+  };
   // Allow child/browser shutdown its existing 30-second grace, but never await
   // an uncooperative module import/setup forever. Late output is erased too.
   const guarded = async operation => {
@@ -214,7 +218,7 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     let value, rejectAbort;
     const aborted = new Promise((_, reject) => { rejectAbort = () => reject(new Error('ABBOTT_VERIFICATION_REFUSED')); });
     controller.signal.addEventListener('abort', rejectAbort, { once: true });
-    const pending = Promise.resolve().then(() => { active(); return operation(); }).then(result => { value = result; if(controller.signal.aborted)erase(result); return result; });
+    const pending = Promise.resolve().then(() => { active(); return operation(); }).then(result => { value = result; if(controller.signal.aborted)eraseGuarded(result); return result; });
     try { return await Promise.race([pending, aborted]); }
     finally {
       let drainTimer;
@@ -227,7 +231,7 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
         throw failure;
       } finally {
         controller.signal.removeEventListener('abort', rejectAbort);
-        if (controller.signal.aborted) erase(value);
+        if (controller.signal.aborted) eraseGuarded(value);
       }
     }
   };

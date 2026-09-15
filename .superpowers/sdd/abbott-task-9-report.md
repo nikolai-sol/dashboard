@@ -2856,3 +2856,30 @@ section. No new host-state, screenshot/dimension/diff or parity claim is made.
 Systematic debugging and TDD restricted this work to evidence instrumentation;
 verification-before-completion supplied fresh local gates. STOP for review,
 with the live cause, parity, six-image comparison and cutover still unresolved.
+
+## Guarded erase review Minor — source-only correction
+
+Verified the review finding with three RED regressions: cancellation followed
+by a malformed stdout descriptor during the result callback, guard finally, or
+late-result settlement during forward shutdown previously retained cancelled
+instead of the cleanup boundary. Both guarded erase calls now use one narrow
+local guard that records cleanup/guarded_cleanup without throwing out of the
+pending-result/finalizer path. The existing eraser still attempts the accessible
+stderr buffer despite a failing stdout descriptor. No new vocabulary, SSH,
+acceptance, attestation or runtime behavior was introduced.
+
+GREEN3/3 new cases; focused71/71; broader post-build verification137/137;
+app/contract67/67; full authority/bootstrap/browser/recovery/deploy/artifact512/512.
+The Abbott production build, exact12-route/1-prefix gate, sealed2870-file/82-text
+artifact verification, both typechecks, syntax and whitespace checks pass.
+Lint exits0 with0 errors and10 existing warnings. Tests verify no issuance,
+accessible buffer/capsule clearing, bounded drain, owned-forward cleanup,
+cleared timers and removed signal handlers; all commands exited. Local3001/3004
+listeners and both private identity evidence directories are absent.
+
+Receiving-code-review and TDD required source verification and the failing
+regressions before the fix; verification-before-completion required fresh full
+gates. No live access, SSH, push, credentials, smoke/capture, deployment, neighbor
+or Nginx action occurred. The previous checkpoint e529eb6 remains in history;
+published refs remain98cf58a. This report makes no fresh production-state or
+parity claim. DONE_WITH_CONCERNS; STOP for re-review before any live action.

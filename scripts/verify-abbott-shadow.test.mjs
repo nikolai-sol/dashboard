@@ -299,6 +299,32 @@ test('malformed asset reflection cannot skip other buffers or owned cleanup',asy
   assert.equal(issued,0);assert.equal(closed,1);assert.ok(stderr.every(x=>x===0));assert.ok(code.every(x=>x===0));assert.equal(signals.listenerCount('SIGTERM'),0);
 });
 
+for(const timing of ['result','guard_finally','late_result']){
+  test(`cancelled malformed asset ${timing} brands erase failure and preserves cleanup`,async()=>{
+    const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs');
+    const signals=new EventEmitter(),stderr=Buffer.from('private-error'),code=Buffer.from('private-code');
+    let reads=0,closed=0,issued=0,resolveLate;const timers=new Set();
+    const result=new Proxy({status:0,stdout:Buffer.alloc(0),stderr},{getOwnPropertyDescriptor(target,key){
+      if(key==='stdout'&&++reads>=(timing==='guard_finally'?2:1))throw Error('private-descriptor https://invalid/?access_token=private');
+      return Reflect.getOwnPropertyDescriptor(target,key);
+    }});
+    const platform={signalSource:signals,capsule:()=>code,prepareOutput(){},verifyForward(){},openForward:async()=>({pid:4242,start:'proof'}),
+      readAssets:async()=>{signals.emit('SIGTERM');return timing==='late_result'?new Promise(resolve=>{resolveLate=resolve;}):result;},
+      issue:async()=>{issued++;},
+      setTimer(fn,ms){const timer=setTimeout(()=>{timers.delete(timer);fn();},ms===35000?5:1000);timers.add(timer);return timer;},
+      clearTimer(timer){clearTimeout(timer);timers.delete(timer);},
+      closeForward:async()=>{closed++;assert.equal(signals.listenerCount('SIGTERM'),1);if(resolveLate){resolveLate(result);await new Promise(resolve=>setImmediate(resolve));}},
+    };
+    try{
+      await assert.rejects(api.runAbbottVerification('smoke',platform),error=>{
+        assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=cleanup reason=guarded_cleanup\n');return true;
+      });
+      assert.equal(issued,0);assert.equal(closed,1);assert.ok(reads>0);assert.ok(stderr.every(x=>x===0));assert.ok(code.every(x=>x===0));
+      assert.equal(signals.listenerCount('SIGINT'),0);assert.equal(signals.listenerCount('SIGTERM'),0);assert.equal(timers.size,0);
+    }finally{stderr.fill(0);code.fill(0);for(const timer of timers)clearTimeout(timer);}
+  });
+}
+
 test('real asset capsule labels import versus unbranded runtime failure and preserves known remote reasons',async()=>{
   const api=await moduleUnderTest(),secret='synthetic-secret https://invalid.test/?access_token=private';
   for(const kind of ['remote_import','remote_attestation','tree_hash']){
