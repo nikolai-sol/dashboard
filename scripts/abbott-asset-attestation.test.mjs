@@ -15,7 +15,7 @@ function fixture(){
 }
 test('asset attester binds fixed release/hash, source proof and every public file without writes',async()=>{
   const m=await api();assert.equal(typeof m.readAttestedAbbottAssets,'function');const f=fixture();
-  const result=m.readAttestedAbbottAssets(f.platform);assert.equal(result.releaseId,ID);assert.equal(result.sourceSha,SHA);assert.equal(result.assets.length,1);assert.equal(result.assets[0].path,'/_next-abbott/static/chunks/a.js');assert.equal(f.proofs(),2);assert.equal(f.fds.size,0);assert.ok(!JSON.stringify(result).includes('synthetic-static'));
+  const result=m.readAttestedAbbottAssets(f.platform);assert.equal(result.releaseId,ID);assert.equal(result.sourceSha,SHA);assert.equal(result.assets.length,1);assert.equal(result.assets[0].path,'/_next-abbott/_next/static/chunks/a.js');assert.equal(f.proofs(),2);assert.equal(f.fds.size,0);assert.ok(!JSON.stringify(result).includes('synthetic-static'));
 });
 test('host, source, manifest, pointer, public hash/mode/link and unattested file drift all refuse',async()=>{
   const m=await api();assert.equal(typeof m.readAttestedAbbottAssets,'function');

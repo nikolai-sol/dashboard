@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
+import fs from 'node:fs';
 const api = async () => { try { return await import('./smoke-abbott-runtime.mjs'); } catch(e) { if(e.code==='ERR_MODULE_NOT_FOUND')return {};throw e; } };
 const hash = x => createHash('sha256').update(x).digest('hex');
 
@@ -30,9 +31,56 @@ test('recursive journey objects accept empty rows and do not accept inherited ro
 
 test('asset inventory rejects redirects, foreign origins, dynamic and traversal paths',async()=>{
   const m=await api();assert.equal(typeof m.assetInventory,'function');
-  assert.deepEqual(m.assetInventory('<script src="/_next-abbott/static/chunks/a.js"></script><link href="/_next-abbott/static/css/a.css" rel="stylesheet">','http://127.0.0.1:3004'),['/_next-abbott/static/chunks/a.js','/_next-abbott/static/css/a.css']);
+  assert.deepEqual(m.assetInventory('<script src="/_next-abbott/_next/static/chunks/a.js"></script><link href="/_next-abbott/_next/static/css/a.css" rel="stylesheet">','http://127.0.0.1:3004'),['/_next-abbott/_next/static/chunks/a.js','/_next-abbott/_next/static/css/a.css']);
   for(const path of ['https://evil.test/a.js','//evil.test/a.js','/api/health','/_next/static/a.js','/_next-abbott/static/../private.js','/_next-abbott/static/a.js?token=synthetic','data:text/javascript,x']){
     assert.throws(()=>m.assetInventory(`<script src="${path}"></script>`,'http://127.0.0.1:3004'),/^Error: ABBOTT_SMOKE_REFUSED$/);
+  }
+});
+
+test('inventory follows installed Next assetPrefix rewrite contract and local generated markup',async()=>{
+  const m=await api();
+  const config=(await import('../apps/abbott/next.config.js')).default;
+  const {default:loadCustomRoutes}=await import('next/dist/lib/load-custom-routes.js');
+  const routes=await loadCustomRoutes({...config,basePath:'',trailingSlash:false});
+  assert.ok(routes.rewrites.beforeFiles.some(r=>r.source===config.assetPrefix+'/_next/:path+'&&r.destination==='/_next/:path+'));
+  const html=fs.readFileSync(new URL('../apps/abbott/.next-abbott/server/app/_not-found.html',import.meta.url),'utf8');
+  const inventory=m.assetInventory(html,'http://127.0.0.1:3004');
+  assert.ok(inventory.length>0);assert.ok(inventory.every(p=>p.startsWith(config.assetPrefix+'/_next/static/')));
+});
+
+test('asset HTML refusal subcodes never include secret-bearing malformed input',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  const secret='synthetic-secret';
+  const cases=[
+    ['malformed_html',`<script src="${secret}`],
+    ['malformed_html',`<script src=${secret}></script>`],
+    ['no_assets',`<html>${secret}</html>`],
+    ['unexpected_asset_origin',`<script src="https://invalid.test/${secret}?access_token=${secret}"></script>`],
+    ['unexpected_asset_origin',`<script src="//invalid.test/${secret}"></script>`],
+    ['unexpected_asset_path',`<script src="/_next/static/a.js?access_token=${secret}"></script>`],
+    ['unexpected_asset_path',`<script src="/${secret}/../a.js"></script>`],
+    ['body_limit',secret.repeat(2000000)],
+    ['inventory_limit',Array.from({length:257},(_,i)=>`<script src="/_next/static/${secret}${i}.js"></script>`).join('')],
+  ];
+  for(const [reason,html]of cases){assert.throws(()=>m.assetInventory(html,'http://127.0.0.1:3001'),error=>{
+    assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=${reason}\n`);
+    assert.doesNotMatch(d.formatVerificationFailure(error),/synthetic|invalid\.test|access_token/);return true;
+  });}
+});
+
+test('inventory ignores favicon metadata queries but refuses script and stylesheet queries',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const origin of ['http://127.0.0.1:3001','http://127.0.0.1:3004']){
+    const prefix=(origin.endsWith('3004')?'/_next-abbott':'')+'/_next/static/';
+    const script=`<script src="${prefix}chunks/a.js"></script>`;
+    const metadata='<link rel="icon" href="/favicon.ico?synthetic-secret"><link rel="shortcut icon" href="/favicon.ico?synthetic-secret"><link rel="apple-touch-icon" href="/icon.png?synthetic-secret"><img src="/logo.png?synthetic-secret">';
+    assert.deepEqual(m.assetInventory(metadata+script,origin),[prefix+'chunks/a.js']);
+    for(const tag of [`<script src="${prefix}chunks/a.js?synthetic-secret"></script>`,`<link rel="stylesheet" href="${prefix}css/a.css?synthetic-secret">`,`<link rel="preload" href="${prefix}media/a.woff2?synthetic-secret">`,`<link rel="modulepreload" href="${prefix}chunks/a.js?synthetic-secret">`]){
+      assert.throws(()=>m.assetInventory(script+tag,origin),error=>{assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=unexpected_asset_path\n');return true;});
+    }
+    assert.throws(()=>m.assetInventory('<script src="/public.js"></script>',origin));
+    assert.throws(()=>m.assetInventory('<link rel="stylesheet" href="/public.css">',origin));
+    assert.throws(()=>m.assetInventory('<link rel="preload" href="/public.woff2">',origin));
   }
 });
 
@@ -52,14 +100,14 @@ test('PDF parser consumes pipes and returns only valid pages, dimensions and nor
 
 function fixture(change=()=>{}) {
   const requests=[],bodies=[];const asset=Buffer.from('synthetic-static');
-  const manifest={version:1,releaseId:'6cd2f12e245a47dcbd5f6ce928c4ed83',sourceSha:'f80607fbc8a693aa2c720b0976938e88732cdf1a',assets:[{path:'/_next-abbott/static/chunks/shared.js',size:asset.length,sha256:hash(asset)}]};
+  const manifest={version:1,releaseId:'6cd2f12e245a47dcbd5f6ce928c4ed83',sourceSha:'f80607fbc8a693aa2c720b0976938e88732cdf1a',assets:[{path:'/_next-abbott/_next/static/chunks/shared.js',size:asset.length,sha256:hash(asset)}]};
   const fetchImpl=async(url,options)=>{
     requests.push({url:new URL(url),options});const u=new URL(url);let body,status=200,type='application/json';
     if(u.pathname.endsWith('/abbott-admin-users')){status=u.searchParams.has('embed_key')?403:200;body=JSON.stringify(status===200?{user_ids:[]}:{error:'Forbidden'});}
     else if(u.pathname.endsWith('.js')){type='application/javascript';body=asset;}
     else if(u.pathname.endsWith('/pdf')){type='application/pdf';body=pdf();}
     else if(u.pathname.endsWith('/excel')){type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';body=await new ExcelJS.Workbook().xlsx.writeBuffer();}
-    else if(u.pathname.startsWith('/dashboard/')){type='text/html';body=`<html><script src="/${u.port==='3004'?'_next-abbott':'_next'}/static/chunks/shared.js"></script></html>`;}
+    else if(u.pathname.startsWith('/dashboard/')){type='text/html';body=`<html><script src="${u.port==='3004'?'/_next-abbott':''}/_next/static/chunks/shared.js"></script></html>`;}
     else {
       const data={...Object.fromEntries(['counters','traffic_summary','page_stats','bitrix_pages','external_events','external_clicks','returning','general_materials'].map(x=>[x,[]])),data_quality:{},time_buckets:{overall:[],materials:[],by_page:[]},session_journeys:{rows:[]},return_frequency:{available:false,period_local:true,identified_visitors:0,unidentified_visits:0,groups:[],user_directions:[],return_pages:[]}};
       if(!u.searchParams.has('embed_key'))Object.assign(data,{users_summary:[],users_summary_without_admins:[],user_actions:[],admin_user_filter:{}});
@@ -85,6 +133,45 @@ test('real API shape without dashboard.id passes exact aliases, audiences, expor
   assert.equal(f.requests.filter(x=>x.url.pathname.endsWith('/excel')).length,8);
   for(const {url,options}of f.requests){assert.ok(['http://127.0.0.1:3001','http://127.0.0.1:3004'].includes(url.origin));assert.equal(options.method,'GET');assert.equal(options.redirect,'error');assert.ok(!url.href.includes('synthetic-token'));if(!url.pathname.includes('/static/')){assert.equal(url.searchParams.get('from'),'2026-09-01');assert.equal(url.searchParams.get('to'),'2026-09-13');}}
   assert.ok(!JSON.stringify(result).includes('synthetic'));
+});
+
+test('HTML transport and alias diagnostics are closed, with bounded body cancellation',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const reason of ['http_status','content_type','body_limit','malformed_html','no_assets','alias_mismatch']){
+    let cancelled=0;
+    const f=fixture(r=>{if(r.u.pathname==='/dashboard/abbott'&&reason==='alias_mismatch')r.body='<script src="/_next/static/chunks/synthetic-secret.js"></script>';});
+    const fetchImpl=async(url,options)=>{
+      if(!url.pathname.startsWith('/dashboard/')||reason==='alias_mismatch')return f.fetchImpl(url,options);
+      const body=reason==='malformed_html'?Uint8Array.of(0xff):Buffer.from('synthetic-secret');
+      const headers={'cache-control':'private, no-store','content-type':reason==='content_type'?'text/synthetic-secret':'text/html','x-private':'synthetic-secret'};
+      if(reason==='body_limit')headers['content-length']=String(16*1024*1024+1);
+      return new Response(new ReadableStream({start(c){c.enqueue(body);},cancel(){cancelled++;}}),{status:reason==='http_status'?500:200,headers});
+    };
+    // Finite bodies for decode/empty-inventory checks; unread bodies stay pending
+    // to prove cancellation at header-based refusals.
+    const finiteFetch=async(url,options)=>['malformed_html','no_assets'].includes(reason)&&url.pathname.startsWith('/dashboard/')?new Response(reason==='malformed_html'?Uint8Array.of(0xff):'synthetic-secret',{headers:{'content-type':'text/html','cache-control':'private, no-store'}}):fetchImpl(url,options);
+    const error=await m.runReadOnlySmoke({managerAccessToken:'synthetic-secret',embedKey:'synthetic-secret',manifest:f.manifest},new AbortController().signal,{fetchImpl:finiteFetch,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})}).catch(e=>e);
+    assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=${reason}\n`);
+    if(['http_status','content_type','body_limit'].includes(reason))assert.equal(cancelled,1);
+  }
+});
+
+test('candidate prefix normalization still compares overlapping asset hashes',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  const bytes=Buffer.from('candidate-different');const f=fixture(r=>{if(r.u.pathname.endsWith('.js')&&r.u.port==='3004')r.body=bytes;});
+  Object.assign(f.manifest.assets[0],{size:bytes.length,sha256:hash(bytes)});
+  const error=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})}).catch(e=>e);
+  assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=asset_compare reason=failed\n');
+});
+
+test('excluding image metadata from HTML inventory does not exclude any attested candidate public file',async()=>{
+  const m=await api();const image=Buffer.from('synthetic-public-image');
+  const f=fixture(r=>{if(r.u.pathname==='/logo.png'){r.body=image;r.type='image/png';}if(r.u.pathname.startsWith('/dashboard/'))r.body+='<link rel="icon" href="/favicon.ico?synthetic-secret"><img src="/logo.png">';});
+  f.manifest.assets.push({path:'/logo.png',size:image.length,sha256:hash(image)});
+  const result=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})});
+  assert.equal(result.status,'passed');assert.equal(result.candidate_assets,2);
+  assert.equal(f.requests.filter(r=>r.url.port==='3004'&&r.url.pathname==='/logo.png').length,1);
+  assert.ok(f.requests.every(r=>r.url.pathname!=='/favicon.ico'));
 });
 
 test('smoke failures expose only exact stage enums and never response or exception content',async()=>{
@@ -147,7 +234,7 @@ test('semantic PDF differences, period drift, manager denial and unapproved inve
     let calls=0;const f=fixture(r=>{
       if(kind==='period'&&r.u.pathname==='/api/dashboard/abbott')r.body=String(r.body).replaceAll('2026-09-13','2026-09-12');
       if(kind==='manager'&&r.u.pathname.endsWith('/abbott-admin-users')&&!r.u.searchParams.has('embed_key'))r.status=403;
-      if(kind==='unattested'&&r.u.port==='3004'&&r.u.pathname.startsWith('/dashboard/'))r.body='<script src="/_next-abbott/static/chunks/new.js"></script>';
+      if(kind==='unattested'&&r.u.port==='3004'&&r.u.pathname.startsWith('/dashboard/'))r.body='<script src="/_next-abbott/_next/static/chunks/new.js"></script>';
       if(kind==='type'&&r.u.pathname.endsWith('.js'))r.type='text/html';
       if(kind==='empty'&&r.u.pathname.startsWith('/dashboard/'))r.body='<html>login</html>';
     });

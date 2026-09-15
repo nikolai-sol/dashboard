@@ -305,6 +305,30 @@ formatter. The parent accepts a child diagnostic only for exit 1, empty stdout,
 and one exact bounded allowlisted stderr line; other child output is never relayed.
 Success reports remain unchanged and contain no diagnostic/raw error objects.
 
+The latest approved attempt stopped at `asset_html reason=failed`. The subsequent
+local asset-contract correction and subcodes are **STOP for review; no live retry**.
+HTML refusals now distinguish `http_status`, `content_type`, `body_limit`,
+`malformed_html`, `no_assets`, `unexpected_asset_origin`, `unexpected_asset_path`,
+`inventory_limit`, and `alias_mismatch`; existing fixed boundary/cache/cancellation
+codes remain applicable. These are categories only: never append the rejected
+status value, URL, path, markup, header, body or exception. Unknown errors retain
+the closed fallback. A `malformed_html` code means unsupported/malformed inventory
+markup or invalid UTF-8, not a general-purpose HTML validity certification.
+
+Next's configured `assetPrefix: "/_next-abbott"` prefixes the standard
+`/_next/static/` namespace. Thus candidate inventory and attested file mapping use
+`/_next-abbott/_next/static/`; installed Next supplies its internal rewrite to
+`/_next/static/`. Normalize only that exact candidate prefix when comparing
+overlapping assets. Release/hash/file attestation remains unchanged. Off-origin
+references, queries, encoding/traversal and all unattested candidate assets remain
+refused; this correction does not authorize a Nginx edit or relax an asset gate.
+The HTML inventory is scoped to `script[src]` and stylesheet/preload/modulepreload
+links in the runtime's exact Next static namespace. Icon/metadata links (including
+Next's favicon content-hash query) and image elements are explicitly ignored, not
+accepted as query-bearing assets. Query-bearing scripts/styles/preloads remain
+refused. Candidate attestation and fetching of every attested public file remain
+exhaustive; this inventory scope does not remove files from the manifest gate.
+
 This mode uses the same strict credential frame and owned-forward lifecycle.
 Before credential issuance, a separate bounded read-only SSH capsule repeats the
 source proof and validates the exact installed release

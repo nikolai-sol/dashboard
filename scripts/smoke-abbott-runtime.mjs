@@ -31,26 +31,37 @@ export function scanEmbedPrivacy(value) {
   visit(value);
 }
 
-function safeAssetPath(value,origin) {
-  if(!ORIGINS.includes(origin)||typeof value!=='string'||value.length>512||!value.startsWith('/')||value.startsWith('//')||/[\\%?#\s<>"'&]/.test(value)||value.split('/').some(x=>x==='.'||x==='..'))fail();
-  const prefix=origin===ORIGINS[1]?'/_next-abbott/static/':'/_next/static/';
-  if(value.startsWith('/_next')&&!value.startsWith(prefix))fail();
-  if(!value.startsWith(prefix)&&!/^\/[A-Za-z0-9_./-]+\.(?:svg|png|jpe?g|webp|ico|woff2?)$/.test(value))fail();
-  if(!/\.(?:js|css|svg|png|jpe?g|webp|ico|woff2?)$/.test(value))fail();
+function safeAssetPath(value,origin,stage='asset_attestation') {
+  const reject=reason=>{throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),stage,reason);};
+  if(!ORIGINS.includes(origin)||typeof value==='string'&&(/^[a-z][a-z0-9+.-]*:/i.test(value)||value.startsWith('//')))reject('unexpected_asset_origin');
+  if(typeof value!=='string'||value.length>512||!value.startsWith('/')||/[\\%?#\s<>"'&]/.test(value)||value.split('/').some(x=>x==='.'||x==='..'))reject('unexpected_asset_path');
+  // Next appends /_next/static to assetPrefix and installs an internal rewrite.
+  const prefix=origin===ORIGINS[1]?'/_next-abbott/_next/static/':'/_next/static/';
+  if(stage==='asset_html'&&!value.startsWith(prefix))reject('unexpected_asset_path');
+  if(value.startsWith('/_next')&&!value.startsWith(prefix))reject('unexpected_asset_path');
+  if(!value.startsWith(prefix)&&!/^\/[A-Za-z0-9_./-]+\.(?:svg|png|jpe?g|webp|ico|woff2?)$/.test(value))reject('unexpected_asset_path');
+  if(!/\.(?:js|css|svg|png|jpe?g|webp|ico|woff2?)$/.test(value))reject('unexpected_asset_path');
   return value;
 }
 
 export function assetInventory(html,origin) {
-  if(typeof html!=='string'||Buffer.byteLength(html)>16*1024*1024)fail();
+  const reject=reason=>{throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),'asset_html',reason);};
+  if(typeof html!=='string')reject('malformed_html');
+  if(Buffer.byteLength(html)>16*1024*1024)reject('body_limit');
   const paths=new Set();
-  for(const tag of html.matchAll(/<(script|link|img)\b[^>]*>/gi)){
-    if(tag[1].toLowerCase()==='link'&&!/\brel=["'](?:stylesheet|preload|modulepreload|icon|shortcut icon)["']/i.test(tag[0]))continue;
+  // Only executable/render-critical Next resources belong to this inventory.
+  // Icon/metadata links (including Next's favicon content-hash query) and img
+  // elements are deliberately not fetched; attestation still covers all public files.
+  for(const tag of html.matchAll(/<(script|link)\b[^>]*(?:>|$)/gi)){
+    if(!tag[0].endsWith('>'))reject('malformed_html');
+    if(tag[1].toLowerCase()==='link'&&!/\brel=["'](?:stylesheet|preload|modulepreload)["']/i.test(tag[0]))continue;
     const name=tag[1].toLowerCase()==='link'?'href':'src';
     const match=new RegExp(`\\b${name}=["']([^"']+)["']`,'i').exec(tag[0]);
-    if(match)paths.add(safeAssetPath(match[1],origin));
-    if(paths.size>256)fail();
+    if(!match&&new RegExp(`\\s${name}\\s*=`,'i').test(tag[0]))reject('malformed_html');
+    if(match)paths.add(safeAssetPath(match[1],origin,'asset_html'));
+    if(paths.size>256)reject('inventory_limit');
   }
-  if(!paths.size)fail();
+  if(!paths.size)reject('no_assets');
   return [...paths].sort();
 }
 
@@ -106,13 +117,13 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       if(response.redirected||response.url&&new URL(response.url).origin!==origin)reject('boundary');
       if(denied){if(![401,403].includes(response.status))reject('status');await response.body?.cancel();checks++;return null;}
       const type=(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase();
-      if(response.status!==200)reject('status');
+      if(response.status!==200)reject(kind==='html'?'http_status':'status');
       if((kind==='json'&&type!=='application/json')||(kind==='html'&&type!=='text/html')||(kind==='pdf'&&type!=='application/pdf')||(kind==='excel'&&type!=='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')||(kind==='asset'&&!assetType(endpoint,type)))reject('content_type');
       if(kind!=='asset'&&(!/private/.test(response.headers.get('cache-control')??'')||!/no-store/.test(response.headers.get('cache-control')??'')))reject('cache_policy');
       const max=kind==='pdf'?32*1024*1024:16*1024*1024;
-      if(Number(response.headers.get('content-length'))>max)fail();
+      if(Number(response.headers.get('content-length'))>max)reject('body_limit');
       const chunks=[];let length=0,bytes;const reader=response.body?.getReader();if(!reader)fail();
-      try{for(;;){const item=await reader.read();if(item.done)break;length+=item.value.length;if(length>max){item.value.fill(0);fail();}chunks.push(Buffer.from(item.value));item.value.fill(0);}bytes=Buffer.concat(chunks);active(signal);checks++;return {bytes,type};}
+      try{for(;;){const item=await reader.read();if(item.done)break;length+=item.value.length;if(length>max){item.value.fill(0);reject('body_limit');}chunks.push(Buffer.from(item.value));item.value.fill(0);}bytes=Buffer.concat(chunks);active(signal);checks++;return {bytes,type};}
       catch(error){await reader.cancel().catch(()=>{});bytes?.fill(0);throw error;}finally{for(const chunk of chunks)chunk.fill(0);reader.releaseLock();}
       }catch(error){await response.body?.cancel().catch(()=>{});throw error;}
     }
@@ -136,10 +147,13 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       stage='pdf_fetch';const pdf=await inspect(origin,'/api/dashboard/'+alias+'/pdf',credential,'pdf',bytes=>{stage='pdf_parse';return parsePdf(bytes,signal);});
       stage='excel_fetch';const workbook=await inspect(origin,'/api/dashboard/'+alias+'/excel',credential,'excel',bytes=>{stage='excel_parse';return summarizeWorkbook(bytes);});
       stage='asset_html';
-      const paths=await inspect(origin,'/dashboard/'+alias,credential,'html',bytes=>assetInventory(new TextDecoder('utf8',{fatal:true}).decode(bytes),origin));
+      const paths=await inspect(origin,'/dashboard/'+alias,credential,'html',bytes=>{
+        let html;try{html=new TextDecoder('utf8',{fatal:true}).decode(bytes);}catch{reject('malformed_html');}
+        return assetInventory(html,origin);
+      });
       const combined={summary,pdf,workbook};if(summaries.has(audience))for(const [key,code]of [['summary','json_compare'],['pdf','pdf_compare'],['workbook','excel_compare']]){stage=code;if(!isDeepStrictEqual(summaries.get(audience)[key],combined[key]))reject('mismatch');}summaries.set(audience,combined);
       stage='asset_html';
-      if(inventories.has(origin)&&!isDeepStrictEqual(inventories.get(origin),paths))fail();inventories.set(origin,paths);
+      if(inventories.has(origin)&&!isDeepStrictEqual(inventories.get(origin),paths))reject('alias_mismatch');inventories.set(origin,paths);
     }
     for(const origin of ORIGINS){
       const paths=inventories.get(origin);
@@ -149,7 +163,7 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       for(const p of all){stage='asset_fetch';const result=await inspect(origin,p,null,'asset',(bytes,type)=>({size:bytes.length,sha256:hash(bytes),type}));
         stage='asset_attestation';
         if(origin===ORIGINS[1]&&(result.sha256!==approved.get(p).sha256||result.size!==approved.get(p).size))fail();
-        const normalized=p.replace(/^\/_next(?:-abbott)?\//,'/_next/');
+        const normalized=p.replace(/^\/_next-abbott\/_next\//,'/_next/');
         stage='asset_compare';
         if(assetResults.has(normalized)&&!isDeepStrictEqual(assetResults.get(normalized),result))fail();assetResults.set(normalized,result);
       }

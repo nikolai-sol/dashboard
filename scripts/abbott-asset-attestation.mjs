@@ -30,7 +30,7 @@ export function readAttestedAbbottAssets({io=fs,hostname=os.hostname,proveSource
       if(s.isDirectory()){visit(file);continue;}
       const relative=file.slice(ROOT.length+1),entry=entries.get(relative);if(!entry||seen.has(relative)||(s.mode&0o777)!==entry.mode)fail();
       const bytes=read(file,16*1024*1024);try{if(bytes.length!==entry.size||hash(bytes)!==entry.sha256)fail();}finally{bytes.fill(0);}
-      seen.add(relative);assets.push({path:relative.startsWith(publicRoots[0])?'/_next-abbott/static/'+relative.slice(publicRoots[0].length):'/'+relative.slice(publicRoots[1].length),size:entry.size,sha256:entry.sha256});
+      seen.add(relative);assets.push({path:relative.startsWith(publicRoots[0])?'/_next-abbott/_next/static/'+relative.slice(publicRoots[0].length):'/'+relative.slice(publicRoots[1].length),size:entry.size,sha256:entry.sha256});
     }if(!same(before,io.lstatSync(dir)))fail();};
     for(const prefix of publicRoots){const directory=ROOT+'/'+prefix.slice(0,-1);if(io.existsSync(directory))visit(directory);}
     if(seen.size!==entries.size||!read(CONTROL+'/current.json',4096).equals(currentBytes))fail();proveSource();

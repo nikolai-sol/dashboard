@@ -1005,3 +1005,73 @@ structural inserter was implemented, and no Nginx backup/edit/test/reload/cutove
 occurred. No app/neighbor restart/release, DB/auth/admin mutation, credential
 rotation, collector or cron action occurred. Public routing and its route-only
 rollback target remain port 3001. This evidence-only update is local/unpushed.
+
+### Asset HTML source diagnosis and corrected inventory — STOP for review, 2026-09-15
+
+Performed source/local-build inspection only after the preceding refusal. No live
+HTTP request, SSH connection, credential issuance, capture, deployment, push or
+Nginx action occurred in this checkpoint. The preceding production identities,
+cleanup and Nginx hash are historical evidence, not a new production verification.
+
+Found a deterministic local contract bug: Abbott config sets assetPrefix to
+`/_next-abbott`, and Next 16.1.6 appends `/_next/static/`. Local generated HTML and
+the installed Next `loadCustomRoutes` implementation agree on
+`/_next-abbott/_next/static/`, with an internal rewrite to `/_next/static/`.
+Smoke and the attester incorrectly mapped files to `/_next-abbott/static/`.
+Corrected those two derived-path mappings and normalized only the exact candidate
+prefix for common-asset comparison. The pinned deployed release/source/manifest
+digests, file inventory, ownership/link checks and every per-file hash remain
+unchanged. This does not change app configuration, deployment or Nginx.
+
+Installed Next's metadata image loader also adds a content-hash query, and the
+combined app has a favicon route. Per explicit review direction, HTML inventory
+now covers script sources and stylesheet/preload/modulepreload links in the
+exact runtime Next static namespace; icon/metadata links and image elements are
+ignored rather than accepting query URLs. No-query, exact-loopback and redirect
+boundaries remain intact for all probed assets. Candidate attestation still
+checks and fetches every attested public file, including files outside the HTML
+inventory. A regression verifies that an ignored image remains fetched and
+hash-checked if it is present in the candidate manifest.
+
+These are source-backed contract findings, not an attribution of the earlier
+live `asset_html reason=failed`: its exact origin/construct was not retained and
+has not been inspected. No successful live smoke or visual parity is claimed.
+
+Added closed reason categories `http_status`, `body_limit`, `malformed_html`,
+`no_assets`, `unexpected_asset_origin`, `unexpected_asset_path`, `inventory_limit`
+and `alias_mismatch`; `content_type` was already closed. HTML decode/unsupported
+markup failures, declared/stream body limits and inventory consistency now carry
+safe categories. Existing cache/boundary/cancellation categories are preserved.
+Only branded allowlisted stage/reason strings can reach parent diagnostics;
+no rejected value, raw HTML, header, body, credential, URL or exception property
+is included. The inventory remains a bounded strict markup recognizer, not a
+general HTML validator.
+
+TDD RED reproduced the wrong generated/attested prefix and missing subcodes.
+An isolated RED run with the old normalization proved that an overlapping asset
+with different bytes would otherwise pass; the correction restores refusal.
+The favicon-query regression failed before metadata exclusion, then passed while
+script, stylesheet, preload and modulepreload queries stayed rejected. Synthetic
+secret-bearing inputs cover each new inventory category, and transport tests
+cover HTTP/type/body refusals, cancellation, invalid UTF-8 and alias drift.
+The existing exhaustive enum/forged-error/child-framing redaction tests cover the
+new closed reasons as well. No real browser was launched; test children and
+temporary fixtures use their existing bounded cleanup.
+
+Fresh local gates passed: 133 focused bootstrap/issuer/orchestrator/compare/
+capture/smoke/attestation/diagnostic tests; 108 auth/access/PDF-auth/app/runtime
+tests; full Abbott build and runtime suite with 268 authority/artifact tests;
+111 contract tests; contract wiring; public-asset security; explicit trusted
+artifact verification (2,870 files, 82 text files); exact existing route-fragment
+validation. Root and Abbott typechecks, syntax, whitespace and full lint passed
+(zero errors, ten existing warnings). An initial parallel auth/runtime invocation
+raced build cleanup and missed the temporary middleware manifest; its ordered
+post-build rerun passed all 108 tests. The final build/focused run was ordered,
+with no such race.
+
+STOP for dedicated review before any push or live retry. Public routing and its
+rollback target remain port 3001 according to the preceding live evidence; no
+fresh production observation is claimed. Shadow remains the previously attested
+f80607f release; screenshot dimensions/diffs, full smoke acceptance and Nginx
+structural review remain outstanding. The previously recorded Minor about the
+Python stamp helper's broader direct-input contract remains unchanged.
