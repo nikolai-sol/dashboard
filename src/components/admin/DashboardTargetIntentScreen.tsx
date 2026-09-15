@@ -492,6 +492,8 @@ export function DashboardTargetIntentView({
             <p className="mt-1 text-sm text-slate-600">
               {transportLabel(preview.sourceTransport)} · {preview.filename ?? preview.sourceIdentity}
               {preview.worksheet ? ` · лист «${preview.worksheet}»` : ""}
+              {preview.encoding ? ` · ${preview.encoding}` : ""}
+              {preview.delimiter ? ` · Разделитель: ${preview.delimiter === "\t" ? "табуляция" : `«${preview.delimiter}»`}` : ""}
             </p>
           </div>
 
@@ -550,6 +552,24 @@ export function DashboardTargetIntentView({
                 </tbody>
                 </table>
               </div>
+            </div>
+          ) : null}
+
+          {preview.observedQueries?.length ? (
+            <div className="space-y-3">
+              <h3 className="font-semibold text-slate-900">Совпадения с наблюдаемыми запросами</h3>
+              <p className="text-sm text-slate-600">Это ограниченная выборка: до 8 совпадений среди 100 запросов с наибольшим числом показов на источник. Google: последняя опубликованная неделя; Яндекс: семь дней до последней даты с запросами. Периоды независимы; полнота недель здесь не проверяется.</p>
+              {preview.observedQueries.map(sample => (
+                <div key={sample.source} className="rounded-lg border border-slate-200 p-3 text-sm">
+                  <p className="font-medium">{sample.source === "google" ? "Google" : "Яндекс"}{sample.periodFrom && sample.periodTo ? ` · ${sample.periodFrom} — ${sample.periodTo}` : ""}</p>
+                  {sample.state === "unavailable" ? <p>Примеры недоступны.</p> : sample.state === "empty" ? <p>Нет доступных запросов с показами для этой выборки.</p> : <>
+                    <p className="text-slate-600">Проверено запросов: {sample.sampledQueryCount}. Совпадений показано: {sample.matches.length}.</p>
+                    {sample.matches.length ? <ul className="mt-2 space-y-1">{sample.matches.slice(0, 8).map(row => (
+                      <li key={row.query}>{row.query} → {row.matchedRule} · {row.group ?? "Без группы"} · {matchTypeLabel(row.matchType ?? "phrase")} · {row.impressions} показов · {row.clicks} кликов</li>
+                    ))}</ul> : <p>В ограниченной выборке совпадений нет.</p>}
+                  </>}
+                </div>
+              ))}
             </div>
           ) : null}
 

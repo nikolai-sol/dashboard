@@ -74,6 +74,20 @@ test("GET requires a valid administrator cookie and returns private server-scope
   });
 });
 
+test("preview API exposes source parsing metadata and canonical observed matches without accepting client scope", async () => {
+  const receipt = { previewId: "7", state: "valid", encoding: "UTF-8", delimiter: ";", observedQueries: [{ source: "google", state: "ready", periodFrom: "2026-09-07", periodTo: "2026-09-13", sampledQueryCount: 1, matches: [{ query: "рак", matchedRule: "рак" }] }] };
+  const handlers = createTargetIntentAdminRouteHandlers(baseDependencies({ preview: async ({ scope: received }: { scope: unknown }) => {
+    assert.deepEqual(received, scope);
+    return receipt;
+  } }));
+  const body = { transport: "upload", filename: "intent.csv", content_base64: Buffer.from("Ключ;Тип совпадения\nрак;точное\n").toString("base64") };
+  const response = await handlers.preview(request("/api/admin/dashboards/41/target-intent/preview", "POST", body), context);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), receipt);
+  const rejected = await handlers.preview(request("/api/admin/dashboards/41/target-intent/preview", "POST", { ...body, site_id: "foreign", period_from: "2020-01-01" }), context);
+  assert.equal(rejected.status, 400);
+});
+
 test("capability GET resolves protected dashboard scope without reading catalogue state", async () => {
   let reads = 0;
   const handlers = createTargetIntentAdminRouteHandlers(baseDependencies({

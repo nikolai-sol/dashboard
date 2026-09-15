@@ -229,6 +229,8 @@ export function assertImportManifest(value: unknown): ImportManifest {
 }
 
 export { assertSiteProfile, assertSiteRegistry } from "./profile-schema.ts";
+export { normalizeIntentKey, classifyTargetIntentQuery } from "./target-intent.ts";
+export type { TargetIntentObservedSample } from "./target-intent.ts";
 export type {
   TargetIntentCard,
   TargetIntentClassification,

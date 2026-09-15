@@ -1,10 +1,8 @@
 import type {
   TargetIntentCard,
-  TargetIntentClassification,
   TargetIntentClassifiedQuery,
   TargetIntentObservedQuery,
   TargetIntentProvenance,
-  TargetIntentRule,
   TargetIntentRuleSet,
   TargetIntentView,
 } from "@reportingdash/site-seo-contract";
@@ -12,76 +10,12 @@ import type {
 const DEFAULT_TARGET_LABEL = "Целевой интент";
 const OTHER_LABEL = "Остальные запросы";
 
-export function normalizeIntentKey(value: string): string {
-  return value
-    .normalize("NFKC")
-    .toLowerCase()
-    .replaceAll("ё", "е")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
+import { normalizeIntentKey, classifyTargetIntentQuery } from "@reportingdash/site-seo-contract";
+export { normalizeIntentKey, classifyTargetIntentQuery } from "@reportingdash/site-seo-contract";
 
 function compareText(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
-}
-
-function rulePriority(left: TargetIntentRule, right: TargetIntentRule): number {
-  if (left.matchType !== right.matchType) {
-    return left.matchType === "exact" ? -1 : 1;
-  }
-  const leftTokens = left.normalizedKey.split(" ").length;
-  const rightTokens = right.normalizedKey.split(" ").length;
-  return (
-    rightTokens - leftTokens ||
-    compareText(left.normalizedKey, right.normalizedKey) ||
-    compareText(left.key, right.key) ||
-    compareText(left.group ?? "", right.group ?? "")
-  );
-}
-
-function phraseMatches(query: string, phrase: string): boolean {
-  return ` ${query} `.includes(` ${phrase} `);
-}
-
-export function classifyTargetIntentQuery(
-  query: string,
-  rules: readonly TargetIntentRule[],
-): TargetIntentClassification {
-  const normalizedQuery = normalizeIntentKey(query);
-  if (normalizedQuery === "") {
-    return {
-      category: "other",
-      group: null,
-      matchedRule: null,
-      matchType: null,
-    };
-  }
-
-  const match = rules
-    .filter((candidate) =>
-      candidate.matchType === "exact"
-        ? candidate.normalizedKey === normalizedQuery
-        : phraseMatches(normalizedQuery, candidate.normalizedKey),
-    )
-    .toSorted(rulePriority)[0];
-
-  if (!match) {
-    return {
-      category: "other",
-      group: null,
-      matchedRule: null,
-      matchType: null,
-    };
-  }
-
-  return {
-    category: "target",
-    group: match.group,
-    matchedRule: match.key,
-    matchType: match.matchType,
-  };
 }
 
 function isNonEmptyText(value: unknown): value is string {
@@ -234,7 +168,7 @@ export function buildTargetIntentView(
     0,
   );
   const card = (
-    category: TargetIntentClassification["category"],
+    category: "target" | "other",
     label: string,
   ): TargetIntentCard => {
     const rows = classified.filter((query) => query.category === category);

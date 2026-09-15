@@ -1,5 +1,7 @@
 import * as XLSX from "xlsx";
+import Papa from "papaparse";
 import { assertBoundedXlsxZip } from "./xlsx-zip-preflight";
+import { normalizeIntentKey, type TargetIntentObservedSample } from "@reportingdash/site-seo-contract";
 
 export const MAX_TARGET_INTENT_UPLOAD_BYTES = 5 * 1024 * 1024;
 export const MAX_TARGET_INTENT_LOGICAL_ROWS = 10_000;
@@ -28,6 +30,7 @@ export type TargetIntentImportError = Readonly<{
     | "duplicate_column"
     | "unnamed_column"
     | "empty_key"
+    | "field_too_long"
     | "unknown_match_type"
     | "exact_duplicate"
     | "normalized_duplicate"
@@ -39,6 +42,9 @@ export type TargetIntentImportResult = Readonly<{
   state: "valid" | "invalid";
   format: "csv" | "xls" | "xlsx";
   worksheet: string | null;
+  encoding?: "UTF-8" | null;
+  delimiter?: string | null;
+  observedQueries?: readonly TargetIntentObservedSample[];
   rows: readonly TargetIntentImportRow[];
   errors: readonly TargetIntentImportError[];
   duplicateCount: number;
@@ -55,14 +61,7 @@ function normalizedText(value: unknown): string {
   return String(value ?? "").normalize("NFKC").trim().replace(/\s+/gu, " ");
 }
 
-export function normalizeTargetIntentKey(value: unknown): string {
-  return normalizedText(value)
-    .toLocaleLowerCase("ru-RU")
-    .replace(/ё/gu, "е")
-    .replace(/[\p{P}\p{S}_]+/gu, " ")
-    .trim()
-    .replace(/\s+/gu, " ");
-}
+export const normalizeTargetIntentKey = normalizeIntentKey;
 
 function emptyResult(
   error: TargetIntentImportError,
@@ -111,7 +110,7 @@ function workbookContainer(bytes: Buffer): WorkbookContainer {
 function readLogicalTable(
   bytes: Buffer,
   format: "csv" | "xls" | "xlsx",
-): { worksheet: string | null; cells: unknown[][] } {
+): { worksheet: string | null; cells: unknown[][]; encoding: "UTF-8" | null; delimiter: string | null } {
   const container = workbookContainer(bytes);
   if (container === "zip") assertBoundedXlsxZip(bytes);
   if (
@@ -122,8 +121,14 @@ function readLogicalTable(
   const source = format === "csv"
     ? new TextDecoder("utf-8", { fatal: true }).decode(bytes)
     : bytes;
+  if (format === "csv") {
+    const csv = Papa.parse<string[]>(source as string, { skipEmptyLines: true, delimitersToGuess: [",", ";", "\t", "|"] });
+    if (csv.errors.length) throw new Error("Invalid CSV table");
+    if (csv.data.length > MAX_TARGET_INTENT_LOGICAL_ROWS + 1) throw new RangeError("target_intent_row_limit");
+    return { worksheet: null, cells: csv.data, encoding: "UTF-8", delimiter: csv.meta.delimiter };
+  }
   const workbook = XLSX.read(source, {
-    type: format === "csv" ? "string" : "buffer",
+    type: "buffer",
     raw: true,
     cellFormula: false,
     cellHTML: false,
@@ -133,7 +138,7 @@ function readLogicalTable(
     bookFiles: false,
   });
   const worksheetName = workbook.SheetNames[0];
-  if (!worksheetName) return { worksheet: null, cells: [] };
+  if (!worksheetName) return { worksheet: null, cells: [], encoding: null, delimiter: null };
   const worksheet = workbook.Sheets[worksheetName];
   const range = worksheet["!ref"] ? XLSX.utils.decode_range(worksheet["!ref"]) : null;
   if (range && range.e.r - range.s.r > MAX_TARGET_INTENT_LOGICAL_ROWS) {
@@ -145,7 +150,7 @@ function readLogicalTable(
     blankrows: false,
     defval: "",
   });
-  return { worksheet: format === "csv" ? null : worksheetName, cells };
+  return { worksheet: worksheetName, cells, encoding: null, delimiter: null };
 }
 
 export function parseTargetIntentWorkbook(
@@ -173,7 +178,7 @@ export function parseTargetIntentWorkbook(
     }, format);
   }
 
-  let table: { worksheet: string | null; cells: unknown[][] };
+  let table: ReturnType<typeof readLogicalTable>;
   try {
     table = readLogicalTable(bytes, detectedFormat);
   } catch (error) {
@@ -257,6 +262,8 @@ export function parseTargetIntentWorkbook(
       state: "invalid",
       format: detectedFormat,
       worksheet: table.worksheet,
+      encoding: table.encoding,
+      delimiter: table.delimiter,
       rows: [],
       errors: headerErrors,
       duplicateCount: 0,
@@ -287,6 +294,18 @@ export function parseTargetIntentWorkbook(
       continue;
     }
     const normalizedKey = normalizeTargetIntentKey(key);
+    const lengths = [
+      { value: key, max: 512, column: "Ключ", field: "Ключ" },
+      { value: normalizedKey, max: 512, column: "Ключ", field: "Нормализованный ключ" },
+      { value: group ?? "", max: 255, column: "Группа", field: "Группа" },
+    ].filter(({ value, max }) => [...value].length > max);
+    if (lengths.length) {
+      for (const { max, column, field } of lengths) errors.push({
+        row: sourceRowOrdinal, column, code: "field_too_long",
+        message: `${field}: не более ${max} символов`,
+      });
+      continue;
+    }
     if (!normalizedKey) {
       errors.push({ row: sourceRowOrdinal, column: "Ключ", code: "empty_key", message: "Ключ не может быть пустым" });
       continue;
@@ -334,6 +353,8 @@ export function parseTargetIntentWorkbook(
     state: errors.length === 0 && rows.length > 0 ? "valid" : "invalid",
     format: detectedFormat,
     worksheet: table.worksheet,
+    encoding: table.encoding,
+    delimiter: table.delimiter,
     rows,
     errors,
     duplicateCount,

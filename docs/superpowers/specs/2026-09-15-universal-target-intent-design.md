@@ -43,7 +43,11 @@ The logical input table has these columns:
 
 Excel may contain one selected worksheet; CSV contains one table. The preview UI names the accepted worksheet and encoding/delimiter where relevant. Column names are matched after safe whitespace/case normalization, but unknown columns are rejected rather than silently interpreted.
 
+CSV accepts UTF-8 (including BOM), detects comma, semicolon, tab or pipe with the same parser that reads the table, and records the actual encoding/delimiter in the immutable preview. Preview validates MySQL character limits: source and normalized keys are at most 512 Unicode characters; group labels are at most 255. Overflows produce row/column errors.
+
 Rule normalization applies Unicode NFKC, lowercase, `ё → е`, punctuation/hyphen separation and repeated-whitespace collapse.
+
+The shared contract implements normalization for imports, runtime integrity and matching. Every run of non-letter/non-number characters becomes a token boundary, including zero-width format characters and combining marks that remain after NFKC. New previews use contract identity `target-intent-preview-v2`; older immutable evidence is retained, and noncanonical historical preview rows cannot publish.
 
 - `точное`: the normalized observed query equals the normalized key.
 - `фраза`: the normalized key occurs as a complete token sequence inside the observed query.
@@ -93,6 +97,14 @@ Dashboard render, filtering and export never read the uploaded file, fetch Googl
 The feature reuses the established protected upload/Google Sheet preview-confirm patterns where their contracts fit. Target-intent publication has its own site-scoped rule-set contract; it is not an advertising fact import and does not enter advertising collector SLAs.
 
 ## Dashboard experience
+
+### Administrator preview examples
+
+Preview distinguishes source-rule examples from observed-query matches. Each source samples at most 100 positive-impression canonical queries, ordered by impressions, clicks and query, and shows at most eight matches using the shared classifier. Samples and their actual periods are stored in the immutable validation receipt; an idempotent retry returns the original sample.
+
+The admin form has no selected reporting period. Google examples use the latest published canonical ISO-week query import for the server-resolved client/site/dashboard and default all-country/all-device web-search filter. Yandex examples use the exact server-registered account/host and seven days ending at its latest canonical query fact date. Source periods are independent and explicitly rendered. These are illustrative samples, not weekly completeness checks, totals or inferred query/page relationships. A read failure is unavailable; zero sampled queries and zero matches within a nonempty sample are distinct. No source API, source credential or client-supplied site/account/period participates.
+
+### Dashboard review
 
 The overview goal panel retains its two metric cards:
 
@@ -147,6 +159,8 @@ If a site has no active rule set, the goal panel reports «Классифика�
 - An unreachable or unauthorized Google Sheet produces an import failure while the active version remains unchanged.
 - A transaction or publication failure rolls back the entire active transition.
 - Dashboard rule reads fail closed: if active-version integrity cannot be proven, intent percentages are unavailable rather than calculated using packaged defaults or another site's rules.
+- Runtime fetches metadata and the immutable validation receipt once, then ordered rules pinned to the captured site/dashboard/version on the same acquired connection. Receipt payload is never joined onto every rule. Missing linked metadata is unavailable; only an absent active pointer is not configured.
+- Once preview COMMIT begins, a lost acknowledgement has unknown outcome and protected evidence is retained. A retry resolves the immutable receipt; evidence is discarded only after a definitive pre-commit failure or a confirmed unreferenced duplicate.
 - A failed attempt is visible in admin history without replacing the last successful active version.
 
 ## Migration and compatibility

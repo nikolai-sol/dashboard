@@ -259,6 +259,23 @@ test("validation errors are visible and disable publication", () => {
   assert.match(html, /<button[^>]*disabled=""[^>]*>Опубликовать новую версию<\/button>/);
 });
 
+test("preview distinguishes bounded observed matches with periods from source rules and displays CSV metadata", () => {
+  const preview: DashboardTargetIntentPreview = { ...validPreview, filename: "intent.csv", worksheet: null, encoding: "UTF-8", delimiter: ";", observedQueries: [{
+    source: "yandex" as const, state: "ready" as const, periodFrom: "2026-09-07", periodTo: "2026-09-13", sampledQueryCount: 100,
+    matches: [{ query: "лечение рака молочной железы", source: "yandex" as const, impressions: 100, clicks: 3, category: "target" as const, group: "Онкология", matchedRule: "рак молочной железы", matchType: "phrase" as const }],
+  }] };
+  const html = viewHtml({ state: { ...createDashboardTargetIntentState(), preview }, preview });
+  assert.match(html, /UTF-8/);
+  assert.match(html, /Разделитель/);
+  assert.match(html, /Совпадения с наблюдаемыми запросами/);
+  assert.match(html, /2026-09-07/);
+  assert.match(html, /2026-09-13/);
+  assert.match(html, /лечение рака молочной железы/);
+  assert.match(html, /Яндекс/);
+  assert.match(html, /100/);
+  assert.match(html, /ограниченн/);
+});
+
 test("validation and publication lock source controls against overlapping operations", () => {
   const publishing = {
     ...createDashboardTargetIntentState(),

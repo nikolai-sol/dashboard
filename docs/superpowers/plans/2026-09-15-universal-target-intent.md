@@ -167,6 +167,8 @@ Task 5 feature commit is `a46fd4bb9706b42b61ee699101b53eaae810ca75`; final revie
 
 ## Self-review
 
+Final review remediation (2026-09-15): split runtime receipt/rule reads; shared normalization/classification; preview COMMIT ambiguity retention; MySQL Unicode character limits; immutable bounded canonical observed-query samples and actual CSV metadata. The cross-layer regression, build and final source-attestation evidence is recorded in `.superpowers/sdd/final-fix-report.md`. Production migration, import and deployment remain outside this implementation wave.
+
 - Spec coverage: upload and Google Sheets, manual snapshot, complete replacement, version history/restore, configurable label, exact/phrase rules, admin authorization, canonical-only reads, review tables/downloads, missing-state semantics, migration/parity and verification are each assigned.
 - No placeholders or deferred implementation wording remain.
 - Type flow is consistent: import creates immutable `TargetIntentRuleSet`; canonical reader returns it; the read model produces `TargetIntentView`; UI and exports consume that view.

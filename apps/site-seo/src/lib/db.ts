@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeIntentKey } from "@reportingdash/site-seo-contract";
 import type { DatasetMeta, ManualSheet, Metrics, Period, SourceScope, TargetIntentRuleSet } from "@reportingdash/site-seo-contract";
 import mysql from "mysql2/promise";
 import type { GscReadRows } from "./gsc.ts";
@@ -159,6 +160,7 @@ export const missingCanonicalReadExecutor: CanonicalReadExecutor = async () => {
 
 type CanonicalDatabase = Readonly<{
   execute(sql: string, params: unknown[]): Promise<[unknown, unknown]>;
+  getConnection?(): Promise<CanonicalDatabase & { release(): void }>;
 }>;
 
 type TargetIntentRow = Readonly<{
@@ -270,7 +272,19 @@ export async function readTargetIntentData(
   database: CanonicalDatabase,
   query: TargetIntentReadQuery,
 ): Promise<TargetIntentRuleSet> {
-  const rows = await rowsFor<TargetIntentRow>(database, {
+  const connection = database.getConnection ? await database.getConnection() : null;
+  try {
+    return await readTargetIntentSnapshot(connection ?? database, query);
+  } finally {
+    connection?.release();
+  }
+}
+
+async function readTargetIntentSnapshot(
+  database: CanonicalDatabase,
+  query: TargetIntentReadQuery,
+): Promise<TargetIntentRuleSet> {
+  const metadata = await rowsFor<TargetIntentRow>(database, {
     sql: `/* site-seo:target-intent */
           SELECT active.site_id,
                  active.dashboard_id,
@@ -289,60 +303,34 @@ export async function readTargetIntentData(
                  imported.content_sha256,
                  imported.rule_count AS import_rule_count,
                  imported.validation_state,
-                 imported.validation_result_json,
-                 rule.source_row_ordinal,
-                 rule.rule_key,
-                 rule.normalized_key,
-                 rule.group_label,
-                 rule.match_type
+                 imported.validation_result_json
             FROM site_seo_intent_active AS active
-            JOIN site_seo_intent_versions AS version
+            LEFT JOIN site_seo_intent_versions AS version
               ON version.site_id = active.site_id
              AND version.dashboard_id = active.dashboard_id
              AND version.id = active.version_id
-            JOIN site_seo_intent_publications AS publication
+            LEFT JOIN site_seo_intent_publications AS publication
               ON publication.site_id = active.site_id
              AND publication.dashboard_id = active.dashboard_id
              AND publication.id = active.publication_id
              AND publication.version_id = active.version_id
-            JOIN site_seo_intent_imports AS imported
+             AND version.import_id = publication.import_id
+            LEFT JOIN site_seo_intent_imports AS imported
               ON imported.site_id = publication.site_id
              AND imported.dashboard_id = publication.dashboard_id
              AND imported.id = publication.import_id
-            LEFT JOIN site_seo_intent_rules AS rule
-              ON rule.site_id = version.site_id
-             AND rule.dashboard_id = version.dashboard_id
-             AND rule.version_id = version.id
-           WHERE active.site_id = ? AND active.dashboard_id = ?
-           ORDER BY rule.source_row_ordinal ASC`,
+           WHERE active.site_id = ? AND active.dashboard_id = ?`,
     params: [query.scope.siteId, query.scope.dashboardId],
   });
-  if (rows.length === 0) return notConfiguredTargetIntent(query);
+  if (metadata.length === 0) return notConfiguredTargetIntent(query);
+  if (metadata.length !== 1) return unavailableTargetIntent(query);
 
-  const first = rows[0]!;
+  const first = metadata[0]!;
   const expectedRuleCount = Number(first.expected_rule_count);
   const importRuleCount = Number(first.import_rule_count);
   const sealedAt = normalizedTimestamp(first.sealed_at);
   const publishedAt = normalizedTimestamp(first.published_at);
-  const inScope = rows.every((row) =>
-    row.site_id === query.scope.siteId &&
-    Number(row.dashboard_id) === query.scope.dashboardId &&
-    row.version_id === first.version_id &&
-    row.version_uid === first.version_uid &&
-    row.publication_id === first.publication_id &&
-    row.import_id === first.import_id &&
-    row.label === first.label &&
-    row.expected_rule_count === first.expected_rule_count &&
-    row.import_rule_count === first.import_rule_count &&
-    normalizedTimestamp(row.sealed_at) === sealedAt &&
-    row.source_transport === first.source_transport &&
-    row.source_identity === first.source_identity &&
-    row.content_sha256 === first.content_sha256 &&
-    row.validation_state === first.validation_state &&
-    normalizedTimestamp(row.published_at) === publishedAt &&
-    row.published_by === first.published_by &&
-    row.publication_comment === first.publication_comment,
-  );
+  const inScope = first.site_id === query.scope.siteId && Number(first.dashboard_id) === query.scope.dashboardId;
   const validSnapshot =
     inScope &&
     nonEmptyString(first.version_uid) &&
@@ -352,7 +340,7 @@ export async function readTargetIntentData(
     expectedRuleCount > 0 &&
     Number.isInteger(importRuleCount) &&
     importRuleCount === expectedRuleCount &&
-    rows.length === expectedRuleCount &&
+    expectedRuleCount <= 10_000 &&
     ["upload", "google_sheet"].includes(String(first.source_transport)) &&
     nonEmptyString(first.source_identity) &&
     /^[a-f0-9]{64}$/i.test(String(first.content_sha256 ?? "")) &&
@@ -361,6 +349,22 @@ export async function readTargetIntentData(
     nonEmptyString(first.published_by);
   if (!validSnapshot) return unavailableTargetIntent(query);
 
+  // The selected sealed version and its rules are immutable. Pin that identity
+  // even if a concurrent publication changes the active pointer between reads.
+  const rows = await rowsFor<TargetIntentRow>(database, {
+    sql: `/* site-seo:target-intent-rules */
+          SELECT rule.site_id, rule.dashboard_id, rule.version_id,
+                 rule.source_row_ordinal, rule.rule_key, rule.normalized_key,
+                 rule.group_label, rule.match_type
+            FROM site_seo_intent_rules AS rule
+           WHERE rule.site_id = ? AND rule.dashboard_id = ? AND rule.version_id = ?
+           ORDER BY rule.source_row_ordinal ASC`,
+    params: [query.scope.siteId, query.scope.dashboardId, first.version_id],
+  });
+  if (rows.length !== expectedRuleCount || rows.some(row =>
+    row.site_id !== query.scope.siteId || Number(row.dashboard_id) !== query.scope.dashboardId ||
+    String(row.version_id) !== String(first.version_id)
+  )) return unavailableTargetIntent(query);
   const ordered = [...rows].sort((left, right) => Number(left.source_row_ordinal) - Number(right.source_row_ordinal));
   const ordinals = new Set<number>();
   const normalizedKeys = new Set<string>();
@@ -380,7 +384,7 @@ export async function readTargetIntentData(
     const group = row.group_label === null || row.group_label === undefined ? null : String(row.group_label);
     if (
       !Number.isInteger(ordinal) || ordinal <= 0 || ordinals.has(ordinal) ||
-      !nonEmptyString(key) || !nonEmptyString(normalizedKey) || normalizedKeys.has(normalizedKey) ||
+      !nonEmptyString(key) || !nonEmptyString(normalizedKey) || normalizedKey !== normalizeIntentKey(key) || normalizedKeys.has(normalizedKey) ||
       !["exact", "phrase"].includes(matchType) || (group !== null && !nonEmptyString(group))
     ) return unavailableTargetIntent(query);
     ordinals.add(ordinal);
@@ -1356,6 +1360,10 @@ function defaultMysqlPool(): mysql.Pool {
 
 export const canonicalReadExecutor: CanonicalReadExecutor = async (query) => createCanonicalReadExecutor({
   execute: async (sql, params) => defaultMysqlPool().execute(sql, params as never[]),
+  getConnection: async () => {
+    const connection = await defaultMysqlPool().getConnection();
+    return { execute: async (sql, params) => connection.execute(sql, params as never[]), release: () => connection.release() };
+  },
 })(query);
 
 export const availableMetrikaWeeksReadExecutor: AvailableMetrikaWeeksReadExecutor = async (query) => createAvailableMetrikaWeeksReadExecutor({

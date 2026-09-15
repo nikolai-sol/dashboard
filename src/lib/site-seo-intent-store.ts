@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, open, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { normalizeIntentKey, type TargetIntentObservedSample } from "@reportingdash/site-seo-contract";
 import {
   MAX_TARGET_INTENT_UPLOAD_BYTES,
   parseTargetIntentWorkbook,
@@ -41,6 +42,7 @@ export type TargetIntentStoreDependencies = Readonly<{
     fetchSnapshot(normalizedUrl: string): Promise<{ bytes: Buffer | Uint8Array; filename: string }>;
   };
   now?: () => Date;
+  observedQueries?(rows: readonly TargetIntentImportRow[]): Promise<readonly TargetIntentObservedSample[]>;
 }>;
 
 export type TargetIntentPreviewInput =
@@ -56,6 +58,9 @@ export type TargetIntentPreviewReceipt = Readonly<{
   contentSha256: string;
   filename: string | null;
   worksheet: string | null;
+  encoding: "UTF-8" | null;
+  delimiter: string | null;
+  observedQueries: readonly TargetIntentObservedSample[];
   ruleCount: number;
   duplicateCount: number;
   conflictCount: number;
@@ -131,7 +136,7 @@ type StoredImportRow = {
 function requiredText(value: unknown, field: string, max: number): string {
   const text = String(value ?? "").trim();
   if (!text) throw new Error(`${field} is required`);
-  if (text.length > max) throw new Error(`${field} is too long`);
+  if ([...text].length > max) throw new Error(`${field} is too long`);
   return text;
 }
 
@@ -221,6 +226,9 @@ function previewReceipt(row: StoredImportRow): TargetIntentPreviewReceipt {
     contentSha256: row.content_sha256,
     filename: row.original_filename,
     worksheet: row.accepted_worksheet,
+    encoding: validation.encoding ?? null,
+    delimiter: validation.delimiter ?? null,
+    observedQueries: validation.observedQueries ?? [],
     ruleCount: Number(row.rule_count),
     duplicateCount: Number(row.duplicate_count),
     conflictCount: Number(row.conflict_count),
@@ -553,7 +561,7 @@ export async function previewTargetIntent(
     bytes = Buffer.isBuffer(snapshot.bytes) ? snapshot.bytes : Buffer.from(snapshot.bytes);
   }
 
-  const validation: TargetIntentImportResult = sourceFailure
+  let validation: TargetIntentImportResult = sourceFailure
     ? {
         state: "invalid",
         format: "xlsx",
@@ -568,10 +576,13 @@ export async function previewTargetIntent(
         conflictCount: 0,
       }
     : parseTargetIntentWorkbook(bytes, filename);
+  if (validation.state === "valid" && deps.observedQueries) {
+    validation = { ...validation, observedQueries: await deps.observedQueries(validation.rows) };
+  }
   const contentSha256 = sha256(bytes);
   const sourceIdentityHash = sha256(sourceIdentity);
   const importUid = stableUid(
-    "target-intent-preview-v1",
+    "target-intent-preview-v2",
     scope.siteId,
     scope.dashboardId,
     input.transport,
@@ -582,6 +593,7 @@ export async function previewTargetIntent(
   let connection: TargetIntentSqlConnection | null = null;
   let transactionStarted = false;
   let committed = false;
+  let commitAttempted = false;
   let artifactReferenced = false;
   let artifactSettled = false;
   try {
@@ -624,6 +636,7 @@ export async function previewTargetIntent(
     ));
     if (!persisted) throw new Error("Preview receipt was not persisted");
     artifactReferenced = persisted.protected_artifact_ref === artifact.protectedRef;
+    commitAttempted = true;
     await connection.commit();
     committed = true;
     artifactSettled = true;
@@ -636,7 +649,9 @@ export async function previewTargetIntent(
     }
     if (!artifactSettled) {
       try {
-        if (committed && artifactReferenced) await artifact.release();
+        // An acknowledgement failure cannot prove that COMMIT failed. Retain evidence
+        // once commit starts; an idempotent retry can recover the persisted receipt.
+        if (commitAttempted) await artifact.release();
         else await artifact.discard();
       } catch { /* Preserve the primary failure. */ }
     }
@@ -660,6 +675,9 @@ function validPreviewRows(row: {
       validation.rows.length === 0 ||
       validation.rows.length !== Number(row.rule_count)
     ) throw new Error("invalid validation receipt");
+    if (validation.rows.some(row => row.normalizedKey !== normalizeIntentKey(row.key))) {
+      throw new Error("noncanonical validation receipt");
+    }
     return validation.rows;
   } catch {
     throw new TargetIntentServiceError(422, "Предпросмотр содержит ошибки и не может быть опубликован");

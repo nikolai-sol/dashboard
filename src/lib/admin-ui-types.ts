@@ -281,6 +281,9 @@ export type DashboardTargetIntentPreview = {
   contentSha256: string;
   filename: string | null;
   worksheet: string | null;
+  encoding?: "UTF-8" | null;
+  delimiter?: string | null;
+  observedQueries?: readonly import("@reportingdash/site-seo-contract").TargetIntentObservedSample[];
   ruleCount: number;
   duplicateCount: number;
   conflictCount: number;

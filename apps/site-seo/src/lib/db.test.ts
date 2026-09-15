@@ -50,21 +50,27 @@ function intentRows(overrides: Record<string, unknown> = {}): Record<string, unk
   ];
 }
 
+function intentResponse(sql: string, rows = intentRows()): [unknown, unknown] {
+  return [/validation_result_json/.test(sql) ? rows.slice(0, 1) : rows, []];
+}
+
 test("target-intent reads one exact active site/dashboard snapshot with ordered rules", async () => {
   const calls: { sql: string; params: readonly unknown[] }[] = [];
   const result = await readTargetIntentData({ async execute(sql, params) {
     calls.push({ sql, params });
-    return [[...intentRows()].reverse(), []];
+    return intentResponse(sql, [...intentRows()].reverse());
   } }, { name: "target_intent", scope: intentScope });
 
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   assert.deepEqual(calls[0]!.params, [intentScope.siteId, intentScope.dashboardId]);
   assert.match(calls[0]!.sql, /site_seo_intent_active/);
   assert.match(calls[0]!.sql, /site_seo_intent_versions/);
   assert.match(calls[0]!.sql, /site_seo_intent_publications/);
   assert.match(calls[0]!.sql, /site_seo_intent_imports/);
   assert.match(calls[0]!.sql, /imported\.rule_count\s+AS\s+import_rule_count/i);
-  assert.match(calls[0]!.sql, /site_seo_intent_rules/);
+  assert.doesNotMatch(calls[0]!.sql, /site_seo_intent_rules/);
+  assert.match(calls[1]!.sql, /site_seo_intent_rules/);
+  assert.doesNotMatch(calls[1]!.sql, /validation_result_json/);
   assert.match(calls[0]!.sql, /WHERE\s+active\.site_id\s*=\s*\?\s+AND\s+active\.dashboard_id\s*=\s*\?/i);
   assert.doesNotMatch(calls[0]!.sql, /LIMIT\s+1/i, "rules must not be truncated to one row");
   assert.equal(result?.state, "ready");
@@ -74,7 +80,7 @@ test("target-intent reads one exact active site/dashboard snapshot with ordered 
   assert.ok(!/api\.|oauth|token/i.test(calls[0]!.sql));
 });
 
-test("target-intent accepts MySQL DATETIME values as equal Date instants and rejects differing instants", async () => {
+test("target-intent accepts MySQL DATETIME metadata and rejects invalid timestamps", async () => {
   const sameInstantRows = intentRows({
     sealed_at: new Date("2026-09-15T11:59:00.000Z"),
     published_at: new Date("2026-09-15T12:00:00.000Z"),
@@ -84,13 +90,12 @@ test("target-intent accepts MySQL DATETIME values as equal Date instants and rej
     sealed_at: new Date("2026-09-15T11:59:00.000Z"),
     published_at: new Date("2026-09-15T12:00:00.000Z"),
   };
-  const ready = await readTargetIntentData({ async execute() { return [sameInstantRows, []]; } }, { name: "target_intent", scope: intentScope });
+  const ready = await readTargetIntentData({ async execute(sql) { return intentResponse(sql, sameInstantRows); } }, { name: "target_intent", scope: intentScope });
   assert.equal(ready.state, "ready");
   assert.equal(ready.provenance?.publishedAt, "2026-09-15T12:00:00.000Z");
 
-  const differingInstantRows = intentRows({ published_at: new Date("2026-09-15T12:00:00.000Z") });
-  differingInstantRows[1] = { ...differingInstantRows[1]!, published_at: new Date("2026-09-15T12:00:00.001Z") };
-  const unavailable = await readTargetIntentData({ async execute() { return [differingInstantRows, []]; } }, { name: "target_intent", scope: intentScope });
+  const differingInstantRows = intentRows({ published_at: new Date("invalid") });
+  const unavailable = await readTargetIntentData({ async execute(sql) { return intentResponse(sql, differingInstantRows); } }, { name: "target_intent", scope: intentScope });
   assert.equal(unavailable.state, "unavailable");
 });
 
@@ -115,7 +120,7 @@ test("target-intent fails closed when rule count or source hash integrity differ
     changedValidatedRows,
     duplicateRules,
   ]) {
-    const result = await readTargetIntentData({ async execute() { return [rows, []]; } }, { name: "target_intent", scope: intentScope });
+    const result = await readTargetIntentData({ async execute(sql) { return intentResponse(sql, rows); } }, { name: "target_intent", scope: intentScope });
     assert.equal(result?.state, "unavailable");
     assert.deepEqual(result?.rules, []);
     assert.equal(result?.provenance, null);
