@@ -1755,3 +1755,46 @@ production evidence directory was never created. Its Git ignore rule passed.
 STOP for focused re-review. No push, live SSH, recovery retry, credentials,
 browser, deploy, smoke/capture or Nginx operation occurred. The last live state
 and remote refs remain those recorded in the previous operational entry.
+
+### Approved diagnostic recovery retry: stopped (2026-09-15)
+
+Diagnostics checkpoint received explicit approval. Clean HEAD
+e0238f92ba6b8e4cfc734b514580fed1651bed8a passed26 fresh transport/diagnostics/
+private-evidence/wrapper tests. Existing complete gate evidence is above.
+Ordinary non-force fast-forward pushes updated only the feature and Abbott
+release refs; isolated literal remote lookups verified both at that exact HEAD.
+Temporary ref-proof directory cleanup passed.
+
+Exactly one reviewed clean-env recovery retry returned:
+
+`ABBOTT_RECOVERY_UNACKNOWLEDGED stage=remote_startup reason=stderr`
+
+No raw stderr/stdout or exception was retained or examined. This closed code
+does not establish why SSH/remote startup emitted stderr, does not prove the
+remote loader reached preflight, and does not acknowledge recovery completion.
+No retry, speculative fix, deploy, smoke, capture, credential use or Nginx action
+followed.
+
+An independent bounded read-only local observer consumed only the protected
+identity metadata while the retry ran. It held the exact owned SSH identity and
+its verified wrapper parent identity in memory, then proved both processes
+absent after the evidence file disappeared. No PIDs/start times entered tool
+output or this report. The observer returned only
+ABBOTT_LOCAL_PRIVATE_EVIDENCE_CLEANUP_VERIFIED and exited. Fixed private evidence
+directory absence was independently confirmed; local3001/3004 listeners are
+absent. No browser or forward was created.
+
+Narrow read-only post-refusal checks passed with no raw runtime output: active
+candidate and old backup source markers/layout remain unchanged; quarantine,
+lock, journal and journal.next remain absent. Current pointer is still the
+exact old6cd2/f806 record; the previously pinned Abbott kernel identity and
+sole loopback3004 listener remain unchanged and bounded health is200. All
+neighbor PID/start/cwd/UID/GID/release proofs and the exact prior Nginx hash
+remain unchanged. Account and secret-file metadata pass. Combined/Abbott child
+counts remain zero; the remote recovery-loader inventory is zero. This narrow
+post-check does not claim a fresh full browser/tree attestation or repaired
+activation. All read-only tool sessions exited.
+
+BLOCKED at the closed code above. Public routing stays combined3001 and the
+interrupted activation remains unresolved. Await direction; no further attempt
+is authorized by this report.
