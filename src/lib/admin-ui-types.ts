@@ -257,6 +257,63 @@ export type DashboardListItem = {
   url: string;
 };
 
+export type DashboardTargetIntentRule = {
+  sourceRowOrdinal: number;
+  key: string;
+  normalizedKey: string;
+  group: string | null;
+  matchType: "exact" | "phrase";
+};
+
+export type DashboardTargetIntentValidationError = {
+  row: number | null;
+  column?: string;
+  code: string;
+  message: string;
+};
+
+export type DashboardTargetIntentPreview = {
+  previewId: string;
+  state: "valid" | "invalid" | "failed";
+  sourceTransport: "upload" | "google_sheet";
+  sourceIdentity: string;
+  sourceIdentityHash: string;
+  contentSha256: string;
+  filename: string | null;
+  worksheet: string | null;
+  ruleCount: number;
+  duplicateCount: number;
+  conflictCount: number;
+  rows: DashboardTargetIntentRule[];
+  errors: DashboardTargetIntentValidationError[];
+  importedBy: string;
+  createdAt: string;
+};
+
+export type DashboardTargetIntentHistoryEntry = {
+  publicationId: string;
+  versionId: string;
+  previousVersionId: string | null;
+  kind: "publish" | "restore";
+  label: string;
+  ruleCount: number;
+  sourceTransport: "upload" | "google_sheet";
+  sourceIdentity: string;
+  sourceIdentityHash: string;
+  contentSha256: string;
+  importId: string;
+  publishedBy: string;
+  publishedAt: string;
+  comment: string | null;
+  active: boolean;
+};
+
+export type DashboardTargetIntentAdminState = {
+  activeVersionId: string | null;
+  history: DashboardTargetIntentHistoryEntry[];
+  previews: DashboardTargetIntentPreview[];
+};
+
 export type SourceCollectionMode =
   | "ads_only"
   | "ads_plus_seo"
