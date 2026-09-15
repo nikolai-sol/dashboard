@@ -1,5 +1,33 @@
 # Abbott isolated-runtime cutover runbook
 
+### Gated source-only PDF log-stage diagnostic (2026-09-15)
+
+After the approved d17712f smoke returned `pdf_fetch/candidate_5xx`, stop live
+verification. `scripts/abbott-pdf-log-stage.mjs` is a read-only classifier library,
+not an operational command. It requires review and a separately reviewed caller
+that attests the exact active PM2 registration against the protected deploy
+receipt and kernel PID/start before and after reading. Do not invoke a host log
+read, copy logs, or use `pm2 logs`, `tail`, or raw SSH output at this checkpoint.
+
+The pinned6f09982 ecosystem fixes one error log, merge mode and second-resolution
+timestamps; the handler emits only its fixed marker plus stage/error_class.
+No repository policy establishes live rotation or log ownership/mode. The reader
+therefore requires root:root0600, one regular non-symlink link and safe ancestors;
+unknown metadata means unknown, never permission repair. It refuses files larger
+than64KiB without reading content and never follows rotated files. Stable bounded
+snapshot checks detect rotation, truncation or append during reading; the read
+buffer is zeroed and descriptor closed on every outcome.
+
+Only exact timestamped single-/multiline Node marker records can be classified.
+Unknown context, duplicate/nonmonotonic timestamps, malformed/partial records or
+additional fields make the snapshot unknown. Output is only
+`ABBOTT_PDF_STAGE stage=<authorize|launch|prepare|navigate|ready|render> class=<Error|NonError>`
+or `ABBOTT_PDF_STAGE stage=unknown class=unknown`, without timestamps, counts,
+paths or messages. Raw unframed logs cannot authenticate a marker's origin or
+correlate a historical marker with a particular request; the result must not be
+represented as proof of the failed smoke's cause. No standalone transport is
+included; live metadata and rotation remain unobserved pending authorization.
+
 This runbook moves only Abbott's exact public routes from the combined runtime on `127.0.0.1:3001` to the already-reviewed isolated runtime on `127.0.0.1:3004`. It does not migrate data, rotate credentials, change collectors or cron, or restart another dashboard runtime. The parity period is fixed at `2026-09-01..2026-09-13`.
 
 Run the local commands from the reviewed isolated-runtime worktree as an unprivileged account. Run the server commands only through the established `beget` SSH alias. Stop on the first failure. Never put a password, access token, embed key, cookie, or authorized URL in shell arguments, environment variables, files, screenshots of browser chrome, or chat. Credentials must arrive through the approved ephemeral host issuer and a direct stdin pipe only.

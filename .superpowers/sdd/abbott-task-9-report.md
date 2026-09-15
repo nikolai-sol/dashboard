@@ -1,6 +1,9 @@
-# Abbott Task 9 — candidate PDF smoke refusal
+# Abbott Task 9 — PDF log-stage classifier awaits review
 
-Status: BLOCKED. Approved degraded-baseline policy d17712f was published to both
+Status: DONE_WITH_CONCERNS for the source-only diagnostic checkpoint. The bounded
+closed-output PDF log classifier and local fixtures are implemented; no host log
+read or live retry occurred. Operational Task9 remains blocked: approved
+degraded-baseline policy d17712f was published to both
 authorized refs and the single approved live smoke returned
 `ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`.
 The candidate failure remains fatal under that policy. No successful strict or
@@ -3170,3 +3173,83 @@ collector/cron, password or admin-ID mutation occurred.
 Verification-before-completion required the independent post-state and cleanup
 proof before this evidence-only checkpoint. BLOCKED on candidate PDF5xx; no
 capture, Nginx implementation or application, retry, or unapproved code fix.
+
+## Source-only PDF log-stage classifier — Phase1, awaiting review
+
+Systematic debugging restricted this checkpoint to evidence instrumentation, not
+a speculative PDF fix. Inspected the exact pinned6f09982 handler and ecosystem
+using local Git blobs. They establish the literal Abbott error log path,
+merge_logs=true, second-resolution timestamp format and the single safe handler
+marker with stage/error_class only. The classifier test checks these contracts
+against the actual deployed-source blobs, not an invented handler format.
+No repository log-rotation rule or observed live log ownership/mode was found.
+No server log/config/PM2 call was made to fill that gap.
+
+Added scripts/abbott-pdf-log-stage.mjs and local fixture tests. The library has no
+standalone execution/SSH transport and performs no writes or process actions.
+A future separately reviewed caller must attest the exact PM2 registration,
+kernel PID/start and protected active receipt; the classifier requires that
+proof before and after reading, validates exact boot/source/release/UID/GID/log
+binding and rejects identity drift. The callback remains a trust boundary, not
+an independently implemented live proof. No invocation command is offered in
+the runbook until that preceding operator gate is reviewed.
+
+Only the fixed error log can be opened, O_RDONLY|O_NOFOLLOW, after safe-ancestor,
+realpath, root:root0600, regular/single-link metadata checks. That strict0600
+requirement is a conservative acceptance rule, not an observation of production
+mode. Files larger than65,536 bytes refuse before content read; this version
+does not seek into an arbitrary truncated log or read rotated siblings. A bounded
+complete snapshot uses stable descriptor/path inode/metadata checks before and
+after reading; rename/copytruncate/append races refuse. Buffers are zeroed and
+opened descriptors closed on success, parser refusal and errors. Unknown does
+not authorize chmod, rotation or a broader/raw log read.
+
+Only exact timestamped Node-console single-line or multiline safe marker records
+are accepted. Multiline continuations may share the exact repeated PM2 timestamp
+or remain unprefixed. The latest complete strictly chronological unique record
+selects one of authorize/launch/prepare/navigate/ready/render and Error/NonError.
+Malformed or partial records, duplicate timestamps/fields, unknown content,
+extra keys, controls, invalid dates or arbitrary exception text make the snapshot
+unknown. This intentionally rejects mixed-content logs: unframed logs cannot
+authenticate a marker embedded in arbitrary text. A valid historical marker is
+also not proof of which request or runtime process originally emitted it; even
+stable current-process proof does not establish per-record provenance. No
+current-smoke root cause or stage is claimed without a subsequent reviewed read.
+
+The only returned line is ABBOTT_PDF_STAGE with the closed stage/class pair, or
+stage=unknown/class=unknown. No counts, timestamps, paths, raw text/messages,
+headers, tokens or exceptions can be incorporated into this output. Tests inject
+synthetic secrets into arbitrary errors, fields, forged marker context and IO
+exceptions; all remain unknown without leakage. Real Node Console formatting is
+used for all six stages and both error classes. Temporary fixture files are
+removed, including sparse oversized and rotated files; descriptors are closed.
+
+TDD RED: five of the initial eight groups failed against unknown-only stubs for
+the intended missing recognition/read/cleanup behavior. GREEN10/10 groups cover
+format/schema/secret cases, latest/duplicate/partial chronology, root/host/process
+proof, symlink/hardlink/metadata/huge-file refusal, rotation/truncate/append/PID
+drift, bounded partial reads, injected IO failure/closure and pinned source
+contract. An initial fixture needed realpath normalization for macOS's temporary
+directory alias; production authority was not relaxed.
+
+Fresh final gates: combined verification183/183; app67/67; full authority/browser/
+bootstrap/recovery/deploy/artifact512/512; dashboard contract111/111. Production
+build and exact12-route/1-prefix validation, contract wiring/public asset policy,
+root and Abbott typechecks, syntax and whitespace checks pass. Lint exits0 with
+0 errors and10 pre-existing warnings. Initial combined test execution overlapped
+the build and hit one missing generated HTML file; rerunning after the build
+passed183/183. An invalid workspace typecheck script invocation was replaced by
+the installed TypeScript executable with the actual Abbott tsconfig. A new test
+variable violated the lint module-name rule; renamed locally and reran lint and
+focused tests successfully. These were local invocation/test issues, not live
+diagnostics or changes to verification acceptance.
+
+All test/build/operator commands exited. Local3001/3004 listeners and private
+identity evidence directories are absent; no live browser/SSH/credential session
+was started. No push, host read, live request, deploy, neighbor/runtime mutation,
+DB/auth/fact/collector/cron change, Nginx edit or capture occurred. Prior evidence
+commitb074b7a remains in history, published refs remain d17712f and last verified
+production remains6f09982/release8c79 with retainedf80607f/release6cd2 rollback.
+There is no fresh production-state claim from this source-only turn. TDD and
+verification-before-completion governed tests and closure. DONE_WITH_CONCERNS;
+STOP for review before any host log read or live retry.
