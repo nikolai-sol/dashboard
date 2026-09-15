@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import vm from 'node:vm';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
@@ -42,22 +41,19 @@ export function readCurrentVersion(values, execute = spawnSync) {
   finally { input?.fill(0); result?.stdout?.fill(0); result?.stderr?.fill(0); }
 }
 
-function signWithExistingImplementation(code, secret, payload) {
-  let context;
+function signManagerToken(secret, version, timestamp) {
+  let key;
   try {
-    if (typeof code !== 'string' || Buffer.byteLength(code) > 65536) refuse();
-    const exports = {};
-    context = vm.createContext({ exports, module: { exports }, process: { env: { NODE_ENV: 'production', DASHBOARD_AUTH_SECRET: secret } }, Buffer,
-      require(name) { if (name === 'crypto') return crypto; refuse(); }, payload });
-    vm.runInContext(code, context, { timeout: 750 });
-    const token = vm.runInContext('module.exports.createSignedSession(payload)', context, { timeout: 750 });
-    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/.test(token)) refuse();
-    return token;
+    // Same JSON/base64url/HMAC-SHA256 wire contract as the attested access-auth.
+    // No source code is accepted or executed by the signing path.
+    key = Buffer.from(secret.trim(), 'utf8');
+    const part = Buffer.from(JSON.stringify({ type: 'viewer', dashboard_id: 18, audience: 'manager', credential_version: version, exp: timestamp + 600 }), 'utf8').toString('base64url');
+    return `${part}.${crypto.createHmac('sha256', key).update(part).digest('base64url')}`;
   } catch { refuse(); }
-  finally { if (context) { delete context.process.env.DASHBOARD_AUTH_SECRET; delete context.payload; } }
+  finally { key?.fill(0); }
 }
 
-export function createOneShotIssuer({ outputPipe, readSource, readVersion = readCurrentVersion, signingCode, now = () => Math.floor(Date.now() / 1000) }) {
+export function createOneShotIssuer({ outputPipe, readSource, readVersion = readCurrentVersion, now = () => Math.floor(Date.now() / 1000) }) {
   let consumed = false;
   return async () => {
     let values, repeated, frame;
@@ -74,8 +70,8 @@ export function createOneShotIssuer({ outputPipe, readSource, readVersion = read
       repeated = readSource();
       if (JSON.stringify(values) !== JSON.stringify(repeated)) refuse();
       const timestamp = now();
-      if (!Number.isSafeInteger(timestamp) || timestamp <= 0) refuse();
-      const token = signWithExistingImplementation(signingCode, values.DASHBOARD_AUTH_SECRET, { type: 'viewer', dashboard_id: 18, audience: 'manager', credential_version: version, exp: timestamp + 600 });
+      if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || !Number.isSafeInteger(timestamp + 600)) refuse();
+      const token = signManagerToken(values.DASHBOARD_AUTH_SECRET, version, timestamp);
       frame = Buffer.from(`manager_access_token\n${token}\n${values.ABBOTT_DASHBOARD_EMBED_KEY.trim()}\n`, 'utf8');
       if (frame.length > 65536 || !outputPipe()) refuse();
       return frame;
@@ -84,12 +80,12 @@ export function createOneShotIssuer({ outputPipe, readSource, readVersion = read
   };
 }
 
-export async function runRemoteIssuer(readSource, signingCode) {
+export async function runRemoteIssuer(readSource) {
   let frame;
   try {
     if (process.argv.length !== 1 || Object.keys(process.env).length) refuse();
     const outputPipe = () => { const stat = fs.fstatSync(1); return !process.stdout.isTTY && (stat.isFIFO() || stat.isSocket()); };
-    frame = await createOneShotIssuer({ outputPipe, readSource, signingCode })();
+    frame = await createOneShotIssuer({ outputPipe, readSource })();
     await new Promise((resolve, reject) => process.stdout.write(frame, error => error ? reject(error) : resolve()));
   } catch { process.stderr.write('ABBOTT_ISSUER_REFUSED\n'); process.exitCode = 1; }
   finally { frame?.fill(0); }

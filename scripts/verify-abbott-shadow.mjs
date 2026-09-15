@@ -4,7 +4,6 @@ import net from 'node:net';
 import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
 import { parseCredentialLines } from './compare-abbott-runtime.mjs';
 import { HOST } from './bootstrap-abbott-host.mjs';
 
@@ -55,9 +54,8 @@ export function captureBoundedChild(binary, args, { input, timeout, maxBytes, si
 
 export function buildIssuerCapsule({ bootstrapSource, issuerSource, authSource }) {
   if (createHash('sha256').update(authSource).digest('hex') !== AUTH_HASH) refuse();
-  const signingCode = ts.transpileModule(authSource.toString(), { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true, target: ts.ScriptTarget.ES2020 } }).outputText;
   const moduleUrl = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
-  const code = `try { const proof=await import(${JSON.stringify(moduleUrl(bootstrapSource))}); const issuer=await import(${JSON.stringify(moduleUrl(issuerSource))}); await issuer.runRemoteIssuer(proof.readVerifiedAbbottSource,${JSON.stringify(signingCode)}); } catch { process.stderr.write('ABBOTT_ISSUER_REFUSED\\n');process.exitCode=1; }\n`;
+  const code = `try { const proof=await import(${JSON.stringify(moduleUrl(bootstrapSource))}); const issuer=await import(${JSON.stringify(moduleUrl(issuerSource))}); await issuer.runRemoteIssuer(proof.readVerifiedAbbottSource); } catch { process.stderr.write('ABBOTT_ISSUER_REFUSED\\n');process.exitCode=1; }\n`;
   if (Buffer.byteLength(code) > 262144) refuse();
   return Buffer.from(code);
 }
@@ -94,6 +92,10 @@ export async function closeOwnedForward(proof) {
   try {
     for (const killSignal of ['SIGTERM','SIGKILL']) {
       if (proof.closed) break;
+      if (child.exitCode !== null || child.signalCode !== null) {
+        await Promise.race([proof.exit, delay(2000)]);
+        break;
+      }
       if (processStart(proof.pid) !== proof.start) refuse();
       child.kill(killSignal);
       await Promise.race([proof.exit, delay(2000)]);
@@ -102,15 +104,25 @@ export async function closeOwnedForward(proof) {
   } finally { for (const buffer of proof.buffers) buffer.fill(0); }
 }
 
+export function verifyOwnedForward(proof) {
+  try {
+    if (proof.closed || proof.failed || proof.failure.aborted || processStart(proof.pid) !== proof.start) refuse();
+    const listeners = execFileSync('/usr/sbin/lsof', ['-nP', '-a', '-p', String(proof.pid), '-iTCP', '-sTCP:LISTEN', '-Fn'], { env: {}, encoding: 'utf8', timeout: 1000, stdio: ['ignore','pipe','pipe'] }).trim().split('\n').filter(line => line.startsWith('n')).sort();
+    if (JSON.stringify(listeners) !== JSON.stringify(['n127.0.0.1:3001','n127.0.0.1:3004'])) refuse();
+  } catch { refuse(); }
+}
+
 async function openOwnedForward(signal) {
   await assertPortsFree();
   if (signal.aborted) refuse();
   const invocation = fixedSshInvocation('forward');
   const child = spawn(invocation.binary, invocation.args, { cwd: ROOT, env: { PATH: '/usr/bin:/bin' }, stdio: ['ignore','pipe','pipe'] });
-  const proof = { child, pid: child.pid, start: '', buffers: [], closed: false, failed: false };
+  const failure = new AbortController();
+  const proof = { child, pid: child.pid, start: '', buffers: [], closed: false, failed: false, failure: failure.signal };
+  const failed = () => { proof.failed = true; failure.abort(); };
   proof.exit = new Promise(resolve => child.once('close', () => { proof.closed = true; resolve(); }));
-  child.on('error', () => { proof.failed = true; });
-  const collect = chunk => { proof.failed = true; chunk.fill(0); };
+  child.once('exit', failed); child.once('error', failed);
+  const collect = chunk => { failed(); chunk.fill(0); };
   child.stdout.on('data', collect); child.stderr.on('data', collect);
   try {
     proof.start = processStart(proof.pid);
@@ -118,11 +130,7 @@ async function openOwnedForward(signal) {
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
       if (signal.aborted || proof.closed || proof.failed) refuse();
-      let listeners = [];
-      try {
-        listeners = execFileSync('/usr/sbin/lsof', ['-nP', '-a', '-p', String(proof.pid), '-iTCP', '-sTCP:LISTEN', '-Fn'], { env: {}, encoding: 'utf8', timeout: 1000, stdio: ['ignore','pipe','pipe'] }).trim().split('\n').filter(line => line.startsWith('n')).sort();
-      } catch {}
-      if (JSON.stringify(listeners) === JSON.stringify(['n127.0.0.1:3001','n127.0.0.1:3004'])) return proof;
+      try { verifyOwnedForward(proof); return proof; } catch {}
       await delay(100);
     }
     refuse();
@@ -144,7 +152,7 @@ function prepareOutput() {
 
 const realPlatform = {
   signalSource: process, capsule: productionCapsule, prepareOutput,
-  openForward: openOwnedForward, closeForward: closeOwnedForward,
+  openForward: openOwnedForward, closeForward: closeOwnedForward, verifyForward: verifyOwnedForward,
   recordForward(proof, exitVerified) {
     process.stdout.write(JSON.stringify({forward:{pid:proof.pid,start:proof.start,exitVerified}}) + '\n');
   },
@@ -163,32 +171,70 @@ const realPlatform = {
 };
 
 export async function runAbbottVerification(mode, platform = realPlatform) {
-  let proof, code, issued, consumed;
+  let proof, code, issued, consumed, passed = false, tearingDown = false;
   const controller = new AbortController();
   const interrupt = () => controller.abort();
+  const forwardFailed = () => { if (!tearingDown) controller.abort(); };
   const active = () => { if (controller.signal.aborted) refuse(); };
-  platform.signalSource.once('SIGINT', interrupt); platform.signalSource.once('SIGTERM', interrupt);
+  const checkForward = () => { active(); platform.verifyForward(proof); active(); };
+  // Failure wins the race, but still await the aborted operation's bounded
+  // shutdown so browser/child cleanup finishes before the tunnel is reaped.
+  const guarded = async operation => {
+    active();
+    let value, rejectAbort;
+    const aborted = new Promise((_, reject) => { rejectAbort = () => reject(new Error('ABBOTT_VERIFICATION_REFUSED')); });
+    controller.signal.addEventListener('abort', rejectAbort, { once: true });
+    const pending = Promise.resolve().then(() => { active(); return operation(); }).then(result => { value = result; return result; });
+    try { return await Promise.race([pending, aborted]); }
+    finally {
+      await pending.catch(() => {});
+      controller.signal.removeEventListener('abort', rejectAbort);
+      if (controller.signal.aborted) erase(value);
+    }
+  };
+  platform.signalSource.on('SIGINT', interrupt); platform.signalSource.on('SIGTERM', interrupt);
   try {
     if (!['compare','capture'].includes(mode)) refuse();
     code = platform.capsule(); active();
     platform.prepareOutput(); active();
     proof = await platform.openForward(controller.signal); active();
+    proof.failure?.addEventListener('abort', forwardFailed, { once: true });
+    if (proof.failure?.aborted) interrupt();
+    checkForward();
     platform.recordForward?.(proof, false);
-    issued = await platform.issue(code, controller.signal); active();
+    issued = await guarded(() => platform.issue(code, controller.signal));
+    checkForward();
     if (issued.status !== 0 || issued.signal || issued.stderr.length || !Buffer.isBuffer(issued.stdout) || issued.stdout.length > 65536) refuse();
     const credentials = parseCredentialLines(new TextDecoder('utf8',{fatal:true}).decode(issued.stdout));
     try { if (!credentials.managerAccessToken || !issued.stdout.toString().endsWith('\n')) refuse(); }
     finally { for (const key of Object.keys(credentials)) delete credentials[key]; }
-    consumed = await platform.consume(mode, issued.stdout, controller.signal); active();
+    consumed = await guarded(() => { checkForward(); return platform.consume(mode, issued.stdout, controller.signal); });
+    checkForward();
     const expected = mode === 'compare' ? /^status=match mismatches=0 report=created\n$/ : /^captures=[1-9]\d* errors=0 index=created\n$/;
     if (consumed.status !== 0 || consumed.signal || consumed.stderr.length || !expected.test(consumed.stdout.toString())) refuse();
-    return { mode, status:'passed', forward:{pid:proof.pid,start:proof.start,exitVerified:true} };
-  } catch { refuse(); }
+    passed = true;
+  } catch { passed = false; }
   finally {
     code?.fill(0); erase(issued); erase(consumed);
-    platform.signalSource.removeListener('SIGINT', interrupt); platform.signalSource.removeListener('SIGTERM', interrupt);
-    if (proof) { try { await platform.closeForward(proof); platform.recordForward?.(proof, true); } catch { refuse(); } }
+    try {
+      if (proof) {
+        // Only our deliberate shutdown may end the tunnel without cancelling
+        // a finished verification. OS signal handlers remain installed.
+        if (passed) checkForward();
+        tearingDown = true;
+      }
+    } catch { passed = false; tearingDown = true; }
+    try {
+      if (proof) { await platform.closeForward(proof); platform.recordForward?.(proof, true); }
+    } catch { passed = false; }
+    finally {
+      proof?.failure?.removeEventListener('abort', forwardFailed);
+      platform.signalSource.removeListener('SIGINT', interrupt); platform.signalSource.removeListener('SIGTERM', interrupt);
+    }
   }
+  active();
+  if (!passed) refuse();
+  return { mode, status:'passed', forward:{pid:proof.pid,start:proof.start,exitVerified:true} };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

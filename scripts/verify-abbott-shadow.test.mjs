@@ -29,6 +29,7 @@ test('orchestrator consumes issuer stdout once, uses stdin, clears buffers and c
   const api = await moduleUnderTest(); assert.equal(typeof api.runAbbottVerification, 'function');
   const bytes=frame(), calls=[];
   const platform={ signalSource:new EventEmitter(), capsule:()=>Buffer.from('reviewed-code'), prepareOutput:()=>{},
+    verifyForward:()=>{},
     openForward:async()=>({pid:4242,start:'start-proof'}), closeForward:async proof=>calls.push(['close',proof.pid]),
     issue:async()=>({status:0,stdout:bytes,stderr:Buffer.alloc(0)}),
     consume:async(mode,input)=>{assert.equal(mode,'compare');assert.equal(input,bytes);calls.push(['consume']);return {status:0,stdout:Buffer.from('status=match mismatches=0 report=created\n'),stderr:Buffer.alloc(0)};},
@@ -48,6 +49,7 @@ test('issuer failure, secret stderr, truncation and extra frame never reach cons
   ]){
     let consumes=0,closed=0;
     const platform={signalSource:new EventEmitter(),capsule:()=>Buffer.from('code'),prepareOutput:()=>{},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{closed++;},issue:async()=>response,consume:async()=>{consumes++;}};
+    platform.verifyForward=()=>{};
     await assert.rejects(api.runAbbottVerification('compare',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
     assert.equal(consumes,0);assert.equal(closed,1);assert.ok(response.stdout.every(x=>x===0));assert.ok(response.stderr.every(x=>x===0));
   }
@@ -58,6 +60,7 @@ test('interrupt and consumer failure close forwards, clear frame and remove sign
   for(const interrupt of [false,true]){
     const signals=new EventEmitter(),bytes=frame();let closed=0,aborted=false;
     const platform={signalSource:signals,capsule:()=>Buffer.from('code'),prepareOutput:()=>{},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{closed++;},issue:async()=>({status:0,stdout:bytes,stderr:Buffer.alloc(0)}),consume:async(mode,input,signal)=>{if(interrupt){signals.emit('SIGINT');aborted=signal.aborted;}throw Error('synthetic-secret');}};
+    platform.verifyForward=()=>{};
     await assert.rejects(api.runAbbottVerification('capture',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
     assert.equal(closed,1);assert.ok(bytes.every(x=>x===0));assert.equal(signals.listenerCount('SIGINT'),0);assert.equal(signals.listenerCount('SIGTERM'),0);if(interrupt)assert.equal(aborted,true);
   }
@@ -100,7 +103,63 @@ test('consumer secret output and interruption while issuing are sanitized and ze
   for(const interrupt of [false,true]){
     const signals=new EventEmitter(),bytes=frame(),secret=Buffer.from('secret-looking-output');let closed=0;
     const platform={signalSource:signals,capsule:()=>Buffer.from('code'),prepareOutput:()=>{},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{closed++;},issue:async()=>{if(interrupt)signals.emit('SIGTERM');return{status:0,stdout:bytes,stderr:Buffer.alloc(0)};},consume:async()=>({status:0,stdout:secret,stderr:Buffer.alloc(0)})};
+    platform.verifyForward=()=>{};
     await assert.rejects(api.runAbbottVerification('compare',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
     assert.equal(closed,1);assert.ok(bytes.every(x=>x===0));if(!interrupt)assert.ok(secret.every(x=>x===0));secret.fill(0);
   }
+});
+
+test('forward death during issuer, before handoff, or during consumer never produces success',async()=>{
+  const api=await moduleUnderTest();
+  for(const phase of ['issuer','handoff','immediate-handoff','consumer','replacement']){
+    const failure=new AbortController(), signals=new EventEmitter(), bytes=frame();let consumes=0,closed=0,checks=0,aborted=false;
+    const proof={pid:4242,start:'proof',failure:failure.signal};
+    const platform={signalSource:signals,capsule:()=>Buffer.from('code'),prepareOutput:()=>{},openForward:async()=>proof,closeForward:async()=>{closed++;},
+      verifyForward:()=>{checks++;if(phase==='replacement'&&checks>1)throw Error('different PID/listener');if(phase==='handoff'&&checks===2||phase==='immediate-handoff'&&checks===3)failure.abort();},
+      issue:async()=>{if(phase==='issuer')failure.abort();return{status:0,stdout:bytes,stderr:Buffer.alloc(0)};},
+      consume:async(mode,input,signal)=>{consumes++;if(phase==='consumer')failure.abort();aborted=signal.aborted;return{status:0,stdout:Buffer.from('status=match mismatches=0 report=created\n'),stderr:Buffer.alloc(0)};},
+    };
+    await assert.rejects(api.runAbbottVerification('compare',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
+    assert.equal(consumes,phase==='consumer'?1:0);assert.equal(closed,1);assert.ok(bytes.every(byte=>byte===0));if(phase==='consumer')assert.equal(aborted,true);
+  }
+});
+
+test('forward loss races pending work, waits for aborted cleanup, and clears late buffers',async()=>{
+  const api=await moduleUnderTest();
+  for(const phase of ['issuer','consumer']){
+    const failure=new AbortController(),bytes=frame();let cleaned=false,closed=false,consumes=0;
+    const response={status:0,stdout:bytes,stderr:Buffer.alloc(0)};
+    const pending = signal => new Promise(resolve=>{
+      signal.addEventListener('abort',()=>{setTimeout(()=>{cleaned=true;resolve(response);},5);},{once:true});
+      setImmediate(()=>failure.abort());
+    });
+    const platform={signalSource:new EventEmitter(),capsule:()=>Buffer.from('code'),prepareOutput:()=>{},verifyForward:()=>{},
+      openForward:async()=>({pid:4242,start:'proof',failure:failure.signal}),
+      issue:async(code,signal)=>phase==='issuer'?pending(signal):response,
+      consume:async(mode,input,signal)=>{consumes++;return pending(signal);},
+      closeForward:async()=>{assert.equal(cleaned,true);closed=true;},
+    };
+    await assert.rejects(api.runAbbottVerification('compare',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
+    assert.equal(consumes,phase==='consumer'?1:0);assert.equal(closed,true);assert.ok(bytes.every(byte=>byte===0));
+  }
+});
+
+test('real owned-forward validator refuses missing listeners, failed proof and PID/start drift',async()=>{
+  const api=await moduleUnderTest();
+  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{env:{},stdio:'ignore'});
+  const proof={child,pid:child.pid,start:execFileSync('/bin/ps',['-p',String(child.pid),'-o','lstart='],{encoding:'utf8'}).trim(),buffers:[],closed:false,failure:new AbortController().signal};
+  proof.exit=new Promise(resolve=>child.once('close',()=>{proof.closed=true;resolve();}));
+  try{
+    for(const change of [{},{failed:true},{start:'replacement'},{pid:0}])assert.throws(()=>api.verifyOwnedForward({...proof,...change}),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
+  }finally{await api.closeOwnedForward(proof);assert.equal(proof.closed,true);}
+});
+
+test('signal handlers remain installed throughout cleanup and cleanup interruption prevents success',async()=>{
+  const api=await moduleUnderTest();const signals=new EventEmitter();let finished=false;
+  const platform={signalSource:signals,capsule:()=>Buffer.from('code'),prepareOutput:()=>{},openForward:async()=>({pid:4242,start:'proof'}),verifyForward:()=>{},
+    issue:async()=>({status:0,stdout:frame(),stderr:Buffer.alloc(0)}),consume:async()=>({status:0,stdout:Buffer.from('status=match mismatches=0 report=created\n'),stderr:Buffer.alloc(0)}),
+    closeForward:async()=>{assert.equal(signals.listenerCount('SIGINT'),1);assert.equal(signals.listenerCount('SIGTERM'),1);signals.emit('SIGTERM');await new Promise(resolve=>setTimeout(resolve,5));finished=true;},
+  };
+  await assert.rejects(api.runAbbottVerification('compare',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
+  assert.equal(finished,true);assert.equal(signals.listenerCount('SIGINT'),0);assert.equal(signals.listenerCount('SIGTERM'),0);
 });

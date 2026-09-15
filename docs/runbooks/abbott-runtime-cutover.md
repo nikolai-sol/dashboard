@@ -29,7 +29,7 @@ non-force pushes only after the complete local gates pass.
 ```bash
 npm ci
 command -v python3 >/dev/null
-node --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs \
+node --import tsx --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs \
   scripts/abbott-parity-issuer.test.mjs scripts/verify-abbott-shadow.test.mjs
 npm run test:abbott-runtime
 npm run test:abbott-contract
@@ -166,15 +166,18 @@ orchestrator below, after its dedicated review. It sends committed code on SSH
 stdin to the fixed `beget` command under an empty remote environment. The issuer
 revalidates the exact combined host/source/process/UID/GID/Next-parser proof,
 selects the effective allowlisted environment in memory, reads dashboard 18's
-current DB credential version with a fixed SELECT, and calls the existing
-`createSignedSession` signing code with
+current DB credential version with a fixed SELECT, and uses a fixed internal
+`node:crypto` HMAC-SHA256 signer with
 `type=viewer`, `dashboard_id=18`, `audience=manager`, that credential version, and
 an expiry 600 seconds ahead. The consumer rejects expired tokens or expiry more
-than 900 seconds ahead. The signing implementation is the exact Git blob at the
-verified combined source SHA, SHA-256
-`71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f`, transpiled
-in memory and evaluated in a private VM. No combined file or ambient environment
-is changed. Missing DB credentials/version/embed key or source drift fails closed.
+than 900 seconds ahead. Its JSON/base64url wire contract is tested byte-for-byte
+against the existing `createSignedSession` and accepted by the existing verifier.
+The combined auth Git blob remains hash-attested as
+`71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f`, but is
+never loaded or evaluated for signing. There is no dynamic signing source, VM,
+eval, Function constructor, or signer child. No combined file or ambient
+environment is changed. Missing DB credentials/version/embed key or source drift
+fails closed.
 
 The issuer refuses TTY/file-like stdout and emits at most one exact frame per
 process. Its stdout/stderr are captured, bounded and checked before consumer use,
@@ -182,9 +185,14 @@ never inherited or teed to a terminal. The local orchestrator feeds only the
 validated frame into the consumer's stdin, clears buffers, and never saves a
 credential. It opens only literal loopback forwards 3001/3004, refuses occupied
 ports, disables ControlMaster/ControlPath reuse, records its SSH PID/start identity,
-checks owned listeners, and bounds startup and exit. Interrupt/error cleanup
-closes only that owned SSH process; capture receives time for its reviewed browser
-cleanup before escalation. No password or HTTP issuer endpoint exists.
+checks owned listeners, and bounds startup and exit. SSH exit/error aborts both
+issuance and consuming verification. PID/start and both literal owned listeners
+are revalidated after issuance, immediately before handing off the frame, after
+the consumer, and before deliberate tunnel shutdown. A lost/replaced tunnel
+cannot produce success. Interrupt handlers stay installed through consumer and
+verified forward cleanup; capture receives time for its reviewed browser cleanup
+before escalation. Only the owned SSH process is closed. No password or HTTP
+issuer endpoint exists.
 
 The consumer's envelope checks do not verify a signature. Both live runtimes
 must independently accept the session/current version through a read-only

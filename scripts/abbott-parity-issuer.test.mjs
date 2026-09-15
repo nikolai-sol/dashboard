@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs';
-import { createHash } from 'node:crypto';
-import ts from 'typescript';
+import { createHash, createHmac } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -15,25 +14,57 @@ async function moduleUnderTest() {
 }
 const values = { DASHBOARD_AUTH_SECRET: 'synthetic-signing-secret', ABBOTT_DASHBOARD_EMBED_KEY: 'synthetic-embed', DB_NAME: 'report_bd', DB_HOST: 'localhost', DB_PORT: '3306', DB_USER: 'synthetic-reader', DB_PASSWORD: 'synthetic-db' };
 const source = fs.readFileSync(new URL('../src/lib/access-auth.ts', import.meta.url));
-const compiled = ts.transpileModule(source.toString(), { compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true, target: ts.ScriptTarget.ES2020 } }).outputText;
 
-test('issuer uses existing pinned signing implementation for a single strict manager frame', async () => {
+test('fixed signing path accepts no executable source and uses crypto without dynamic execution or signer children', async () => {
+  const issuer = fs.readFileSync(new URL('./abbott-parity-issuer.mjs', import.meta.url), 'utf8');
+  const orchestrator = fs.readFileSync(new URL('./verify-abbott-shadow.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(issuer, /node:vm|\beval\s*\(|\bFunction\s*\(|signingCode|runInContext|createContext/);
+  assert.doesNotMatch(orchestrator, /transpileModule|signingCode|typescript/);
+  const signingPath = issuer.slice(issuer.indexOf('function signManagerToken'), issuer.indexOf('export function createOneShotIssuer'));
+  assert.match(signingPath, /createHmac/);
+  assert.doesNotMatch(signingPath, /\b(?:spawn\w*|exec\w*|import|require)\s*\(|child_process/);
+});
+
+test('issuer emits the pinned signing wire contract for a single strict manager frame', async () => {
   const api = await moduleUnderTest();
   assert.equal(typeof api.createOneShotIssuer, 'function');
   let proofs = 0, reads = 0;
   const before = JSON.stringify(process.env);
-  const issue = api.createOneShotIssuer({ outputPipe: () => true, readSource: () => { proofs++; return { ...values }; }, readVersion: async env => { assert.equal(env.DB_NAME, 'report_bd'); reads++; return 7; }, signingCode: compiled, now: () => 1000 });
+  const issue = api.createOneShotIssuer({ outputPipe: () => true, readSource: () => { proofs++; return { ...values }; }, readVersion: async env => { assert.equal(env.DB_NAME, 'report_bd'); reads++; return 7; }, now: () => 1000 });
   const frame = await issue();
   try {
     const lines = frame.toString().split('\n');
     assert.equal(lines.length, 4); assert.equal(lines[0], 'manager_access_token'); assert.equal(lines[2], values.ABBOTT_DASHBOARD_EMBED_KEY); assert.equal(lines[3], '');
     const claims = JSON.parse(Buffer.from(lines[1].split('.')[0], 'base64url'));
+    const [payloadPart, signature] = lines[1].split('.');
+    assert.equal(signature, createHmac('sha256', values.DASHBOARD_AUTH_SECRET).update(payloadPart).digest('base64url'));
     assert.deepEqual(claims, { type: 'viewer', dashboard_id: 18, audience: 'manager', credential_version: 7, exp: 1600 });
     assert.equal(proofs, 2); assert.equal(reads, 1);
     await assert.rejects(issue(), /ABBOTT_ISSUER_REFUSED/);
     assert.equal(proofs, 2);
     assert.equal(JSON.stringify(process.env), before);
   } finally { frame.fill(0); }
+});
+
+test('fixed issuer token is byte-identical to the real signer and accepted by the real verifier', async () => {
+  const api = await moduleUnderTest();
+  const auth = await import('../src/lib/access-auth.ts');
+  const prior = process.env.DASHBOARD_AUTH_SECRET;
+  const timestamp = Math.floor(Date.now()/1000);
+  let bytes;
+  try {
+    // Synthetic test-only ambient state for the existing application verifier;
+    // the production issuer never writes process.env.
+    process.env.DASHBOARD_AUTH_SECRET = `  ${values.DASHBOARD_AUTH_SECRET}  `;
+    bytes = await api.createOneShotIssuer({ outputPipe:()=>true, readSource:()=>({...values,DASHBOARD_AUTH_SECRET:process.env.DASHBOARD_AUTH_SECRET}),readVersion:async()=>7,now:()=>timestamp })();
+    const token = bytes.toString().split('\n')[1];
+    const claims = {type:'viewer',dashboard_id:18,audience:'manager',credential_version:7,exp:timestamp+600};
+    assert.equal(token, auth.createSignedSession(claims));
+    assert.deepEqual(auth.verifySignedSession(token), claims);
+  } finally {
+    bytes?.fill(0);
+    if(prior === undefined) delete process.env.DASHBOARD_AUTH_SECRET; else process.env.DASHBOARD_AUTH_SECRET=prior;
+  }
 });
 
 test('issuer refuses TTY/file output, source drift, invalid version or missing secret before output', async () => {
@@ -48,7 +79,7 @@ test('issuer refuses TTY/file output, source drift, invalid version or missing s
     { readSource: () => ({ ...values, ABBOTT_DASHBOARD_EMBED_KEY: 'x\nextra' }) },
     { readSource: () => ({ ...values, ABBOTT_DASHBOARD_EMBED_KEY: 'x'.repeat(65536) }) },
   ]) {
-    const issue = api.createOneShotIssuer({ outputPipe: () => true, readSource: () => ({ ...values }), readVersion: async () => 7, signingCode: compiled, now: () => 1000, ...change });
+    const issue = api.createOneShotIssuer({ outputPipe: () => true, readSource: () => ({ ...values }), readVersion: async () => 7, now: () => 1000, ...change });
     await assert.rejects(issue(), error => String(error) === 'Error: ABBOTT_ISSUER_REFUSED');
   }
 });
@@ -79,7 +110,7 @@ test('issuer current-version query is fixed read-only and captures failures with
 test('real remote entrypoint refuses file-backed stdout before reading any source', async () => {
   const moduleSource = fs.readFileSync(new URL('./abbott-parity-issuer.mjs',import.meta.url));
   const url='data:text/javascript;base64,'+moduleSource.toString('base64');
-  const script=`const m=await import(${JSON.stringify(url)});await m.runRemoteIssuer(()=>{process.stdout.write('SOURCE_READ_ATTEMPTED');throw Error('must-not-read');},'');`;
+  const script=`const m=await import(${JSON.stringify(url)});await m.runRemoteIssuer(()=>{process.stdout.write('SOURCE_READ_ATTEMPTED');throw Error('must-not-read');});`;
   const temp=fs.mkdtempSync(path.join(os.tmpdir(),'abbott-issuer-output-'));
   const filename=path.join(temp,'stdout');const fd=fs.openSync(filename,'wx',0o600);
   try{
@@ -98,7 +129,7 @@ test('missing or malformed database credentials refuse before starting a databas
 
 test('existing embed key uses the same trimming semantics as the authorizer',async()=>{
   const api=await moduleUnderTest();
-  const issue=api.createOneShotIssuer({outputPipe:()=>true,readSource:()=>({...values,ABBOTT_DASHBOARD_EMBED_KEY:'  synthetic-embed  '}),readVersion:async()=>7,signingCode:compiled,now:()=>1000});
+  const issue=api.createOneShotIssuer({outputPipe:()=>true,readSource:()=>({...values,ABBOTT_DASHBOARD_EMBED_KEY:'  synthetic-embed  '}),readVersion:async()=>7,now:()=>1000});
   const bytes=await issue();
   try{assert.equal(bytes.toString().split('\n')[2],'synthetic-embed');}finally{bytes.fill(0);}
 });

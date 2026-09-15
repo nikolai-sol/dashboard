@@ -539,3 +539,62 @@ No real credential was minted, no production/SSH command was run, no live browse
 or parity execution occurred, and no commit was pushed or deployed in this
 revision. The previous shadow/neighbor/Nginx evidence remains the latest observed
 live state, not a new verification claim. Stop for focused issuer review.
+
+## Issuer review correction — fixed signer and continuous forward ownership
+
+Status: DONE_WITH_CONCERNS, stopped for re-review before any live credential use.
+This section supersedes the previous checkpoint's VM-signing description.
+
+The reviewer identified two Important issues: host objects injected into the
+signer VM were not an isolation boundary, and the SSH forward was not monitored
+through the complete issuance/consumer/cleanup lifetime. The owner subsequently
+directed a simpler fixed internal signer instead of an OS signer sandbox.
+
+The issuer now signs directly with `node:crypto` HMAC-SHA256. It accepts no
+executable signing source, performs no dynamic signing-code loading/evaluation,
+and has no signer child. The signing key Buffer is cleared in `finally`; existing
+source/frame/output cleanup remains in place. The exact existing auth blob hash
+is still checked as compatibility authority, but that blob is not transported or
+executed for signing. A synthetic regression verifies byte-for-byte equality
+with the real `createSignedSession`, acceptance by the real verifier, trimmed
+secret semantics, the current credential version, dashboard 18, manager audience,
+and the fixed 600-second expiry. The fixed read-only DB-version child is unchanged.
+No runtime upgrade, OS sandbox installation, or combined-source change was needed.
+
+The owned SSH child's exit/error (and unexpected output) now aborts a lifetime
+signal. Both issuance and consuming verification race against that signal; the
+orchestrator still awaits their bounded aborted cleanup, clearing late-arriving
+buffers before it closes the forward. PID/start identity and both exact literal
+loopback listeners are checked initially, after issuance, immediately before
+credential handoff, after consumption, and before intentional tunnel shutdown.
+Failure or replacement prevents handoff/success. SIGINT/SIGTERM handlers remain
+installed until consumer cleanup and owned-forward exit verification finish;
+signals during cleanup cannot produce a passed result. Expected exit from the
+orchestrator's deliberate final shutdown is distinguished from earlier loss.
+
+TDD RED demonstrated the former dynamic signing path and false success after
+forward death/early signal-handler removal. GREEN additionally covers a pending
+issuer or consumer interrupted by forward failure, waiting for their cleanup,
+zeroing late buffers, immediate handoff loss, replacement refusal, real local
+child start-identity/listener checks, and signals during cleanup.
+
+Fresh verification:
+
+- Focused bootstrap/issuer/orchestrator/comparator/capture: 88 passed (20 in the
+  focused issuer/orchestrator subset), zero failures.
+- Relevant real auth/access/PDF-auth and Abbott app/runtime: 108 passed.
+- Full Abbott runtime gate: build passed; 67 app/runtime and 268 authority/artifact
+  tests passed; unchanged Nginx fragment validation passed.
+- Root and Abbott typechecks, full lint, syntax and whitespace checks passed.
+  Lint retains the ten pre-existing warnings, with zero errors.
+
+All inputs were synthetic local fixtures. Test-owned children were bounded and
+reaped; no browser or SSH forward was opened. No real credential was minted or
+used, no production/network command was run, and no push, deploy, Nginx edit,
+reload, DB/auth write, or neighbor action occurred in this revision. Published
+refs and the shadow deployment remain at `f80607f` as previously recorded; prior
+PID/release/Nginx evidence was not refreshed and is not presented as fresh proof.
+Public routing remains unswitched by this task; rollback target remains port
+3001. Live parity, six-image comparison, and the separately reviewed structural
+Nginx correction remain required. The previously recorded Python stamp-helper
+Minor is unchanged. Stop for focused re-review.
