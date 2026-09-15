@@ -1,6 +1,6 @@
 # Abbott Task 9 — shadow deployment and token-tooling review checkpoint
 
-Status: DONE_WITH_CONCERNS at the requested issuer/orchestrator review checkpoint.
+Status: DONE_WITH_CONCERNS at the requested additional smoke-tool review checkpoint.
 Reviewed bootstrap and shadow deployment succeeded. Public routing is unchanged;
 live parity, six-image comparison and cutover are not complete. Earlier sections
 are chronological checkpoint history, superseded by the final execution section
@@ -598,3 +598,123 @@ Public routing remains unswitched by this task; rollback target remains port
 3001. Live parity, six-image comparison, and the separately reviewed structural
 Nginx correction remain required. The previously recorded Python stamp-helper
 Minor is unchanged. Stop for focused re-review.
+
+## Approved operational resume and additional smoke review checkpoint
+
+### Publication and unchanged installed application
+
+After issuer approval, the worktree was clean at
+`bb9fad507b2dbda67eaf3a46b020acf680a70f30`. Isolated Git discovery proved both
+authorized remote refs were at `f80607f` and ancestors of HEAD. One ordinary
+non-force push updated only `refs/heads/codex/abbott-runtime-isolation` and
+`refs/heads/release/abbott`; a fresh isolated literal repository lookup confirmed
+both at `bb9fad507b2dbda67eaf3a46b020acf680a70f30`.
+
+No shadow redeploy was necessary: the entire diff from installed `f80607f` to
+`bb9fad5` contains verification/bootstrap tooling and documentation, not packaged
+application, launcher, runtime-contract, dependency or artifact-policy changes.
+The installed release remains `6cd2f12e245a47dcbd5f6ce928c4ed83` with source
+`f80607fbc8a693aa2c720b0976938e88732cdf1a` and no predecessor.
+
+Fresh preflight verified host `ybjqbzojln`, account UID 982/GID 984,
+`/nonexistent` home and `/usr/sbin/nologin`, root-only input directory/file
+0700/0600, rendered app environment root:GID984 mode0640, and single-link files.
+The sole port-3004 listener was `127.0.0.1:3004`, owned by PID542693; direct
+Abbott/database health returned HTTP200. No credential values were output.
+
+Neighbor PM2 pid-file/kernel identities and release paths/stamps matched before
+and after the live comparison/capture attempt:
+
+| Runtime | PM2 ID / PID | Release evidence |
+| --- | --- | --- |
+| dashboard-next | 1 / 3722244 | source `8f389a28df1c4b741ec33b7538f0354b74f5a40e`, cwd `/var/www/dashboard` |
+| dashboard-zaruku | 2 / 791065 | source `af1948c8b9a0f70d8696afb9c8abc254408a5daa`, cwd `/var/www/dashboard-zaruku/apps/zaruku` |
+| dashboard-medroche | 4 / 1870897 | immutable root `/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone` |
+| dashboard-abbott | 5 / 542693 | installed isolated release/source unchanged |
+
+Nginx config SHA-256 remained
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+No Nginx backup, insertion, test/reload or cutover occurred. Route rollback target
+remains the unchanged combined runtime on port3001.
+
+### Live results and cleanup
+
+The approved `compare` orchestrator minted an ephemeral frame on the authorized
+host, captured it only in memory, and passed it directly to the consumer. For
+`2026-09-01..2026-09-13`, manager/embed JSON and HTTP Excel parity returned
+`match`, mismatch count0. Both manager-only administrator-list GETs accepted the
+session/current version. No administrator ID was modified. The redacted report
+is mode0600 at:
+
+`/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026-09-14/abbott-runtime-parity-5d963f9c0537299abe34f5df/abbott-runtime-parity.json`
+
+Its owned SSH PID8174 (start `Tue Sep 15 02:23:46 2026`) exited; independent
+kernel existence check returned ESRCH.
+
+The approved `capture` invocation used a fresh ephemeral frame, but exited1 with
+the fixed `ABBOTT_VERIFICATION_REFUSED` diagnostic. The wrapper intentionally
+did not expose raw consumer stderr, so no more specific failure cause is claimed.
+No candidate PNGs/index remain; therefore six-image dimensions, pixel differences,
+console counts and human visual parity are **not available / not passed**.
+The existing visual baseline was not changed.
+
+Capture cleanup removed its partial output directory. Independently checked
+ESRCH for owned SSH8302 (start `Tue Sep 15 02:24:13 2026`), orchestrator8294,
+consumer8336, Chromium8338 and captured child PIDs8346, 8347, 8348, 8352, 8353,
+8362 and 8366. Only the successful redacted comparison directory remains in the
+private evidence root. Credential buffers were cleared by the reviewed lifecycle;
+credential strings remained process-memory-only until those processes exited.
+No credential temp files or plaintext password workflow were used.
+
+The visual gate is blocked. Separately, the reviewed comparison/capture tools did
+not cover PDF, all aliases or explicit privacy-denial/asset acceptance; these were
+not misrepresented as passed. The parent approved a local-only additional smoke
+implementation and required review before any new live probe.
+
+### Additional read-only smoke transport, not executed live
+
+Implemented a focused `smoke` mode behind the same frame/forward lifecycle. A
+read-only SSH attestation binds the exact installed release/current record and
+manifest hash, repeats source proof, checks every public file and refuses
+unattested additions, symlinks, owner/mode/hash drift. It returns only bounded
+public paths/sizes/hashes in captured memory before credential issuance. No
+manifest file or alternate credential descriptor is introduced.
+
+The in-process consumer checks both page/JSON/PDF/Excel aliases and both audiences
+on the two literal loopback origins with fixed dates, GET only and no redirects.
+Manager admin reads must pass; embed admin reads must return401/403. Embed JSON
+gets a recursive forbidden-identifier/private-collection scan. JSON and workbook
+aliases use the existing semantic summaries. PDF validity, page count/dimensions
+and normalized text digests are compared; metadata/compression byte differences
+are deliberately not parity failures. Installed Poppler26.04.0 parses PDFs using
+bounded pipes, captures/clears output and reaps children. No raw PDF/text is saved.
+
+Assets have bounded per-runtime HTML inventories, status/type checks, shared-path
+hash equality and candidate-manifest equality. Candidate-only split-prefix chunks
+are validated against the installed manifest rather than a different local build.
+The overall smoke deadline is eight minutes; rejected response bodies are
+cancelled. Forward loss or signals abort requests/parser children and prevent
+success. The report retains only redacted counts/digests.
+
+TDD RED observed missing smoke/attestation interfaces, absent orchestrator mode,
+unread body cleanup omission and missing Excel alias requests. GREEN covers real
+synthetic PDF parsing, PDF semantic differences, both aliases/audiences, recursive
+privacy, manager denial/embed acceptance failures, wrong periods/status/types,
+asset/hash/manifest/source drift, unapproved paths, abort cleanup and buffer
+clearing. Runbook and dashboard memory distinguish the actual partial live result
+from this unexecuted local implementation. No Nginx structural fix was attempted.
+
+New focused suite: 100 tests passed. Relevant auth/access/PDF-auth plus Abbott
+app/runtime: 108 passed. Root/Abbott typechecks, full lint (same ten pre-existing
+warnings, zero errors), targeted lint, syntax and whitespace checks passed.
+Fresh full runtime build passed, with 67 app/runtime and 268 authority/artifact
+tests passing; the unchanged exact Nginx fragment validation also passed. Earlier
+pre-publication supplemental gates passed 111 Abbott contract tests, contract
+wiring, public-asset scan and explicit artifact verification (2,870 files,
+82 text files). Those operations did not deploy or change Nginx.
+
+STOP for additional smoke-tool review. This revision is not pushed/deployed; no
+new live smoke/PDF/asset probe or token mint occurred during implementation.
+Visual failure still requires a separate safe diagnosis and passing retry before
+Nginx work or cutover. No DB/fact/auth/admin write, migration, credential rotation,
+collector/cron change or neighbor restart/release occurred.

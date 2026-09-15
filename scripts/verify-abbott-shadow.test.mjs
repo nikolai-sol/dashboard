@@ -163,3 +163,22 @@ test('signal handlers remain installed throughout cleanup and cleanup interrupti
   await assert.rejects(api.runAbbottVerification('compare',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
   assert.equal(finished,true);assert.equal(signals.listenerCount('SIGINT'),0);assert.equal(signals.listenerCount('SIGTERM'),0);
 });
+
+test('smoke consumes bounded attestation in memory and shares forward-loss cleanup',async()=>{
+  const api=await moduleUnderTest();
+  for(const loss of [false,true]){
+    const failure=new AbortController(),bytes=frame(),assets=Buffer.from('{"version":1}');let consumed=0,closed=0;
+    const platform={signalSource:new EventEmitter(),capsule:()=>Buffer.from('code'),prepareOutput:()=>{},verifyForward:()=>{},openForward:async()=>({pid:4242,start:'proof',failure:failure.signal}),closeForward:async()=>{closed++;},
+      readAssets:async()=>({status:0,stdout:assets,stderr:Buffer.alloc(0)}),issue:async()=>({status:0,stdout:bytes,stderr:Buffer.alloc(0)}),
+      consume:async(mode,input,signal,attestation)=>{assert.equal(mode,'smoke');assert.equal(input,bytes);assert.equal(attestation,assets);consumed++;if(loss)failure.abort();return{status:0,stdout:Buffer.from('smoke=passed checks=40\n'),stderr:Buffer.alloc(0)};},
+    };
+    if(loss)await assert.rejects(api.runAbbottVerification('smoke',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);else assert.equal((await api.runAbbottVerification('smoke',platform)).status,'passed');
+    assert.equal(consumed,1);assert.equal(closed,1);assert.ok(bytes.every(x=>x===0));assert.ok(assets.every(x=>x===0));
+  }
+});
+
+test('failed asset attestation refuses before issuing a credential and never leaks stderr',async()=>{
+  const api=await moduleUnderTest();let issued=0;const assets=Buffer.from('secret-looking'),stderr=Buffer.from('private-error');
+  const platform={signalSource:new EventEmitter(),capsule:()=>Buffer.from('code'),prepareOutput:()=>{},verifyForward:()=>{},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{},readAssets:async()=>({status:1,stdout:assets,stderr}),issue:async()=>{issued++;}};
+  await assert.rejects(api.runAbbottVerification('smoke',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);assert.equal(issued,0);assert.ok(assets.every(x=>x===0));assert.ok(stderr.every(x=>x===0));
+});

@@ -45,8 +45,13 @@ Direct health and exclusive loopback port 3004 passed. Public routing remains
 combined port 3001, with neighbor PIDs/releases and Nginx unchanged. Bootstrap
 installed only the existing allowlisted runtime values in root-only input; no
 password rotation, auth/database mutation, collector, cron, or source-API action
-occurred. Live parity and cutover are pending token-tooling and Nginx reviews;
-this is not completed isolation/cutover. See the cutover runbook for authority.
+occurred. Approved ephemeral-token comparison now passes manager/embed JSON and
+HTTP Excel for 2026-09-01..2026-09-13 with zero mismatches. Visual capture failed;
+no candidate images/index remain and owned browser/SSH PIDs exited. Additional
+read-only PDF/alias/privacy/asset smoke is locally implemented pending review,
+not run live. Both authorized refs are `bb9fad5`; the shadow remains `f80607f`
+because later changes affect only tooling/docs. Nginx is unchanged; isolation
+cutover is not complete. See the cutover runbook for authority.
 
 ### Abbott canonical/private release boundary
 

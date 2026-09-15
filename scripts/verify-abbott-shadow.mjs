@@ -4,7 +4,7 @@ import net from 'node:net';
 import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { parseCredentialLines } from './compare-abbott-runtime.mjs';
+import { parseCredentialLines, createPrivateOutputDirectory, writePrivateExclusiveFile, releasePrivateOutputDirectory, cleanupPrivateOutputDirectory } from './compare-abbott-runtime.mjs';
 import { HOST } from './bootstrap-abbott-host.mjs';
 
 const ROOT = '/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
@@ -60,7 +60,13 @@ export function buildIssuerCapsule({ bootstrapSource, issuerSource, authSource }
   return Buffer.from(code);
 }
 
-function productionCapsule() {
+export function buildAssetCapsule({bootstrapSource,attestationSource}) {
+  const url=bytes=>'data:text/javascript;base64,'+Buffer.from(bytes).toString('base64');
+  const code=`try{const proof=await import(${JSON.stringify(url(bootstrapSource))});const assets=await import(${JSON.stringify(url(attestationSource))});assets.runRemoteAssetAttestation(proof.verifyAbbottBootstrapSource);}catch{process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED\\n');process.exitCode=1;}\n`;
+  if(Buffer.byteLength(code)>262144)refuse();return Buffer.from(code);
+}
+
+function productionCapsule(kind='issuer') {
   if (process.getuid() === 0 || fs.realpathSync(process.cwd()) !== ROOT || fs.realpathSync(path.resolve(import.meta.dirname, '..')) !== ROOT) refuse();
   const env = { PATH: '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_GLOBAL: '/dev/null', GIT_NO_REPLACE_OBJECTS: '1', GIT_GRAFT_FILE: '/dev/null', GIT_PAGER: '/bin/cat' };
   const git = (...args) => execFileSync('/usr/bin/git', ['--no-replace-objects', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', ...args], { cwd: ROOT, env, timeout: 10000, maxBuffer: 262144, stdio: ['ignore','pipe','pipe'] });
@@ -71,7 +77,10 @@ function productionCapsule() {
   const gitDir = path.resolve(ROOT, match[1]);
   if (fs.realpathSync(gitDir) !== gitDir || fs.readFileSync(path.join(gitDir,'gitdir'),'utf8').trim() !== marker || git('rev-parse','--absolute-git-dir').toString().trim() !== gitDir) refuse();
   if (git('status', '--porcelain=v1').length || git('rev-parse', '--show-toplevel').toString().trim() !== ROOT) refuse();
-  return buildIssuerCapsule({ bootstrapSource: git('show', 'HEAD:scripts/bootstrap-abbott-host.mjs'), issuerSource: git('show', 'HEAD:scripts/abbott-parity-issuer.mjs'), authSource: git('show', `${HOST.sourceSha}:src/lib/access-auth.ts`) });
+  const bootstrapSource=git('show','HEAD:scripts/bootstrap-abbott-host.mjs');
+  if(kind==='assets')return buildAssetCapsule({bootstrapSource,attestationSource:git('show','HEAD:scripts/abbott-asset-attestation.mjs')});
+  if(kind!=='issuer')refuse();
+  return buildIssuerCapsule({ bootstrapSource, issuerSource: git('show', 'HEAD:scripts/abbott-parity-issuer.mjs'), authSource: git('show', `${HOST.sourceSha}:src/lib/access-auth.ts`) });
 }
 
 function processStart(pid) {
@@ -160,7 +169,28 @@ const realPlatform = {
     const invocation = fixedSshInvocation('issuer');
     return captureBoundedChild(invocation.binary, invocation.args, { input: code, signal, timeout: 30000, maxBytes: 65536 });
   },
-  consume(mode, input, signal) {
+  async readAssets(signal) {
+    const input=productionCapsule('assets'),invocation=fixedSshInvocation('issuer');
+    try{return await captureBoundedChild(invocation.binary,invocation.args,{input,signal,timeout:30000,maxBytes:262144});}finally{input.fill(0);}
+  },
+  async consume(mode, input, signal, attestation) {
+    if(mode==='smoke'){
+      const credentials=parseCredentialLines(new TextDecoder('utf8',{fatal:true}).decode(input));let directory;
+      try{
+        if(!credentials.managerAccessToken)refuse();
+        const {runReadOnlySmoke}=await import('./smoke-abbott-runtime.mjs');
+        const manifest=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(attestation));
+        const report=await runReadOnlySmoke({...credentials,manifest},signal);
+        if(signal.aborted)refuse();
+        directory=await createPrivateOutputDirectory(OUTPUT,'abbott-runtime-smoke-',ROOT);
+        await writePrivateExclusiveFile(directory,'abbott-runtime-smoke.json',JSON.stringify(report)+'\n');
+        if(signal.aborted)refuse();await releasePrivateOutputDirectory(directory);directory=null;
+        return {status:0,stdout:Buffer.from(`smoke=passed checks=${report.checks}\n`),stderr:Buffer.alloc(0)};
+      }finally{
+        for(const key of Object.keys(credentials))delete credentials[key];
+        if(directory)await cleanupPrivateOutputDirectory(directory);
+      }
+    }
     const args = mode === 'compare'
       ? ['scripts/compare-abbott-runtime.mjs','--reference','http://127.0.0.1:3001','--candidate','http://127.0.0.1:3004','--output-parent',OUTPUT]
       : ['scripts/capture-abbott-runtime.mjs','--login','http://127.0.0.1:3001','--candidate','http://127.0.0.1:3004','--baseline',BASELINE,'--output-parent',OUTPUT];
@@ -171,7 +201,7 @@ const realPlatform = {
 };
 
 export async function runAbbottVerification(mode, platform = realPlatform) {
-  let proof, code, issued, consumed, passed = false, tearingDown = false;
+  let proof, code, issued, consumed, assets, passed = false, tearingDown = false;
   const controller = new AbortController();
   const interrupt = () => controller.abort();
   const forwardFailed = () => { if (!tearingDown) controller.abort(); };
@@ -194,7 +224,7 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
   };
   platform.signalSource.on('SIGINT', interrupt); platform.signalSource.on('SIGTERM', interrupt);
   try {
-    if (!['compare','capture'].includes(mode)) refuse();
+    if (!['compare','capture','smoke'].includes(mode)) refuse();
     code = platform.capsule(); active();
     platform.prepareOutput(); active();
     proof = await platform.openForward(controller.signal); active();
@@ -202,20 +232,24 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     if (proof.failure?.aborted) interrupt();
     checkForward();
     platform.recordForward?.(proof, false);
+    if(mode==='smoke'){
+      assets=await guarded(()=>platform.readAssets(controller.signal));checkForward();
+      if(assets.status!==0||assets.signal||assets.stderr.length||!Buffer.isBuffer(assets.stdout)||assets.stdout.length>262144)refuse();
+    }
     issued = await guarded(() => platform.issue(code, controller.signal));
     checkForward();
     if (issued.status !== 0 || issued.signal || issued.stderr.length || !Buffer.isBuffer(issued.stdout) || issued.stdout.length > 65536) refuse();
     const credentials = parseCredentialLines(new TextDecoder('utf8',{fatal:true}).decode(issued.stdout));
     try { if (!credentials.managerAccessToken || !issued.stdout.toString().endsWith('\n')) refuse(); }
     finally { for (const key of Object.keys(credentials)) delete credentials[key]; }
-    consumed = await guarded(() => { checkForward(); return platform.consume(mode, issued.stdout, controller.signal); });
+    consumed = await guarded(() => { checkForward(); return platform.consume(mode, issued.stdout, controller.signal, assets?.stdout); });
     checkForward();
-    const expected = mode === 'compare' ? /^status=match mismatches=0 report=created\n$/ : /^captures=[1-9]\d* errors=0 index=created\n$/;
+    const expected = mode === 'compare' ? /^status=match mismatches=0 report=created\n$/ : mode==='smoke'?/^smoke=passed checks=[1-9]\d*\n$/:/^captures=[1-9]\d* errors=0 index=created\n$/;
     if (consumed.status !== 0 || consumed.signal || consumed.stderr.length || !expected.test(consumed.stdout.toString())) refuse();
     passed = true;
   } catch { passed = false; }
   finally {
-    code?.fill(0); erase(issued); erase(consumed);
+    code?.fill(0); erase(issued); erase(consumed); erase(assets);
     try {
       if (proof) {
         // Only our deliberate shutdown may end the tunnel without cancelling

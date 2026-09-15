@@ -31,6 +31,7 @@ npm ci
 command -v python3 >/dev/null
 node --import tsx --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs \
   scripts/abbott-parity-issuer.test.mjs scripts/verify-abbott-shadow.test.mjs
+node --import tsx --test scripts/smoke-abbott-runtime.test.mjs scripts/abbott-asset-attestation.test.mjs
 npm run test:abbott-runtime
 npm run test:abbott-contract
 npm run test:abbott-contract-wiring
@@ -146,11 +147,12 @@ test "$(ssh beget 'curl --fail --silent --show-error http://127.0.0.1:3004/api/h
   '{"ok":true,"scope":"abbott","database":"connected"}'
 ```
 
-## 4. Obtain ephemeral authorization and compare ports — token review checkpoint
+## 4. Obtain ephemeral authorization and compare ports
 
-**Paused for focused review. Do not run live parity or mint credentials until the
-exact issuer/orchestrator transport is approved. No plaintext or legacy password fallback is
-authorized for this operation.**
+**Issuer/orchestrator `bb9fad5` was approved and used for comparison and capture.
+Comparison passed; capture failed without retained images/index. The additional
+smoke mode below remains paused for dedicated review and has not run live. No
+plaintext or legacy password fallback is authorized for this operation.**
 
 The new stdin frame is three LF-delimited lines: the literal mode name
 `manager_access_token`, the short-lived signed manager session, and the existing
@@ -264,6 +266,50 @@ NODE
 
 ## 6. Verify every neighbor PID is unchanged
 
+### Additional read-only smoke transport — STOP for review
+
+The following entrypoint is implemented but must not run live until its dedicated
+review approves it. It does not waive the failed visual gate:
+
+```bash
+node scripts/verify-abbott-shadow.mjs smoke
+```
+
+This mode uses the same strict credential frame and owned-forward lifecycle.
+Before credential issuance, a separate bounded read-only SSH capsule repeats the
+source proof and validates the exact installed release
+`6cd2f12e245a47dcbd5f6ce928c4ed83` / `f80607f`, current/record agreement, and trusted
+manifest SHA-256
+`7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f`.
+It rejects links, mode/owner drift, modified public assets and unattested files;
+only public asset paths/sizes/hashes return through captured stdout. No manifest
+or credential transport file or extra credential descriptor is created.
+
+The in-process consumer performs GET only on both literal loopback origins for
+both aliases `18`/`abbott`, both audiences, and the fixed period. Manager admin
+reads must succeed; embed admin reads must return 401/403. JSON aliases must match
+the existing redacted payload contract and parity; embed JSON additionally gets
+a recursive private-identifier/collection scan. Both Excel aliases are parsed and
+compared using the existing redacted workbook semantics. PDF responses must be 200 with
+the PDF content type and valid parse, equal page counts/dimensions and normalized
+text digest. PDF metadata/compression bytes are not compared. Installed Poppler
+26.04.0 at its exact `/opt/homebrew/Cellar/poppler/26.04.0/bin` paths receives PDF
+bytes only through bounded stdin/stdout pipes; raw PDF/text never reaches files,
+arguments, diagnostics, or the report. Parser children are reaped on abort.
+
+HTML inventories must be consistent across aliases/audiences per runtime.
+Status, content type and hashes are checked; normalized common paths have equal
+hashes and all candidate public assets match the attested deployed manifest.
+Different generated chunk names across builds are not treated as byte-parity
+failures. Inventories are capped at 256 assets, individual bodies at 16 MiB
+(32 MiB for PDFs), PDFs at 500 pages; overall smoke has an eight-minute deadline.
+Redirects and non-loopback requests are forbidden, rejected bodies are cancelled,
+and buffers are cleared. Only a private redacted `abbott-runtime-smoke.json` report
+and fixed success counts are retained. Any release/manifest change requires a new
+reviewed authority update, never an override.
+
+### Neighbor identity check
+
 ```bash
 ssh beget 'set -eu; for app in dashboard-next dashboard-zaruku dashboard-medroche; do printf "%s " "$app"; pm2 pid "$app"; done' \
   > "$EVIDENCE_PARENT/neighbors.after-shadow"
@@ -368,9 +414,9 @@ ssh beget '/usr/sbin/nginx -s reload'
 
 ## 8. Post-cutover Abbott and neighbor smoke
 
-**Gated preceding step: the exact issuer transport must be reviewed and approved
-before token generation, live smoke, or cutover.** This section is not executable
-until that gate is satisfied; no issuer placeholder command is supplied.
+**Gated preceding step: the additional smoke transport must be reviewed and
+approved, and the failed visual gate resolved, before cutover.** The initial
+issuer transport was reviewed and approved; no issuer placeholder command is supplied.
 
 After approval, re-run the orchestrator; it obtains the strict
 `manager_access_token\n<token>\n<embed key>\n` frame in memory and feeds stdin.
@@ -385,14 +431,14 @@ Use only these local entrypoints, with no credentials in arguments or redirects:
 ```bash
 node scripts/verify-abbott-shadow.mjs compare
 node scripts/verify-abbott-shadow.mjs capture
+node scripts/verify-abbott-shadow.mjs smoke
 ```
 
-This parity consumer does not replace the remaining acceptance checks: PDF,
-embed private-field absence and administrator-control denial, both page/JSON/
-export aliases, and the Abbott public asset must all pass before declaring
-cutover complete. Their exact token-safe smoke transport must be reviewed with
-the issuer/Nginx gate before any route mutation; do not improvise a public-token
-URL, credential file, extra descriptor, or plaintext fallback to perform them.
+The additional smoke mode covers the separately required PDF/privacy/admin/
+alias/asset checks described above, but it is not approved or run live yet.
+All of these and visual parity must pass before any route mutation; do not
+improvise a public-token URL, credential file, extra descriptor, or plaintext
+fallback to perform them.
 
 Verify representative neighbor pages and the three direct health endpoints, then compare PIDs again:
 
