@@ -6,7 +6,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseCredentialLines, createPrivateOutputDirectory, writePrivateExclusiveFile, releasePrivateOutputDirectory, cleanupPrivateOutputDirectory } from './compare-abbott-runtime.mjs';
 import { HOST } from './bootstrap-abbott-host.mjs';
-import { captureBoundedChild } from './abbott-bounded-child.mjs';
+import { captureBoundedChild, boundedChildFailureReason } from './abbott-bounded-child.mjs';
 export { captureBoundedChild } from './abbott-bounded-child.mjs';
 import { markDiagnostic, carryDiagnostic, diagnosticFromChild, formatVerificationFailure } from './abbott-verification-diagnostics.mjs';
 import { ASSET_ATTESTATION_REASONS } from './abbott-asset-attestation.mjs';
@@ -37,8 +37,22 @@ export function buildIssuerCapsule({ bootstrapSource, issuerSource, authSource }
 
 export function buildAssetCapsule({bootstrapSource,attestationSource}) {
   const url=bytes=>'data:text/javascript;base64,'+Buffer.from(bytes).toString('base64');
-  const code=`try{const proof=await import(${JSON.stringify(url(bootstrapSource))});const assets=await import(${JSON.stringify(url(attestationSource))});assets.runRemoteAssetAttestation(proof.verifyAbbottBootstrapSource);}catch{process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED\\n');process.exitCode=1;}\n`;
+  const code=`let imported=false;try{const proof=await import(${JSON.stringify(url(bootstrapSource))});const assets=await import(${JSON.stringify(url(attestationSource))});imported=true;assets.runRemoteAssetAttestation(proof.verifyAbbottBootstrapSource);}catch{process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED reason='+(imported?'remote_attestation':'remote_import')+'\\n');process.exitCode=1;}\n`;
   if(Buffer.byteLength(code)>262144)refuse();return Buffer.from(code);
+}
+
+export async function readAbbottAssetTransport(signal,{capsule=productionCapsule,capture=captureBoundedChild}={}) {
+  let input;
+  try {
+    try { input=capsule('assets');if(!Buffer.isBuffer(input)||input.length>262144)refuse(); }
+    catch { throw markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'asset_attestation','local_capsule'); }
+    const invocation=fixedSshInvocation('issuer');
+    try { return await capture(invocation.binary,invocation.args,{input,signal,timeout:30000,maxBytes:262144}); }
+    catch(error){
+      const reason={spawn:'ssh_spawn',stdin:'ssh_stdin',timeout:'ssh_timeout',abort:'cancelled',limit:'ssh_stderr_frame'}[boundedChildFailureReason(error)]??'unknown';
+      throw markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'asset_attestation',reason);
+    }
+  }finally{if(Buffer.isBuffer(input))input.fill(0);}
 }
 
 function productionCapsule(kind='issuer') {
@@ -144,10 +158,7 @@ const realPlatform = {
     const invocation = fixedSshInvocation('issuer');
     return captureBoundedChild(invocation.binary, invocation.args, { input: code, signal, timeout: 30000, maxBytes: 65536 });
   },
-  async readAssets(signal) {
-    const input=productionCapsule('assets'),invocation=fixedSshInvocation('issuer');
-    try{return await captureBoundedChild(invocation.binary,invocation.args,{input,signal,timeout:30000,maxBytes:262144});}finally{input.fill(0);}
-  },
+  readAssets: readAbbottAssetTransport,
   loadConsumer: mode => mode === 'smoke' ? import('./smoke-abbott-runtime.mjs') : undefined,
   async consume(mode, input, signal, attestation, consumer) {
     if(signal.aborted)refuse();
@@ -220,10 +231,10 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     if(mode==='smoke'){
       stage='asset_attestation';assets=await guarded(()=>platform.readAssets(controller.signal));checkForward();
       if(assets.status!==0||assets.signal||assets.stderr.length||!Buffer.isBuffer(assets.stdout)||assets.stdout.length>262144){
-        let reason='transport';
+        let reason=assets.signal||assets.status!==0&&assets.status!==1||assets.status===1&&!assets.stderr.length?'ssh_exit':'ssh_stderr_frame';
         if(assets.status===1&&!assets.signal&&Buffer.isBuffer(assets.stdout)&&!assets.stdout.length&&Buffer.isBuffer(assets.stderr)&&assets.stderr.length<=96){
           const match=/^ABBOTT_ASSET_ATTESTATION_REFUSED reason=([a-z_]+)\n$/.exec(assets.stderr.toString('utf8'));
-          if(match&&ASSET_ATTESTATION_REASONS.includes(match[1]))reason=match[1];
+          if(match&&ASSET_ATTESTATION_REASONS.includes(match[1]))reason=match[1]==='source_proof'?'remote_source_proof':match[1];
         }
         throw markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'asset_attestation',reason);
       }

@@ -40,7 +40,7 @@ npm ci
 command -v python3 >/dev/null
 node --import tsx --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs \
   scripts/abbott-parity-issuer.test.mjs scripts/verify-abbott-shadow.test.mjs
-node --import tsx --test scripts/smoke-abbott-runtime.test.mjs scripts/abbott-asset-attestation.test.mjs
+node --import tsx --test scripts/smoke-abbott-runtime.test.mjs scripts/abbott-asset-attestation.test.mjs scripts/abbott-bounded-child.test.mjs
 node --import tsx --test scripts/abbott-verification-diagnostics.test.mjs
 npm run test:abbott-runtime
 npm run test:abbott-contract
@@ -725,6 +725,36 @@ inventory, fixed prefix, bounded reads, ownership/modes and link checks remain.
 The record must contain exactly the observed five authority fields. The sanitized
 deployed-record fixture accepts8c79/6f09982/a5b56e3/6cd2 and rejects stale/wrong or
 extra fields. This narrows validation; it is not a speculative compatibility fix.
+
+### Asset boundary diagnostics — Phase1, STOP for review
+
+The approved6393077 retry still returned asset_attestation/failed; no finer reason
+was obtained. This source-only instrumentation must be reviewed before one more
+diagnostic run. It does not select a live fix, change SSH flags/LogLevel, relax
+environment/authority checks or alter payload acceptance.
+
+The asset-specific local wrapper brands Git/source/capsule-size failures as
+local_capsule before SSH. The node-only bounded child runner privately retains
+only its first spawn/stdin/timeout/abort/output-limit cause, while still zeroing
+both streams before rejecting and waiting for the owned child to close. These
+map to ssh_spawn, ssh_stdin, ssh_timeout, cancelled or ssh_stderr_frame. Unbranded
+local failures remain unknown; arbitrary exception fields cannot forge a cause.
+Input capsule buffers are cleared in finally on setup and child failures.
+
+Returned nonzero/signal exits without a valid remote frame use ssh_exit; malformed
+stderr/output combinations use ssh_stderr_frame. Known exact bounded exit1 remote
+frames retain their specific pin/schema/tree/prefix/predecessor/metadata reasons.
+Source-proof frames become remote_source_proof. The outer capsule distinguishes
+remote_import from otherwise unbranded remote_attestation exceptions. Raw stderr,
+stdout, status values, signal names, URLs, command strings and exception text
+never become diagnostic output. Terminal output remains the same two-enum
+`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=<closed reason>`.
+
+The regressions cover thrown capsule creation/size, spawn failure, synthetic and
+real stdin EPIPE with exact child exit verification, timeout/abort, nonzero without
+a frame, forged/oversized output, outer import/runtime exceptions and a valid
+remote reason. Every refusal precedes credential issuance and uses the existing
+forward-loss/cleanup path. No automatic retry or standalone remote probe is added.
 
 The in-process consumer performs GET only on both literal loopback origins for
 both aliases `18`/`abbott`, both audiences, and the fixed period. Manager admin

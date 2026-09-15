@@ -1,14 +1,14 @@
-# Abbott Task 9 — diagnostic smoke still refused at asset attestation
+# Abbott Task 9 — Phase1 asset-boundary instrumentation
 
-Status: BLOCKED. Approved diagnostics6393077 were published; the single retry
-returned `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`,
-without a more specific asset subreason and before credential issuance. No
-deterministic cause is established. No subsequent retry, source fix, capture,
-deployment or Nginx action occurred. Fresh before/after proofs attest unchanged
-production6f09982/release8c79 files/pointer/control/manifest/fresh PM2 binding,
-retainedf80607f/release6cd2 backup,9aaed34 quarantine, browser prerequisite,
-neighbors and Nginx. Local cleanup is verified. Live parity, six-image comparison
-and cutover remain incomplete. Earlier sections are chronological history.
+Status: DONE_WITH_CONCERNS; local boundary diagnostics await review before a
+diagnostic run. The last approved6393077 smoke returned asset_attestation/failed
+before issuance, without a finer reason. Its live cause remains unproven. This
+turn changed source/tests/runbook/report only; no live request, push, deployment,
+capture or Nginx action occurred. Last verified production remains6f09982/8c79,
+with retainedf80607f/6cd2 backup,9aaed34 quarantine, browser/neighbor/Nginx proofs
+and completed cleanup from the preceding operational turn. No fresh host claim
+is made here. Live parity, six-image comparison and cutover remain incomplete.
+Earlier sections are chronological history.
 
 ## Scope and authorization
 
@@ -2682,3 +2682,72 @@ cron action occurred. Rollback target remains retainedf80607f/release6cd2.
 This checkpoint changes only the sanitized report. Verification-before-completion
 required fresh cleanup and independent state proofs, not a claimed smoke pass.
 BLOCKED pending further reviewed direction; no automatic retry.
+
+## Phase1 only — instrument every asset boundary before further diagnosis
+
+The preceding closed failed result could originate before the remote module
+returns an attestation frame. Source inspection confirmed that the generic
+bounded-child rejection erased whether spawn, stdin, timeout or abort caused
+failure; the asset capsule creation was also outside the previous per-child
+diagnostic catch. The outer remote import catch had its own undifferentiated
+frame. Synthetic tests reproduced these information gaps. None establishes
+which happened during the real6393077 attempt, and no runtime fix was selected.
+
+Added a narrow asset transport wrapper around the existing fixed capsule/SSH
+invocation. Git/source/capsule/size setup failures are local_capsule; its assigned
+input buffer is cleared in finally on every path. The shared node-only bounded
+child runner now privately brands its first spawn, stdin, timeout, abort or
+output-limit failure while preserving the generic external exception message.
+It still zeroes accumulated stdout/stderr before rejection after owned close,
+clears timers and abort listeners, and retains the existing bounded TERM/KILL
+sequence. A synchronous stdin-write throw is retained through that same cleanup
+path instead of escaping the Promise setup. No raw errors, error properties or
+streams become diagnostic values. The spawn seam is local-test-only wiring;
+production consumers still call the same fixed installed child commands.
+
+Asset-only mapping exposes ssh_spawn, ssh_stdin, ssh_timeout, cancelled and
+ssh_stderr_frame. Returned nonzero/signal exits without a valid remote frame
+map to ssh_exit; malformed output frames map to ssh_stderr_frame. Arbitrary
+unbranded local throws remain unknown. The remote capsule now distinguishes
+remote_import from otherwise unbranded remote_attestation exceptions; valid
+source-proof frames map to remote_source_proof. Per review instruction, known
+remote pin/schema/tree/prefix/predecessor/metadata reasons remain specific rather
+than being collapsed. Terminal output stays the existing closed two-enum frame.
+No LogLevel or other SSH flag, secret/env contract, release pin, file/tree/hash/
+path/mode check, credential protocol or acceptance threshold changed.
+
+TDD RED showed missing private cause classification, capsule catch coverage and
+outer import/runtime distinction. GREEN covers thrown setup/oversize before SSH,
+spawn failure, synthetic EPIPE/synchronous stdin throw, timeout, abort, output
+overflow, first-cause preservation, unknown/forged secret-bearing error fields,
+and zeroed streams after child close. A real local child closes descriptor0
+early, reproducing EPIPE; the test verifies its exact owned PID has exited.
+Real local capsule children distinguish failing import, unbranded remote runtime
+throw and a valid tree_hash frame, without exposing synthetic secret text.
+Parent integration verifies no issuance on each boundary failure, cleared capsule
+and child buffers, closed forward and removed signal handlers. The exact current
+SSH argv is regression-checked, including the absence of a speculative option
+change. No production capsule, credential or network connection is used by these
+local fixtures.
+
+Fresh gates: focused leaf/asset/diagnostic/orchestrator47/47; broader post-build
+smoke/asset/issuer/visual/orchestrator/leaf113/113; app/contract67/67; full authority/
+bootstrap/browser/recovery/deploy/artifact512/512. Abbott production build and
+exact12-route/1-prefix gate pass; sealed artifact2870 files/82 text files passes.
+Both TypeScript checks, source/test syntax and whitespace checks pass; final
+lint exits0 with0 errors and10 existing warnings. An initial broader-suite run
+overlapped the rebuild and could not read its generated HTML fixture; rerunning
+after the build completed passed113/113 without a source workaround. The final
+post-build result, not that overlapping run, is the verification evidence.
+
+Systematic debugging is deliberately paused at evidence instrumentation, not a
+chosen production remedy. TDD and verification-before-completion provide the
+local test evidence. All local test/loader commands exited; the EPIPE fixture
+specifically proves owned PID absence. Local3001/3004 listeners and both fixed
+private identity evidence directories are absent; no browser or SSH session was
+started. No live credential read/issuance/use, push, deploy, DB/auth/fact/cron/
+collector/neighbor or Nginx action occurred. Latest published refs remain6393077;
+the preceding evidence-only commit is112df8f. No new screenshot/diff, Nginx
+backup or parity approval is claimed. Last verified rollback target remains
+f80607f/release6cd2. DONE_WITH_CONCERNS: STOP for review before one diagnostic
+run; no automatic retry and no speculative fix.

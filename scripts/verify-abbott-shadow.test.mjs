@@ -18,6 +18,7 @@ const frame = () => Buffer.from(`manager_access_token\n${token()}\nsynthetic-emb
 
 test('fixed issuer and forwards refuse caller authority and reusable masters', async () => {
   const api = await moduleUnderTest(); assert.equal(typeof api.fixedSshInvocation, 'function');
+  assert.deepEqual(api.fixedSshInvocation('issuer'),{binary:'/usr/bin/ssh',args:['-T','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ControlMaster=no','-o','ControlPath=none','-o','ConnectTimeout=10','--','beget','/usr/bin/env -i /usr/bin/node --input-type=module']});
   for (const mode of ['issuer','forward']) {
     const invocation = api.fixedSshInvocation(mode);
     assert.equal(invocation.binary, '/usr/bin/ssh');
@@ -190,13 +191,46 @@ test('asset subreason frames are exact, closed, zeroed and propagated only after
   const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs');
   const secret='synthetic-secret https://invalid.test/?access_token=private';
   const reasons=['record_schema','pin_mismatch','tree_hash','asset_prefix','predecessor','transport','source_proof','metadata','unknown'];
-  const cases=reasons.map(reason=>({status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from(`ABBOTT_ASSET_ATTESTATION_REFUSED reason=${reason}\n`),reason}));
-  for(const text of [secret,'ABBOTT_ASSET_ATTESTATION_REFUSED\n','ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\n'+secret,'ABBOTT_ASSET_ATTESTATION_REFUSED reason='+secret+'\n','ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\r\n','x'.repeat(262145)])cases.push({status:1,stdout:Buffer.alloc(0),stderr:Buffer.from(text),reason:'transport'});
-  for(const change of [{status:0},{signal:'SIGTERM'},{stdout:Buffer.from(secret)}])cases.push({status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from('ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\n'),reason:'transport',...change});
+  const cases=reasons.map(reason=>({status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from(`ABBOTT_ASSET_ATTESTATION_REFUSED reason=${reason}\n`),reason:reason==='source_proof'?'remote_source_proof':reason}));
+  for(const text of [secret,'ABBOTT_ASSET_ATTESTATION_REFUSED\n','ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\n'+secret,'ABBOTT_ASSET_ATTESTATION_REFUSED reason='+secret+'\n','ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\r\n','x'.repeat(262145)])cases.push({status:1,stdout:Buffer.alloc(0),stderr:Buffer.from(text),reason:'ssh_stderr_frame'});
+  for(const change of [{status:0},{signal:'SIGTERM'},{stdout:Buffer.from(secret)}])cases.push({status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from('ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\n'),reason:change.signal?'ssh_exit':'ssh_stderr_frame',...change});
   for(const response of cases){let issued=0,closed=0;const signals=new EventEmitter();
     const platform={signalSource:signals,capsule:()=>Buffer.from('code'),prepareOutput(){},verifyForward(){},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{closed++;},readAssets:async()=>response,issue:async()=>{issued++;}};
     await assert.rejects(api.runAbbottVerification('smoke',platform),e=>{assert.equal(d.formatVerificationFailure(e),`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=${response.reason}\n`);return true;});
     assert.equal(issued,0);assert.equal(closed,1);assert.equal(signals.listenerCount('SIGTERM'),0);assert.ok(response.stdout.every(x=>x===0));assert.ok(response.stderr.every(x=>x===0));
+  }
+});
+
+test('asset capsule setup failures are branded before SSH and do not leak values',async()=>{
+  const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs');assert.equal(typeof api.readAbbottAssetTransport,'function');
+  for(const capsule of [()=>{throw Error('synthetic-secret');},()=>Buffer.alloc(262145)]){let captures=0;
+    await assert.rejects(api.readAbbottAssetTransport(new AbortController().signal,{capsule,capture:async()=>{captures++;}}),e=>{assert.equal(d.formatVerificationFailure(e),'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=local_capsule\n');return true;});assert.equal(captures,0);
+  }
+  const input=Buffer.from('synthetic-code');await assert.rejects(api.readAbbottAssetTransport(new AbortController().signal,{capsule:()=>input,capture:async()=>{throw Object.assign(Error('synthetic-secret'),{reason:'ssh_stdin'});}}),e=>{assert.equal(d.formatVerificationFailure(e),'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=unknown\n');return true;});assert.ok(input.every(x=>x===0));
+});
+
+test('real asset capsule labels import versus unbranded runtime failure and preserves known remote reasons',async()=>{
+  const api=await moduleUnderTest(),secret='synthetic-secret https://invalid.test/?access_token=private';
+  for(const kind of ['remote_import','remote_attestation','tree_hash']){
+    const input=api.buildAssetCapsule({bootstrapSource:kind==='remote_import'?Buffer.from(`throw Error(${JSON.stringify(secret)});`):Buffer.from('export const verifyAbbottBootstrapSource=()=>{};'),attestationSource:Buffer.from(kind==='remote_attestation'?`export function runRemoteAssetAttestation(){throw Error(${JSON.stringify(secret)});}`:`export function runRemoteAssetAttestation(){process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED reason=tree_hash\\n');process.exitCode=1;}`)});
+    const r=await api.captureBoundedChild(process.execPath,['--input-type=module'],{input,timeout:2000,maxBytes:1024});
+    try{assert.equal(r.status,1);assert.equal(r.stdout.length,0);assert.equal(r.stderr.toString(),`ABBOTT_ASSET_ATTESTATION_REFUSED reason=${kind}\n`);}finally{input.fill(0);r.stdout.fill(0);r.stderr.fill(0);}
+  }
+});
+
+test('asset SSH boundary failures reach closed parent reasons and finish cleanup without issuing',async()=>{
+  const api=await moduleUnderTest(),leaf=await import('./abbott-bounded-child.mjs'),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const kind of ['ssh_spawn','ssh_stdin','ssh_timeout','cancelled','ssh_exit','ssh_stderr_frame','remote_import','remote_source_proof','remote_attestation']){
+    let issued=0,closed=0;const capsule=Buffer.from('fixture'),raw=Buffer.from('synthetic-secret');const result={status:kind==='ssh_stderr_frame'?0:1,stdout:Buffer.alloc(0),stderr:kind==='ssh_exit'?Buffer.alloc(0):kind==='ssh_stderr_frame'?raw:Buffer.from(`ABBOTT_ASSET_ATTESTATION_REFUSED reason=${kind==='remote_source_proof'?'source_proof':kind}\n`)};
+    const capture=()=>{
+      if(kind==='ssh_spawn')return leaf.captureBoundedChild('/fixed',[],{input:Buffer.alloc(0),timeout:10,maxBytes:32,spawnChild(){throw Error('synthetic-secret');}});
+      if(!['ssh_stdin','ssh_timeout','cancelled'].includes(kind))return Promise.resolve(result);
+      const controller=new AbortController(),child=new EventEmitter();Object.assign(child,{stdout:new EventEmitter(),stderr:new EventEmitter(),stdin:new EventEmitter(),exitCode:null,signalCode:null});
+      const close=()=>{child.exitCode=1;child.emit('close',1,null);};child.kill=()=>{setImmediate(close);return true;};child.stdin.end=()=>setImmediate(()=>{if(kind==='ssh_stdin'){child.stdin.emit('error',Object.assign(Error('synthetic-secret'),{code:'EPIPE'}));close();}if(kind==='cancelled')controller.abort();});
+      return leaf.captureBoundedChild('/fixed',[],{input:Buffer.alloc(0),timeout:10,graceMs:5,maxBytes:32,signal:controller.signal,spawnChild:()=>child});
+    };
+    const signals=new EventEmitter(),platform={signalSource:signals,capsule:()=>Buffer.from('code'),prepareOutput(){},verifyForward(){},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{closed++;},issue:async()=>{issued++;},readAssets:()=>api.readAbbottAssetTransport(new AbortController().signal,{capsule:()=>capsule,capture})};
+    await assert.rejects(api.runAbbottVerification('smoke',platform),e=>{assert.equal(d.formatVerificationFailure(e),`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=${kind}\n`);return true;});assert.equal(issued,0);assert.equal(closed,1);assert.ok(capsule.every(x=>x===0));if(!['ssh_spawn','ssh_stdin','ssh_timeout','cancelled'].includes(kind)){assert.ok(result.stdout.every(x=>x===0));assert.ok(result.stderr.every(x=>x===0));}assert.equal(signals.listenerCount('SIGTERM'),0);
   }
 });
 

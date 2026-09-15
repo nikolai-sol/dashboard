@@ -2,7 +2,7 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';i
 const ROOT='/var/www/dashboard-abbott',CONTROL='/var/www/.dashboard-abbott-control';
 const ID='8c79caf495f147ad91b2174b9bc5f65c',SHA='6f09982fb1e8068f02340ddfcb5c945fb02ebfd5';
 const HASH='a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2',PREVIOUS='6cd2f12e245a47dcbd5f6ce928c4ed83';
-export const ASSET_ATTESTATION_REASONS=Object.freeze(['record_schema','pin_mismatch','tree_hash','asset_prefix','predecessor','transport','source_proof','metadata','unknown']);
+export const ASSET_ATTESTATION_REASONS=Object.freeze(['record_schema','pin_mismatch','tree_hash','asset_prefix','predecessor','transport','source_proof','metadata','unknown','remote_import','remote_attestation']);
 const reasons=new WeakMap();
 const fail=reason=>{const error=Error('ABBOTT_ASSET_ATTESTATION_REFUSED');if(ASSET_ATTESTATION_REASONS.includes(reason))reasons.set(error,reason);throw error;};
 export const formatAssetAttestationFailure=error=>`ABBOTT_ASSET_ATTESTATION_REFUSED reason=${reasons.get(error)??'unknown'}\n`;
@@ -51,5 +51,5 @@ export function runRemoteAssetAttestation(proveSource) {
     if(process.argv.length!==1||Object.keys(process.env).length)fail('transport');
     const out=fs.fstatSync(1);if(process.stdout.isTTY||!(out.isFIFO()||out.isSocket()))fail('transport');
     const bytes=Buffer.from(JSON.stringify(readAttestedAbbottAssets({proveSource}))+'\n');if(bytes.length>262144)fail('transport');process.stdout.write(bytes);
-  }catch(error){process.stderr.write(formatAssetAttestationFailure(error));process.exitCode=1;}
+  }catch(error){process.stderr.write(reasons.has(error)?formatAssetAttestationFailure(error):'ABBOTT_ASSET_ATTESTATION_REFUSED reason=remote_attestation\n');process.exitCode=1;}
 }
