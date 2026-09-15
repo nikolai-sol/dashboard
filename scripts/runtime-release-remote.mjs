@@ -99,6 +99,11 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     // Every other same-host block must be explicitly confined to non-SSL port80.
     for(const n of hostBlocks.filter(n=>n!==targets[0])){const listens=n.children.filter(x=>x.name==='listen');if(!listens.length||listens.some(x=>x.block||x.args.includes('ssl')||! /^(?:80|\[::\]:80|[0-9.]+:80)$/.test(x.args[0])))fail();}
     const passive=new Set(['listen','server_name','ssl_certificate','ssl_certificate_key','ssl_protocols','ssl_ciphers','ssl_prefer_server_ciphers','ssl_session_cache','ssl_session_timeout','ssl_session_tickets','ssl_dhparam','ssl_stapling','ssl_stapling_verify','ssl_trusted_certificate','resolver','resolver_timeout','access_log','error_log','client_max_body_size','client_body_timeout','send_timeout','keepalive_timeout','proxy_http_version','proxy_set_header','proxy_read_timeout','proxy_connect_timeout','proxy_send_timeout','proxy_buffering','proxy_request_buffering','proxy_cache_bypass','proxy_no_cache','proxy_buffers','proxy_buffer_size','proxy_busy_buffers_size','add_header','expires','etag','gzip','gzip_types']);
+    const unrelatedPath=literal=>{
+      if(literal&&(literal.includes('//')||path.posix.normalize(literal)!==literal))fail();
+      const segments=literal.toLowerCase().split('/').filter(Boolean);
+      if(segments.some((part,i)=>part==='_next-abbott'||part==='dashboard'&&(segments[i+1]==='abbott'||Number(segments[i+1])===18)))fail();
+    };
     const visit=(list,context='root',selected=false,location=null)=>{for(const n of list){let childLocation=location;const args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))fail();
       // Includes are outside this single-file snapshot: never silently authorize them.
       if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))fail();
@@ -108,15 +113,14 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
         if(n.name==='location'){
           const literal=n.args.length===1?n.args[0]:n.args.length===2&&n.args[0]==='='?n.args[1]:null;
           if(!literal||!/^\/[A-Za-z0-9_./-]*$/.test(literal))fail();
+          unrelatedPath(literal);
           childLocation={literal,exact:n.args.length===2};
         }else if(n.name==='proxy_pass'){
           // Only the three literal, independently protected loopback runtimes.
           const target=n.args.length===1&&/^http:\/\/127\.0\.0\.1:300[123](\/[A-Za-z0-9_./~-]*)?$/.exec(n.args[0]);
           if(!target||!location)fail();const uri=target[1]??'';
           // Never normalize an ambiguous rewrite into apparent unrelated authority.
-          if(uri&&(uri.includes('//')||path.posix.normalize(uri)!==uri))fail();
-          const segments=uri.toLowerCase().split('/').filter(Boolean);
-          if(segments.some((part,i)=>part==='_next-abbott'||part==='dashboard'&&(segments[i+1]==='abbott'||Number(segments[i+1])===18)))fail();
+          unrelatedPath(uri);
           // Prefix replacement appends unmatched request bytes. Only identity
           // replacement is provable here; other static rewrites require exact locations.
           if(uri&&!location.exact&&uri!==location.literal)fail();

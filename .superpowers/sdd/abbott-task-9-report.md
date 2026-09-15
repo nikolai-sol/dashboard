@@ -1,4 +1,11 @@
-# Abbott Task 9 — Nginx proxy URI alias source checkpoint
+# Abbott Task 9 — Nginx location numeric-normalization source checkpoint
+
+Current status: DONE_WITH_CONCERNS. Source-only location numeric-normalization correction pending
+re-review. Location and proxy paths now share the same canonical-path/Abbott-alias
+guard. The actual loader's identifier-normalization corpus is covered without a
+database connection. No push, live request, deployment or Nginx action ran.
+
+## Previous source checkpoint — proxy URI aliases
 
 Current status: DONE_WITH_CONCERNS. Source-only proxy URI alias/normalization correction is pending
 re-review. The literal proxy target path is now validated separately from its
@@ -4248,3 +4255,41 @@ not newly attested. Route-only rollback target remains3001. The restricted
 canonical/identity URI contract is intentional; unsupported valid rewrites need
 review, not a bypass. DONE_WITH_CONCERNS: STOP for parent re-review before any
 publication or live use.
+
+## Location numeric-normalization correction — source-only re-review
+
+Parent review found location literals bypassed the numeric alias policy already
+used by proxy URI paths. Ten RED cases covered prefix/exact locations with
+leading-zero, hex, scientific, binary and octal representations of18. Plus,
+decimal/trailing-dot, whitespace, case and textual Abbott forms remained covered
+by the existing closed grammar/alias checks. The implementation extracts the
+existing private canonical-path and Number18/Abbott segment check and calls it
+from both location and proxy validation, preventing policy drift. It also rejects
+ambiguous dot/duplicate-slash normalization consistently. App/auth lookup,
+snapshot lifecycle and deployment/activation code are unchanged.
+
+A parity test executes actual getDashboardAccessContext using the installed
+scoped TypeScript loader and an injected in-memory pool. Its corpus compares
+literal and encoded forms at both Nginx boundaries, including a non-Abbott19
+control. The pool permits only the captured SELECT shape, blocks query/connection
+methods, and returns a nonprotected synthetic row to avoid the unrelated shared
+password branch. Global pool state and loader hooks are restored in finally.
+An initial test-loader alias-resolution issue was corrected in test setup; the
+parity test then failed on the real missing refusal before implementation and
+passed afterward. No actual database, credentials or authentication were used.
+
+Fresh final gates: isolated proof201/201, focused proof/deploy/transport/session
+435/435, full authority751/751, app/runtime68/68, post-build verification206/206,
+and Abbott contract111/111 passed. Abbott and combined production builds, exact
+route/asset-prefix, contract wiring, public-assets security, root/focused
+typechecks, deploy-source/release-runtime shell suites, syntax and whitespace
+checks passed. Lint has0 errors and the same10 existing warnings. Independent
+read-only local review found no Critical or Important finding and separately
+passed the33 new focused cases.
+
+All owned fixture commands exited. Final checks found private deploy/recovery
+evidence absent and no local3001/3004 listeners. No real browser, SSH, forward,
+credential, DB, deployment, recovery, neighbor or Nginx operation ran. Published
+refs and deployed state remain historical evidence only, not newly attested.
+The conservative supported Nginx subset remains intentional. STOP for parent
+re-review before publication or live use; route-only rollback remains3001.

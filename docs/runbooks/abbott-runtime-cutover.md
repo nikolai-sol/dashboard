@@ -92,6 +92,15 @@ a partial Abbott alias. Other canonical unrelated URI rewrites require an exact
 context refuse. The no-URI/root-identity accepted composite
 fixture is unchanged. This remains a source-only gate requiring re-review.
 
+Location normalization re-review correction: literal locations and proxy URI
+paths now use the same private canonical-path/Abbott-alias check. Dashboard/API
+identifier segments whose Number conversion is18 refuse, including leading-zero,
+hexadecimal, scientific, binary and octal spellings. Plus/whitespace/percent
+encoding forms that cannot be proven canonical remain rejected by the literal
+grammar. A local in-memory test executes the actual getDashboardAccessContext
+normalization corpus against both boundaries, with database connections blocked;
+it does not change the application lookup or authenticate any real account.
+
 Neighbor/Nginx proof repeats immediately before predecessor PM2 stop, after
 candidate health immediately before pointer promotion, and at compensation
 completion. The first activation gate re-proves predecessor presence/identity

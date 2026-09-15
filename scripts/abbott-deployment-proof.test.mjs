@@ -324,3 +324,24 @@ for(const[label,uri]of [['partial_id','/dashboard/1'],['partial_api','/api/dashb
 test('Nginx proxy URI requires a proven location context',async()=>{
  const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'proxy_pass http://127.0.0.1:3001;'));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
 });
+const locationIdentifiers={canonical:'18',leading_zero:'018',hex:'0x12',positive:'+18',decimal:'18.0',trailing_dot:'18.',scientific:'1.8e1',scientific_plus:'1.8e+1',binary:'0b10010',octal:'0o22',space:' 18 ',tab:'\t18\t',unicode_space:'\u00a018\u00a0',alias:'abbott',alias_case:'ABBOTT',alias_space:' abbott '};
+for(const mode of ['prefix','exact'])for(const[label,id]of Object.entries(locationIdentifiers))test('Nginx location normalizes numeric alias: '+mode+'/'+label,async()=>{
+ const m=await api(),f=fixture(),seen=[];f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location ${mode==='exact'?'= ':''}"/api/dashboard/${id}" { proxy_pass http://127.0.0.1:3001; }`));f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
+ assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(f.calls,[]);assert.equal(seen.at(-1).stage,'preflight_nginx');assert.equal(f.fds.size,0);
+});
+test('location and proxy gates agree with actual getDashboardAccessContext identifier normalization',async()=>{
+ const {register}=await import('tsx/cjs/api'),loader=register({namespace:'abbott-location-normalization'}),prior=Object.getOwnPropertyDescriptor(globalThis,'__dashboardMysqlPool');let calls=0;
+ // Only identifier lookup is under test; a nonprotected synthetic row avoids
+ // entering the unrelated environment-backed shared-password branch.
+ const pool={async execute(sql,params){assert.match(sql.trim(),/^SELECT\b/);assert.equal(params.length,2);calls++;return [params[0]===18||params[1]==='abbott'?[{id:18,client_id:'synthetic',client_name:'Synthetic',dashboard_name:'Synthetic',dashboard_type:'synthetic',is_active:1,access_users_count:0}]:[],[]];},query(){assert.fail('No query');},getConnection(){assert.fail('No DB connection');}};
+ Object.defineProperty(globalThis,'__dashboardMysqlPool',{value:pool,writable:true,configurable:true});
+ try{const {getDashboardAccessContext}=loader.require('../src/lib/dashboard-access.ts',import.meta.url),m=await api();assert.equal(typeof getDashboardAccessContext,'function');
+  for(const id of [...Object.values(locationIdentifiers),'19']){
+   const context=await getDashboardAccessContext(id);assert.equal(context?.id??null,id==='19'?null:18);
+   for(const encoded of [false,true])for(const kind of ['location','proxy']){
+    const literal='/dashboard/'+(encoded?encodeURIComponent(id):id),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,kind==='location'?`location = "${literal}" { proxy_pass http://127.0.0.1:3001; }`:`location = /status { proxy_pass "http://127.0.0.1:3001${literal}"; }`));
+    if(context?.id===18)assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});else assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());
+   }
+  }assert.equal(calls,Object.keys(locationIdentifiers).length+1);
+ }finally{if(prior)Object.defineProperty(globalThis,'__dashboardMysqlPool',prior);else delete globalThis.__dashboardMysqlPool;await loader.unregister();}
+});
