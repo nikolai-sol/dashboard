@@ -1,10 +1,10 @@
-# Abbott Task 9 — shadow deployment and token-tooling review checkpoint
+# Abbott Task 9 — interrupted-activation recovery checkpoint
 
-Status: DONE_WITH_CONCERNS at the requested additional smoke-tool review checkpoint.
-Reviewed bootstrap and shadow deployment succeeded. Public routing is unchanged;
+Status: DONE_WITH_CONCERNS after verified predecessor recovery. Active files,
+control pointer and PM2 binding now agree on f80607f/release6cd2. Candidate9aaed34
+is quarantined and preserved. Public routing remains unchanged; deployment repair,
 live parity, six-image comparison and cutover are not complete. Earlier sections
-are chronological checkpoint history, superseded by the final execution section
-where they state that bootstrap/deploy had not occurred.
+are chronological history, superseded by the latest execution section.
 
 ## Scope and authorization
 
@@ -2099,3 +2099,81 @@ push, credentials, browser capture, deployment or Nginx operation occurred.
 Historical unknown stderr is not newly classified, and no claim is made that
 the live failure is resolved. STOP for review before retry; interrupted Abbott
 activation remains unresolved and was not revalidated by this local checkpoint.
+
+### Approved matrix and single predecessor recovery (2026-09-15)
+
+Clean approved HEAD982dd1ad5152a7bd832a2d4c6efae9de34330e2a was published with
+ordinary fast-forward pushes to codex/abbott-runtime-isolation and release/abbott
+only. Isolated literal remote lookups verified both refs equal that exact SHA.
+The preceding implementation's full fresh gates are recorded above; this turn
+changed evidence only.
+
+Ran each fixed clean-env inert stage once, with independent owned-process and
+private-evidence cleanup verified between stages:
+
+```
+ABBOTT_STARTUP_STAGE stage=ssh result=clean category=none
+ABBOTT_STARTUP_STAGE stage=node result=clean category=none
+ABBOTT_STARTUP_STAGE stage=loader result=clean category=none
+```
+
+The fresh read-only check invoked only initial verification in the exact
+committed recovery adapter/worker/source-proof modules, without recovery steps.
+It checked both sealed trees and overlays, exact control/manifest pins, source
+and installed-Next proof, pinned Abbott process/binding/kernel identity, health,
+listener, neighbors and Nginx. It returned ABBOTT_RECOVERY_INITIAL_PROOF_VERIFIED.
+Its bounded SSH process was reaped and independently absence-checked.
+
+Executed the single approved fixed recovery CLI through env-i, installed Node,
+bounded transport and private identity evidence. The command independently
+rechecked all initial and under-lock preconditions. It returned:
+
+```
+ABBOTT_RECOVERY_RESTORED stage=complete reason=none
+```
+
+Independent read-only post-recovery verification returned
+ABBOTT_POST_RECOVERY_VERIFIED. The unchanged trusted worker fully attests active
+f80607fbc8a693aa2c720b0976938e88732cdf1a, release6cd2f12e245a47dcbd5f6ce928c4ed83,
+manifest7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f,
+and exact current pointer. The predecessor backup was atomically consumed into
+the active path. PM2 registration5, source/release binding, active files and new
+kernel process identity agree; UID982/GID984, sole loopback3004 listener and
+database health pass. The old interrupted-process identity is absent; the new
+identity was captured in memory and rechecked unchanged, without emitting IDs.
+
+Candidate9aaed34/e9e548a6414c4d8c836c7715c66f37ad and its exact a62b6297 manifest
+are preserved and freshly full-tree attested at the fixed interrupted-recovery
+quarantine path. No candidate promotion occurred. The deployment lock and
+journal next file are absent. Per explicit reviewed clarification, the audit
+journal is intentionally retained: exact version/state restored, pinned old/
+candidate references and original identity fields, root:root0600, regular file,
+single link. It is not an active lock or cleanup failure; no journal was deleted.
+
+The entire browser inventory/stamp was revalidated against exact installed
+package/build/source contract and original archive SHA
+fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04.
+Root/group immutable modes, executable access as UID982/GID984, shared libraries
+and writable temporary-directory access pass. Browser-cache is the sole browser
+parent entry, with no staging residue. No install/download occurred.
+
+All three neighbor process/start/cwd/UID/GID/release proofs and the prior exact
+Nginx hash pass unchanged. Source/Next proof, account and secret-file metadata
+pass. Public routes remain on combined3001; no Nginx backup/change/reload was
+needed or performed. This is a verified recovery, not a cutover or PDF/parity
+acceptance. The restored predecessor still lacks the newer browser env wiring;
+the reviewed PM2 release-binding deployment defect requires its separate repair
+checkpoint before any next candidate deployment.
+
+All four stage/recovery child-wrapper observer pairs returned
+ABBOTT_LOCAL_PRIVATE_EVIDENCE_CLEANUP_VERIFIED. Every local execution session
+ended, private evidence was removed, and final checks returned
+ABBOTT_REMOTE_RECOVERY_INVENTORY_CLEAR, ABBOTT_LOCAL_VERIFICATION_PORTS_CLEAR
+and ABBOTT_PRIVATE_EVIDENCE_ABSENT. Read-only verification SSH children were
+reaped/absence-checked too. No credentials or browser sessions were created.
+
+DONE_WITH_CONCERNS: recovery complete and host safe on the sealed predecessor;
+Task9 release repair/parity/capture/cutover remain incomplete. No deployment,
+smoke, capture, fact/DB/auth mutation, neighbor process action or Nginx action
+followed recovery. Stop for review/direction. This sanitized evidence-only commit
+is local and is not published without new authorization.
