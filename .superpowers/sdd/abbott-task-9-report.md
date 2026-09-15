@@ -1,9 +1,40 @@
-# Abbott Task 9 — inventory-only listener authority correction
+# Abbott Task 9 — approved read-only include inventory evidence
 
-Current status: DONE_WITH_CONCERNS. Inventory-only listener proof now rejects
-extra addresses, variable/unknown/duplicate options and malformed address forms.
-The shared deploy selector is unchanged. No includes are loaded, and no live
-call/push occurred. STOP for independent re-review before inventory execution.
+Current status: BLOCKED. One approved read-only inventory at cleancca7388
+returned two canonical selected-TLS include paths with verified owned cleanup.
+No include contents were loaded or printed, and deployment acceptance remains
+unchanged. No retry/push/deploy/Nginx action. STOP for direction.
+
+## Approved single include inventory atcca7388
+
+Verified exact clean HEAD
+`cca73881c543718701399a23afe353fc05f65310`. Exactly one reviewed command ran:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+Exit0; exact strictly validated path-array line:
+
+`ABBOTT_NGINX_INCLUDES paths=["/etc/nginx/snippets/coopervision-market-path.conf","/etc/nginx/snippets/reportingdash-public-coopervision-market-intelligence-c.conf"]`
+
+The inventory passed fixed local/source authority, stable nofollow main-config
+read, observer-only exact selected TLS/listener proof, path lexical/normalization
+bounds and canonical remote/local frame validation. These paths are the complete
+deduplicated selected-subtree inventory under that parser. This does not attest
+included contents, routing ownership, safety or deployment compatibility. No
+included file was opened, resolved or loaded, and no contents were output.
+
+The accepted result requires captured owned SSH PID/start, verified exit and
+successful private identity-evidence removal. Caller exited; local-only checks
+confirmed both fixed deploy/recovery evidence directories absent and no local
+3001/3004 listeners. No browser, forwarding, credential or remote temp artifact
+was created. Supplemental remote runtime/neighbor/Nginx hash comparisons were
+not run; this read-only inventory is not a full perimeter/health attestation.
+
+No retry, push, deploy, recovery, smoke/capture, PDF, DB/auth/fact/collector/cron,
+neighbor operation or Nginx edit/reload followed. Pins and deploy acceptance
+remain unchanged. STOP for direction before any included-content read or change.
 
 ## Listener authority exactness follow-up — source-only
 
