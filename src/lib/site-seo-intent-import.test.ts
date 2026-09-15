@@ -47,6 +47,48 @@ test("parses accepted Russian XLSX columns, both match types and an optional gro
   ]);
 });
 
+test("parses a real BIFF8 XLS workbook without applying ZIP preflight", () => {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ["Ключ", "Группа", "Тип совпадения"],
+    ["HER2-положительный", "Онкология", "точное"],
+    ["рак лёгкого", "", "фраза"],
+  ]), "Интент");
+  const bytes = Buffer.from(XLSX.write(workbook, { bookType: "biff8", type: "buffer" }));
+
+  const result = parseTargetIntentWorkbook(bytes, "intent.xls");
+
+  assert.equal(bytes.subarray(0, 8).toString("hex"), "d0cf11e0a1b11ae1");
+  assert.equal(result.state, "valid");
+  assert.equal(result.format, "xls");
+  assert.equal(result.worksheet, "Интент");
+  assert.deepEqual(result.rows.map(({ normalizedKey, matchType, group }) => ({ normalizedKey, matchType, group })), [
+    { normalizedKey: "her2 положительный", matchType: "exact", group: "Онкология" },
+    { normalizedKey: "рак легкого", matchType: "phrase", group: null },
+  ]);
+});
+
+test("retains byte and logical-row bounds for BIFF8 XLS workbooks", () => {
+  const oversizedBytes = parseTargetIntentWorkbook(
+    Buffer.alloc(MAX_TARGET_INTENT_UPLOAD_BYTES + 1, 0x61),
+    "intent.xls",
+  );
+  assert.equal(oversizedBytes.errors[0]?.code, "file_too_large");
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ["Ключ", "Тип совпадения"],
+    ...Array.from({ length: 10_001 }, (_, index) => [`key-${index}`, "точное"]),
+  ]), "Интент");
+  const oversizedRows = parseTargetIntentWorkbook(
+    Buffer.from(XLSX.write(workbook, { bookType: "biff8", type: "buffer" })),
+    "intent.xls",
+  );
+
+  assert.equal(oversizedRows.state, "invalid");
+  assert.equal(oversizedRows.errors[0]?.code, "row_limit");
+});
+
 test("parses a UTF-8 CSV fixture into the same logical rows", () => {
   const result = parseTargetIntentWorkbook(
     Buffer.from("Ключ,Группа,Тип совпадения\nHER2,Маркеры,точное\nрак лёгкого,,фраза\n"),

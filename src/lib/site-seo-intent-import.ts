@@ -37,7 +37,7 @@ export type TargetIntentImportError = Readonly<{
 
 export type TargetIntentImportResult = Readonly<{
   state: "valid" | "invalid";
-  format: "csv" | "xlsx";
+  format: "csv" | "xls" | "xlsx";
   worksheet: string | null;
   rows: readonly TargetIntentImportRow[];
   errors: readonly TargetIntentImportError[];
@@ -66,7 +66,7 @@ export function normalizeTargetIntentKey(value: unknown): string {
 
 function emptyResult(
   error: TargetIntentImportError,
-  format: "csv" | "xlsx",
+  format: "csv" | "xls" | "xlsx",
 ): TargetIntentImportResult {
   return {
     state: "invalid",
@@ -79,10 +79,11 @@ function emptyResult(
   };
 }
 
-function extension(filename: string): "csv" | "xlsx" | null {
+function extension(filename: string): "csv" | "xls" | "xlsx" | null {
   const match = String(filename ?? "").trim().toLowerCase().match(/\.([^.]+)$/u);
   if (match?.[1] === "csv") return "csv";
-  if (match?.[1] === "xlsx" || match?.[1] === "xls") return "xlsx";
+  if (match?.[1] === "xlsx") return "xlsx";
+  if (match?.[1] === "xls") return "xls";
   return null;
 }
 
@@ -95,7 +96,7 @@ function parseMatchType(value: unknown): "exact" | "phrase" | null {
 
 function readLogicalTable(
   bytes: Buffer,
-  format: "csv" | "xlsx",
+  format: "csv" | "xls" | "xlsx",
 ): { worksheet: string | null; cells: unknown[][] } {
   if (format === "xlsx") assertBoundedXlsxZip(bytes);
   const source = format === "csv"
@@ -124,7 +125,7 @@ function readLogicalTable(
     blankrows: false,
     defval: "",
   });
-  return { worksheet: format === "xlsx" ? worksheetName : null, cells };
+  return { worksheet: format === "csv" ? null : worksheetName, cells };
 }
 
 export function parseTargetIntentWorkbook(
