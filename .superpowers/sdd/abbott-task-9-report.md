@@ -1,9 +1,9 @@
-# Abbott Task 9 — arbitrary unsupported block diagnostic source checkpoint
+# Abbott Task 9 — arbitrary-block caller operational checkpoint
 
-Current status: DONE_WITH_CONCERNS. Diagnostic-only unsupported-block name
-collection now includes any block at a proven selected-TLS boundary, without
-visiting contents. The2c655055 parser_ambiguity/exit1 remains historical, not a
-new host attestation. No retry, push or live action occurred. STOP for review.
+Current status: DONE_WITH_CONCERNS. One approved read-only invocation at clean
+8dca55eb again returned parser_ambiguity/exit1 with verified owned cleanup.
+No directive name/partial inventory was produced. No retry or other live action
+occurred. STOP for direction; no new full host attestation is claimed.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4750,3 +4750,33 @@ git diff --check
 No live/read-only remote invocation, push, deploy, retry, smoke, capture, PDF,
 Nginx edit or other host mutation occurred. The actual production blocker is not
 newly identified; no supplemental host checks were made. STOP for review.
+
+## Approved arbitrary-block caller — one invocation, 2026-09-15
+
+Parent approved one direct-Node call at exact clean HEAD
+8dca55eb5478996feba30766de31e970f8fd0680. HEAD, clean worktree and absent private
+evidence were verified before the unchanged reviewed command:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+Exactly one invocation completed, exit1, with the exact closed output:
+
+```text
+ABBOTT_NGINX_READ_REFUSED reason=parser_ambiguity
+```
+
+The reviewed wrapper retained this remote reason after its exact owned PID/start,
+zero SSH exit, PID absence and identity evidence cleanup gates. Independent
+local post-checks found caller/owned distinctive SSH loader absent, private
+recovery/deploy evidence directories and temporary material absent, and no local
+listeners3001/3004 (empty lsof, exit1). The owned command session completed;
+no browser or tunnel was created. No raw configuration or secret-bearing output
+was emitted. No retry, push, deploy, recovery, smoke, capture, PDF request, Nginx
+edit or other host mutation occurred.
+
+The analyzer again refused without partial names. The exact underlying structural
+cause is not identified by this enum. No supplemental remote release/neighbor/
+Nginx hash or other host inventory was run, and the result is not a full current
+host attestation. Evidence-only local commit; STOP for direction.
