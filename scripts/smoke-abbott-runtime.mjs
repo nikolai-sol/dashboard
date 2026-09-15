@@ -22,7 +22,7 @@ export function scanEmbedPrivacy(value) {
       const name=key.replace(/([a-z0-9])([A-Z])/g,'$1_$2').replace(/[^a-zA-Z0-9]+/g,'_').replace(/^_+|_+$/g,'').toLowerCase();
       if(['user_actions','users_summary','users_summary_without_admins','admin_user_filter','raw_user_ids_json','raw_user_ids','start_url','end_url','access_token','embed_key','cookie'].includes(name))fail();
       if(!/^(?:has|is|sessions|users|visits)_/.test(name)&&/(?:^|_)(?:user|session|visit|client)_(?:id|identifier|hash)(?:s|_hash)?$/.test(name))fail();
-      if(parent==='session_journeys'&&name==='rows'&&(!Array.isArray(nested)||nested.length))fail();
+      if(name==='session_journeys'&&(!nested||typeof nested!=='object'||Array.isArray(nested)||!Object.hasOwn(nested,'rows')||!Array.isArray(nested.rows)||nested.rows.length!==0))fail();
       if(parent==='return_frequency'&&['groups','user_directions','return_pages'].includes(name)&&(!Array.isArray(nested)||nested.length))fail();
       visit(nested,depth+1,name);
     }
@@ -123,7 +123,9 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       if(audience==='embed')await request(origin,admin,credential,'json',true);
       else administratorExclusionCount=await inspect(origin,admin,credential,'json',bytes=>{const data=JSON.parse(bytes);if(!Array.isArray(data.user_ids)||data.user_ids.some(x=>typeof x!=='string'))fail();return data.user_ids.length;});
       const summary=await inspect(origin,'/api/dashboard/'+alias,credential,'json',bytes=>{
-        const data=JSON.parse(bytes);if(data.dashboard?.id!==18)fail();if(audience==='embed')scanEmbedPrivacy(data);
+        // The public loader omits dashboard.id. Fixed aliases/authentication and
+        // the Abbott-specific schema/period checked below establish identity.
+        const data=JSON.parse(bytes);if(audience==='embed')scanEmbedPrivacy(data);
         return summarizeAbbottPayload(data,{audience,administratorExclusionCount});
       });
       const pdf=await inspect(origin,'/api/dashboard/'+alias+'/pdf',credential,'pdf',bytes=>parsePdf(bytes,signal));

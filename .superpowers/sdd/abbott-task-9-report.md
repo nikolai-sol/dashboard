@@ -718,3 +718,36 @@ new live smoke/PDF/asset probe or token mint occurred during implementation.
 Visual failure still requires a separate safe diagnosis and passing retry before
 Nginx work or cutover. No DB/fact/auth/admin write, migration, credential rotation,
 collector/cron change or neighbor restart/release occurred.
+
+### Smoke review corrections — local-only checkpoint, 2026-09-15
+
+The real public loader serializes `dashboard.type`, period and Abbott-specific
+schema, but not the internal `dashboard_id` metadata. Removed the invented
+`dashboard.id === 18` smoke requirement. The fixture now mirrors the public
+loader shape, including its KPI and dashboard fields. Identity remains bound to
+the two fixed exact aliases, reviewed audience authorization and existing strict
+Abbott schema/period validation. Regressions reject foreign dashboard type,
+missing Abbott collections and malformed time buckets even when both origins
+return the same invalid payload.
+
+Every recursively encountered `session_journeys` (including normalized camel
+case) must now be a non-null, non-array object with its own empty `rows` array.
+Null, arrays, missing/inherited rows, scalar values, malformed rows and nonempty
+rows refuse with the fixed safe category. Aggregate metadata alongside an empty
+rows array remains accepted.
+
+TDD RED: the targeted regression run selected 12 tests and demonstrated eight
+expected failures before the implementation change (the real response shape and
+seven previously accepted malformed journey shapes). GREEN: all 20 smoke tests
+passed. Fresh focused bootstrap/issuer/orchestrator/comparison/capture/smoke/asset
+suite passed 112 tests; relevant auth/access/PDF-auth and app/runtime passed 108.
+Full Abbott production build and runtime gate passed, including 67 app/runtime
+and 268 authority/artifact tests plus unchanged exact route-fragment validation.
+Root and Abbott typechecks, full lint (zero errors, ten existing warnings), both
+changed JavaScript syntax checks and whitespace checks passed.
+
+STOP for re-review. No live probe, SSH session, token issuance, browser launch,
+push, deploy or Nginx action occurred in this correction turn. No production
+state was re-read or mutated. Prior live visual capture remains failed; additional
+live smoke remains unexecuted. Public routing stays at the previously recorded
+port 3001 state; this local checkpoint does not claim new production evidence.

@@ -13,6 +13,21 @@ test('recursive embed scan rejects identifier variants and private collections w
   }
 });
 
+for(const [shape,value]of Object.entries({null:null,array:[],array_objects:[{}],missing_rows:{},null_rows:{rows:null},object_rows:{rows:{}},string_rows:{rows:'synthetic-private'},nonempty_rows:{rows:[{}]},string:'malformed',number:1})){
+  test(`every recursive session_journeys occurrence refuses ${shape}`,async()=>{
+    const m=await api();
+    for(const field of ['session_journeys','sessionJourneys']){
+      assert.throws(()=>m.scanEmbedPrivacy({abbott_bi:{session_journeys:{rows:[]},nested:[{[field]:value}]}}),/^Error: ABBOTT_SMOKE_REFUSED$/);
+    }
+  });
+}
+
+test('recursive journey objects accept empty rows and do not accept inherited rows',async()=>{
+  const m=await api();
+  m.scanEmbedPrivacy({abbott_bi:{session_journeys:{available:true,rows:[]},nested:[{sessionJourneys:{rows:[]}}]}});
+  assert.throws(()=>m.scanEmbedPrivacy({session_journeys:Object.create({rows:[]})}),/^Error: ABBOTT_SMOKE_REFUSED$/);
+});
+
 test('asset inventory rejects redirects, foreign origins, dynamic and traversal paths',async()=>{
   const m=await api();assert.equal(typeof m.assetInventory,'function');
   assert.deepEqual(m.assetInventory('<script src="/_next-abbott/static/chunks/a.js"></script><link href="/_next-abbott/static/css/a.css" rel="stylesheet">','http://127.0.0.1:3004'),['/_next-abbott/static/chunks/a.js','/_next-abbott/static/css/a.css']);
@@ -48,14 +63,21 @@ function fixture(change=()=>{}) {
     else {
       const data={...Object.fromEntries(['counters','traffic_summary','page_stats','bitrix_pages','external_events','external_clicks','returning','general_materials'].map(x=>[x,[]])),data_quality:{},time_buckets:{overall:[],materials:[],by_page:[]},session_journeys:{rows:[]},return_frequency:{available:false,period_local:true,identified_visitors:0,unidentified_visits:0,groups:[],user_directions:[],return_pages:[]}};
       if(!u.searchParams.has('embed_key'))Object.assign(data,{users_summary:[],users_summary_without_admins:[],user_actions:[],admin_user_filter:{}});
-      body=JSON.stringify({dashboard:{id:18,type:'abbott_bi',period:{from:'2026-09-01',to:'2026-09-13'}},kpi:{visits:0},abbott_bi:data});
+      // Match loadAbbottDashboardDataWithDependencies().data: dashboard_id is
+      // internal loader metadata, not a field in the serialized API dashboard.
+      body=JSON.stringify({
+        dashboard:{client_name:'Abbott fixture',dashboard_name:'Abbott fixture dashboard',logo_url:null,type:'abbott_bi',period:{from:'2026-09-01',to:'2026-09-13'},currency:'RUB',language:'ru',show_spend:false,filter_scope:'platform',section_order:[],multibrand:null},
+        ai_summary_enabled:false,kpi_config:[],visible_metrics:[],
+        kpi:Object.fromEntries(['total_impressions','total_clicks','total_spend','total_conversions','avg_ctr','avg_cpm','prev_impressions','prev_clicks','prev_spend','prev_conversions','prev_ctr','prev_cpm'].map(key=>[key,0])),
+        platforms:[],timeseries:[],plan_vs_fact:[],abbott_bi:data,
+      });
     }
     const record={u,options,body,status,type};change(record);const bytes=Buffer.from(record.body);bodies.push(bytes);
     return new Response(bytes,{status:record.status,headers:{'content-type':record.type,'cache-control':'private, no-store'}});
   };
   return {requests,bodies,manifest,fetchImpl};
 }
-test('fixed smoke covers both aliases, audiences, PDF semantics, admin denial and attested split assets',async()=>{
+test('real API shape without dashboard.id passes exact aliases, audiences, exports and attested assets',async()=>{
   const m=await api();assert.equal(typeof m.runReadOnlySmoke,'function');const f=fixture();
   const result=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})});
   assert.equal(result.status,'passed');assert.equal(result.aliases,2);assert.equal(result.audiences,2);
@@ -67,14 +89,22 @@ test('fixed smoke covers both aliases, audiences, PDF semantics, admin denial an
 test('wrong aliases/period/privacy/PDF/assets/status/types and redirects fail with fixed diagnostics',async()=>{
   const m=await api();assert.equal(typeof m.runReadOnlySmoke,'function');
   for(const mutate of [
-    r=>{if(r.u.pathname==='/api/dashboard/abbott')r.body=JSON.stringify({dashboard:{id:19}});},
-    r=>{if(r.u.pathname==='/api/dashboard/18'&&r.u.searchParams.has('embed_key'))r.body=JSON.stringify({dashboard:{id:18,type:'abbott_bi',period:{from:'2026-09-01',to:'2026-09-13'}},abbott_bi:{nested:{visit_id:'private'}}});},
+    r=>{if(r.u.pathname==='/api/dashboard/abbott'){const body=JSON.parse(r.body);body.dashboard.type='zaruku_bi';r.body=JSON.stringify(body);}},
+    r=>{if(r.u.pathname==='/api/dashboard/18'&&r.u.searchParams.has('embed_key')){const body=JSON.parse(r.body);body.abbott_bi.nested={visit_id:'private'};r.body=JSON.stringify(body);}},
     r=>{if(r.u.pathname.endsWith('/abbott-admin-users')&&r.u.searchParams.has('embed_key'))r.status=200;},
     r=>{if(r.u.pathname.endsWith('/pdf'))r.type='text/html';},
     r=>{if(r.u.pathname.endsWith('.js')&&r.u.port==='3004')r.body='changed';},
     r=>{if(r.u.pathname.startsWith('/dashboard/'))r.body='<script src="/_next-abbott/static/chunks/unattested.js"></script>';},
     r=>{r.status=302;},r=>{r.status=500;},
   ]){const f=fixture(mutate);await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})}),/^Error: ABBOTT_SMOKE_REFUSED$/);}
+});
+
+test('Abbott schema remains mandatory even when both runtimes return the same malformed payload',async()=>{
+  const m=await api();
+  for(const mutate of [data=>{data.dashboard.type='zaruku_bi';},data=>{delete data.abbott_bi;},data=>{delete data.abbott_bi.traffic_summary;},data=>{data.abbott_bi.time_buckets.overall=null;}]){
+    const f=fixture(r=>{if(/^\/api\/dashboard\/(?:18|abbott)$/.test(r.u.pathname)){const data=JSON.parse(r.body);mutate(data);r.body=JSON.stringify(data);}});
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl}),/^Error: ABBOTT_SMOKE_REFUSED$/);
+  }
 });
 test('abort cancels pending GETs and parser failures cannot leak raw diagnostics',async()=>{
   const m=await api();assert.equal(typeof m.runReadOnlySmoke,'function');const f=fixture();const controller=new AbortController();let aborted=false;
