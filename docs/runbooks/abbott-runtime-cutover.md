@@ -1,5 +1,28 @@
 # Abbott isolated-runtime cutover runbook
 
+### Unsupported directive vocabulary — source-only review checkpoint
+
+The approved ae5634f attempt refused before mutation with
+`preflight_nginx/unsupported_directive`. Its live cause is still unknown.
+The existing read-only proof/inspect now narrows only that diagnostic: inside the
+selected dashboards TLS server, the fixed vocabulary is `location`, `proxy_pass`,
+`return`, `add_header`, `root`, `alias`, `index`, `try_files`, `error_page`,
+`proxy_redirect`, `proxy_cache`, `ssl_ecdh_curve`, `ssl_conf_command`,
+`client_body_buffer_size`, `charset`, `gzip_vary`, and `if`. Output uses the exact
+closed `unsupported_<name>` reason; all other names or out-of-selected-server
+contexts use `unsupported_other`. This is diagnostic vocabulary only: none of
+these names gains permission or new semantics. Already-specific include/variable/
+regex/Abbott/3004/syntax and other boundary reasons retain their precedence.
+
+No argument, value, path, URL, raw config or included content is output. Names
+inside values/comments are not diagnostic authority; arbitrary or uppercase
+unknown names do not pass through. Existing unsupported_directive frames remain
+readable for compatibility, but current proof uses the finite vocabulary/fallback.
+The wire still permits these reasons only with Nginx REFUSED; no free-form suffix
+is accepted. No new SSH command, host reader or mutation entrypoint is added.
+Review source before separately authorizing any diagnostic execution. Do not
+invoke deploy/inspect or read live config as part of this source checkpoint.
+
 ### Nginx preflight reason diagnostics — STOP for review
 
 Approved e719ad6 reached the read-only Nginx boundary and returned only

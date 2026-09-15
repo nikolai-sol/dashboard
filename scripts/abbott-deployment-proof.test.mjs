@@ -338,7 +338,7 @@ const nginxDiagnostics=[
  ['variable_routing',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location / { proxy_pass http://$private_token; }'))],
  ['variable_routing',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'set $target private-token;'))],
  ['regex_location',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location ~* ^/private-token { return 404; }'))],
- ['unsupported_directive',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'private_token value;'))],
+ ['unsupported_other',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'private_token value;'))],
  ['existing_abbott_route',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location = /dashboard/018 { return 404; }'))],
  ['existing_abbott_route',f=>f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'location = /status { proxy_pass http://127.0.0.1:3001/api/dashboard/0x12; }'))],
  ['existing_abbott_route',f=>f.files.set(NGINX,NGINX_TEXT+'# ABBOTT private-token\n')],
@@ -351,6 +351,16 @@ for(const [index,[reason,alter]]of nginxDiagnostics.entries())test('Nginx privat
 test('Nginx exact transaction recheck has private snapshot_drift diagnostic',async()=>{
  const m=await api(),f=fixture(),seen=[];f.options.notePhase=(stage,reason)=>seen.push({stage,reason});const proof=m.createAbbottDeploymentProof(f.options);proof.preflight();f.files.set(NGINX,NGINX_TEXT+'# private-token\n');
  assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:'preflight_nginx',reason:'snapshot_drift'});assert.doesNotMatch(JSON.stringify(seen),/private-token/);assert.equal(f.fds.size,0);
+});
+const unsupportedNginxNames=['location','proxy_pass','return','add_header','root','alias','index','try_files','error_page','proxy_redirect','proxy_cache','ssl_ecdh_curve','ssl_conf_command','client_body_buffer_size','charset','gzip_vary','if'];
+for(const name of unsupportedNginxNames)test('selected TLS unsupported known name only: '+name,async()=>{
+ const m=await api(),f=fixture(),seen=[];f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
+ const body=name==='location'?'location /private%20token { return 404; }':name==='proxy_pass'?'location / { proxy_pass https://private.invalid/secret; }':name==='return'?'return 301 https://private.invalid/secret;':name==='add_header'?'add_header Location https://private.invalid/secret;':name==='if'?'if (private_token) { return 404; }':name+' "private-token https://private.invalid/secret";';
+ f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,body));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:'preflight_nginx',reason:'unsupported_'+name});assert.deepEqual(f.calls,[]);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(x=>x===0)));assert.doesNotMatch(JSON.stringify(seen),/private|secret|https/);
+});
+test('unsupported name diagnostics never infer known names from values or outside selected TLS',async()=>{
+ const m=await api();for(const content of ['root private-token;\n'+NGINX_TEXT,NGINX_TEXT.replace(TLS_BODY,'private_token "root proxy_redirect https://private.invalid/secret";'),NGINX_TEXT.replace(TLS_BODY,'ROOT private-token;')]){const f=fixture(),seen=[];f.options.notePhase=(stage,reason)=>seen.push({stage,reason});f.files.set(NGINX,content);assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:'preflight_nginx',reason:'unsupported_other'});assert.doesNotMatch(JSON.stringify(seen),/private|secret|https/);assert.equal(f.fds.size,0);}
+ const f=fixture();f.files.set(NGINX,NGINX_TEXT+'# root proxy_redirect private-token\n');assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());
 });
 for(const mode of ['prefix','exact'])for(const[label,id]of Object.entries(locationIdentifiers))test('Nginx location normalizes numeric alias: '+mode+'/'+label,async()=>{
  const m=await api(),f=fixture(),seen=[];f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location ${mode==='exact'?'= ':''}"/api/dashboard/${id}" { proxy_pass http://127.0.0.1:3001; }`));f.options.notePhase=(stage,reason)=>seen.push({stage,reason});

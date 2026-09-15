@@ -1,9 +1,9 @@
-# Abbott Task 9 — Nginx unsupported-directive deployment refusal
+# Abbott Task 9 — unsupported Nginx name diagnostics source checkpoint
 
-Current status: BLOCKED. Approved ae5634f was published to both authorized refs;
-the single acknowledged deploy returned preflight_nginx/unsupported_directive
-before mutation. Cleanup verified. No retry, pin update, smoke, capture or
-Nginx change followed.
+Current status: DONE_WITH_CONCERNS. Finite unsupported-directive name diagnostics
+are implemented locally and await review. Approved ae5634f remains the latest
+published/live attempt, refused before mutation. No live read, retry, pin update,
+smoke, capture or Nginx change followed.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4412,3 +4412,59 @@ Historical active6f09982/8c79 and predecessor f80607f/6cd2 remain historical
 evidence, not newly attested by this incomplete preflight. Public route-only
 rollback remains3001. BLOCKED: STOP for review/direction at the closed
 unsupported_directive boundary.
+
+## Unsupported directive vocabulary — source-only Phase1 checkpoint
+
+Systematic-debugging Phase1 traced generic unsupported_directive to the private
+read-only parser's existing rejection branches; the live construct is still
+unknown. TDD added20 RED regressions before the implementation. The parser now
+classifies those same refusals with a fixed known-name vocabulary exclusively
+inside the selected dashboards TLS server: location, proxy_pass, return,
+add_header, root, alias, index, try_files, error_page, proxy_redirect, proxy_cache,
+ssl_ecdh_curve, ssl_conf_command, client_body_buffer_size, charset, gzip_vary and
+if. Only exact `unsupported_<name>` or fallback `unsupported_other` is emitted.
+No arbitrary name, argument, value, path, URL, included content or raw config is
+returned. Known-name text in an argument/comment is not authority. Unknown or
+out-of-selected-TLS contexts receive the fixed fallback. Already-specific
+boundary reasons retain precedence. The names grant no parsing/routing permission.
+
+The worker and hash/status-paired wire accept only the explicit closed list,
+with Nginx REFUSED; arbitrary suffixes, forged exception fields and wrong status
+pairs refuse. The prior generic unsupported_directive wire value remains readable
+for compatibility, but the updated parser produces specific names/fallback.
+No standalone host reader, SSH command or deploy entrypoint was added. This is
+the existing read-only proof/inspect capability, not authorization to execute it.
+
+Fresh evidence:20 new regressions passed; focused proof/deploy/transport/session
+475/475, full authority791/791, post-build verification175/175, Abbott app/runtime
+and contract suites passed. Abbott/combined production builds, root/focused
+typechecks, contract wiring, public-assets security, deploy-source/release-runtime
+shell suites, exact routes, syntax and whitespace passed. Lint has0 errors and
+the same10 existing warnings. One prematurely parallel focused pass hit ENOENT
+while the Abbott build recreated its artifact; the same focused command passed
+475/475 when rerun after build completion, without code changes. This failed
+attempt is not counted as passing evidence. Independent read-only review found
+no findings and passed all20 new tests separately.
+
+Reproduction/check commands from the exact isolated worktree:
+
+```sh
+node --test scripts/abbott-deployment-proof.test.mjs scripts/abbott-deploy-transport.test.mjs scripts/abbott-deploy-session.test.mjs scripts/deploy-abbott.test.mjs
+npm run test:abbott-runtime
+npm run test:abbott-contract
+npm run test:abbott-contract-wiring
+npm run security:public-assets
+npm run build
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+npm run test:deploy-source
+npm run test:release-runtime
+```
+
+All owned fixture commands exited; exact private deploy/recovery evidence is
+absent and no local3001/3004 listeners remain. No push, host read, live SSH,
+credential/browser/forward, deploy/recovery, PDF/smoke/capture, DB/auth/fact/
+collector/cron, neighbor or Nginx action occurred. Historical deployed6f09982/8c79
+and predecessor f80607f/6cd2 remain historical evidence only. Route-only rollback
+remains3001. STOP for separate source review; no automatic diagnostic execution.

@@ -94,7 +94,9 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else directive.push(token.word);
     }if(stack.length!==1||directive.length)fail();
     // conf.d is already in the HTTP context. A nested server cannot supply TLS authority.
-    const unsupported=n=>n.name==='include'?'include':['set','map','rewrite'].includes(n.name)?'variable_routing':n.name==='server'?'nested_server':'unsupported_directive';
+    // Names are diagnostic vocabulary only, never an acceptance allowlist.
+    const unsupportedName=(n,selected=false)=>selected&&['location','proxy_pass','return','add_header','root','alias','index','try_files','error_page','proxy_redirect','proxy_cache','ssl_ecdh_curve','ssl_conf_command','client_body_buffer_size','charset','gzip_vary','if'].includes(n.name)?'unsupported_'+n.name:'unsupported_other';
+    const unsupported=(n,selected=false)=>n.name==='include'?'include':['set','map','rewrite'].includes(n.name)?'variable_routing':n.name==='server'?'nested_server':unsupportedName(n,selected);
     if(nodes.some(n=>n.name!=='server'||!n.block||n.args.length)){
       const n=nodes.find(n=>n.name!=='server'||!n.block||n.args.length),containsServer=n=>n.children.some(c=>c.name==='server'||containsServer(c));
       refuse(containsServer(n)?'nested_server':unsupported(n));
@@ -107,36 +109,35 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     // Every other same-host block must be explicitly confined to non-SSL port80.
     for(const n of hostBlocks.filter(n=>n!==targets[0])){const listens=n.children.filter(x=>x.name==='listen');if(!listens.length||listens.some(x=>x.block||x.args.includes('ssl')||! /^(?:80|\[::\]:80|[0-9.]+:80)$/.test(x.args[0])))fail();}
     const passive=new Set(['listen','server_name','ssl_certificate','ssl_certificate_key','ssl_protocols','ssl_ciphers','ssl_prefer_server_ciphers','ssl_session_cache','ssl_session_timeout','ssl_session_tickets','ssl_dhparam','ssl_stapling','ssl_stapling_verify','ssl_trusted_certificate','resolver','resolver_timeout','access_log','error_log','client_max_body_size','client_body_timeout','send_timeout','keepalive_timeout','proxy_http_version','proxy_set_header','proxy_read_timeout','proxy_connect_timeout','proxy_send_timeout','proxy_buffering','proxy_request_buffering','proxy_cache_bypass','proxy_no_cache','proxy_buffers','proxy_buffer_size','proxy_busy_buffers_size','add_header','expires','etag','gzip','gzip_types']);
-    const unrelatedPath=literal=>{
-      if(literal&&(literal.includes('//')||path.posix.normalize(literal)!==literal))refuse('unsupported_directive');
+    const unrelatedPath=(literal,diagnostic)=>{
+      if(literal&&(literal.includes('//')||path.posix.normalize(literal)!==literal))refuse(diagnostic);
       const segments=literal.toLowerCase().split('/').filter(Boolean);
       if(segments.some((part,i)=>part==='_next-abbott'||part==='dashboard'&&(segments[i+1]==='abbott'||Number(segments[i+1])===18)))refuse('existing_abbott_route');
     };
-    const visit=(list,context='root',selected=false,location=null)=>{for(const n of list){nginxReason('unknown');let childLocation=location;const args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))refuse(/abbott/i.test(n.name+' '+args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args)?'existing_abbott_route':'existing_3004');
+    const visit=(list,context='root',selected=false,location=null)=>{for(const n of list){nginxReason('unknown');let childLocation=location;const active=selected||n===targets[0],args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))refuse(/abbott/i.test(n.name+' '+args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args)?'existing_abbott_route':'existing_3004');
       // Includes are outside this single-file snapshot: never silently authorize them.
-      if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))refuse(unsupported(n));
-      const active=selected||n===targets[0];
-      if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))refuse(unsupported(n));
+      if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))refuse(unsupported(n,active));
+      if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))refuse(unsupported(n,active));
       if(active&&n.name!=='server'){
         if(n.name==='location'){
           const literal=n.args.length===1?n.args[0]:n.args.length===2&&n.args[0]==='='?n.args[1]:null;
-          if(!literal||!/^\/[A-Za-z0-9_./-]*$/.test(literal))refuse(args.includes('$')?'variable_routing':n.args.some(v=>['~','~*','^~'].includes(v))?'regex_location':'unsupported_directive');
-          unrelatedPath(literal);
+          if(!literal||!/^\/[A-Za-z0-9_./-]*$/.test(literal))refuse(args.includes('$')?'variable_routing':n.args.some(v=>['~','~*','^~'].includes(v))?'regex_location':unsupportedName(n,active));
+          unrelatedPath(literal,unsupportedName(n,active));
           childLocation={literal,exact:n.args.length===2};
         }else if(n.name==='proxy_pass'){
           // Only the three literal, independently protected loopback runtimes.
           const target=n.args.length===1&&/^http:\/\/127\.0\.0\.1:300[123](\/[A-Za-z0-9_./~-]*)?$/.exec(n.args[0]);
-          if(!target||!location)refuse(args.includes('$')?'variable_routing':'unsupported_directive');const uri=target[1]??'';
+          if(!target||!location)refuse(args.includes('$')?'variable_routing':unsupportedName(n,active));const uri=target[1]??'';
           // Never normalize an ambiguous rewrite into apparent unrelated authority.
-          unrelatedPath(uri);
+          unrelatedPath(uri,unsupportedName(n,active));
           // Prefix replacement appends unmatched request bytes. Only identity
           // replacement is provable here; other static rewrites require exact locations.
-          if(uri&&!location.exact&&uri!==location.literal)refuse('unsupported_directive');
+          if(uri&&!location.exact&&uri!==location.literal)refuse(unsupportedName(n,active));
         }else if(n.name==='return'){
-          if(n.args.length!==1||! /^[1-5][0-9]{2}$/.test(n.args[0]))refuse(args.includes('$')?'variable_routing':'unsupported_directive');
+          if(n.args.length!==1||! /^[1-5][0-9]{2}$/.test(n.args[0]))refuse(args.includes('$')?'variable_routing':unsupportedName(n,active));
         }else if(n.name==='add_header'){
-          if(![2,3].includes(n.args.length)||n.args.length===3&&n.args[2]!=='always'||! /^[A-Za-z0-9-]+$/.test(n.args[0])||['location','refresh'].includes(n.args[0].toLowerCase()))refuse(n.args[0]?.includes('$')?'variable_routing':'unsupported_directive');
-        }else if(!passive.has(n.name))refuse(unsupported(n));
+          if(![2,3].includes(n.args.length)||n.args.length===3&&n.args[2]!=='always'||! /^[A-Za-z0-9-]+$/.test(n.args[0])||['location','refresh'].includes(n.args[0].toLowerCase()))refuse(n.args[0]?.includes('$')?'variable_routing':unsupportedName(n,active));
+        }else if(!passive.has(n.name))refuse(unsupported(n,active));
       }
       visit(n.children,n.name,active,childLocation);
     }};visit(nodes);
@@ -1093,7 +1094,7 @@ async function transactAcknowledged(request,signal,platform=realPlatform){
   catch{
     const stage=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(terminal.phase)?terminal.phase:'unknown';
     const neighbor=['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'].includes(stage);
-    const specific=neighbor?['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']:stage==='preflight_nginx'?['metadata','utf8','syntax','tls_count','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown']:null;
+    const specific=neighbor?['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']:stage==='preflight_nginx'?['metadata','utf8','syntax','tls_count','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown','unsupported_location','unsupported_proxy_pass','unsupported_return','unsupported_add_header','unsupported_root','unsupported_alias','unsupported_index','unsupported_try_files','unsupported_error_page','unsupported_proxy_redirect','unsupported_proxy_cache','unsupported_ssl_ecdh_curve','unsupported_ssl_conf_command','unsupported_client_body_buffer_size','unsupported_charset','unsupported_gzip_vary','unsupported_if','unsupported_other']:null;
     const reason=specific?(specific.includes(terminal.reason)?terminal.reason:'unknown'):'failed';
     const diagnostic=terminal.status==='RESTORED'?{stage:'compensation',reason:'restored'}:terminal.status==='REVIEW_REQUIRED'?{stage:'compensation',reason:'review_required'}:{stage,reason};
     return{status:terminal.status,record:null,diagnostic};

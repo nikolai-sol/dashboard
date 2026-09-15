@@ -464,6 +464,12 @@ test('acknowledged worker carries only closed Nginx proof markers through REFUSE
   assert.deepEqual(JSON.parse(JSON.stringify(r)),{status:'REFUSED',record:null,diagnostic:{stage:'preflight_nginx',reason:['failed','private-token'].includes(reason)?'unknown':reason}});assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);assert.doesNotMatch(JSON.stringify(r),/private-token/);
  }finally{f.cleanup();}}
 });
+test('acknowledged inspect only emits fixed unsupported names and never mutates',async()=>{
+ for(const name of ['location','proxy_pass','return','add_header','root','alias','index','try_files','error_page','proxy_redirect','proxy_cache','ssl_ecdh_curve','ssl_conf_command','client_body_buffer_size','charset','gzip_vary','if','other','private_token']){const f=fixture();try{
+  f.platform.deploymentPreflight=note=>{note('preflight_nginx','unsupported_'+name);throw Object.assign(Error('private-token'),{directive:'root',args:['private-token']});};
+  const r=await f.installer.transactAcknowledged({action:'inspect'},new AbortController().signal,f.platform);assert.deepEqual(JSON.parse(JSON.stringify(r)),{status:'REFUSED',record:null,diagnostic:{stage:'preflight_nginx',reason:name==='private_token'?'unknown':'unsupported_'+name}});assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);assert.equal(f.events.length,0);assert.doesNotMatch(JSON.stringify(r),/private/);
+ }finally{f.cleanup();}}
+});
 test('acknowledged worker returns only completed, restored or protected-review outcomes',async()=>{
  for(const mode of['success','pre_abort','compensated','rollback_failure','spoofed_error']){const f=fixture();try{
   assert.equal(typeof f.installer.transactAcknowledged,'function');const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),abort=new AbortController();
