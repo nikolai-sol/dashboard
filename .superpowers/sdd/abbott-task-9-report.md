@@ -1,14 +1,13 @@
-# Abbott Task 9 — Phase1 asset-boundary instrumentation
+# Abbott Task 9 — approved Phase1 diagnostic run refused
 
-Status: DONE_WITH_CONCERNS; local boundary diagnostics await review before a
-diagnostic run. The last approved6393077 smoke returned asset_attestation/failed
-before issuance, without a finer reason. Its live cause remains unproven. This
-turn changed source/tests/runbook/report only; no live request, push, deployment,
-capture or Nginx action occurred. Last verified production remains6f09982/8c79,
-with retainedf80607f/6cd2 backup,9aaed34 quarantine, browser/neighbor/Nginx proofs
-and completed cleanup from the preceding operational turn. No fresh host claim
-is made here. Live parity, six-image comparison and cutover remain incomplete.
-Earlier sections are chronological history.
+Status: BLOCKED. Approved98cf58a was published and one smoke diagnostic returned
+`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`; no finer
+boundary reason was exposed. Stopped after that result, before issuance/capture/
+Nginx. Fresh before/after checks again verify unchanged6f09982/8c79 production,
+retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite, neighbors
+and Nginx. Owned process/port/output cleanup passed. The live cause remains
+unproven; parity, six-image comparison and cutover remain incomplete. Earlier
+sections are chronological history.
 
 ## Scope and authorization
 
@@ -2751,3 +2750,52 @@ the preceding evidence-only commit is112df8f. No new screenshot/diff, Nginx
 backup or parity approval is claimed. Last verified rollback target remains
 f80607f/release6cd2. DONE_WITH_CONCERNS: STOP for review before one diagnostic
 run; no automatic retry and no speculative fix.
+
+## Approved98cf58a publication and single Phase1 diagnostic run
+
+The clean exact HEAD`98cf58abc76711b24290da1370bd1d2bfc1ef7d2` received approval
+and was ordinary fast-forward pushed to only the two authorized refs. Literal
+`refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott` were
+reread and both matched that SHA. No redeployment or other ref mutation occurred.
+The independent full deployed-state proof passed immediately before the run.
+
+Ran exactly one smoke diagnostic through the reviewed orchestrator with fixed
+2026-09-01..2026-09-13 dates, exact deployed attestation and literal loopback3001/
+3004. It returned only:
+
+`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`
+
+`ABBOTT_VERIFICATION_OWNED_CLEANUP_VERIFIED`
+
+No more specific boundary cause was exposed. No root cause is inferred from this
+unchanged generic result. Per the explicit stop instruction, no second attempt,
+source diagnosis/fix, capture, deployment or Nginx action followed. The asset
+stage precedes issuance, so no real manager/embed credential frame was minted or
+consumed and no credentialed smoke/PDF/Excel/browser phase was reached. Child
+streams remained bounded in memory and were never relayed as raw diagnostics.
+
+The owned orchestrator, forward and observed descendant identities were captured
+in memory; every captured PID exited and the forward's terminal record attested
+exit. Independent local checks confirmed no3001/3004 listeners, no private
+identity evidence directories, no smoke report and no partial candidate output.
+No browser was launched or credential temp file created. All task-owned local
+and read-only SSH sessions exited; reviewed buffers were cleared.
+
+The full independent post-run proof again returned ABBOTT_POST_DEPLOY_VERIFIED
+for source`6f09982fb1e8068f02340ddfcb5c945fb02ebfd5`, release/control
+`8c79caf495f147ad91b2174b9bc5f65c`, manifest
+`a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2`
+and predecessor`6cd2f12e245a47dcbd5f6ce928c4ed83`. Active/current/control/ownership
+receipt, exact Abbott kernel/PM2 binding/UID982/GID984, soleloopback3004/health,
+full backup/quarantine trees, browser contract/archive/executable/env metadata,
+committed/restored root-only audits and absent lock/staging all passed again.
+Neighbor PID/start/cwd/releases match the established table. Nginx remains at
+SHA256`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+
+Public Abbott routing still uses3001. No Nginx backup/test/reload/cutover, neighbor
+write/restart/release, DB/auth/fact change, password rotation or collector/cron
+action occurred. Rollback target remains retainedf80607f/release6cd2. This
+checkpoint adds sanitized evidence only, with whitespace validation and a clean
+commit; it claims no new parity or image/dimension/diff result. Verification-
+before-completion required the fresh cleanup and state proofs. BLOCKED; stopped
+after the one approved result, awaiting further direction.
