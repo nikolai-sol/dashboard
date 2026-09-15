@@ -1,9 +1,9 @@
-# Abbott Task 9 — first deployment-parser rejection source checkpoint
+# Abbott Task 9 — first rejection operational checkpoint
 
-Current status: DONE_WITH_CONCERNS. Source-only first-rejection classifier now
-reports a fixed top-level or selected-TLS context/name code at the actual first
-deployment-parser rejection. The preceding parser_ambiguity remains historical;
-no new live read or host attestation occurred. STOP for independent review.
+Current status: DONE_WITH_CONCERNS. One approved read-only invocation at clean
+fafe1b0 returned top_limit_req_zone, exit0, with verified owned cleanup. This
+identifies only the first rejected directive, not deployment/Nginx acceptance.
+No retry or other live action occurred. STOP for direction.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4838,3 +4838,33 @@ git diff --check
 No remote call, push, deploy, retry, smoke, capture, PDF request, Nginx edit,
 credential or other host mutation occurred. No actual production directive is
 newly identified. No supplemental host attestation is claimed. STOP for review.
+
+## Approved first-rejection caller — one invocation, 2026-09-15
+
+Parent approved exactly one read-only invocation at clean exact HEAD
+fafe1b0ab33d941126aa87f3050f3614199322e8. Clean HEAD and absent private evidence
+were verified before the unchanged reviewed command:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+The single invocation completed with exit0 and exactly:
+
+```text
+ABBOTT_NGINX_FIRST_REJECTION code=top_limit_req_zone
+```
+
+The reviewed caller accepted the fixed result only after exact owned PID/start
+capture, zero SSH exit, verified PID absence, and private identity evidence
+validation/removal. Independent local post-checks found no exact caller or
+distinctive owned SSH loader, no recovery/deploy private evidence directory or
+contained temporary material, and no listeners3001/3004 (empty lsof, exit1).
+The owned command session completed. No browser or tunnel was created.
+
+Only the top-level limit_req_zone directive name/category was revealed; no args,
+values, paths, config contents or raw errors were emitted. No further rejection
+or selected TLS acceptance is established by first-failure analysis. No remote
+supplemental release/neighbor/Nginx hash/state inventory was run. No retry, push,
+deploy, recovery, smoke, capture, PDF request, Nginx edit or other host mutation
+occurred. Evidence-only local commit; STOP for direction.
