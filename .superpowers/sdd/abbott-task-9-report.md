@@ -1621,3 +1621,35 @@ The final recovery reader regression proves metadata-to-descriptor replacement
 refuses before any writes. All test/build tool sessions ended; loader tests
 independently verified their exact local Node child PIDs absent. No browser or
 live SSH/recovery process was created during this implementation checkpoint.
+
+### Checkpoint A re-review: post-spawn transport lifecycle
+
+The review found an early-return path when the initial SSH start proof or shared
+setup failed after spawn. TDD first reproduced seven failures. The transport now
+installs close/exit observation, bounded stdout/stderr drains and all cleanup
+deadlines before PID/start proof or shared setup. A failed proof/setup sends EOF
+without source or RUN, and permits a cleanup-only identity retry. A ps timeout
+or error is unknown identity, not proof of absence. A captured start identity
+must still match before TERM/KILL; an observed child exit cannot be rebound to
+a replacement PID. No catch, failed kill or identity mismatch can clear timers
+or settle while the child remains live before the full observation deadline.
+
+If the budget expires without a verified close, the result is explicitly
+UNACKNOWLEDGED with sshExitVerified=false. It never claims remote cleanup.
+Bounded drains and the close observer remain attached for a late close; timers
+are cleared only after close. Secret-bearing synthetic errors/stdout/stderr
+remain absent from returned status. Source/RUN are never sent before proof.
+
+Fresh local evidence: transport14/14, focused recovery34/34; build plus67
+app/runtime tests and full authority/artifact/bootstrap/recovery318/318 passed.
+The additional smoke/asset/orchestrator/capture61/61 passed after the build.
+Root and Abbott typechecks passed; lint zero errors/ten existing warnings.
+Artifact inventory remains2,870 files/82 text files and trusted verification
+passed. Exact12-route/one-prefix validation, changed-module syntax and Git
+whitespace checks passed. Local loader tests reaped their owned Node children
+and independently proved their PIDs absent; all test/build sessions exited.
+
+STOP for re-review. No live SSH, recovery, deployment, credential use, browser,
+push or Nginx operation occurred. The last attested interrupted host state above
+is not asserted repaired or freshly revalidated by this local-only checkpoint.
+The authorized public rollback route remains combined127.0.0.1:3001.

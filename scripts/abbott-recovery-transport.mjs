@@ -14,27 +14,63 @@ while(bytes.length){const end=bytes.indexOf(10);if(end<0){if(bytes.length>5){sto
 process.stdin.on('data',consume);process.stdin.on('end',()=>{stop();if(!running)finish('REFUSED');});process.stdin.on('error',()=>{stop();if(!running)finish('REFUSED');});`;
 const quote=s=>`'${s.replaceAll("'","'\\''")}'`;
 const ARGS=Object.freeze(['-T','-F','/dev/null','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','HostName=5.35.85.218','-o','HostKeyAlias=5.35.85.218','-o','User=root','-o','Port=22','-i','/Users/nafanya/.ssh/beget_ed25519','-o','IdentitiesOnly=yes','-o','IdentityAgent=none','-o','UserKnownHostsFile=/Users/nafanya/.ssh/known_hosts','-o','GlobalKnownHostsFile=/dev/null','-o','ProxyCommand=none','-o','ProxyJump=none','-o','CanonicalizeHostname=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none','-o','ConnectTimeout=10','--','beget',`/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(RECOVERY_LOADER)}`]);
-const real={spawn,identity(pid){try{return execFileSync('/bin/ps',['-p',String(pid),'-o','lstart='],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:2000,stdio:['ignore','pipe','pipe']}).trim()||null;}catch{return null;}},kill:(pid,signal)=>process.kill(pid,signal),setTimeout,clearTimeout};
+const real={spawn,identity(pid){try{const value=execFileSync('/bin/ps',['-p',String(pid),'-o','lstart='],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:2000,stdio:['ignore','pipe','pipe']}).trim();if(!value)throw Error();return value;}catch(error){if(error.status===1&&!error.signal)return null;throw Error('ABBOTT_SSH_IDENTITY_UNAVAILABLE');}},kill:(pid,signal)=>process.kill(pid,signal),setTimeout,clearTimeout};
 export function runRecoveryTransport(source,{signal,platform=real}={}){
   const refused={status:'ABBOTT_RECOVERY_REFUSED',remoteAcknowledged:false,sshExitVerified:true,pid:null,start:null};
   if(signal?.aborted||!Buffer.isBuffer(source)||!source.length||source.length>1048576)return Promise.resolve(refused);
   return new Promise(resolve=>{
-    let child,pid,start,finished=false,aborted=false,invalid=false,output=Buffer.alloc(0),deadline,force,final;
-    const done=(exited)=>{if(finished)return;finished=true;for(const t of[deadline,force,final])platform.clearTimeout(t);signal?.removeEventListener('abort',abort);const match=!invalid&&/^ABBOTT_RECOVERY_ACK (RESTORED|REFUSED|REVIEW_REQUIRED)\n$/.exec(output.toString());output.fill(0);resolve({status:match?'ABBOTT_RECOVERY_'+match[1]:'ABBOTT_RECOVERY_UNACKNOWLEDGED',remoteAcknowledged:Boolean(match),sshExitVerified:exited,pid:pid??null,start:start??null});};
-    const abort=()=>{if(aborted||finished)return;aborted=true;try{child.stdin.write('ABORT\n');}catch{invalid=true;}};
-    const terminate=(sig)=>{if(platform.identity(pid)!==start){invalid=true;done(false);return false;}try{platform.kill(pid,sig);return true;}catch{invalid=true;done(platform.identity(pid)===null);return false;}};
+    let child,pid,start,settled=false,closed=false,exitSeen=false,budgetEnded=false,aborted=false,invalid=false,dispatched=false,termSent=false;
+    let output=Buffer.alloc(0),header;const timers=[];
+    const validPid=()=>Number.isSafeInteger(pid)&&pid>0;
+    const readIdentity=()=>{try{const value=platform.identity(pid);return value?{kind:'found',value}:{kind:'absent'};}catch{return{kind:'unknown'};}};
+    const liveChild=()=>!closed&&!exitSeen&&child.exitCode===null&&child.signalCode===null;
+    const closeInput=()=>{try{child.stdin.end();}catch{invalid=true;}};
+    const clearAfterClose=()=>{if(!closed)return;for(const timer of timers)platform.clearTimeout(timer);};
+    const done=()=>{
+      // A live child cannot shorten its observation budget through any catch,
+      // identity failure, PID mismatch or failed kill. Late close still reaps.
+      clearAfterClose();if(settled||!closed&&!budgetEnded)return;
+      settled=true;try{signal?.removeEventListener('abort',abort);}catch{invalid=true;}
+      const exited=closed&&(!validPid()||readIdentity().kind==='absent');
+      const match=exited&&!invalid&&/^ABBOTT_RECOVERY_ACK (RESTORED|REFUSED|REVIEW_REQUIRED)\n$/.exec(output.toString());
+      output.fill(0);header?.fill(0);
+      resolve({status:match?'ABBOTT_RECOVERY_'+match[1]:'ABBOTT_RECOVERY_UNACKNOWLEDGED',remoteAcknowledged:Boolean(match),sshExitVerified:exited,pid:pid??null,start:start??null});
+    };
+    const abort=()=>{if(aborted||settled)return;aborted=true;if(!dispatched){closeInput();return;}try{child.stdin.write('ABORT\n');}catch{invalid=true;closeInput();}};
+    const acquire=()=>{
+      if(start)return true;if(!validPid()||!liveChild())return false;
+      const proof=readIdentity();if(proof.kind!=='found'||!liveChild())return false;
+      start=proof.value;return true;
+    };
+    const terminate=sig=>{
+      if(!start||!liveChild())return false;const proof=readIdentity();
+      if(proof.kind!=='found'||proof.value!==start||!liveChild())return false;
+      try{platform.kill(pid,sig);return true;}catch{invalid=true;return false;}
+    };
+    const failedSetup=()=>{invalid=true;closeInput();if(!start&&!closed)timers.push(platform.setTimeout(()=>{if(!settled)acquire();},1000));};
     try{
-      child=platform.spawn('/usr/bin/ssh',ARGS,{cwd:'/',env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});pid=child.pid;
-      child.on('error',()=>{invalid=true;});child.stdin.on('error',()=>{});
-      if(!Number.isSafeInteger(pid)||pid<1){invalid=true;child.stdin.end();done(false);return;}start=platform.identity(pid);if(!start){invalid=true;child.stdin.end();done(false);return;}
-      child.stdout.on('data',chunk=>{if(finished){chunk.fill(0);return;}if(output.length+chunk.length>128){invalid=true;chunk.fill(0);abort();return;}const next=Buffer.concat([output,chunk]);output.fill(0);chunk.fill(0);output=next;});
+      child=platform.spawn('/usr/bin/ssh',ARGS,{cwd:'/',env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});
+      // Install bounded drains, exit observation and the entire cleanup budget
+      // before reading PID metadata, calling ps, or shared setup/dispatch code.
+      child.on('close',(code,childSignal)=>{closed=true;exitSeen=true;if(code!==0||childSignal)invalid=true;done();});
+      child.on('exit',()=>{exitSeen=true;});
+      child.stdout.on('data',chunk=>{if(settled){chunk.fill(0);return;}if(output.length+chunk.length>128){invalid=true;chunk.fill(0);abort();return;}const next=Buffer.concat([output,chunk]);output.fill(0);chunk.fill(0);output=next;});
       child.stderr.on('data',chunk=>{invalid=true;chunk.fill(0);abort();});child.on('error',()=>{invalid=true;abort();});
-      child.on('close',(code,childSignal)=>{if(code!==0||childSignal)invalid=true;done(platform.identity(pid)===null);});
-      deadline=platform.setTimeout(()=>{invalid=true;abort();if(terminate('SIGTERM')&&!finished)force=platform.setTimeout(()=>{if(terminate('SIGKILL')&&!finished)final=platform.setTimeout(()=>done(platform.identity(pid)===null),5000);},60000);},300000);
+      child.stdin.on('error',()=>{invalid=true;closeInput();});
+      timers.push(platform.setTimeout(()=>{if(closed)return;invalid=true;abort();acquire();termSent=terminate('SIGTERM');},300000));
+      timers.push(platform.setTimeout(()=>{if(closed)return;invalid=true;abort();acquire();if(termSent)terminate('SIGKILL');else termSent=terminate('SIGTERM');},360000));
+      timers.push(platform.setTimeout(()=>{if(closed)return;invalid=true;budgetEnded=true;closeInput();done();},365000));
+      pid=child.pid;
       signal?.addEventListener('abort',abort,{once:true});
-      const header=Buffer.from(`ABBOTT_RECOVERY_SOURCE ${source.length} ${createHash('sha256').update(source).digest('hex')}\n`);
+      if(!acquire()){failedSetup();return;}
+      if(signal?.aborted){failedSetup();return;}
+      dispatched=true;header=Buffer.from(`ABBOTT_RECOVERY_SOURCE ${source.length} ${createHash('sha256').update(source).digest('hex')}\n`);
       child.stdin.write(header,()=>header.fill(0));child.stdin.write(source);
       if(signal?.aborted)abort();else child.stdin.write('RUN\n');
-    }catch{invalid=true;done(false);}
+    }catch{
+      invalid=true;
+      if(child)failedSetup();
+      else{closed=true;done();}
+    }
   });
 }
