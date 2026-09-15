@@ -1847,3 +1847,41 @@ STOP for review. No live SSH, remote probe, push, recovery attempt, credential,
 browser, deployment, smoke/capture or Nginx change occurred. The last verified
 live interrupted state and published e0238f9 refs remain unchanged by this
 local-only implementation. The prior startup failure remains unexplained.
+
+### Approved inert startup probe: REFUSED (2026-09-15)
+
+The probe checkpoint received explicit execution approval. Clean HEAD
+385e761adfaf8bf85ec29fb65285b42a9d0a1743 passed35 fresh transport/classifier/
+evidence/probe/wrapper tests. Only the two authorized refs were fast-forwarded
+with ordinary non-force pushes, and isolated literal lookups verified both
+remote SHAs equal to that HEAD. The temporary ref-proof directory was removed.
+
+Exactly one reviewed inert probe ran via the fixed clean-env command and
+returned only:
+
+`ABBOTT_STARTUP_PROBE_REFUSED stage=remote_startup reason=unknown`
+
+No raw stderr/stdout was examined, saved or reproduced. The closed result does
+not establish a particular warning/error type or a remote preflight outcome.
+Unknown stderr remains a hard refusal. No recovery was invoked in this turn,
+regardless of probe result; no fix, retry, deployment, credentials, browser,
+smoke/capture or Nginx action followed.
+
+The bounded private metadata observer verified both the exact owned SSH child
+and probe parent absent after their identity evidence disappeared. PID/start
+metadata stayed in memory and was never emitted. Private evidence directory
+absence and no local3001/3004 listeners were independently confirmed. Observer
+and all read-only tool sessions exited. Remote recovery-loader inventory and
+combined/Abbott runtime child counts are zero.
+
+Post-probe read-only gates verified the previously recorded live state remains
+unchanged: active candidate9aaed34, oldf806 backup, no recovery quarantine/lock/
+journal/next file, exact old6cd2 current pointer, same pinned Abbott kernel
+identity/UID/GID/cwd, sole loopback3004 listener and health200. All three neighbor
+PID/start/cwd/UID/GID/release proofs and the exact prior Nginx hash pass unchanged.
+Account and secret-file metadata pass. These are the narrow post-probe checks,
+not a new full browser/tree attestation or evidence of restored activation.
+
+BLOCKED at the closed probe refusal above. The live interrupted state remains
+unresolved and public routing remains combined3001. Await further direction;
+no recovery attempt is authorized by probe completion.
