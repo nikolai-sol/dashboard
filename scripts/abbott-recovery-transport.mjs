@@ -16,11 +16,18 @@ process.stdin.on('data',consume);process.stdin.on('end',()=>{stop();if(!running)
 const quote=s=>`'${s.replaceAll("'","'\\''")}'`;
 const ARGS=Object.freeze(['-T','-F','/dev/null','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','HostName=5.35.85.218','-o','HostKeyAlias=5.35.85.218','-o','User=root','-o','Port=22','-i','/Users/nafanya/.ssh/beget_ed25519','-o','IdentitiesOnly=yes','-o','IdentityAgent=none','-o','UserKnownHostsFile=/Users/nafanya/.ssh/known_hosts','-o','GlobalKnownHostsFile=/dev/null','-o','ProxyCommand=none','-o','ProxyJump=none','-o','CanonicalizeHostname=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none','-o','ConnectTimeout=10','--','beget',`/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(RECOVERY_LOADER)}`]);
 const real={spawn,identity(pid){try{const value=execFileSync('/bin/ps',['-p',String(pid),'-o','lstart='],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:2000,stdio:['ignore','pipe','pipe']}).trim();if(!value)throw Error();return value;}catch(error){if(error.status===1&&!error.signal)return null;throw Error('ABBOTT_SSH_IDENTITY_UNAVAILABLE');}},kill:(pid,signal)=>process.kill(pid,signal),setTimeout,clearTimeout};
-export function runRecoveryTransport(source,{signal,platform=real,onEvidence=()=>{}}={}){
+const STARTUP_COMMANDS=Object.freeze({ssh:'/usr/bin/env -i /bin/true',node:`/usr/bin/env -i /usr/bin/node -e ${quote('process.stdout.write("ABBOTT_STARTUP_NODE_OK\\n")')}`,loader:ARGS.at(-1)});
+const STARTUP_OUTPUTS=Object.freeze({ssh:'',node:'ABBOTT_STARTUP_NODE_OK\n',loader:'ABBOTT_RECOVERY_READY\nABBOTT_RECOVERY_ACK REFUSED ack_framing malformed\n'});
+export function runRecoveryStartupStage(stage,options={}){
+  if(!Object.hasOwn(STARTUP_COMMANDS,stage))return Promise.resolve({status:'ABBOTT_RECOVERY_REFUSED',remoteAcknowledged:false,sshExitVerified:true,startup:{stage:'unknown',result:'unexpected_output',category:'none'}});
+  return runFixedTransport(null,options,stage);
+}
+export function runRecoveryTransport(source,options={}){return runFixedTransport(source,options);}
+function runFixedTransport(source,{signal,platform=real,onEvidence=()=>{}}={},startupStage=null){
   const refused={status:'ABBOTT_RECOVERY_REFUSED',remoteAcknowledged:false,sshExitVerified:true,pid:null,start:null,diagnostic:{stage:'unknown',reason:'unknown'}};
-  if(signal?.aborted||!Buffer.isBuffer(source)||!source.length||source.length>1048576)return Promise.resolve(refused);
+  if(signal?.aborted||!startupStage&&(!Buffer.isBuffer(source)||!source.length||source.length>1048576))return Promise.resolve({...refused,...(startupStage?{startup:{stage:startupStage,result:'cleanup_unverified',category:'none'}}:{})});
   return new Promise(resolve=>{
-    let child,pid,start,settled=false,closed=false,exitSeen=false,budgetEnded=false,aborted=false,invalid=false,dispatched=false,termSent=false,ready=false,authorized=false;
+    let child,pid,start,settled=false,closed=false,exitSeen=false,budgetEnded=false,aborted=false,invalid=false,dispatched=false,termSent=false,ready=false,authorized=false,badExit=false,deadlineReached=false;
     let output=Buffer.alloc(0),stderr=Buffer.alloc(0),stderrOversized=false,header,diagnostic=null,phase='local_spawn';const timers=[];
     const note=(stage,reason)=>{diagnostic??=safeRecoveryDiagnostic({stage,reason});};
     const evidence=(exit=false,exitVerified=false)=>{try{onEvidence({pid:pid??null,start:start??null,exit,exitVerified,stage:diagnostic?.stage??phase});}catch{invalid=true;diagnostic={stage:'local_evidence',reason:'failed'};throw Error();}};
@@ -35,12 +42,19 @@ export function runRecoveryTransport(source,{signal,platform=real,onEvidence=()=
       clearAfterClose();if(settled||!closed&&!budgetEnded)return;
       settled=true;try{signal?.removeEventListener('abort',abort);}catch{invalid=true;}
       const exited=closed&&(!validPid()||readIdentity().kind==='absent');
-      const match=exited&&!invalid&&parseRecoveryAck(output.toString());
+      let startup;
+      if(startupStage){
+        const category=stderrOversized?'unknown':classifyStartupStderr(stderr);
+        const result=!exited||diagnostic?.stage==='local_evidence'?'cleanup_unverified':deadlineReached?'timeout':stderr.length||stderrOversized?category==='unknown'?'stderr_unknown':'stderr_known_category':badExit?'exit_nonzero':invalid||!authorized||output.toString()!==STARTUP_OUTPUTS[startupStage]?'unexpected_output':'clean';
+        startup={stage:startupStage,result,category:result==='stderr_known_category'?category:'none'};
+      }
+      const match=exited&&!invalid&&(startupStage?(startup.result==='clean'?{status:'ABBOTT_RECOVERY_RESTORED',diagnostic:{stage:'complete',reason:'none'}}:null):parseRecoveryAck(output.toString()));
       if(!diagnostic){if(!exited)note('ssh_close','unverified');else if(match)diagnostic=match.diagnostic;else note('ack_framing',output.length?'malformed':'missing');}
       if(diagnostic.stage==='remote_startup'&&diagnostic.reason==='stderr')diagnostic={stage:'remote_startup',reason:stderrOversized?'unknown':classifyStartupStderr(stderr)};
       try{evidence(closed,exited);}catch{}
+      if(startup&&diagnostic.stage==='local_evidence')startup={stage:startupStage,result:'cleanup_unverified',category:'none'};
       output.fill(0);stderr.fill(0);header?.fill(0);
-      resolve({status:match&&!invalid?match.status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',remoteAcknowledged:Boolean(match&&!invalid),sshExitVerified:exited,pid:pid??null,start:start??null,diagnostic});
+      resolve({status:match&&!invalid?match.status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',remoteAcknowledged:Boolean(match&&!invalid),sshExitVerified:exited,pid:pid??null,start:start??null,diagnostic,...(startup?{startup}:{})});
     };
     const abort=()=>{if(aborted||settled)return;aborted=true;if(!dispatched){closeInput();return;}try{child.stdin.write('ABORT\n');}catch{invalid=true;closeInput();}};
     const acquire=()=>{
@@ -65,26 +79,27 @@ export function runRecoveryTransport(source,{signal,platform=real,onEvidence=()=
       }catch{invalid=true;note(phase,phase==='identity_proof'?'unavailable':'failed');failedSetup();}
     };
     try{
-      child=platform.spawn('/usr/bin/ssh',ARGS,{cwd:'/',env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});
+      child=platform.spawn('/usr/bin/ssh',startupStage?[...ARGS.slice(0,-1),STARTUP_COMMANDS[startupStage]]:ARGS,{cwd:'/',env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});
       // Install bounded drains, exit observation and the entire cleanup budget
       // before reading PID metadata, calling ps, or shared setup/dispatch code.
-      child.on('close',(code,childSignal)=>{closed=true;exitSeen=true;if(code!==0||childSignal){invalid=true;note('ssh_close',childSignal?'signal':'nonzero');}done();});
+      child.on('close',(code,childSignal)=>{closed=true;exitSeen=true;if(code!==0||childSignal){invalid=true;badExit=true;note('ssh_close',childSignal?'signal':'nonzero');}done();});
       child.on('exit',()=>{exitSeen=true;});
       child.stdout.on('data',chunk=>{if(settled){chunk.fill(0);return;}if(output.length+chunk.length>128){invalid=true;note('ack_framing','oversized');chunk.fill(0);abort();return;}const next=Buffer.concat([output,chunk]);output.fill(0);chunk.fill(0);output=next;
+        if(startupStage){if(startupStage==='loader'&&!ready){const marker=Buffer.from('ABBOTT_RECOVERY_READY\n');if(!marker.subarray(0,Math.min(marker.length,output.length)).equals(output.subarray(0,marker.length))){invalid=true;note('ack_framing','malformed');abort();return;}if(output.length>=marker.length){ready=true;if(authorized)closeInput();}}return;}
         if(!ready){const marker=Buffer.from('ABBOTT_RECOVERY_READY\n');if(output.length>marker.length||!marker.subarray(0,output.length).equals(output)){invalid=true;note('ack_framing','malformed');abort();return;}if(output.length===marker.length){ready=true;output.fill(0);output=Buffer.alloc(0);dispatch();}}
       });
-      child.stderr.on('data',chunk=>{if(settled){chunk.fill(0);return;}invalid=true;note('remote_startup','stderr');if(stderr.length+chunk.length>8192){stderrOversized=true;stderr.fill(0);stderr=Buffer.alloc(0);}else if(!stderrOversized){const next=Buffer.concat([stderr,chunk]);stderr.fill(0);stderr=next;}chunk.fill(0);abort();});child.on('error',()=>{invalid=true;note('local_spawn','failed');abort();});
+      child.stderr.on('data',chunk=>{if(settled){chunk.fill(0);return;}invalid=true;note('remote_startup','stderr');if(stderr.length+chunk.length>8192){stderrOversized=true;stderr.fill(0);stderr=Buffer.alloc(0);}else if(!stderrOversized){const next=Buffer.concat([stderr,chunk]);stderr.fill(0);stderr=next;}chunk.fill(0);abort();});child.on('error',()=>{invalid=true;badExit=true;note('local_spawn','failed');abort();});
       child.stdin.on('error',()=>{invalid=true;note(phase==='run_write'?'run_write':'source_write','failed');closeInput();});
       const cleanupProof=()=>{try{acquire();}catch{}};
-      timers.push(platform.setTimeout(()=>{if(closed)return;invalid=true;note('timeout','deadline');abort();cleanupProof();termSent=terminate('SIGTERM');},300000));
-      timers.push(platform.setTimeout(()=>{if(closed)return;invalid=true;note('timeout','deadline');abort();cleanupProof();if(termSent)terminate('SIGKILL');else termSent=terminate('SIGTERM');},360000));
-      timers.push(platform.setTimeout(()=>{if(closed)return;invalid=true;note('timeout','deadline');budgetEnded=true;closeInput();done();},365000));
+      timers.push(platform.setTimeout(()=>{if(closed)return;deadlineReached=true;invalid=true;note('timeout','deadline');abort();cleanupProof();termSent=terminate('SIGTERM');},300000));
+      timers.push(platform.setTimeout(()=>{if(closed)return;deadlineReached=true;invalid=true;note('timeout','deadline');abort();cleanupProof();if(termSent)terminate('SIGKILL');else termSent=terminate('SIGTERM');},360000));
+      timers.push(platform.setTimeout(()=>{if(closed)return;deadlineReached=true;invalid=true;note('timeout','deadline');budgetEnded=true;closeInput();done();},365000));
       pid=child.pid;
       phase='identity_proof';evidence();
       signal?.addEventListener('abort',abort,{once:true});
       if(!acquire()){note('identity_proof','unavailable');failedSetup();return;}
       if(signal?.aborted){failedSetup();return;}
-      authorized=true;dispatch();
+      authorized=true;if(startupStage){if(startupStage!=='loader'||ready)closeInput();}else dispatch();
     }catch{
       invalid=true;note(phase,phase==='identity_proof'?'unavailable':'failed');
       if(child)failedSetup();

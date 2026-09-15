@@ -333,6 +333,45 @@ was restored. Probe success does not authorize or substitute for recovery.
 No recovery capsule, arbitrary source, standalone remote command or caller
 override is accepted. Do not run this probe or retry recovery before review.
 
+#### Staged startup matrix (review required; no stage executed)
+
+The approved single inert probe returned remote_startup/unknown. The staged
+matrix below is implemented for separate review; these are three separate
+invocations, not an automatic fallback chain. Execute only the specifically
+approved stage. A stage result never authorizes recovery or the next stage.
+
+```bash
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/probe-abbott-startup-stage.mjs ssh
+```
+
+```bash
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/probe-abbott-startup-stage.mjs node
+```
+
+```bash
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/probe-abbott-startup-stage.mjs loader
+```
+
+All stages reuse the exact fixed SSH options, clean env and private evidence/
+bounded cleanup implementation. The ssh stage runs only env-i /bin/true and
+expects empty stdout; node runs the exact Node binary with a fixed direct -e
+sentinel; loader starts the current ESM loader, waits for exact READY, then
+sends EOF and verifies its exact terminal refusal. No stage sends a source
+frame or RUN, reads host state, creates remote files or changes a runtime.
+Only the three literal stage arguments are accepted; recovery itself still
+requires zero arguments and retains every original authority/pin gate.
+
+Each stage returns only `ABBOTT_STARTUP_STAGE stage=<enum> result=<enum>
+category=<enum>` on one line. Results are clean, stderr_known_category,
+stderr_unknown, exit_nonzero, timeout, unexpected_output or cleanup_unverified.
+Known category names are closed; all other results use category=none. The
+matrix never returns text, hashes, byte counts, identities or paths. Even
+recognized stderr is fatal. Standard SSH tty/known-host/locale and Node warning
+patterns are bounded and anchored; generic warning prefixes remain unknown.
+Local tokenization fixtures substitute installed local binary paths only;
+they do not establish the remote binaries' behavior. No matrix stage has run
+live; stop for source review before any execution.
+
 #### Normal shadow health check (not a recovery substitute)
 
 ```bash

@@ -1885,3 +1885,48 @@ not a new full browser/tree attestation or evidence of restored activation.
 BLOCKED at the closed probe refusal above. The live interrupted state remains
 unresolved and public routing remains combined3001. Await further direction;
 no recovery attempt is authorized by probe completion.
+
+### Staged startup matrix checkpoint (source/tests only)
+
+Implemented three separately selected fixed read-only stages behind the same
+SSH option vector, clean environment, private identity evidence and bounded
+lifecycle. The ssh stage runs env-i /bin/true and expects empty stdout. The
+node stage runs exact env-i /usr/bin/node with a fixed direct-e sentinel. The
+loader stage runs the current ESM loader, waits for READY, sends only EOF and
+checks the exact terminal refusal. No stage sends source or RUN, creates remote
+files, imports recovery code, or changes any runtime. The CLI accepts exactly
+one literal stage; there is no automatic fallback chain or arbitrary command.
+Recovery itself retains zero-argument invocation and all prior authority gates.
+
+The owner approved additional closed unexpected_output and cleanup_unverified
+results so forged stdout and missing cleanup proof are not mislabeled as stderr
+or nonzero exit. Output contains only fixed stage/result/category enums: clean,
+stderr_known_category, stderr_unknown, exit_nonzero, timeout, unexpected_output
+or cleanup_unverified. No raw text, hash, length, path or identity is emitted.
+Known stderr remains fatal. SSH tty, known-host and locale warnings now have
+bounded anchored family patterns; the prior generic warning-prefix matcher
+was tightened to unknown. Node warning families remain bounded/anchored.
+
+TDD first reproduced missing staged API/wrapper and a deadline classification
+regression; tests now cover secret-bearing/forged output and summary fields,
+wrong stage, all fixed commands, zero source/RUN, loader-only EOF, stderr,
+nonzero exit, deadlines and cleanup refusal. Final evidence failure cannot
+remain clean. Local shell tokenization tests ran each exact command shape with
+installed local executable substitutions only: macOS uses a different true
+binary path, which was corrected in the fixture without changing the fixed
+production /bin/true command. These local tests do not attest remote binaries.
+
+Fresh gates passed:61 focused recovery/matrix tests;345 full authority/artifact/
+bootstrap/recovery tests;67 app/runtime tests;61 separate smoke/asset/
+orchestrator/capture regressions. Build, both typechecks, trusted artifact scan
+(2,870 files/82 text files), exact12-route/one-prefix validator, changed-module
+syntax and whitespace checks pass. Lint:zero errors/ten existing warnings.
+All owned local test children were reaped with independent absence checks;
+test/build sessions exited, fixture evidence was removed, and the fixed private
+evidence directory was not created.
+
+STOP for review before executing any matrix stage. No live SSH, probe, recovery,
+push, credential, browser, deploy, smoke/capture or Nginx operation occurred.
+The existing interrupted host state and last published385e761 refs were not
+changed or freshly revalidated by this local-only checkpoint. Root cause of
+the startup refusal remains unknown pending an explicitly approved stage.

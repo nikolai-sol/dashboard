@@ -30,8 +30,10 @@ export function buildRecoveryCapsule(sources,keys){
   const code=`export async function run(signal){if(process.getuid()!==0||process.argv.length!==1||Object.keys(process.env).some(k=>k!=='UV_USE_IO_URING'||process.env[k]!=='0'))throw Error('ABBOTT_RECOVERY_REFUSED');const m=await import(${JSON.stringify(url(Buffer.from(recovery)))});return m.runRecoverySteps(m.createRecoveryAdapter(${JSON.stringify(keys)},signal));}`;
   if(Buffer.byteLength(code)>1048576)fail();return Buffer.from(code);
 }
-export function verifyRecoveryLocalAuthority(){
-  validateRecoveryInvocation(process.argv.slice(2),process.env);
+export function verifyRecoveryLocalAuthority(expectedArgs=[]){
+  if(expectedArgs.length&&!(expectedArgs.length===1&&['ssh','node','loader'].includes(expectedArgs[0])))fail();
+  if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(expectedArgs))fail();
+  validateRecoveryInvocation([],process.env);
   if(process.getuid()===0||fs.realpathSync(process.cwd())!==ROOT||fs.realpathSync(path.resolve(import.meta.dirname,'..'))!==ROOT)fail();
   if(process.execPath!=='/opt/homebrew/Cellar/node/25.6.1_1/bin/node')fail();
   for(const[p,privateKey]of[['/Users/nafanya/.ssh/beget_ed25519',true],['/Users/nafanya/.ssh/known_hosts',false]]){

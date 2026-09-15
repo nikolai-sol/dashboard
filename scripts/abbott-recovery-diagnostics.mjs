@@ -1,6 +1,6 @@
 export const RECOVERY_REASONS=Object.freeze(Object.fromEntries(Object.entries({
  local_spawn:['failed'],identity_proof:['unavailable','absent','unverified'],
- source_write:['failed'],run_write:['failed'],remote_startup:['failed','stderr','sudo_hostname','node_syntax','node_warning','permission','missing_binary','ssh_warning','unknown'],
+ source_write:['failed'],run_write:['failed'],remote_startup:['failed','stderr','sudo_hostname','node_syntax','node_warning','permission','missing_binary','ssh_warning','ssh_tty','ssh_known_host','locale_warning','unknown'],
  remote_preflight:['refused'],remote_recovery:['review_required'],
  ack_framing:['malformed','missing','oversized'],timeout:['deadline'],
  ssh_close:['nonzero','signal','unverified'],local_evidence:['failed'],
@@ -17,7 +17,9 @@ export function classifyStartupStderr(bytes){
   node_warning:/^\(node:[0-9]+\) (?:\[[A-Z0-9_]+\] )?(?:ExperimentalWarning|DeprecationWarning|Warning): /m,
   permission:/^(?:Permission denied \(publickey\)\.|[^\r\n]{0,512}: Permission denied\.?\r?$)/m,
   missing_binary:/^(?:(?:\/usr\/bin\/env|env): [^\r\n]+: No such file or directory|(?:sh|bash): [^\r\n]+: (?:command )?not found)\r?$/m,
-  ssh_warning:/^(?:Warning: |WARNING: |ssh: |@@@@@@@@@@@@)/m,
+  ssh_tty:/^Pseudo-terminal will not be allocated because stdin is not a terminal\.\r?$/m,
+  ssh_known_host:/^Warning: Permanently added '[^'\r\n]{1,255}' \((?:ED25519|ECDSA|RSA)\) to the list of known hosts\.\r?$/m,
+  locale_warning:/^(?:bash|sh): warning: setlocale: LC_[A-Z_]+: cannot change locale \([^\r\n)]{1,128}\)(?:: No such file or directory)?\r?$/m,
  };
  const matches=Object.entries(patterns).filter(([,pattern])=>pattern.test(text));return matches.length===1?matches[0][0]:'unknown';
 }
