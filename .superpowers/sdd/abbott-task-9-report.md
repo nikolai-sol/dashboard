@@ -1798,3 +1798,52 @@ activation. All read-only tool sessions exited.
 BLOCKED at the closed code above. Public routing stays combined3001 and the
 interrupted activation remains unresolved. Await direction; no further attempt
 is authorized by this report.
+
+### Source-first startup diagnosis and inert probe checkpoint (local only)
+
+The exact fixed command was inspected: root SSH invokes env-i and Node ESM
+with an explicit -e loader. There is no sudo command in this path. A new local
+shell-bound test ran the identical remote quoting/tokenization, substituting
+only the installed local Node executable, with a framed inert source module.
+It passed without stderr and reaped its local process. Existing full capsule
+syntax checks also pass. This does not establish remote Node behavior or a
+deterministic cause for the prior remote_startup/stderr; no speculative
+argv/ESM/source-syntax correction or warning suppression was made.
+
+The requested READY boundary was added with RED/GREEN tests: no source or RUN
+is transmitted until the exact complete startup marker arrives and the same
+owned SSH identity is revalidated. Missing/forged/duplicate-coalesced READY,
+startup stderr, cancellation and identity replacement cannot release a frame.
+Framing, source hashes and recovery pins/state transitions remain unchanged.
+
+A bounded in-memory stderr classifier now returns only sudo_hostname,
+node_syntax, node_warning, permission, missing_binary, ssh_warning or unknown.
+All stderr is still fatal; classification never permits a warning or exposes
+matched text. Fragmentation, invalid encoding/control data, oversized buffers,
+mixed categories and secret-bearing fixtures are covered. At most8,192 bytes
+are retained, then zeroed; no raw stderr is saved or returned.
+
+Because source inspection did not determine the cause, the fixed inert probe
+was implemented, NOT executed. It reuses the exact same SSH/env/Node loader,
+READY/identity boundary, bounded child lifecycle and private evidence. Its
+only source is an inert function returning an internal protocol marker; it
+loads no recovery source and makes no host filesystem, runtime, database or
+network operation. External output is explicitly STARTUP_PROBE_READY or
+STARTUP_PROBE_REFUSED with closed enums, never a recovery-restored claim.
+Shared local authority checks still require the exact clean worktree, pinned
+Node, protected SSH metadata and zero caller arguments/ambient overrides.
+The runbook labels this command as requiring separate review and execution
+approval; no remote startup probe or recovery retry ran in this checkpoint.
+
+Fresh gates:53 focused recovery/probe tests;337 full authority/artifact/
+bootstrap/recovery tests;67 app/runtime tests;61 smoke/asset/orchestrator/capture
+regressions all passed. Build, both typechecks, trusted artifact verification
+(2,870 files/82 text files), exact12-route/one-prefix validation, changed-script
+syntax and whitespace checks passed. Lint:zero errors/ten existing warnings.
+Local loader/shell children were reaped and independently absent; test/build
+sessions exited and no fixed private evidence directory remains.
+
+STOP for review. No live SSH, remote probe, push, recovery attempt, credential,
+browser, deployment, smoke/capture or Nginx change occurred. The last verified
+live interrupted state and published e0238f9 refs remain unchanged by this
+local-only implementation. The prior startup failure remains unexplained.

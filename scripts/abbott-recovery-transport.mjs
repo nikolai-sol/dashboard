@@ -1,5 +1,5 @@
 import {spawn,execFileSync}from'node:child_process';import{createHash}from'node:crypto';
-import{parseRecoveryAck,safeRecoveryDiagnostic}from'./abbott-recovery-diagnostics.mjs';
+import{parseRecoveryAck,safeRecoveryDiagnostic,classifyStartupStderr}from'./abbott-recovery-diagnostics.mjs';
 // Recovery-only transport. No credential protocol and no caller host/command.
 export const RECOVERY_LOADER=String.raw`import{createHash}from'node:crypto';
 const abort=new AbortController();let bytes=Buffer.alloc(0),source=null,length=null,digest=null,running=false,finished=false;
@@ -12,7 +12,7 @@ if(length===null){const end=bytes.indexOf(10);if(end<0){if(bytes.length>128)fini
 if(source===null){if(bytes.length<length)return;source=Buffer.from(bytes.subarray(0,length));const rest=Buffer.from(bytes.subarray(length));bytes.fill(0);bytes=rest;if(createHash('sha256').update(source).digest('hex')!==digest){finish('REFUSED');return;}}
 while(bytes.length){const end=bytes.indexOf(10);if(end<0){if(bytes.length>5){stop();if(!running)finish('REFUSED');}return;}const line=bytes.subarray(0,end).toString(),rest=Buffer.from(bytes.subarray(end+1));bytes.fill(0);bytes=rest;if(line==='ABORT'){stop();if(!running){finish('REFUSED');return;}}else if(line==='RUN'&&!running&&!abort.signal.aborted){void execute();}else{stop();if(!running)finish('REFUSED');return;}}
 }
-process.stdin.on('data',consume);process.stdin.on('end',()=>{stop();if(!running)finish('REFUSED');});process.stdin.on('error',()=>{stop();if(!running)finish('REFUSED');});`;
+process.stdin.on('data',consume);process.stdin.on('end',()=>{stop();if(!running)finish('REFUSED');});process.stdin.on('error',()=>{stop();if(!running)finish('REFUSED');});process.stdout.write('ABBOTT_RECOVERY_READY\n');`;
 const quote=s=>`'${s.replaceAll("'","'\\''")}'`;
 const ARGS=Object.freeze(['-T','-F','/dev/null','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','HostName=5.35.85.218','-o','HostKeyAlias=5.35.85.218','-o','User=root','-o','Port=22','-i','/Users/nafanya/.ssh/beget_ed25519','-o','IdentitiesOnly=yes','-o','IdentityAgent=none','-o','UserKnownHostsFile=/Users/nafanya/.ssh/known_hosts','-o','GlobalKnownHostsFile=/dev/null','-o','ProxyCommand=none','-o','ProxyJump=none','-o','CanonicalizeHostname=no','-o','UpdateHostKeys=no','-o','ControlMaster=no','-o','ControlPath=none','-o','ConnectTimeout=10','--','beget',`/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(RECOVERY_LOADER)}`]);
 const real={spawn,identity(pid){try{const value=execFileSync('/bin/ps',['-p',String(pid),'-o','lstart='],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8',timeout:2000,stdio:['ignore','pipe','pipe']}).trim();if(!value)throw Error();return value;}catch(error){if(error.status===1&&!error.signal)return null;throw Error('ABBOTT_SSH_IDENTITY_UNAVAILABLE');}},kill:(pid,signal)=>process.kill(pid,signal),setTimeout,clearTimeout};
@@ -20,8 +20,8 @@ export function runRecoveryTransport(source,{signal,platform=real,onEvidence=()=
   const refused={status:'ABBOTT_RECOVERY_REFUSED',remoteAcknowledged:false,sshExitVerified:true,pid:null,start:null,diagnostic:{stage:'unknown',reason:'unknown'}};
   if(signal?.aborted||!Buffer.isBuffer(source)||!source.length||source.length>1048576)return Promise.resolve(refused);
   return new Promise(resolve=>{
-    let child,pid,start,settled=false,closed=false,exitSeen=false,budgetEnded=false,aborted=false,invalid=false,dispatched=false,termSent=false;
-    let output=Buffer.alloc(0),header,diagnostic=null,phase='local_spawn';const timers=[];
+    let child,pid,start,settled=false,closed=false,exitSeen=false,budgetEnded=false,aborted=false,invalid=false,dispatched=false,termSent=false,ready=false,authorized=false;
+    let output=Buffer.alloc(0),stderr=Buffer.alloc(0),stderrOversized=false,header,diagnostic=null,phase='local_spawn';const timers=[];
     const note=(stage,reason)=>{diagnostic??=safeRecoveryDiagnostic({stage,reason});};
     const evidence=(exit=false,exitVerified=false)=>{try{onEvidence({pid:pid??null,start:start??null,exit,exitVerified,stage:diagnostic?.stage??phase});}catch{invalid=true;diagnostic={stage:'local_evidence',reason:'failed'};throw Error();}};
     const validPid=()=>Number.isSafeInteger(pid)&&pid>0;
@@ -37,8 +37,9 @@ export function runRecoveryTransport(source,{signal,platform=real,onEvidence=()=
       const exited=closed&&(!validPid()||readIdentity().kind==='absent');
       const match=exited&&!invalid&&parseRecoveryAck(output.toString());
       if(!diagnostic){if(!exited)note('ssh_close','unverified');else if(match)diagnostic=match.diagnostic;else note('ack_framing',output.length?'malformed':'missing');}
+      if(diagnostic.stage==='remote_startup'&&diagnostic.reason==='stderr')diagnostic={stage:'remote_startup',reason:stderrOversized?'unknown':classifyStartupStderr(stderr)};
       try{evidence(closed,exited);}catch{}
-      output.fill(0);header?.fill(0);
+      output.fill(0);stderr.fill(0);header?.fill(0);
       resolve({status:match&&!invalid?match.status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',remoteAcknowledged:Boolean(match&&!invalid),sshExitVerified:exited,pid:pid??null,start:start??null,diagnostic});
     };
     const abort=()=>{if(aborted||settled)return;aborted=true;if(!dispatched){closeInput();return;}try{child.stdin.write('ABORT\n');}catch{invalid=true;closeInput();}};
@@ -53,14 +54,26 @@ export function runRecoveryTransport(source,{signal,platform=real,onEvidence=()=
       try{platform.kill(pid,sig);return true;}catch{invalid=true;return false;}
     };
     const failedSetup=()=>{invalid=true;closeInput();if(!start&&!closed)timers.push(platform.setTimeout(()=>{if(!settled)try{acquire();}catch{}},1000));};
+    const dispatch=()=>{
+      if(!ready||!authorized||dispatched||invalid||aborted||settled)return;
+      try{
+        const proof=readIdentity();if(!liveChild()||proof.kind!=='found'||proof.value!==start){note('identity_proof','unverified');failedSetup();return;}
+        evidence();dispatched=true;header=Buffer.from(`ABBOTT_RECOVERY_SOURCE ${source.length} ${createHash('sha256').update(source).digest('hex')}\n`);
+        phase='source_write';const writeError=(error,stage)=>{if(error){invalid=true;note(stage,'failed');closeInput();}};
+        child.stdin.write(header,error=>{header.fill(0);writeError(error,'source_write');});child.stdin.write(source,error=>writeError(error,'source_write'));
+        if(signal?.aborted)abort();else{phase='run_write';child.stdin.write('RUN\n',error=>writeError(error,'run_write'));}
+      }catch{invalid=true;note(phase,phase==='identity_proof'?'unavailable':'failed');failedSetup();}
+    };
     try{
       child=platform.spawn('/usr/bin/ssh',ARGS,{cwd:'/',env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});
       // Install bounded drains, exit observation and the entire cleanup budget
       // before reading PID metadata, calling ps, or shared setup/dispatch code.
       child.on('close',(code,childSignal)=>{closed=true;exitSeen=true;if(code!==0||childSignal){invalid=true;note('ssh_close',childSignal?'signal':'nonzero');}done();});
       child.on('exit',()=>{exitSeen=true;});
-      child.stdout.on('data',chunk=>{if(settled){chunk.fill(0);return;}if(output.length+chunk.length>128){invalid=true;note('ack_framing','oversized');chunk.fill(0);abort();return;}const next=Buffer.concat([output,chunk]);output.fill(0);chunk.fill(0);output=next;});
-      child.stderr.on('data',chunk=>{invalid=true;note('remote_startup','stderr');chunk.fill(0);abort();});child.on('error',()=>{invalid=true;note('local_spawn','failed');abort();});
+      child.stdout.on('data',chunk=>{if(settled){chunk.fill(0);return;}if(output.length+chunk.length>128){invalid=true;note('ack_framing','oversized');chunk.fill(0);abort();return;}const next=Buffer.concat([output,chunk]);output.fill(0);chunk.fill(0);output=next;
+        if(!ready){const marker=Buffer.from('ABBOTT_RECOVERY_READY\n');if(output.length>marker.length||!marker.subarray(0,output.length).equals(output)){invalid=true;note('ack_framing','malformed');abort();return;}if(output.length===marker.length){ready=true;output.fill(0);output=Buffer.alloc(0);dispatch();}}
+      });
+      child.stderr.on('data',chunk=>{if(settled){chunk.fill(0);return;}invalid=true;note('remote_startup','stderr');if(stderr.length+chunk.length>8192){stderrOversized=true;stderr.fill(0);stderr=Buffer.alloc(0);}else if(!stderrOversized){const next=Buffer.concat([stderr,chunk]);stderr.fill(0);stderr=next;}chunk.fill(0);abort();});child.on('error',()=>{invalid=true;note('local_spawn','failed');abort();});
       child.stdin.on('error',()=>{invalid=true;note(phase==='run_write'?'run_write':'source_write','failed');closeInput();});
       const cleanupProof=()=>{try{acquire();}catch{}};
       timers.push(platform.setTimeout(()=>{if(closed)return;invalid=true;note('timeout','deadline');abort();cleanupProof();termSent=terminate('SIGTERM');},300000));
@@ -71,10 +84,7 @@ export function runRecoveryTransport(source,{signal,platform=real,onEvidence=()=
       signal?.addEventListener('abort',abort,{once:true});
       if(!acquire()){note('identity_proof','unavailable');failedSetup();return;}
       if(signal?.aborted){failedSetup();return;}
-      dispatched=true;header=Buffer.from(`ABBOTT_RECOVERY_SOURCE ${source.length} ${createHash('sha256').update(source).digest('hex')}\n`);
-      phase='source_write';const writeError=(error,stage)=>{if(error){invalid=true;note(stage,'failed');closeInput();}};
-      child.stdin.write(header,error=>{header.fill(0);writeError(error,'source_write');});child.stdin.write(source,error=>writeError(error,'source_write'));
-      if(signal?.aborted)abort();else{phase='run_write';child.stdin.write('RUN\n',error=>writeError(error,'run_write'));}
+      authorized=true;dispatch();
     }catch{
       invalid=true;note(phase,phase==='identity_proof'?'unavailable':'failed');
       if(child)failedSetup();

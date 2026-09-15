@@ -300,6 +300,39 @@ delete or overwrite existing evidence to bypass a refusal. An unverified exit
 remains unverified even after the observation deadline; no cleanup claim can
 be inferred from a closed diagnostic alone.
 
+#### Inert startup diagnostic (review required; not executed)
+
+Source inspection found no sudo step: the exact command is fixed root SSH,
+`env -i`, and Node ESM `--input-type=module -e`. A local shell-bound regression
+preserves the exact remote quoting/tokenization (substituting only the local
+verified Node executable) and passes with inert framed source. It does not
+establish behavior of the remote Node installation or explain prior stderr.
+
+The transport now waits for exactly `ABBOTT_RECOVERY_READY` before sending any
+source or RUN, then rechecks the same owned child identity. Missing, malformed,
+duplicate/coalesced startup output, cancellation, identity drift or stderr
+cannot release a frame. All stderr remains fatal, including recognized warnings.
+At most8,192 bytes are retained in memory, classified and zeroed. The only
+additional startup reasons are sudo_hostname, node_syntax, node_warning,
+permission, missing_binary, ssh_warning and unknown; no raw line is returned.
+
+After separate review and explicit probe approval only:
+
+```bash
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/probe-abbott-recovery-startup.mjs
+```
+
+This fixed probe uses the exact recovery SSH/env/Node loader invocation,
+private identity evidence, READY gate and bounded lifecycle. Its sole framed
+module is a fixed inert function returning the internal transport success
+marker. It imports no host/recovery code and performs no filesystem, runtime,
+database or network operation. The loader itself only manages its own stdin,
+stdout, hash and cancellation lifecycle. External output is STARTUP_PROBE_READY
+or STARTUP_PROBE_REFUSED with closed stage/reason; it never claims a runtime
+was restored. Probe success does not authorize or substitute for recovery.
+No recovery capsule, arbitrary source, standalone remote command or caller
+override is accepted. Do not run this probe or retry recovery before review.
+
 #### Normal shadow health check (not a recovery substitute)
 
 ```bash

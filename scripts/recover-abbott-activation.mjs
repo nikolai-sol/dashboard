@@ -30,7 +30,7 @@ export function buildRecoveryCapsule(sources,keys){
   const code=`export async function run(signal){if(process.getuid()!==0||process.argv.length!==1||Object.keys(process.env).some(k=>k!=='UV_USE_IO_URING'||process.env[k]!=='0'))throw Error('ABBOTT_RECOVERY_REFUSED');const m=await import(${JSON.stringify(url(Buffer.from(recovery)))});return m.runRecoverySteps(m.createRecoveryAdapter(${JSON.stringify(keys)},signal));}`;
   if(Buffer.byteLength(code)>1048576)fail();return Buffer.from(code);
 }
-async function main(){
+export function verifyRecoveryLocalAuthority(){
   validateRecoveryInvocation(process.argv.slice(2),process.env);
   if(process.getuid()===0||fs.realpathSync(process.cwd())!==ROOT||fs.realpathSync(path.resolve(import.meta.dirname,'..'))!==ROOT)fail();
   if(process.execPath!=='/opt/homebrew/Cellar/node/25.6.1_1/bin/node')fail();
@@ -42,6 +42,10 @@ async function main(){
   const match=/^gitdir: ([^\r\n]+)\n?$/.exec(fs.readFileSync(marker,'utf8'));if(!match)fail();const gitDir=path.resolve(ROOT,match[1]);
   if(gitDir!=='/Users/nafanya/ReportingDash/dashboard-next/.git/worktrees/abbott-runtime-isolation'||fs.realpathSync(gitDir)!==gitDir||fs.readFileSync(path.join(gitDir,'gitdir'),'utf8').trim()!==marker||git('rev-parse','--absolute-git-dir').toString().trim()!==gitDir||git('rev-parse','--show-toplevel').toString().trim()!==ROOT||git('status','--porcelain').length)fail();
   git('merge-base','--is-ancestor','9aaed34feeb9b73b4d177dccab5a2b750776b4c3','HEAD');
+  return git;
+}
+async function main(){
+  const git=verifyRecoveryLocalAuthority();
   const names={worker:'runtime-release-remote.mjs',proof:'bootstrap-abbott-host.mjs',recovery:'abbott-interrupted-recovery.mjs'};
   const sources=Object.fromEntries(Object.entries(names).map(([key,file])=>[key,git('show','HEAD:scripts/'+file)]));
   const input=buildRecoveryCapsule(sources,JSON.parse(git('show','HEAD:deploy/abbott/environment.json'))),abort=new AbortController(),stop=()=>abort.abort();
