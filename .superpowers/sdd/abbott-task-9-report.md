@@ -2018,3 +2018,48 @@ private evidence directory remains absent. No live SSH, staged probe, recovery,
 push, credentials, browser capture, deployment or Nginx action occurred. Host
 state was not revalidated in this source-only checkpoint. STOP for review before
 any retry; interrupted activation remains unresolved by this work.
+
+### Approved corrected-precedence matrix execution (2026-09-15)
+
+Clean approved HEAD7188a843f87b4b68875727ac4107735764c69cf9 was published by
+ordinary fast-forward pushes only to codex/abbott-runtime-isolation and
+release/abbott. Isolated literal remote lookups verified both refs equal that
+exact SHA. No other ref was changed. The preceding source checkpoint's fresh
+gates are recorded above; this turn changed evidence only.
+
+Ran each fixed clean-env stage exactly once, separately, after verifying prior
+stage cleanup. The exit_nonzero stop condition did not occur. Closed results:
+
+```
+ABBOTT_STARTUP_STAGE stage=ssh result=stderr_unknown category=none
+ABBOTT_STARTUP_STAGE stage=node result=stderr_unknown category=none
+ABBOTT_STARTUP_STAGE stage=loader result=stderr_unknown category=none
+```
+
+With reviewed corrected precedence, these results establish verified zero SSH
+exit with unrecognized stderr, not a hidden nonzero/signal exit. They do not
+establish clean stdout or successful remote sentinel/loader readiness because
+stderr still takes precedence over output validation. No raw streams, warning
+text, lengths, hashes or exception contents were inspected or persisted. Root
+cause remains unknown; no warning was bypassed and no recovery was attempted.
+
+For each stage, independent bounded observation verified the captured owned
+SSH child and wrapper absent after exit and the private identity evidence
+file/directory removed. All three cleanup observations returned
+ABBOTT_LOCAL_PRIVATE_EVIDENCE_CLEANUP_VERIFIED; all six sessions were reaped.
+Final checks returned ABBOTT_LOCAL_VERIFICATION_PORTS_CLEAR and
+ABBOTT_REMOTE_RECOVERY_INVENTORY_CLEAR. No credential or browser resource was
+created.
+
+The bounded read-only proof returned ABBOTT_POST_MATRIX_STATE_VERIFIED. Known
+interrupted layout, old current pointer/backup, pinned Abbott kernel identity,
+UID/GID/cwd, loopback-only listener and health remain unchanged. Quarantine,
+lock/journal/next remain absent. All three neighbor process/start/cwd/UID/GID/
+release proofs, account/secret-file metadata and exact Nginx hash pass unchanged.
+This narrow proof is not a fresh full-tree/browser attestation or evidence of
+restored activation. Public routing remains combined3001; active candidate9aa
+and old6cd2/f806 control pointer remain the unresolved interrupted state.
+
+BLOCKED at the closed stderr_unknown results. No further probe/retry, recovery,
+deploy, smoke, capture or Nginx action. Stop with sanitized evidence-only commit;
+do not publish this evidence commit without new direction.
