@@ -1,5 +1,36 @@
 # Abbott isolated-runtime cutover runbook
 
+### Selected TLS include path inventory — source-only, STOP for review
+
+The same no-argument read-abbott-nginx.mjs caller now emits the separate strict
+result `ABBOTT_NGINX_INCLUDES paths=<canonical JSON array>` instead of the older
+first-rejection enum. Its command is unchanged, but this source revision requires
+independent review and a separately authorized single live invocation. Old enum
+and batch frames are rejected. Existing closed reader-refusal frames remain.
+
+The inventory reuses tokenizer/lexical provenance and unique TLS selection, then
+recursively collects include nodes only within the selected server. Unsupported
+semantic directives elsewhere in that subtree do not cancel the scan; it does
+not grant them deployment acceptance. Nested server blocks, malformed syntax,
+ambiguous TLS authority, or any invalid selected include refuse the whole result.
+No partial inventory is output. Other vhost include paths are not collected.
+
+Each include must be non-block with exactly one unescaped, unambiguous absolute
+literal path rooted in /etc/nginx/ or /etc/letsencrypt/. Paths use only ASCII
+letters, digits, underscore, dot, hyphen and slash; no variable, glob, control,
+double slash, dot/dot-dot segment, trailing slash or prefix-confusion root.
+Maximum256 characters per path and8 unique paths, sorted lexicographically.
+Empty inventory is an empty array. Plain or wholly quoted literals are permitted
+only under the reviewed exact lexical rules. Canonical paths are the only
+dynamic values authorized for this result: no other arguments, contents, errors,
+headers, timestamps or offsets may be output. Paths are never resolved or opened.
+
+Both remote and local framing validate exact schema, ordering, bounds and JSON
+serialization. Fixed SSH, hash authority, bounded streams/time, owned PID/start,
+private evidence cleanup and zeroing remain unchanged. The server reads only
+the fixed dashboard-next.conf file; no include traversal, Nginx/PM2 call or host
+write occurs. Deployment acceptance, release pins and lifecycle are unchanged.
+
 ### Selected include classification — source-only, STOP for review
 
 The first-rejection reader refines selected include into exactly these diagnostic

@@ -1,8 +1,77 @@
-# Abbott Task 9 — read-only selected_include_other result
+# Abbott Task 9 — bounded selected TLS include inventory source checkpoint
 
-Current status: BLOCKED. The one approved read-only caller at clean32a737f
-returned selected_include_other with exit0 and verified owned cleanup. The
-actual include path/form remains unknown. No retry/push/deploy or Nginx change.
+Current status: DONE_WITH_CONCERNS. Source-only bounded path inventory replaces
+the caller's first-rejection result. It is not yet authorized for live use.
+Deployment acceptance is unchanged; no includes are loaded. Actual production
+include paths remain unknown. STOP for independent review; no live/push.
+
+## Selected TLS include inventory — source-only checkpoint
+
+Parent authorized canonical include paths as the only dynamic output, replacing
+the insufficient closed other classification. The same no-argument executable
+now emits `ABBOTT_NGINX_INCLUDES paths=<canonical JSON array>`. It shares the
+fixed read/metadata proof, tokenizer and lexical provenance. Unique TLS selection
+was extracted without changing its deployment behavior. An early diagnostic-only
+AST scan recursively collects all include nodes inside the selected TLS server,
+including nested semantic contexts. Other unsupported semantic nodes are ignored
+by inventory only; deployment continues refusing them exactly as before.
+
+Each selected include must be a non-block, one exact unescaped/unambiguous literal
+absolute path within /etc/nginx/ or /etc/letsencrypt/, maximum256 ASCII safe
+characters, no variables/globs/control, path traversal, duplicate slash or root
+prefix confusion. Results have at most8 unique lexically sorted paths. Every
+include is validated before deduplication; any invalid include rejects the whole
+result. Syntax/TLS authority ambiguity, escaped authority tokens or nested server
+blocks refuse. Upstream server leaf directives are not nested server blocks.
+No other vhost paths, arbitrary arguments, raw errors or config contents escape.
+No include path is opened or resolved, and no included file is read.
+
+Remote and local framing agree on exact schema, canonical JSON, path predicate,
+sorting and size bounds. Old first-rejection and batch frames are rejected;
+closed reader refusal frames remain. The previous pure first-rejection classifier
+and tests remain available but are not the current remote result. Fixed SSH,
+bounded streams/deadlines, owned PID/start, verified cleanup and zeroing are
+unchanged. Both analysis and reader hashes were refreshed to their exact source;
+release/current/deploy pins were not changed.
+
+TDD RED observed missing inventory APIs, old-frame rejection of inventory, and
+escaped TLS authority incorrectly qualifying. GREEN:48/48 focused,841/841 full
+authority plus Abbott app/runtime and12routes/1prefix. Differential320 lexical
+and84 include cases retain zero deployment acceptance/phase drift; original327
+unchanged cases and16approved rate-limit deltas remain unchanged. Tests cover
+multiple/nested includes, sorted deduplication, exact256/257 and8/9 bounds,
+escapes/quotes/variables/globs/traversal/prefixes, mixed invalid inputs with no
+partial result, unsupported semantic nodes, TLS ambiguity, strict framing,
+secret-bearing errors, fixed single-file reads, cleanup and hashes. A temporary
+focused hash failure before pin refresh was expected; final pinned gates pass.
+
+Independent read-only review reported no Critical, Important or Minor findings,
+independently running48/48 focused tests. Both builds, root/focused typechecks,
+deploy-source/release-runtime, syntax and diff checks passed. Lint:0errors with
+10pre-existing warnings. Verification commands:
+
+```sh
+node --test --test-name-pattern='include inventory' scripts/abbott-nginx-readonly.test.mjs
+node --test --test-name-pattern='inventory TLS authority' scripts/abbott-nginx-readonly.test.mjs
+node --test --test-name-pattern='inventory wire' scripts/read-abbott-nginx.test.mjs
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+npm run build
+npm run test:deploy-source
+npm run test:release-runtime
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+node --check scripts/abbott-nginx-readonly.mjs
+git diff --check
+```
+
+All owned test sessions completed; fixed private evidence directories are absent.
+No live SSH/remote read, push, deploy/retry, smoke/capture, PDF, browser/credential,
+DB/auth/fact/collector/cron, neighbor or Nginx edit/reload occurred. STOP for
+independent review before a separately approved live inventory invocation.
 
 ## Approved single read-only classification at32a737f
 
