@@ -183,7 +183,77 @@ test('local Git checks bind the expected git-dir and worktree and refuse URL ope
 // Execute the real worker against an isolated filesystem adapter. All absolute
 // host paths map into this test-owned temporary directory. No child process,
 // SSH, PM2, network, or /var/www access is available in the VM.
-function fixture() {
+test('Abbott preflight refusal precedes account lookup, lock, directories and all platform commands',async()=>{
+  const f=fixture();try{
+    const calls=[];
+    for(const name of Object.keys(f.platform))if(typeof f.platform[name]==='function'){const fn=f.platform[name];f.platform[name]=(...args)=>{calls.push(name);return fn(...args);};}
+    f.platform.deploymentPreflight=()=>{calls.push('preflight');throw Error('fixed preflight refusal');};
+    for(const action of ['inspect','deploy','rollback']){
+      calls.length=0;await assert.rejects(f.installer.transact({action},f.platform),/fixed preflight refusal/);
+      assert.deepEqual(calls,['preflight']);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+      assert.deepEqual(fs.readdirSync(f.map('/var/www')),[]);
+    }
+  }finally{f.cleanup();}
+});
+
+test('Abbott read-only inspect never creates a lock or control directory',async()=>{
+  const f=fixture();try{
+    const methods=['mkdirSync','writeFileSync','chmodSync','renameSync','unlinkSync','rmdirSync'];
+    for(const method of methods)f.io[method]=()=>assert.fail('inspection must not write');
+    f.platform.account=()=>assert.fail('inspection must not spawn account lookup');
+    assert.equal(await f.installer.transact({action:'inspect'},f.platform),null);
+  }finally{f.cleanup();}
+});
+
+test('non-Abbott inspection retains its prior account and locked-control path without Abbott proof',async()=>{
+  const authority={scope:'other',appName:'dashboard-other',appDir:'/var/www/dashboard-other',lockDir:'/var/www/.dashboard-other-deploy.lock',releaseBranch:'release/other',assetPrefix:'/_next-other',port:3010};
+  const f=fixture(authority);try{
+    let accounts=0;const account=f.platform.account;f.platform.account=()=>{accounts++;return account();};
+    f.platform.deploymentPreflight=()=>assert.fail('must not enter Abbott proof');
+    assert.equal(await f.installer.transact({action:'inspect'},f.platform),null);
+    assert.equal(accounts,1);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-other-control')),true);
+  }finally{f.cleanup();}
+});
+
+test('perimeter drift immediately before predecessor stop refuses without any stop or delete',async()=>{
+  const f=fixture();try{
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+    f.events.length=0;f.platform.assertDeploymentPerimeter=()=>{throw Error('private neighbor drift');};
+    await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform));
+    assert.equal(f.events.some(e=>['stop','delete','fresh'].includes(e[0])),false);
+    assert.equal(f.installer.inspectActiveRuntime().sourceSha,old.sourceSha);
+  }finally{f.cleanup();}
+});
+
+test('perimeter drift after candidate health prevents pointer promotion and attests compensation',async()=>{
+  const f=fixture();try{
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0,promotions=0;
+    f.platform.assertDeploymentPerimeter=()=>{if(++checks===2)throw Error('private nginx drift');};
+    const rename=f.io.renameSync;f.io.renameSync=(from,to)=>{if(to==='/var/www/.dashboard-abbott-control/current.json')promotions++;return rename(from,to);};
+    await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/attested predecessor restored/);
+    assert.equal(promotions,0);assert.equal(checks,4);assert.equal(f.installer.inspectActiveRuntime().sourceSha,old.sourceSha);
+  }finally{f.cleanup();}
+});
+
+test('perimeter drift during compensation leaves owned Abbott stopped and retains review lock',async()=>{
+  const f=fixture();try{
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0;
+    f.platform.assertDeploymentPerimeter=()=>{if(++checks>1)throw Error('private drift');};f.nextStartup('fail');
+    await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
+    assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+  }finally{f.cleanup();}
+});
+
+test('late compensation perimeter drift also stops the restored registration before review',async()=>{
+  const f=fixture();try{
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0;
+    f.platform.assertDeploymentPerimeter=()=>{if(++checks===3)throw Error('private late drift');};f.nextStartup('fail');
+    await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
+    assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+  }finally{f.cleanup();}
+});
+
+function fixture(authority=RUNTIME_MANIFESTS.abbott) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'abbott-release-test-'));
   const map = filename => path.join(directory, filename);
   const io = {};
@@ -200,9 +270,9 @@ function fixture() {
   io.constants = fs.constants;
   for (const filename of ['/var', '/var/www']) fs.mkdirSync(map(filename), { recursive: true, mode: 0o755 });
   const noHost = () => { throw new Error('Forbidden real host operation in fixture'); };
-  const context = { fs: io, path, os, createHash, randomUUID, execFileSync: noHost, spawn: noHost, createServer: noHost, fetch: noHost, isDeepStrictEqual, Buffer, TextDecoder, setTimeout, clearTimeout, process: { getuid: () => 0 }, authority: RUNTIME_MANIFESTS.abbott, environmentKeys: Object.keys(runtime) };
+  const context = { fs: io, path, os, createHash, randomUUID, execFileSync: noHost, spawn: noHost, createServer: noHost, fetch: noHost, isDeepStrictEqual, Buffer, TextDecoder, setTimeout, clearTimeout, process: { getuid: () => 0 }, authority, environmentKeys: Object.keys(runtime) };
   vm.createContext(context);
-  const source = read('scripts/runtime-release-remote.mjs').replace(/^import .*;\n/gm, '').replace('export function createRuntimeInstaller', 'function createRuntimeInstaller');
+  const source = read('scripts/runtime-release-remote.mjs').replace(/^import .*;\n/gm, '').replaceAll('export function ', 'function ');
   vm.runInContext(source + '\nthis.installer = createRuntimeInstaller(authority, environmentKeys);', context);
   let processRow = null, serial = 10, healthFailure = false,lastDeletedRegistration=null;
   let nextStartup = 'ready', startup = 'ready', listening = false;
@@ -216,6 +286,8 @@ function fixture() {
     throw new Error('unexpected fixture process read');
   };
   const platform = {
+    deploymentPreflight() {},
+    assertDeploymentPerimeter() {},
     account: () => ({ uid: 1001, gid: 1001 }),
     browser: () => '/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell',
     chown: () => {},

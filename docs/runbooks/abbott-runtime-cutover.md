@@ -1,5 +1,56 @@
 # Abbott isolated-runtime cutover runbook
 
+### Fixed deployment preflight checkpoint — review required, no deployment yet
+
+Approved `ece704e` was published to both authorized refs, but no production
+command was dispatched. Source inspection established that the earlier worker
+had no neighbor/Nginx gate and that `inspect` created a lock. Do not treat that
+earlier inspection as mutation-free evidence.
+
+The new Abbott-only preflight runs before account subprocesses, browser UID
+checks, PM2 access, locks or directory/file creation. It pins current/control
+`8c79caf495f147ad91b2174b9bc5f65c`, source
+`6f09982fb1e8068f02340ddfcb5c945fb02ebfd5`, manifest
+`a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2`,
+the protected ownership receipt, full active artifact, exact account982/984,
+and immutable browser/archive evidence. It performs bounded stable nofollow
+filesystem/kernel reads only: no PM2 CLI/library/socket, spawned check or health
+request. Abbott `inspect` now returns through that proof without creating a lock;
+an existing lock still refuses. Subsequent activation retains its existing
+process identity and health gates.
+
+Evidence-pinned neighbors are:
+
+| Runtime | PID / start / UID / GID | Cwd and release authority |
+| --- | --- | --- |
+| combined | 3722244 / 122353749 / 0 / 0 | `/var/www/dashboard`; source8f389a28df1c4b741ec33b7538f0354b74f5a40e |
+| Zaruku | 791065 / 131477500 / 984 / 991 | `/var/www/dashboard-zaruku/apps/zaruku`; sourceaf1948c8b9a0f70d8696afb9c8abc254408a5daa |
+| MedRoche | 1870897 / 139126198 / 983 / 983 | immutable13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone/apps/site-seo |
+
+Each must own its single expected IPv4 loopback listener3001/3002/3003, proven
+from bounded kernel TCP tables and that PID's socket descriptors. Node binary
+and command checks are semantic, not invented historical byte pins: an absolute
+root-owned non-writable regular Node executable, plus the source-established
+Next16.1.6 title or exact server/launcher argv shape. No raw argv or environment
+is output. Source records and the exact MedRoche root-owned immutable pointer
+are independently checked. Nginx remains the stable regular root-owned0644
+`/etc/nginx/conf.d/dashboard-next.conf` with SHA256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+
+Neighbor/Nginx proof repeats immediately before predecessor PM2 stop, after
+candidate health immediately before pointer promotion, and at compensation
+completion. Pre-stop refusal cannot trigger a stop/delete. Post-health drift
+prevents promotion and enters owned compensation; unverified compensation
+retains the lock/review journal and leaves the provably owned runtime stopped.
+No neighbor or Nginx mutation is introduced. Non-Abbott transactions keep their
+existing path. All CLI diagnostics remain closed and contain no raw proof data.
+
+This is a fixed current-state checkpoint, not a dynamic inventory. A successful
+successor activation requires separately reviewed checkpoint re-pinning before
+another deployment or standalone rollback through this entrypoint. Internal
+failure compensation remains available within the transaction. STOP for source
+review; this documentation does not authorize a new probe, deployment or retry.
+
 ### Correlated PDF failure-stage header — review required before deploy
 
 The focused Abbott handler now adds `X-Abbott-PDF-Failure-Stage` only to its

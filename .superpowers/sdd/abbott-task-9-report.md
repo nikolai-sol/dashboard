@@ -1,12 +1,14 @@
-# Abbott Task 9 — correlated PDF header source checkpoint
+# Abbott Task 9 — fixed deployment preflight source checkpoint
 
-Status: DONE_WITH_CONCERNS, pending source review before deployment. Focused
-Abbott PDF500 responses now carry only a fixed request-local failure-stage
-header; smoke maps its six exact labels to closed candidate PDF reasons.
-No live probe, SSH, credential issuance, push, deployment, capture or Nginx
-action occurred in this checkpoint. The production PDF failure remains
-unresolved; source tests do not establish its cause. Details and fresh local
-gate evidence are appended below. Earlier operational results are historical.
+Status: DONE_WITH_CONCERNS, pending source review before deployment. Approved
+header commit ece704e was published to both authorized refs. The planned deploy
+stopped before production contact because source inspection found missing
+neighbor/Nginx preflight gates and a mutating inspect action. The explicitly
+authorized source/TDD correction adds fixed filesystem-only preflight and
+activation/compensation perimeter checks. No production SSH, probe, credential
+issuance, deployment, capture or Nginx action occurred. The production PDF
+failure remains unresolved. Details and fresh local gates are appended below.
+Earlier operational results are historical.
 
 ## Previous operational checkpoint — approved stage read returned unknown
 
@@ -3558,3 +3560,101 @@ route rollback remains3001. No Nginx backup/switch occurred.
 TDD guided the RED/GREEN diagnostic regressions; verification-before-completion
 required fresh full gates without treating synthetic success as a live fix.
 DONE_WITH_CONCERNS: commit and STOP for review before any push/deploy/live use.
+
+## Published header; deployment stopped; fixed preflight source checkpoint
+
+The approved clean header commit
+`ece704e3ddf6452ba980778b17dfbd7c182b49b9` was ordinarily fast-forward pushed
+to exactly refs/heads/codex/abbott-runtime-isolation and refs/heads/release/abbott.
+Both literal remote SHAs were re-read through isolated Git authority and exactly
+matched that commit. No other ref was written. The temporary local Git authority
+directory was removed after the completed commands. These were Git publication
+operations, not production-host SSH or deployment.
+
+Before dispatching any production command, source inspection established a
+deterministic gate gap. The old worker had no neighbor/Nginx proof. Its inspect
+action acquired the scope lock, wrote its owner and ensured control directories
+before reading current. The previously retained broad verifier invoked PM2;
+the later unreviewed supplemental verifier remained prohibited. Neither was
+reused. Reported the gap and stopped: no fresh host proof or deploy occurred.
+The parent explicitly authorized this source/TDD correction instead.
+
+Implemented a fixed Abbott deployment proof within the already transported
+worker, without new remote modules, endpoints, arbitrary arguments or a new
+operator command. Before account lookup, browser UID subprocess, PM2 access,
+lock/directory creation or any write, it verifies:
+
+- Exact6f09982/8c79/a5b5 active/current/control record, source/scope stamps,
+  protected ownership receipt, launcher equality and full active artifact.
+- Root-owned control/releases/backups directory modes and bounded stable
+  nofollow records; exact existing service account982/984, no-login/no-home
+  account fields and no additional group membership.
+- Fixed host/boot and all three accepted neighbor PID/start/UID/GID/cwd and
+  source/immutable-release identities; no PM2 CLI/library/socket is involved.
+- A single expected IPv4 loopback listener for each PID from kernel TCP tables
+  and that PID's socket descriptors, with matching socket UID. No ss or other
+  subprocess runs during this proof.
+- Semantic, not historically byte-pinned, neighbor executable/command checks:
+  absolute root-owned non-writable regular Node binary plus fixed Next16.1.6
+  title or source-established server/launcher argv shape. Unobserved executable
+  hashes and raw command bytes were not invented. The accepted explicit parent
+  direction allowed this semantic contract; no new host inventory ran.
+- Exact root-owned regular0644 Nginx file, stable nofollow reads and unchanged
+  pinned SHA1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c.
+- Existing immutable browser contract/tree/modes and archive
+  fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04, with
+  service-group executable access established by immutable permissions. The
+  existing actual-UID executable check still runs only after preflight passes.
+
+Read buffers are bounded, closed and zeroed; failed proof exposes only the fixed
+ABBOTT_DEPLOY_PREFLIGHT_REFUSED error internally, consumed by the unchanged
+closed deployment result protocol. No raw source, argv, environment, Nginx
+contents, credential, error text or child streams enter the report/output.
+Abbott inspect is now read-only and still rejects an existing lock. Non-Abbott
+inspection retains its existing account/locked-control behavior, proven by a
+separate regression; other dashboard release commands remain unchanged.
+
+Neighbor/Nginx checks repeat immediately before the exact predecessor stop,
+after candidate health immediately before pointer promotion, and within the
+protected compensation-completion checks. No neighbor/Nginx writes are added.
+TDD first reproduced inspect succeeding without the required preflight. Further
+RED cases caught a pre-stop refusal entering compensation and stopping the old
+runtime, and a final compensation refusal leaving the restored registration
+running. Mutation marking now begins only after the immediate pre-stop check;
+the completion check stays inside the identity-checked stop-on-failure region.
+GREEN proves no stop/delete/fresh start on pre-stop drift, no pointer promotion
+on post-health drift, and owned Abbott stopped with retained review lock when
+either early or late compensation proof cannot complete. Staged candidate
+files may already exist at these later boundaries; no claim of zero earlier
+candidate preparation is made. Initial preflight refusal is before all writes
+and subprocess/PM2 operations.
+
+Fresh local gates: focused Abbott build/exact-route validation passed; full
+authority/bootstrap/browser/recovery/deploy/artifact suite525 tests passed;
+app/runtime-contract68 passed; post-build issuer/transport/attestation/smoke/
+capture/comparator/log-proof206 passed; data/UI/private-store111 passed. Both
+TypeScript checks, combined application build, contract wiring and public-assets
+security passed. Lint exits0 with0 errors and the same10 existing warnings.
+Changed-source syntax and whitespace checks passed. The new filesystem-proof
+suite has6 tests covering source/record/mode/symlink/hardlink/oversize/hash drift,
+all neighbor identities, PID reuse during reads, ownership/listener mismatch,
+binary/argv semantic refusal, account/browser failure and fixed diagnostics.
+
+No production-host SSH, PDF/log/health probe, deployment, recovery, credential
+issuance, browser/capture, DB/auth/fact/collector/cron mutation, neighbor action,
+Nginx backup/edit/reload or route switch occurred. Local3001/3004 listeners and
+the exact private recovery/deploy evidence directories were absent after tests.
+No browser was launched; local test-owned loader processes are bounded/reaped
+by their existing tested lifecycle. The last live deployment remains6f09982/
+release8c79 with predecessorf80607f/release6cd2; these are historical evidence,
+not a new host attestation. Public route rollback target remains3001. No pin
+update or PDF-stage deployment has happened.
+
+DONE_WITH_CONCERNS: this fixed current-state gate requires review before any
+deployment. After a successful successor activation its checkpoint pins require
+separate review/re-pinning before another deployment or standalone rollback
+through this entrypoint; internal compensation is unchanged in availability.
+The browser/PDF failure, six-image parity and Nginx structural checkpoint remain
+unresolved. Systematic source diagnosis identified the missing gate, TDD covered
+ordering/fail-closed behavior, and fresh verification supports only this local
+checkpoint. Commit and STOP for review; do not push or deploy this correction.

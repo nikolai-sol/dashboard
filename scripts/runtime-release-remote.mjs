@@ -7,6 +7,93 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { isDeepStrictEqual } from 'node:util';
 
+// Fixed checkpoint authority, not a caller-selected inventory. This proof makes
+// no subprocess, supervisor/socket connection, network request or filesystem write.
+export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=()=>process.getuid(),digest=b=>createHash('sha256').update(b).digest('hex'),verifyActive,verifyBrowser}={}) {
+  const fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
+  const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
+  const record={scope:'abbott',id:'8c79caf495f147ad91b2174b9bc5f65c',sourceSha:'6f09982fb1e8068f02340ddfcb5c945fb02ebfd5',manifestDigest:'a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2',previousId:'6cd2f12e245a47dcbd5f6ce928c4ed83'};
+  const boot='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e',med='/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone';
+  const neighbors=[[3722244,'122353749',0,0,'/var/www/dashboard',3001],[791065,'131477500',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],[1870897,'139126198',983,983,med+'/apps/site-seo',3003]];
+  const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
+  function ancestry(file,uid=0,gid=0){
+    for(let dir=path.dirname(file);dir!=='/';dir=path.dirname(dir)){
+      const s=io.lstatSync(dir),proc=/^\/proc\/[1-9][0-9]*(?:\/|$)/.test(dir);
+      const browser=dir==='/var/lib/dashboard-abbott'||dir.startsWith('/var/lib/dashboard-abbott/');
+      if(!s.isDirectory()||s.isSymbolicLink()||io.realpathSync(dir)!==dir||s.mode&0o022||!(s.uid===0&&(s.gid===0||browser&&s.gid===984)||proc&&s.uid===uid&&s.gid===gid))fail();
+    }
+  }
+  function read(file,max=8192,{uid=0,gid=0,mode,proc=false,ancestorUid=uid,ancestorGid=gid}={}){
+    let fd,bytes;try{
+      ancestry(file,ancestorUid,ancestorGid);const a=io.lstatSync(file);
+      if(!a.isFile()||a.isSymbolicLink()||a.nlink!==1||a.uid!==uid||a.gid!==gid||a.mode&0o022||mode!==undefined&&(a.mode&0o7777)!==mode||!proc&&(a.size>max||io.realpathSync(file)!==file))fail();
+      fd=io.openSync(file,io.constants.O_RDONLY|io.constants.O_NOFOLLOW);if(!stable(a,io.fstatSync(fd)))fail();
+      bytes=Buffer.alloc(max+1);let n=0;while(n<bytes.length){const count=io.readSync(fd,bytes,n,bytes.length-n,n);if(!Number.isSafeInteger(count)||count<0||count>bytes.length-n)fail();if(!count)break;n+=count;}
+      if(n>max||!proc&&n!==a.size||!stable(a,io.fstatSync(fd))||!stable(a,io.lstatSync(file)))fail();return bytes.subarray(0,n).toString('utf8');
+    }finally{bytes?.fill(0);if(fd!==undefined)io.closeSync(fd);}
+  }
+  const json=file=>JSON.parse(read(file,8192,{mode:0o600}));
+  function link(file,target,uid=0,gid=0){const a=io.lstatSync(file);if(!a.isSymbolicLink()||a.uid!==uid||a.gid!==gid||io.realpathSync(file)!==target||!stable(a,io.lstatSync(file)))fail();}
+  function kernel([pid,start,uid,gid,cwd,port],server){
+    const proc='/proc/'+pid,meta={uid,gid,proc:true};ancestry(proc+'/stat',uid,gid);
+    const boundary=io.lstatSync(proc);if(boundary.uid!==uid||boundary.gid!==gid||!boundary.isDirectory()||boundary.isSymbolicLink()||io.realpathSync(proc)!==proc)fail();
+    const identity=()=>{
+      const text=read(proc+'/stat',8192,meta),close=text.lastIndexOf(')'),v=text.slice(close+2).trim().split(/\s+/);
+      if(!text.startsWith(pid+' (')||close<0||!['R','S','D','I'].includes(v[0])||v[19]!==start)fail();
+      const status=read(proc+'/status',8192,meta);
+      for(const[field,value]of [['Uid',uid],['Gid',gid]]){const rows=status.split('\n').filter(l=>l.startsWith(field+':'));if(rows.length!==1||rows[0].trim().split(/\s+/).slice(1).join(',')!==[value,value,value,value].join(','))fail();}
+      link(proc+'/cwd',cwd,uid,gid);
+    };identity();
+    const executable=io.realpathSync(proc+'/exe');if(!/^\/(?:[A-Za-z0-9_.+-]+\/)*(?:node|nodejs)$/.test(executable))fail();
+    link(proc+'/exe',executable,uid,gid);ancestry(executable);const binary=io.lstatSync(executable);
+    if(!binary.isFile()||binary.isSymbolicLink()||binary.nlink!==1||binary.uid!==0||binary.gid!==0||binary.mode&0o022||!(binary.mode&0o111))fail();
+    const command=read(proc+'/cmdline',4096,meta);if(!command.endsWith('\0'))fail();const argv=command.replace(/\0+$/,'');
+    // Next's fixed process-title shape or the fixed source-established server.
+    if(argv!=='next-server (v16.1.6)'&&argv!==executable+'\0'+server)fail();
+    const directory=proc+'/fd',a=io.lstatSync(directory);if(!a.isDirectory()||a.isSymbolicLink()||a.uid!==uid||a.gid!==gid||io.realpathSync(directory)!==directory)fail();
+    const names=io.readdirSync(directory);if(names.length>4096||names.some(n=>!/^\d{1,10}$/.test(n)))fail();const sockets=new Set();
+    for(const name of names){const file=directory+'/'+name,s=io.lstatSync(file);if(!s.isSymbolicLink()||s.uid!==uid||s.gid!==gid)fail();const target=io.readlinkSync(file);if(!stable(s,io.lstatSync(file)))fail();const m=/^socket:\[([1-9][0-9]*)\]$/.exec(target);if(m)sockets.add(m[1]);}
+    const listeners=[];for(const table of ['tcp','tcp6']){
+      const lines=read(proc+'/net/'+table,2*1024*1024,{proc:true,ancestorUid:uid,ancestorGid:gid}).trim().split('\n');
+      for(const line of lines.slice(1)){const v=line.trim().split(/\s+/);if(v[3]==='0A'&&v[1]?.split(':')[1]===port.toString(16).toUpperCase()){if(v[7]!==String(uid))fail();listeners.push([table,v[1],v[9]]);}}
+    }
+    if(listeners.length!==1||listeners[0][0]!=='tcp'||listeners[0][1]!=='0100007F:'+port.toString(16).toUpperCase()||!sockets.has(listeners[0][2]))fail();
+    identity();link(proc+'/exe',executable,uid,gid);if(!stable(binary,io.lstatSync(executable))||!stable(boundary,io.lstatSync(proc)))fail();
+  }
+  function perimeter(){
+    if(getuid()!==0||hostname()!=='ybjqbzojln'||read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim()!==boot)fail();
+    const nginx=read('/etc/nginx/conf.d/dashboard-next.conf',1048576,{mode:0o644});
+    if(digest(Buffer.from(nginx))!=='1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c')fail();
+    for(const[file,sha]of [['/var/www/dashboard/.release-source-sha','8f389a28df1c4b741ec33b7538f0354b74f5a40e'],['/var/www/dashboard-zaruku/.release-source-sha','af1948c8b9a0f70d8696afb9c8abc254408a5daa']])if(read(file,128).trim()!==sha)fail();
+    ancestry('/var/www/dashboard-medroche');link('/var/www/dashboard-medroche',med);
+    for(const row of neighbors)kernel(row,row[4]+'/server.js');
+  }
+  function preflight(){
+    for(const [dir,mode]of [[control,0o700],['/var/www/dashboard-abbott-releases',0o711],['/var/www/dashboard-abbott-backups',0o711]]){
+      ancestry(dir);const s=io.lstatSync(dir);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==0||s.gid!==0||(s.mode&0o7777)!==mode||io.realpathSync(dir)!==dir)fail();
+    }
+    const passwd=read('/etc/passwd',1048576).split('\n').map(l=>l.split(':')).filter(v=>v[0]==='dashboard-abbott'||v[2]==='982');
+    const group=read('/etc/group',1048576).split('\n').map(l=>l.split(':')).filter(v=>v[0]==='dashboard-abbott'||v[2]==='984'||v[3]?.split(',').includes('dashboard-abbott'));
+    if(passwd.length!==1||passwd[0].length!==7||passwd[0][0]!=='dashboard-abbott'||passwd[0][2]!=='982'||passwd[0][3]!=='984'||passwd[0][5]!=='/nonexistent'||passwd[0][6]!=='/usr/sbin/nologin'||group.length!==1||group[0].length!==4||group[0][0]!=='dashboard-abbott'||group[0][2]!=='984'||!['','dashboard-abbott'].includes(group[0][3]))fail();
+    perimeter();if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record)||read(root+'/.release-source-sha',128)!==record.sourceSha+'\n'||read(root+'/.release-runtime-scope',64)!=='abbott\n')fail();
+    if(digest(Buffer.from(read(control+'/'+record.id+'/trusted-runtime-manifest.json',2*1024*1024,{mode:0o600})))!==record.manifestDigest)fail();
+    const launcher='/var/www/.dashboard-abbott-launcher.cjs';if(read(launcher,65536)!==read(control+'/'+record.id+'/deploy/abbott/start.cjs',65536))fail();
+    const names=io.readdirSync(control);if(names.length>256)fail();const receipts=names.filter(n=>/^ownership-[a-f0-9-]{36}\.json$/.test(n)).map(n=>json(control+'/'+n)).filter(r=>r.record?.id===record.id);
+    if(receipts.length!==1)fail();const r=receipts[0],p=r.process,dir=io.lstatSync(root);
+    if(Object.keys(r).sort().join(',')!=='binding,directory,process,record,transaction,version'||r.version!==1||!isDeepStrictEqual(r.record,record)||!isDeepStrictEqual(r.directory,{dev:String(dir.dev),ino:String(dir.ino)})||r.binding?.sourceSha!==record.sourceSha||Object.keys(r.binding).sort().join(',')!=='runId,sourceSha'||! /^[a-f0-9-]{36}$/.test(r.binding.runId)||! /^[a-f0-9-]{36}$/.test(r.transaction))fail();
+    if(!p||Object.keys(p).sort().join(',')!=='appName,bootId,cwd,gid,pid,pmId,registration,script,sourceSha,startTime,uid'||p.appName!=='dashboard-abbott'||p.bootId!==boot||p.uid!==982||p.gid!==984||p.sourceSha!==record.sourceSha||p.cwd!==root+'/apps/abbott'||p.script!==launcher||!Number.isSafeInteger(p.pid)||p.pid<=0||!Number.isSafeInteger(p.pmId)||p.pmId<0||!/^\d{1,20}$/.test(p.startTime))fail();
+    const reg=p.registration;if(!reg||!['dashboard-abbott',982].includes(reg.uid)||!['dashboard-abbott',984].includes(reg.gid)||!isDeepStrictEqual(reg,{appName:'dashboard-abbott',pmId:p.pmId,exec:'/usr/bin/env',cwd:p.cwd,args:['-i','PATH=/usr/local/bin:/usr/bin:/bin','/usr/bin/node',launcher],uid:reg.uid,gid:reg.gid,releaseId:record.id,sourceSha:record.sourceSha}))fail();
+    kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
+    verifyActive(record);
+    const stamp='/var/lib/dashboard-abbott/browser-cache/stamp.json',before=read(stamp,1048576,{gid:984,mode:0o640});
+    if(verifyBrowser().archiveSha256!=='fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'||read(stamp,1048576,{gid:984,mode:0o640})!==before)fail();
+    perimeter();kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
+    if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record))fail();
+  }
+  const closed=fn=>()=>{try{return fn();}catch{fail();}};
+  return{preflight:closed(preflight),perimeter:closed(perimeter)};
+}
+
 // Based on af1948c's immutable installer; transport binds this closure to the
 // clean, exact release ref. No executable is imported from an artifact.
 export function createRuntimeInstaller(authority, environmentKeys, browserPrerequisite = null) {
@@ -351,7 +438,24 @@ async function verifyStagedArtifact(artifact, manifest, boot) {
   }
 }
 
+let abbottDeploymentProtection;
 const realPlatform = {
+  deploymentPreflight() {
+    if(scope!=='abbott'||!browserPrerequisite)fail('Abbott deployment preflight unavailable');
+    abbottDeploymentProtection=createAbbottDeploymentProof({
+      verifyActive:record=>{if(!isDeepStrictEqual(current(),record))fail('Abbott active checkpoint drift');},
+      verifyBrowser:()=>browserPrerequisite.verifyBrowserInstallation({contract:browserPrerequisite.contract,gid:984,checkExecutable:executable=>{
+        // Existing immutable root:Abbott modes grant UID982 access without
+        // launching any process before the complete preflight has succeeded.
+        const s=fs.lstatSync(executable);return s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.uid===0&&s.gid===984&&(s.mode&0o7777)===0o750&&fs.realpathSync(executable)===executable;
+      }}),
+    });
+    abbottDeploymentProtection.preflight();
+  },
+  assertDeploymentPerimeter() {
+    if(!abbottDeploymentProtection)fail('Abbott deployment preflight unavailable');
+    abbottDeploymentProtection.perimeter();
+  },
   browser(account) {
     if(scope!=='abbott'||!browserPrerequisite)fail('Abbott browser prerequisite missing');
     return browserPrerequisite.verifyBrowserInstallation({contract:browserPrerequisite.contract,gid:account.gid,checkExecutable:executable=>{
@@ -503,7 +607,7 @@ async function stopProof(proof,platform,account,guard) {
   if(!proof)fail('No owned deployment process');
   return stopRegistration(proof.registration, proof, platform, account, guard);
 }
-async function stopRegistration(registration, proof, platform, account, guard) {
+async function stopRegistration(registration, proof, platform, account, guard, beforeStop) {
   guard();
   validateRuntimeRegistration(registration, account);
   const active = platform.registration(registration.pmId);
@@ -514,7 +618,7 @@ async function stopRegistration(registration, proof, platform, account, guard) {
       if (!live || live.pid !== active.pid || !isDeepStrictEqual(live.registration, registration) ||
           proof && !isDeepStrictEqual(live, proof)) fail('Deployment ownership changed; no stop');
     } else if (active.pid !== 0 || !['errored', 'waiting restart', 'launching', 'stopping', 'stopped'].includes(active.status)) fail('Unproven PM2 inactive registration; no stop');
-    if (active.pid !== 0 || active.status !== 'stopped') await platform.stop(registration.pmId);
+    if (active.pid !== 0 || active.status !== 'stopped') { beforeStop?.(); await platform.stop(registration.pmId); }
     const stopped = platform.registration(registration.pmId);
     if (stopped !== null && (!isDeepStrictEqual(stopped.registration, registration) || stopped.pid !== 0 || stopped.status !== 'stopped')) fail('Owned PM2 registration did not stop');
   }
@@ -594,11 +698,13 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
   };
   const checkpoint=async()=>{await new Promise(resolve=>setTimeout(resolve,0));guard();lockProof();pointerProof();};
   const noRegistration=async()=>{if(platform.registration()!==null)fail('Abbott registration remains');await platform.assertNoListener();};
-  const remove=async(registration,proof)=>{
+  const remove=async(registration,proof,checkPerimeter=false)=>{
     // Pointer drift forbids layout compensation, but cannot keep an otherwise
     // exactly owned candidate serving. Process identity remains mandatory.
     lockProof();
-    await stopRegistration(registration,proof,platform,account,lockProof);
+    await stopRegistration(registration,proof,platform,account,lockProof,checkPerimeter?()=>{
+      platform.assertDeploymentPerimeter();mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';
+    }:undefined);
     if(proof)platform.exited(proof);
     const stopped=platform.registration(registration.pmId);
     if(stopped!==null){
@@ -632,8 +738,9 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
   };
   await before();await checkpoint();journal('prepared');
   try{
-    await checkpoint();await before();mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';
-    if(old)await remove(beforeProcess.registration,beforeProcess);else await noRegistration();
+    await checkpoint();await before();
+    if(old)await remove(beforeProcess.registration,beforeProcess,true);
+    else {platform.assertDeploymentPerimeter();mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';await noRegistration();}
     journal('predecessor_removed');await checkpoint();
     await noRegistration();
     if(old){tree(APP,old,oldDirectory,oldEnv);absent(oldBackup);if(platform.registration()!==null)fail('Abbott registration reappeared');fs.renameSync(APP,oldBackup);oldMoved=true;}
@@ -646,7 +753,7 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     if(!isDeepStrictEqual(processProof(platform,account),ownedProcess))fail('Candidate readiness identity changed');
     if(old)tree(oldBackup,old,oldDirectory,oldEnv);
     await checkpoint();await platform.health(ownedProcess);capture(true);pointerProof();
-    publishPointer(record);pointerPublished=true;
+    platform.assertDeploymentPerimeter();publishPointer(record);pointerPublished=true;
     if(request.binding)durableFile(`${CONTROL}/ownership-${request.binding.runId}.json`,{version:1,binding:request.binding,transaction:owner,record,directory:directoryIdentity(),process:ownedProcess});
     await checkpoint();capture(true);tree(APP,record,candidateDirectory,envDigest);journal('committed');return record;
   }catch{
@@ -669,11 +776,12 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
         const live=Number.isSafeInteger(restored.pid)&&restored.pid>0?processProof(platform,account):null;
         try{
           if(failed||!live||restored.status!=='online'||live.registration.releaseId!==old.id||live.sourceSha!==old.sourceSha)fail('Predecessor restart failed');
-          await platform.health(live);tree(APP,old,oldDirectory,oldEnv);pointerProof();
+          await platform.health(live);tree(APP,old,oldDirectory,oldEnv);pointerProof();platform.assertDeploymentPerimeter();
           if(!isDeepStrictEqual(processProof(platform,account),live)||!isDeepStrictEqual(current(),old))fail('Predecessor restart identity changed');
+          platform.assertDeploymentPerimeter();
         }catch{await remove(restored.registration,live);throw Error();}
       }else{absent(APP);if(pointerPublished){owned(CURRENT);fs.unlinkSync(CURRENT);pointerPublished=false;}await noRegistration();}
-      journal('restored');if(terminal)terminal.status='RESTORED';fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
+      if(!old)platform.assertDeploymentPerimeter();journal('restored');if(terminal)terminal.status='RESTORED';fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
     }catch(error){
       if(error.message==='runtime activation failed; attested predecessor restored'||error.message==='runtime activation failed; service stopped')throw error;
       preserveLock();try{journal('review_required');if(terminal)terminal.status='REVIEW_REQUIRED';}catch{}
@@ -686,8 +794,15 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
   // The worker is supplied by the exact clean release source, never by remote disk.
   const guard = stagedGuard ?? (() => {});
   guard();
+  if(scope==='abbott'){
+    platform.deploymentPreflight();
+    guard();
+    if(fs.lstatSync(LOCK,{throwIfNoEntry:false}))fail('runtime deployment lock is already held or unsafe');
+    if(request.action==='inspect')return current();
+  }
   if (process.getuid() !== DEPLOY_UID) fail('Privileged deploy account required');
   const account = platform.account();
+  if(scope==='abbott'&&platform===realPlatform&&(account.uid!==982||account.gid!==984))fail('Abbott account checkpoint drift');
   if (!Number.isInteger(account.uid) || account.uid <= 0 || account.uid === DEPLOY_UID || !Number.isInteger(account.gid) || account.gid <= 0) fail('Dedicated runtime account and write separation required');
   const browserExecutable=scope==='abbott'&&['deploy','rollback'].includes(request.action)?platform.browser(account):undefined;
   owned(BASE, true);
@@ -840,7 +955,8 @@ async function remoteMain(expectedDigest) {
     const bytes = fs.readFileSync(0);
     if (bytes.length > 536870912 || hash(bytes) !== expectedDigest) fail('Transport authority mismatch');
     const request = JSON.parse(bytes);
-    // Inspection takes the same scope lock; no active metadata is read here.
+    // Abbott inspection uses its fixed read-only preflight; other scopes retain
+    // their existing locked inspection path.
     const record = await transact(request, realPlatform, guard);
     process.stdout.write(JSON.stringify(record) + '\n');
   } catch (error) {
