@@ -298,3 +298,29 @@ for(const[label,listen,host]of [['shared_tls','443','dashboards.adreports.ru'],[
 for(const[label,header]of [['location','Location'],['refresh','Refresh'],['dynamic','$header']])test('Nginx response-routing headers are not passive: '+label,async()=>{
  const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location / { add_header ${header} $target; return 302; }`));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
 });
+const unsafeProxyPaths={
+ dashboard18:'/dashboard/18',api18:'/api/dashboard/18',nested18:'/reports/api/dashboard/18',
+ trailing18:'/dashboard/18/',api_suffix:'/api/dashboard/18/pdf',mixed_case:'/API/DaShBoArD/18',
+ abbott:'/dashboard/abbott',api_abbott:'/api/dashboard/ABBOTT/',asset:'/_next-abbott/static/chunk.js',
+ query:'/dashboard/18?from=2026-09-01',unrelated_query:'/health?target=18',fragment:'/health#dashboard',
+ encoded_id:'/dashboard/%31%38',encoded_slash:'/dashboard%2f18',double_encoded:'/dashboard/%2531%2538',
+ encoded_name:'/%64ashboard/18',encoded_asset:'/%5fnext%2dabbott/static/chunk.js',
+ dot:'/dashboard/./18',parent_dot:'/health/../dashboard/18',unrelated_dot:'/health/../health',
+ duplicate_slash:'/dashboard//18',unrelated_duplicate:'/health//check',leading_duplicate:'//health',
+ padded_id:'/dashboard/018',decimal_id:'/dashboard/18.0',trailing_dot_id:'/dashboard/18.',
+ exponent_id:'/api/dashboard/1.8e1',hex_id:'/dashboard/0x12',binary_id:'/dashboard/0b10010',octal_id:'/dashboard/0o22',
+ escaped:String.raw`/dashboa\rd/18`,
+};
+for(const location of ['/','= /status'])for(const[label,uri]of Object.entries(unsafeProxyPaths))test('Nginx proxy URI refuses alias or normalization ambiguity: '+(location==='/'?'prefix/':'exact/')+label,async()=>{
+ const m=await api(),f=fixture(),seen=[];f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location ${location} { proxy_pass "http://127.0.0.1:3001${uri}"; }`));f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
+ assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(f.calls,[]);assert.equal(seen.at(-1).stage,'preflight_nginx');assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+});
+test('Nginx canonical unrelated exact-location URI and identity-prefix baseline remain accepted',async()=>{
+ const m=await api();for(const [location,uri]of [['/',''],['/','/'],['/health/','/health/'],['= /status','/health'],['= /status','/health/'],['= /style','/static/site.css']]){const f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location ${location} { proxy_pass "http://127.0.0.1:3001${uri}"; }`));assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());}
+});
+for(const[label,uri]of [['partial_id','/dashboard/1'],['partial_api','/api/dashboard/'],['partial_name','/dashboar'],['unproven_suffix','/health']])test('Nginx prefix replacement cannot concatenate an alias: '+label,async()=>{
+ const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location / { proxy_pass http://127.0.0.1:3001${uri}; }`));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+});
+test('Nginx proxy URI requires a proven location context',async()=>{
+ const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,'proxy_pass http://127.0.0.1:3001;'));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+});

@@ -1,4 +1,11 @@
-# Abbott Task 9 — Nginx context and opaque-routing source checkpoint
+# Abbott Task 9 — Nginx proxy URI alias source checkpoint
+
+Current status: DONE_WITH_CONCERNS. Source-only proxy URI alias/normalization correction is pending
+re-review. The literal proxy target path is now validated separately from its
+origin; Abbott aliases and ambiguous normalization refuse. No push, live request,
+deployment or Nginx action ran. Fresh gate evidence is appended below.
+
+## Previous source checkpoint — Nginx context and opaque routing
 
 Current status: DONE_WITH_CONCERNS. Nginx preflight context/routing correction is source-only and
 pending re-review. Nested server blocks cannot establish TLS authority. Selected
@@ -4186,3 +4193,58 @@ production evidence only. Route-only rollback target remains3001. The source
 checkpoint requires parent re-review before any publication or live use.
 DONE_WITH_CONCERNS: STOP for review; unsupported valid Nginx constructs remain
 an explicit fail-closed compatibility limitation, not permission to bypass proof.
+
+## Literal proxy URI alias correction — source-only re-review
+
+Parent review found that the selected server's otherwise literal proxy_pass
+could still rewrite to dashboard18 through its URI path. Thirteen RED full
+preflight regressions reproduced accepted direct/api/nested/descendant/trailing/
+mixed-case/escaped numeric aliases, dot segments and duplicate slashes. Existing
+encoding/query/fragment refusals and the baseline fixture remained covered.
+
+The change captures the optional URI path from the existing exact loopback
+target grammar, rejects duplicate slashes or any path changed by canonical dot
+normalization, and checks case-folded segments for dashboard/18, dashboard/abbott
+and the Abbott asset prefix anywhere in the path. Queries, fragments and percent
+encoding still fail the unchanged literal grammar; no decoding or repair broadens
+acceptance. No URI, a root slash and canonical unrelated paths remain accepted.
+
+Read-only source inspection of getDashboardAccessContext established that the
+combined loader uses Number(identifier), so seven additional RED tests covered
+leading-zero, decimal, trailing-dot, exponent, hexadecimal, binary and octal
+spellings resolving to18. The path check refuses those aliases too. This adds no
+database access or app/auth behavior change. The snapshot/identity/activation
+contracts and Nginx context restrictions remain unchanged. Review-feedback and
+TDD skills established failing evidence before the narrow implementation.
+
+Local read-only re-review exposed effective URI concatenation in plain prefix
+locations: an unmatched request suffix could complete a partial dashboard18
+alias. Five further RED preflight tests covered those partial rewrites, an
+unproven unrelated rewrite and missing location context. The visitor now carries
+the validated location literal/exact flag. Prefix locations can omit the URI or
+perform only an identity replacement equal to that literal. Other canonical
+unrelated static URI replacements require exact locations, where no unmatched
+request suffix is appended. This narrows the preceding accepted-path statement;
+the baseline no-URI/root-identity fixture remains accepted. No general rewrite
+evaluator or live probe was introduced. Focused read-only re-review found no
+Critical or Important issue in the changed block. Its suggested exact-location
+matrix is persisted alongside every unsafe prefix-URI case, so identity-prefix
+refusal cannot mask regressions in static alias/normalization checks.
+
+Fresh final gates: full authority718/718 and focused deployment402/402 after
+persisting the exact-location matrix. The ordered Abbott production build,
+app/runtime68/68, post-build verification206/206, Abbott contract111/111, exact
+routes, wiring and public-assets checks passed. Combined production build,
+root/focused typechecks, deploy-source and release-runtime shell suites, source
+syntax and whitespace passed. Lint has0 errors and the same10 existing warnings.
+All owned fixture commands exited; exact private deploy/recovery evidence
+directories are absent and local3001/3004 have no listeners. No real browser,
+credential, SSH or forward session was started.
+
+No push, live probe/deploy/recovery/PDF/smoke/capture, DB/auth/fact/collector/cron,
+neighbor or Nginx action occurred. Published refs remain last verified5b17026;
+active6f09982/8c79 and predecessor f80607f/6cd2 remain historical host evidence,
+not newly attested. Route-only rollback target remains3001. The restricted
+canonical/identity URI contract is intentional; unsupported valid rewrites need
+review, not a bypass. DONE_WITH_CONCERNS: STOP for parent re-review before any
+publication or live use.

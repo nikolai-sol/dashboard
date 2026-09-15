@@ -78,6 +78,20 @@ preflight contract, not a complete Nginx interpreter: unsupported otherwise-vali
 configuration requires review and must not be bypassed. No live retry is
 authorized until this correction is reviewed.
 
+Proxy URI re-review correction: the optional literal proxy_pass path must be
+canonical and provably unrelated to Abbott. Queries, fragments, percent encoding,
+duplicate slashes or dot-segment normalization refuse rather than being decoded
+or repaired. Case-insensitive path segments matching dashboard/18 or
+dashboard/abbott, including api-prefixed/nested forms, descendants, trailing
+slashes and the Abbott asset prefix refuse. Numeric spellings coercing to18
+also refuse, matching the combined loader's Number(identifier) behavior. Prefix
+locations may omit the URI or use only an identity URI equal to their literal
+location path: Nginx otherwise appends unmatched request bytes and can complete
+a partial Abbott alias. Other canonical unrelated URI rewrites require an exact
+`=` location with no unmatched suffix. Proxy directives without a proven location
+context refuse. The no-URI/root-identity accepted composite
+fixture is unchanged. This remains a source-only gate requiring re-review.
+
 Neighbor/Nginx proof repeats immediately before predecessor PM2 stop, after
 candidate health immediately before pointer promotion, and at compensation
 completion. The first activation gate re-proves predecessor presence/identity
