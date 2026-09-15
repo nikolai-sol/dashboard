@@ -7,7 +7,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { isDeepStrictEqual } from 'node:util';
 
-function analyzeAbbottNginxText(text,nginxReason,onUnsupported){
+function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=null){
     const rejected=new WeakMap(),fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
     const refuse=code=>{nginxReason(code);const error=Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');rejected.set(error,code);throw error;};
     nginxReason('syntax');
@@ -30,6 +30,7 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported){
     const unsupported=(n,selected=false)=>n.name==='include'?'include':['set','map','rewrite'].includes(n.name)?'variable_routing':n.name==='server'?'nested_server':unsupportedName(n,selected);
     if(nodes.some(n=>n.name!=='server'||!n.block||n.args.length)){
       const n=nodes.find(n=>n.name!=='server'||!n.block||n.args.length),containsServer=n=>n.children.some(c=>c.name==='server'||containsServer(c));
+      if(onFirstRejection&&n.name!=='server'){const containsServerBlock=node=>node.children.some(c=>c.name==='server'&&c.block||containsServerBlock(c));if(!containsServerBlock(n))onFirstRejection('top',n.name);}
       refuse(containsServer(n)?'nested_server':unsupported(n));
     }
     nginxReason('tls_count');
@@ -71,13 +72,15 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported){
         }else if(!passive.has(n.name))refuse(unsupported(n,active));
       }
       visit(n.children,n.name,active,childLocation);
-      }catch(error){const code=rejected.get(error);if(!onUnsupported||!(selected||n===targets[0])||n.block&&!['server','location'].includes(context)||['server','location'].includes(n.name)||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
+      }catch(error){const code=rejected.get(error);if(onFirstRejection&&selected&&!['server','location'].includes(n.name)&&['server','location'].includes(context)&&typeof code==='string'&&(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))onFirstRejection('selected',n.name);if(!onUnsupported||!(selected||n===targets[0])||n.block&&!['server','location'].includes(context)||['server','location'].includes(n.name)||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
     }};visit(nodes);
   }
 
 export function validateAbbottNginxText(text,note=()=>{}){analyzeAbbottNginxText(text,note,null);}
 export function abbottNginxDiagnosticNames(){return ["add_header","alias","auth_basic","auth_basic_user_file","auth_request","autoindex","charset","client_body_buffer_size","client_body_in_file_only","client_body_temp_path","client_header_buffer_size","client_max_body_size","default_type","deny","directio","disable_symlinks","empty_gif","error_page","etag","expires","fastcgi_buffer_size","fastcgi_buffers","fastcgi_cache","fastcgi_index","fastcgi_param","fastcgi_pass","fastcgi_read_timeout","gzip_buffers","gzip_comp_level","gzip_disable","gzip_http_version","gzip_min_length","gzip_proxied","gzip_static","gzip_vary","http2","http2_max_concurrent_streams","if","include","index","internal","large_client_header_buffers","limit_conn","limit_conn_status","limit_except","limit_rate","limit_req","limit_req_status","location","log_not_found","map","max_ranges","more_clear_headers","more_set_headers","open_file_cache","open_file_cache_errors","open_file_cache_min_uses","open_file_cache_valid","other","port_in_redirect","proxy_cache","proxy_cache_background_update","proxy_cache_key","proxy_cache_lock","proxy_cache_revalidate","proxy_cache_use_stale","proxy_cache_valid","proxy_cookie_domain","proxy_cookie_flags","proxy_cookie_path","proxy_headers_hash_bucket_size","proxy_headers_hash_max_size","proxy_hide_header","proxy_ignore_headers","proxy_intercept_errors","proxy_max_temp_file_size","proxy_next_upstream","proxy_pass","proxy_pass_header","proxy_redirect","proxy_ssl_name","proxy_ssl_server_name","proxy_ssl_verify","proxy_temp_path","recursive_error_pages","reset_timedout_connection","return","rewrite","root","satisfy","sendfile","sendfile_max_chunk","server","server_name_in_redirect","server_tokens","set","ssi","ssl_buffer_size","ssl_client_certificate","ssl_conf_command","ssl_early_data","ssl_ecdh_curve","ssl_reject_handshake","ssl_verify_client","sub_filter","sub_filter_once","tcp_nodelay","tcp_nopush","try_files","types","types_hash_max_size","underscores_in_headers","uwsgi_param","uwsgi_pass","valid_referers"];}
 export function diagnoseAbbottNginxText(text){const names=new Set(),known=new Set(abbottNginxDiagnosticNames());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},name=>names.add(known.has(name)?name:'other'));return [...names].sort();}catch{return {reason:'parser_ambiguity'};}}
+export function abbottNginxFirstRejectionCodes(){return ['none',...['upstream','map','geo','split_clients','log_format','proxy_cache_path','limit_req_zone','limit_conn_zone','other'].map(n=>'top_'+n),...abbottNginxDiagnosticNames().map(n=>'selected_'+n)];}
+export function classifyAbbottNginxFirstRejection(text){let first;const known=new Set(abbottNginxFirstRejectionCodes());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},null,(context,name)=>{first??=known.has(context+'_'+name)?context+'_'+name:context+'_other';});return {rejection:'none'};}catch{return first?{rejection:first}:{reason:'parser_ambiguity'};}}
 
 // Fixed checkpoint authority, not a caller-selected inventory. This proof makes
 // no subprocess, supervisor/socket connection, network request or filesystem write.

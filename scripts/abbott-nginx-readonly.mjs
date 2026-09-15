@@ -1,5 +1,5 @@
 import fs from'node:fs';import os from'node:os';import path from'node:path';
-import{diagnoseAbbottNginxText}from'./runtime-release-remote.mjs';
+import{classifyAbbottNginxFirstRejection}from'./runtime-release-remote.mjs';
 // Fixed metadata/content read only. No command, network, env or include loading.
 export function readAbbottNginxNames({io=fs,hostname=os.hostname,getuid=()=>process.getuid()}={}){
  const file='/etc/nginx/conf.d/dashboard-next.conf',max=1048576;let fd,bytes,result,reason='remote_authority';
@@ -12,7 +12,7 @@ export function readAbbottNginxNames({io=fs,hostname=os.hostname,getuid=()=>proc
   bytes=Buffer.alloc(max+1);let n=0;while(n<bytes.length){const count=io.readSync(fd,bytes,n,bytes.length-n,n);if(!Number.isSafeInteger(count)||count<0||count>bytes.length-n)fail();if(!count)break;n+=count;}
   if(n!==before.size||n>max||!stable(before,io.fstatSync(fd))||!stable(before,io.lstatSync(file)))fail();
   reason='utf8';const text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes.subarray(0,n));
-  reason='reader';result=diagnoseAbbottNginxText(text);reason='metadata';
+  reason='reader';result=classifyAbbottNginxFirstRejection(text);reason='metadata';
   if(!stable(before,io.fstatSync(fd))||!stable(before,io.lstatSync(file))||parents.some(([p,s])=>!stable(s,io.lstatSync(p)))||ancestry().length!==parents.length)fail();
  }catch{result={reason};}finally{bytes?.fill(0);if(fd!==undefined)try{io.closeSync(fd);}catch{result={reason:'cleanup'};}}
  return result;

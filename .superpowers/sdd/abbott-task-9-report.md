@@ -1,9 +1,9 @@
-# Abbott Task 9 — arbitrary-block caller operational checkpoint
+# Abbott Task 9 — first deployment-parser rejection source checkpoint
 
-Current status: DONE_WITH_CONCERNS. One approved read-only invocation at clean
-8dca55eb again returned parser_ambiguity/exit1 with verified owned cleanup.
-No directive name/partial inventory was produced. No retry or other live action
-occurred. STOP for direction; no new full host attestation is claimed.
+Current status: DONE_WITH_CONCERNS. Source-only first-rejection classifier now
+reports a fixed top-level or selected-TLS context/name code at the actual first
+deployment-parser rejection. The preceding parser_ambiguity remains historical;
+no new live read or host attestation occurred. STOP for independent review.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4780,3 +4780,61 @@ The analyzer again refused without partial names. The exact underlying structura
 cause is not identified by this enum. No supplemental remote release/neighbor/
 Nginx hash or other host inventory was run, and the result is not a full current
 host attestation. Evidence-only local commit; STOP for direction.
+
+## Source-only first deployment-parser rejection classifier
+
+Parent authorized replacing the caller's batch analysis with the exact first
+deployment-parser rejection. The shared parser now has an optional diagnostic
+observer at its existing top-level rejection and selected unsupported-node catch.
+Strict validation supplies no observer; conditions, refusal order and diagnostic
+sequences are preserved. The standalone first classifier supplies no batch
+collector: it records the first eligible fixed context/name and immediately
+propagates the original rejection without collecting child names or continuing
+to later nodes. The top-level structural nested-server-block check still applies.
+The old batch utility remains tested but is not called remotely.
+
+The only successful wire result is ABBOTT_NGINX_FIRST_REJECTION code=<enum>.
+Top codes are top_upstream, top_map, top_geo, top_split_clients, top_log_format,
+top_proxy_cache_path, top_limit_req_zone, top_limit_conn_zone and top_other.
+Selected codes are selected_ plus the unchanged fixed common-name vocabulary;
+unknown maps to selected_other. Code none means strict parser acceptance only,
+not deployment permission. Exact singular framing rejects old names lists,
+multiple codes, arbitrary names and extra fields. Existing closed reader,
+authority, metadata, syntax/TLS ambiguity, transport and cleanup refusal reasons
+remain separate. No argument, path, order index, count, value or raw error appears.
+
+TDD RED reproduced missing top/selected first classification, fixed reader result
+and caller wire rejection before implementation. A realistic upstream server
+leaf regression caught overly broad nested-authority treatment in the new
+observer; fixed diagnostic-only distinction permits top_upstream while a nested
+server block still refuses ambiguity. No strict parser acceptance changed. The
+two diagnostic source capsule hashes were refreshed; deployed/current pins and
+all runtime/deployment/SSH lifecycle settings are unchanged.
+
+Focused27/27 passed. Independent read-only review found no findings and separately
+passed27/27. Differential coverage now compares exact diagnostic sequences as
+well as acceptance against reviewed b273294: original270 plus9top-level fixtures,
+279 total, zero drift. Tests preserve source hashing, nofollow/stable metadata,
+secret-bearing inputs/errors, inert loader, canonical single-code framing,
+verified cancellation, owned PID cleanup and buffer erasure.
+
+Fresh full authority818/818 plus Abbott app/runtime and12routes/1prefix passed;
+Abbott build, root/focused typechecks, lint0errors/same10existing warnings, source
+syntax and whitespace passed. No source gates were inferred from earlier runs.
+Verification commands:
+
+```sh
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+node --check scripts/abbott-nginx-readonly.mjs
+git diff --check
+```
+
+No remote call, push, deploy, retry, smoke, capture, PDF request, Nginx edit,
+credential or other host mutation occurred. No actual production directive is
+newly identified. No supplemental host attestation is claimed. STOP for review.

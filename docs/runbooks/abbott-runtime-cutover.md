@@ -1,14 +1,14 @@
 # Abbott isolated-runtime cutover runbook
 
-### Standalone read-only Nginx name inventory — STOP for review
+### Standalone read-only Nginx first-rejection classifier — STOP for review
 
 The b273294 live attempt returned `preflight_nginx/unsupported_other` before
 mutation. Supplemental remote release/lock/neighbor checks were not performed;
 that refusal is not a new full host attestation. The following new caller is
 source-only and must be reviewed before any host invocation. The one approved
 0ec4a305 invocation returned the old ambiguous names=other/exit1; no retry ran.
-The2c655055 read returned parser_ambiguity/exit1 with verified owned cleanup.
-The follow-up arbitrary-block name collection below remains gated for review:
+The2c655055 and8dca55eb reads returned parser_ambiguity/exit1 with verified owned
+cleanup. The first-rejection follow-up below remains gated for review:
 
 ```sh
 /usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
@@ -26,26 +26,27 @@ file/descriptor and root-owned nonwritable ancestry metadata around analysis.
 It checks the fixed hostname/root identity and creates no files, runs no command,
 reads no includes/env/PM2 state, and makes no host network request. The analysis
 source contains installer definitions but the reader calls only the pure Nginx
-name diagnosis; no installer, lifecycle or deployment function executes.
+first-rejection diagnosis; no installer, lifecycle or deployment function executes.
 
-Strict deploy validation and name diagnosis use the same private tokenizer and
-TLS/visitor logic. Strict validation remains fail-fast. Batch mode records only
-existing refused directive sites in the selected dashboards TLS server and
-already-proven literal locations. Any unsupported block at those boundaries
-contributes only its external fixed enum name, or other if unknown: its contents
-are never visited and no nested names are reported. Nested server/location
-authority, malformed syntax, ambiguous shared TLS listeners and non-unsupported
-structural failures discard the entire collected result. No partial success is
-returned after such ambiguity, and no refused syntax gains
-acceptance. The fixed broad common-directive vocabulary is declared by
-`abbottNginxDiagnosticNames`; unknown names map to `other`. Names are unique and
-lexically sorted, never source order. Arguments, values, paths, offsets, counts,
-hashes, raw config or stderr never enter the result.
+Strict deploy validation and first-rejection diagnosis use the same private
+tokenizer/TLS/visitor implementation and first-failure order. The caller now
+invokes only the first-rejection mode, not batch collection. A top-level
+non-server rejection maps to top_upstream, top_map, top_geo, top_split_clients,
+top_log_format, top_proxy_cache_path, top_limit_req_zone, top_limit_conn_zone,
+or top_other. A selected-TLS unsupported node maps to selected_<fixed name>,
+using the existing fixed common vocabulary, with selected_other for unknown.
+It stops on that exact first rejection and does not collect unsupported block
+child names or continue to later directives. Structural nested-server-block
+checks still apply. A leaf server directive in upstream
+is not treated as a nested TLS server block by this name classifier. Genuine
+syntax/TLS/nested-server ambiguity remains a refusal, not a fabricated name.
+No previously refused syntax gains deployment acceptance. No args, values,
+paths, positions, counts, hashes, raw config or exception text enter output.
 
-Output is one bounded line `ABBOTT_NGINX_UNSUPPORTED names=<closed list>` with
-exit0 only after completed analysis and verified transport/evidence cleanup.
-An empty complete inventory uses `none`; a genuinely unknown directive name
-uses `other` and is no longer a refusal. Failures use only
+Output is exactly `ABBOTT_NGINX_FIRST_REJECTION code=<closed enum>` with exit0
+only after verified transport/evidence cleanup. The code none means the strict
+parser did not reject, not approval to deploy. Old batch/list frames are refused.
+Failures retain only
 `ABBOTT_NGINX_READ_REFUSED reason=<closed enum>` with exit1. The finite reasons
 are local_authority, local_source, remote_authority, source_frame, remote_import,
 reader, metadata, utf8, parser_ambiguity, transport, framing, cleanup, aborted,
@@ -53,7 +54,7 @@ timeout, and unknown. They never derive from exception text. A valid remote
 refusal is retained only after verified transport/evidence cleanup; unverified
 cleanup supersedes it with cleanup. This is diagnostic information only, not a
 deployment or Nginx validation approval. No refused line includes partial names.
-The parent accepts only canonical sorted unique allowlisted names, verified zero
+The parent accepts only a canonical single fixed code, verified zero
 SSH exit and private identity cleanup. Source/input/output buffers are zeroed.
 The existing fixed private recovery-evidence directory is exclusively owned for
 this invocation, refuses preexisting contents, and is removed after verified
