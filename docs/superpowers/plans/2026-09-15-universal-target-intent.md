@@ -163,7 +163,7 @@
 - [x] Record exact test/build/smoke evidence, final commit IDs and explicit non-deployment status in documentation.
 - [x] Commit: `git commit -m "feat(site-seo): add target intent review tables"`.
 
-Task 5 feature commit is `a46fd4bb9706b42b61ee699101b53eaae810ca75`; reviewed source head `96ab3e4f66e7899e980340fe7c7f5c256407e163` fixes the explicit enablement boundary and preserves the paginated disclosure. Full RED/GREEN, review, build, standalone-smoke and synthetic visual evidence is recorded in `.superpowers/sdd/task-5-report.md`. The documentation/profile attestation commit is reported in the final handoff because a commit cannot contain its own SHA. No production action occurred.
+Task 5 feature commit is `a46fd4bb9706b42b61ee699101b53eaae810ca75`; final reviewed source head `236db55f88aafee975f7cd8cdf102a60fb1ae8df` fixes the explicit enablement boundary, preserves the paginated disclosure, renders truthful non-ready methodology and requires an exact active publication token for ready-catalogue review requests. Full RED/GREEN, review, build, standalone-smoke and synthetic visual evidence is recorded in `.superpowers/sdd/task-5-report.md`. The documentation/profile attestation commit is reported in the final handoff because a commit cannot contain its own SHA. No production action occurred.
 
 ## Self-review
 

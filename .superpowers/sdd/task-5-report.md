@@ -2,7 +2,7 @@
 
 ## Status
 
-Task 5 is implemented and locally verified. Feature commit `a46fd4bb9706b42b61ee699101b53eaae810ca75` has the requested message `feat(site-seo): add target intent review tables`. Reviewed source head `96ab3e4f66e7899e980340fe7c7f5c256407e163` fixes the explicit enablement boundary, preserves paginated disclosure state and accepts the same flag in the build/create profile validator. Both MedRoche profile copies pin that exact reviewed source head; the documentation/profile attestation commit is reported in the final handoff because it cannot embed its own SHA.
+Task 5 is implemented and locally verified. Feature commit `a46fd4bb9706b42b61ee699101b53eaae810ca75` has the requested message `feat(site-seo): add target intent review tables`. Final reviewed source head `236db55f88aafee975f7cd8cdf102a60fb1ae8df` includes all review remediations. Both MedRoche profile copies pin that exact reviewed source head; the documentation/profile attestation commit is reported in the final handoff because it cannot embed its own SHA.
 
 No production deployment, database migration, catalogue import/publication, source API call, collector refresh, cron/scheduler edit, secret change, Telegram send or Hermes action occurred.
 
@@ -42,7 +42,7 @@ Focused final command:
 
 ```text
 node --import tsx --test apps/site-seo/tests/target-intent-panel.test.ts apps/site-seo/tests/exports.test.ts
-31 passed, 0 failed
+33 passed, 0 failed
 ```
 
 ## Final automated evidence
@@ -51,7 +51,7 @@ Run from `/Users/nafanya/ReportingDash/dashboard-next/.worktrees/medroche-medica
 
 ```text
 npm run test:site-seo
-196 TypeScript tests + 27 build/isolation tests = 223 passed, 0 failed
+198 TypeScript tests + 27 build/isolation tests = 225 passed, 0 failed
 
 npm run typecheck:site-seo
 passed
@@ -76,11 +76,11 @@ passed; isolated standalone includes /api/dashboard/[siteSlug]/intent-queries
 
 ## Standalone smoke and cleanup
 
-The final rebuilt standalone artifact ran on temporary loopback port 43159 using its packaged `site-registration.json`:
+The final rebuilt standalone artifact ran on temporary loopback port 43160 using its packaged `site-registration.json`:
 
 - `GET /api/health` → HTTP 200, `{"siteId":"site-medroche","version":"2026.09.15-1"}`.
 - `GET /dashboard/medroche` → HTTP 200 with `site-seo-login-form`, `Пароль` and `Войти`; no authenticated data read was attempted.
-- Owned Node PID 85615 was interrupted and reaped. `lsof -nP -iTCP:43159 -sTCP:LISTEN` then found no listener.
+- Owned Node PID 1209 was interrupted and reaped. `lsof -nP -iTCP:43160 -sTCP:LISTEN` then found no listener.
 
 ## Synthetic visual verification
 
@@ -107,4 +107,55 @@ Accepted: pending parent/owner review.
 Reusable learning: no accepted-work skill update is permitted before acceptance.  
 Skill action: executing-plans, strict TDD, systematic debugging, verification-before-completion, requesting-code-review and Playwright instructions were applied; no durable skill was edited.  
 Evidence: commands, counts, artifact paths, process identities and listener checks above.  
+Budget stop: none.
+
+## Root Task 5 review remediation
+
+Source commit: `236db55f88aafee975f7cd8cdf102a60fb1ae8df` (`fix(site-seo): require intent publication review token`). The separate attestation commit and exact parent relationship are reported in the final handoff.
+
+### RED
+
+The new integrated and route tests produced five focused failures:
+
+1. Both explicitly enabled `not_configured` and active-but-`unavailable` overview renders still included “Доли рассчитаны…” and “Клики — переходы…”, contradicting their unavailable values and state copy.
+2. `parseIntentQueryOptions` rejected an empty token before the handler could classify it as a missing publication, while an omitted token let a ready review response succeed.
+3. `intentPublicationMatches` accepted a missing token for ready-catalogue review navigation.
+
+After the initial implementation, the first full suite was 197/198 TypeScript tests: the remaining failure was an existing visual-shell assertion for the superseded “Классификация обновлена” wording. That contract was updated to the safe missing-or-stale message before the source commit was finalized.
+
+### GREEN
+
+- Non-ready panels now render distinct forward-looking footer copy. Only `ready` renders the calculated-share methodology and the reminder that clicks are not users.
+- The endpoint loads canonical state first. `not_configured`/`unavailable` return their existing 503 classification-unavailable response without requiring a nonexistent publication. A `ready` state requires a non-empty token exactly equal to its active publication; omitted, empty and stale tokens all return 409 with the active publication ID, while a valid token succeeds.
+- The dashboard distinguishes an ordinary overview request from review navigation. A ready review requires the same exact token and otherwise shows a neutral “Не удалось подтвердить версию классификации” state. Non-ready states and ordinary overview requests need no target-intent publication token. Every generated review pagination/download link still carries the valid active token.
+
+Evidence after the final source commit and exact profile pin:
+
+```text
+node --import tsx --test apps/site-seo/tests/target-intent-panel.test.ts apps/site-seo/tests/exports.test.ts
+33 passed, 0 failed
+
+npm run test:site-seo
+198 TypeScript tests + 27 build/isolation tests = 225 passed, 0 failed
+
+npm run typecheck:site-seo && npm run typecheck
+passed
+
+npm run build
+passed; compiled, typechecked and generated 28 pages
+
+node --import tsx scripts/site-seo-build.mjs --site medroche
+passed; isolated standalone contains the intent-query endpoint
+
+standalone smoke on 127.0.0.1:43160
+health 200; scoped login 200; PID 1209 stopped; listener closure verified
+```
+
+No production deployment, migration, import/publication, source API, collector, cron, secret, Telegram or Hermes action occurred. The unrelated modified Task 1 report and untracked generated `.next-medroche` remain uncommitted.
+
+Done: both root-review Important findings are fixed with RED/GREEN evidence and the final source pin is ready for attestation.
+Accepted: pending parent/owner review.
+Reusable learning: no accepted-work skill update is permitted before acceptance.
+Skill action: strict TDD, systematic debugging and verification-before-completion instructions were applied; no durable skill was edited.
+Evidence: source commit, focused/full tests, both builds and owned-process smoke above.
 Budget stop: none.

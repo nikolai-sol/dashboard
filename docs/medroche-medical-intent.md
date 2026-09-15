@@ -59,8 +59,8 @@ No source API, database migration, collector refresh, production deployment, sec
 
 ### Universal review-table evidence — 2026-09-15
 
-- Feature commit: `a46fd4bb9706b42b61ee699101b53eaae810ca75` (`feat(site-seo): add target intent review tables`). Reviewed source head: `96ab3e4f66e7899e980340fe7c7f5c256407e163`; both MedRoche profile copies pin this exact clean source commit.
-- `npm run test:site-seo`: 196 TypeScript tests + 27 build/isolation tests, 223 passed and zero failed.
+- Feature commit: `a46fd4bb9706b42b61ee699101b53eaae810ca75` (`feat(site-seo): add target intent review tables`). Final reviewed source head: `236db55f88aafee975f7cd8cdf102a60fb1ae8df`; both MedRoche profile copies pin this exact clean source commit.
+- `npm run test:site-seo`: 198 TypeScript tests + 27 build/isolation tests, 225 passed and zero failed.
 - `npm run typecheck:site-seo` and root `npm run typecheck`: passed.
 - Root administrator tests: 17 component/state tests + 12 protected route tests, 29 passed and zero failed.
 - Root `npm run build`: passed with 28 generated pages and the target-intent administrator routes.
@@ -68,6 +68,7 @@ No source API, database migration, collector refresh, production deployment, sec
 - Final standalone artifact smoke on `127.0.0.1:43159`: `/api/health` returned 200 with `site-medroche` and version `2026.09.15-1`; `/dashboard/medroche` returned 200 with the scoped login form. PID 85615 was stopped and the listener closure was verified.
 - Independent read-only review found no Critical issue. Its five Important findings (root JSX config regression, CSV formula injection, unreachable not-configured copy, stale publication pagination and loss of the unrelated-dashboard enablement boundary) were reproduced with failing tests and fixed before the evidence above. Both pagination consistency minors were also fixed, including preserving the paginated disclosure on page 1.
 - Final read-only re-review of the pinned source head found no remaining Critical or Important issue and verified both TS/MJS profile validators and the exact profile/registry pin.
+- Root review remediation makes calculated-share methodology conditional on `ready` and requires an exact non-empty active publication token for ready-catalogue review pagination/downloads. Omitted, empty and stale tokens fail safely; `not_configured` and `unavailable` remain renderable without a publication ID.
 - The documentation/profile attestation commit is reported in the Task 5 handoff because a commit cannot embed its own SHA.
 
 ### Historical packaged-classifier evidence — 2026-09-15
