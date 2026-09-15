@@ -1,9 +1,55 @@
-# Abbott Task 9 — fixed include route refusal evidence
+# Abbott Task 9 — fixed include refusal diagnostics checkpoint
 
-Current status: BLOCKED. One approved deploy at cleanbbc9531 returned
-preflight_nginx/include_route during initial read-only inspect, before mutation.
-Owned transport cleanup and local evidence/port absence verified. STOP, no retry.
-No new runtime record/pins or complete neighbor/Nginx perimeter attestation.
+Current source status: DONE_WITH_CONCERNS; diagnostics-only follow-up verified,
+STOP for independent review. Live deployment remains blocked at the prior
+bbc9531 initial-inspect preflight_nginx/include_route refusal, before mutation.
+No diagnostic retry, new runtime record/pins or fresh remote attestation.
+
+## Finite include inner-reason refinement — source-only TDD
+
+Base257dc2615a8c785750e1eae59557cdae02bdf5f4. The parser previously replaced
+every branded fragment failure with include_route at each containing fragment
+catch. This local change preserves only a fixed vocabulary:
+include_existing_abbott_route, include_existing_3004, include_variable_routing,
+include_regex_location, include_unsupported_location,
+include_unsupported_proxy_pass, include_unsupported_return,
+include_unsupported_add_header, include_unsupported_other and include_authority.
+The last covers forbidden server/listen/server_name/nested include nodes.
+Unclassified/lexical failures retain include_route; syntax retains include_syntax.
+
+The mapping reads only the analyzer's private rejection WeakMap, not exception
+text/properties, arguments or paths. Other unsupported names map to the one fixed
+other category. Already prefixed reasons survive parent catches, preserving the
+existing number/order of diagnostic boundary callbacks. Worker terminal output
+and hash-bound strict ACK accept these ten codes only as REFUSED paired with
+preflight_nginx. Success/compensation/wrong-stage/forged suffixes are refused;
+public formatting never leaks synthetic private strings.
+
+No acceptance/grammar, lexical guard, source/runtime pin, fixed include path,
+file permission/snapshot, transport lifecycle or mutation sequence changed.
+The standalone reader's analyzer hash was refreshed only for source attestation;
+it was not executed. Existing source/runtime control/manifest pins remain fixed.
+
+Fresh verification:
+
+- Parser RED returned include_route instead of the expected fixed detail; wire
+  RED rejected the new enums. Both became GREEN after implementation.
+-17 diagnostic fixtures in both include positions cover all ten reasons,
+  numeric Abbott alias, unknown private-name fallback, lexical and syntax cases.
+-120 differential comparisons against257dc26:0 acceptance drift and identical
+  phase sequences after mapping only the new reasons back to include_route.
+- Focused new/affected gates6/6; full npm run test:abbott-runtime app/runtime68/68,
+  authority/artifact864/864; focused build and12routes/1prefix passed.
+- Root/focused typecheck, lint0errors/10existing warnings, root build,
+  deploy-source/release-runtime tests, changed module syntax and git diff checks
+  passed. Independent read-only review303/303 passed with no findings.
+
+No live request/SSH, config/include read, push, deploy/recovery, credentials,
+browser, smoke/capture, DB/auth/fact/cron or Nginx action occurred in this
+follow-up. Local verification children exited; no temporary service was created.
+The last live refusal below remains the only current operational result. The
+actual fragment rule is still unknown until separately approved diagnostics.
+STOP for independent review before any retry or other live use.
 
 ## Approved single deploy atbbc9531 — include-route refusal
 

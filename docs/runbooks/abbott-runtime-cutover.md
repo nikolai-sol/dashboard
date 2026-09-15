@@ -1,5 +1,27 @@
 # Abbott isolated-runtime cutover runbook
 
+### Include rejection detail — source-only diagnostics, STOP for review
+
+The approved bbc9531 deploy refused during initial inspect with
+preflight_nginx/include_route. This diagnostic-only follow-up retains a closed
+inner fragment cause instead of replacing every rejection with include_route:
+include_existing_abbott_route, include_existing_3004, include_variable_routing,
+include_regex_location, include_unsupported_location,
+include_unsupported_proxy_pass, include_unsupported_return,
+include_unsupported_add_header and include_unsupported_other. Forbidden fragment
+server/listen/server_name or nested include nodes use include_authority.
+Syntax remains include_syntax; unclassified or lexical ambiguity remains
+include_route. Other unsupported directive names collapse to the fixed other
+category; no name, argument, value, path or exception field is copied to output.
+
+Nested fragment catch boundaries retain an already branded fixed reason. The
+worker and hash-bound ACK permit the ten new reasons only with REFUSED and
+preflight_nginx; forged/unlisted suffixes, wrong phases and success/compensation
+pairs refuse. Grammar, literal safety, selected authority, file snapshot, release
+pins and deployment lifecycle are unchanged. Source hash attestation is refreshed
+without invoking the reader. This source revision neither diagnoses the live
+fragment's exact rule nor authorizes a retry/read/deploy/push/Nginx action.
+
 ### Selected main routing lexical guard — source-only follow-up
 
 Before reading or splicing any include, the selected main TLS subtree now
