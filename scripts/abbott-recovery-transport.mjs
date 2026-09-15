@@ -45,7 +45,7 @@ function runFixedTransport(source,{signal,platform=real,onEvidence=()=>{}}={},st
       let startup;
       if(startupStage){
         const category=stderrOversized?'unknown':classifyStartupStderr(stderr);
-        const result=!exited||diagnostic?.stage==='local_evidence'?'cleanup_unverified':deadlineReached?'timeout':stderr.length||stderrOversized?category==='unknown'?'stderr_unknown':'stderr_known_category':badExit?'exit_nonzero':invalid||!authorized||output.toString()!==STARTUP_OUTPUTS[startupStage]?'unexpected_output':'clean';
+        const result=!exited||diagnostic?.stage==='local_evidence'?'cleanup_unverified':badExit?'exit_nonzero':deadlineReached?'timeout':stderr.length||stderrOversized?category==='unknown'?'stderr_unknown':'stderr_known_category':invalid||!authorized||output.toString()!==STARTUP_OUTPUTS[startupStage]?'unexpected_output':'clean';
         startup={stage:startupStage,result,category:result==='stderr_known_category'?category:'none'};
       }
       const match=exited&&!invalid&&(startupStage?(startup.result==='clean'?{status:'ABBOTT_RECOVERY_RESTORED',diagnostic:{stage:'complete',reason:'none'}}:null):parseRecoveryAck(output.toString()));

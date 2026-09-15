@@ -1976,3 +1976,45 @@ No speculative fix or retry, recovery, deployment, token issuance, smoke,
 capture or Nginx action followed. Public routing remains combined3001 and the
 interrupted Abbott state remains unresolved. Stop for direction with this
 sanitized evidence-only commit; no publication of the evidence commit.
+
+### Staged exit precedence correction (source/tests only)
+
+Review identified that the first matrix prioritized stderr over a failing SSH
+exit. Its three stderr_unknown results therefore do not establish connection,
+authentication or remote execution success; they may mask nonzero transport
+exits. No reclassification of those historical results is claimed and no raw
+output was recovered or inspected.
+
+TDD reproduced the defect through the real staged transport and public wrapper:
+secret-bearing stderr plus a verified nonzero exit incorrectly returned
+stderr_unknown. The minimal production change now prioritizes cleanup_unverified,
+then exit_nonzero for nonzero/signal exit, then timeout, then zero-exit stderr
+classification. Stderr on zero exit remains fatal. A reached deadline ending in
+verified zero exit remains timeout; a terminated child reports exit_nonzero.
+No numeric status, signal name, raw stderr, optional new category or authority
+change was introduced. Recovery result handling/lifecycle is unchanged.
+
+Regressions cover all three stages with known and secret-bearing unknown stderr,
+nonzero and signal exits, exact closed wrapper output, higher-priority unverified
+cleanup, deadline exit distinctions and evidence failure. The signal fixture
+emits the actual signal in the close event. RED was observed before the fix;
+GREEN passed afterward. Runbook documents precedence and the limits of the
+historical matrix evidence.
+
+Fresh gates passed:45 focused transport/probe/evidence/diagnostic tests;
+347 full authority/artifact/bootstrap/recovery tests;67 app/runtime tests;
+72 smoke/asset/capture/issuer/diagnostic tests;23 orchestrator regressions.
+Abbott build, both root and Abbott typechecks, artifact scan (2,870 files/82
+text files), trusted artifact verification, exact12-route/one-prefix validator,
+changed-module syntax and whitespace checks pass. Lint:zero errors/ten existing
+warnings. An initial workspace typecheck command referenced an absent npm
+script; the direct installed TypeScript command passed. An extra test invocation
+omitted the required tsx loader and failed module resolution; the same suite
+passed with --import tsx. Neither invocation correction required source changes.
+
+All test/build sessions exited. Local loader/tokenization children were reaped
+and absence-checked by tests; fixture resources were cleaned, and the fixed
+private evidence directory remains absent. No live SSH, staged probe, recovery,
+push, credentials, browser capture, deployment or Nginx action occurred. Host
+state was not revalidated in this source-only checkpoint. STOP for review before
+any retry; interrupted activation remains unresolved by this work.

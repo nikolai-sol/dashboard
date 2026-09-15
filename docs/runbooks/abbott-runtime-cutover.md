@@ -333,7 +333,7 @@ was restored. Probe success does not authorize or substitute for recovery.
 No recovery capsule, arbitrary source, standalone remote command or caller
 override is accepted. Do not run this probe or retry recovery before review.
 
-#### Staged startup matrix (review required; no stage executed)
+#### Staged startup matrix (diagnostic correction requires review before retry)
 
 The approved single inert probe returned remote_startup/unknown. The staged
 matrix below is implemented for separate review; these are three separate
@@ -368,9 +368,17 @@ Known category names are closed; all other results use category=none. The
 matrix never returns text, hashes, byte counts, identities or paths. Even
 recognized stderr is fatal. Standard SSH tty/known-host/locale and Node warning
 patterns are bounded and anchored; generic warning prefixes remain unknown.
+Unverified cleanup takes precedence over every other result. Once cleanup is
+verified, nonzero or signal exit takes precedence over deadline and stderr and
+returns only exit_nonzero/category=none. Stderr classification applies only to
+verified zero exit; a reached deadline with zero exit remains timeout. Neither
+exit status values nor signal names are emitted.
 Local tokenization fixtures substitute installed local binary paths only;
-they do not establish the remote binaries' behavior. No matrix stage has run
-live; stop for source review before any execution.
+they do not establish the remote binaries' behavior. The approved first matrix
+returned stderr_unknown for all three stages, but its earlier precedence could
+mask nonzero SSH exits. Those results do not prove successful connection or
+remote execution. Stop for source review before any retry; see the task report
+for the original closed results and cleanup evidence.
 
 #### Normal shadow health check (not a recovery substitute)
 
