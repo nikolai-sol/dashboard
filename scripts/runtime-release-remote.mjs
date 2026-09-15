@@ -18,12 +18,12 @@ function selectAbbottNginxTls(nodes,fail){
 }
 const ABBOTT_FIXED_NGINX_INCLUDES=Object.freeze(['/etc/nginx/snippets/coopervision-market-path.conf','/etc/nginx/snippets/reportingdash-public-coopervision-market-intelligence-c.conf']);
 function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=null,onInventory=null,resolveIncludes=null){
-    const lexical=!!(onFirstRejection||onInventory||resolveIncludes),rejected=new WeakMap(),fragmentNodes=new WeakSet(),fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
+    const lexical=true,rejected=new WeakMap(),fragmentNodes=new WeakSet(),fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
     const refuse=code=>{nginxReason(code);const error=Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');rejected.set(error,code);throw error;};
     nginxReason('syntax');
     if(!onInventory&&/abbott/i.test(text)||/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/.test(text))refuse(/abbott/i.test(text)?'existing_abbott_route':'syntax');
     const tokens=[],literalTokens=new WeakSet(),ambiguousGaps=new Set();let word='',quote=null,started=false,wordStart=0;
-    // Observer-only provenance: token values and deployment parsing stay unchanged.
+    // Preserve raw provenance before token normalization; routing cannot trust dropped escapes.
     const flush=end=>{if(started){const token={word};if(lexical){const raw=text.slice(wordStart,end),boundary=i=>i<0||i===text.length||/[ \t\r\n{};]/.test(text[i]);if(boundary(wordStart-1)&&boundary(end)&&!raw.includes('\\')&&[word,'"'+word+'"',"'"+word+"'"].includes(raw))literalTokens.add(token);}tokens.push(token);word='';started=false;}if(tokens.length>32768)fail();};
     for(let i=0;i<text.length;i++){if(!started)wordStart=i;const c=text[i];if(quote){if(c==='\\'){if(++i>=text.length)fail();word+=text[i];}else if(c===quote)quote=null;else word+=c;continue;}
       if(c==='"'||c==="'"){quote=c;started=true;continue;}if(c==='#'){flush(i);while(i<text.length&&text[i]!=='\n')i++;continue;}
@@ -59,12 +59,15 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     }
     nginxReason('tls_count');
     const targets=[selectAbbottNginxTls(nodes,fail)];
+    // Check the entire selected main subtree before any include read/splice, not
+    // only the fragments. A containing location can otherwise hide a numeric alias.
+    const routingLexemes=list=>{for(const n of list){if(['location','proxy_pass','return','add_header'].includes(n.name)&&(!literalNodes.has(n)||n.args.some(a=>/[\x00-\x1f\x7f]/.test(a))))refuse(unsupportedName(n,true));routingLexemes(n.children);}};routingLexemes(targets[0].children);
     if(resolveIncludes){const references=[];const collect=list=>{for(const n of list){if(n.name==='include')references.push(n);collect(n.children);}};collect(targets[0].children);
       if(references.length){if(references.length!==2||references.some(n=>n.block||n.args.length!==1||!literalNodes.has(n)||!ABBOTT_FIXED_NGINX_INCLUDES.includes(n.args[0]))||new Set(references.map(n=>n.args[0])).size!==2)refuse('include');
         const texts=resolveIncludes();if(!(texts instanceof Map)||texts.size!==2||ABBOTT_FIXED_NGINX_INCLUDES.some(p=>!texts.has(p)))refuse('include');const parsed=new Map();
         for(const file of ABBOTT_FIXED_NGINX_INCLUDES){const content=texts.get(file);if(typeof content!=='string'||Buffer.byteLength(content)>65536)refuse('include_syntax');if(/abbott/i.test(content))refuse('include_route');
           let fragment,literals;try{[fragment,literals]=analyzeAbbottNginxText(content,()=>{},null,null,(n,l)=>[n,l]);}catch{refuse('include_syntax');}
-          const mark=list=>{for(const n of list){if(!literals.has(n)||['include','server','listen','server_name'].includes(n.name))refuse('include_route');fragmentNodes.add(n);mark(n.children);}};mark(fragment);parsed.set(file,fragment);
+          const mark=list=>{for(const n of list){if(!literals.has(n)||n.args.some(a=>/[\x00-\x1f\x7f]/.test(a))||['include','server','listen','server_name'].includes(n.name))refuse('include_route');fragmentNodes.add(n);mark(n.children);}};mark(fragment);parsed.set(file,fragment);
         }
         const splice=list=>list.flatMap(n=>{if(n.name==='include')return parsed.get(n.args[0]);n.children=splice(n.children);return[n];});targets[0].children=splice(targets[0].children);
       }

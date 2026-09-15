@@ -1,5 +1,24 @@
 # Abbott isolated-runtime cutover runbook
 
+### Selected main routing lexical guard — source-only follow-up
+
+Before reading or splicing any include, the selected main TLS subtree now
+requires literal lexical provenance for every location, proxy_pass, return and
+add_header directive and all its tokens. Backslashes, quote concatenation,
+ambiguous token boundaries and literal ASCII controls/DEL refuse with an existing
+closed unsupported_* reason. The rule applies with or without selected includes;
+it does not interpret dropped escapes as an unrelated route. Fragment nodes also
+reject literal ASCII controls/DEL in addition to the existing lexical guard.
+
+This is an intentional narrowing of old selected-routing acceptance: even a
+benign-looking escaped route is refused because exact Nginx equivalence has not
+been proven. Plain literals and whole unescaped single/double-quoted literals
+remain supported; inactive HTTP/unrelated vhosts retain their previous behavior.
+Selected metadata directives outside this routing set are not broadly tightened.
+No include path, runtime pin, transport schema or lifecycle changes in this fix.
+The earlier no-include baseline statement is subject to this explicit lexical
+safety correction. STOP for independent review; no live command authorized.
+
 ### Fixed two-snippet perimeter support — source-only, STOP for review
 
 The deployment proof now conditionally supports only the observed selected-TLS

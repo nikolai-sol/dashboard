@@ -5,6 +5,49 @@ implemented and locally verified; STOP for independent review before any live
 read/push/deploy. Production fragment contents and modes have not been inspected.
 Historical active runtime pins and all deployment lifecycle rules are unchanged.
 
+## Containing main-location lexical bypass — source-only follow-up
+
+Base77a17d01743db79ad3aed4edc4a4079e83d7432e. Independent review found that
+fragment lexical safety did not cover the containing main-file location. The
+legacy tokenizer dropped a backslash in quoted escaped tab/CR/LF numeric aliases;
+the exact include pair beneath that location could therefore pass while actual
+Nginx routing differed. Two RED tests reproduced acceptance before implementation.
+
+The parser now retains raw provenance for validation and checks the complete
+selected main routing subtree before any snippet read/splice. Location,
+proxy_pass, return and add_header nodes require exact unescaped/unconcatenated
+literal tokens without ASCII control/DEL values. Main containing aliases fail
+before snippet reads, active/browser proof or mutation. Ambiguous selected paths
+are not normalized into unrelated paths. Fragment nodes additionally reject
+literal ASCII controls/DEL (a separate RED reproduced the previous acceptance).
+Plain and wholly quoted unescaped safe literals remain accepted; no claim is made
+that backslash syntax is equivalent, even when it looks benign. Inactive HTTP
+and unrelated vhost routing syntax remains unchanged. No source/release/control/
+manifest pin, include authority, process lifecycle or wire-schema change.
+
+Fresh local verification:
+
+- Exact main containing three numeric-alias reproductions and broader selected
+  routing tests: RED missing expected exception, then GREEN.
+- Escape matrix:66 main/fragment combinations plus4 literal control values.
+  Private synthetic strings never occur in diagnostics.
+- New differential vs77a17d0:8 documented selected-routing acceptance narrowings;
+  27 inactive/whole-quoted cases unchanged. Existing baseline and fixed-pair
+  differential tests still pass; no new acceptance expansion.
+- Parser+proof focused289/289; npm run test:abbott-runtime app/runtime68/68,
+  authority/artifact860/860, focused build and12 routes/1prefix passed.
+- Root and focused typecheck, root build, lint0errors/10existing warnings,
+  deploy-source/release-runtime gates, syntax and diff checks passed.
+- Read-only reviewer independently passed305/305 parser/reader/proof tests and
+  reported no remaining findings in the scoped main-routing lexical fix.
+
+The previous fragment-only review was insufficient for this containing-main
+case; this evidence supersedes its completeness claim. Production snippet
+contents/modes remain unverified. No remote read/SSH, push, deploy, credentials,
+smoke/capture, DB/auth/fact/cron or Nginx action occurred. Local verification
+subprocesses exited; no browser, forward or temporary service was created.
+STOP for independent re-review before any live use.
+
 ## Fixed two-include perimeter — source-only TDD checkpoint
 
 Base:53c6b656ee5ac8e1d8a0e03c664277831074973c. Implemented only the observed
