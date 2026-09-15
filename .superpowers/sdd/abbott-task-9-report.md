@@ -1,9 +1,9 @@
-# Abbott Task 9 — unsupported Nginx name diagnostics source checkpoint
+# Abbott Task 9 — approved diagnostic stopped at unsupported_other
 
-Current status: DONE_WITH_CONCERNS. Finite unsupported-directive name diagnostics
-are implemented locally and await review. Approved ae5634f remains the latest
-published/live attempt, refused before mutation. No live read, retry, pin update,
-smoke, capture or Nginx change followed.
+Current status: BLOCKED. Approved b273294 was published and one diagnostic deploy
+returned preflight_nginx/unsupported_other before mutation. Owned cleanup verified.
+No retry, pin update, smoke, capture or Nginx action followed. Supplemental remote
+state checks were not completed; no fresh full perimeter attestation is claimed.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4468,3 +4468,44 @@ credential/browser/forward, deploy/recovery, PDF/smoke/capture, DB/auth/fact/
 collector/cron, neighbor or Nginx action occurred. Historical deployed6f09982/8c79
 and predecessor f80607f/6cd2 remain historical evidence only. Route-only rollback
 remains3001. STOP for separate source review; no automatic diagnostic execution.
+
+## Approved operational diagnostic at b273294 — unsupported_other
+
+The exact clean HEAD was
+`b27329424965540b8b6338d9dff682078db5d55f`. Ordinary non-force fast-forward pushes
+updated only `refs/heads/codex/abbott-runtime-isolation` and
+`refs/heads/release/abbott` fromae5634f. An isolated no-system/global-config Git
+lookup outside every repository verified both literal remote refs at that SHA;
+its owned empty temporary directory was removed. Parent approval included its
+479/479 review tests and differential parser219/219 with zero acceptance drift;
+these are received review evidence, not tests rerun in this operational turn.
+
+Exactly one command ran from the clean active isolated feature worktree:
+`/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott`.
+It exited1 with the expected closed preflight refusal:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=unsupported_other`
+
+The fallback means the rejecting name/context was outside the finite selected-TLS
+diagnostic vocabulary; it does not identify a specific directive or establish a
+config change. No raw config, name, arguments, paths or values were output.
+The initial read-only inspect failed before account subprocesses, lock creation,
+candidate preparation or PM2 calls. This invocation therefore did not create an
+activation journal/lock or mutate runtime files/processes. Existing remote lock/
+journal absence, current release/control/manifest and complete neighbor/Nginx
+unchanged comparison were not independently re-read: the gate stops before that
+full proof. The supplemental checks requested for closure remain unperformed,
+not silently assumed passed. No new unreviewed verifier or ancient neighbor pins
+were used to manufacture a fresh attestation.
+
+The accepted REFUSED proves exact digest/status-paired terminal ACK, owned SSH
+PID/start capture, observed/verified exit and private identity-evidence cleanup.
+Session source/payload buffers were zeroed. The local deploy command and isolated
+Git lookup exited. Local-only checks confirmed deploy/recovery evidence absent
+and no3001/3004 listeners. No credential, browser or forwarding session existed.
+
+No additional live read, retry, source fix, pin update, recovery, PDF request,
+smoke/capture, DB/auth/fact/collector/cron, neighbor mutation or Nginx edit/reload
+followed. Historical active6f09982/8c79 and predecessor f80607f/6cd2 remain report
+history only. Route-only rollback remains3001; cutover did not occur. BLOCKED:
+STOP for direction at unsupported_other and the stated supplemental-proof gap.
