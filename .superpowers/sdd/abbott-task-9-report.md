@@ -751,3 +751,63 @@ push, deploy or Nginx action occurred in this correction turn. No production
 state was re-read or mutated. Prior live visual capture remains failed; additional
 live smoke remains unexecuted. Public routing stays at the previously recorded
 port 3001 state; this local checkpoint does not claim new production evidence.
+
+### Approved smoke operational attempt — BLOCKED, 2026-09-15
+
+After dedicated approval, the clean reviewed commit
+`af33ac7c55a7a21d4388e78216b57ade2d4b3574` was ordinary fast-forward pushed to only
+`refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`.
+Both literal remote refs were then verified equal to that SHA through isolated
+Git configuration outside the worktree. Neither push used force. This followed
+the fresh passing local gate evidence recorded in the preceding checkpoint.
+No app redeploy was performed: the approved smoke attests the existing `f80607f`
+release/manifest, and these changes affect only verification tooling/evidence.
+
+The only credential-bearing command executed was the approved
+`node scripts/verify-abbott-shadow.mjs smoke`. It opened owned forward PID 15106,
+start `Tue Sep 15 02:57:29 2026`, under orchestrator PID 15098 with the same start
+time. It did not return a smoke result. Read-only source inspection found an ESM
+evaluation cycle: the orchestrator's top-level await waits for its smoke consumer
+to dynamically import `smoke-abbott-runtime.mjs`; that module statically imports
+`captureBoundedChild` back from the still-evaluating orchestrator. The smoke body
+and its eight-minute timeout cannot start. The abort path also waits for the
+pending import, so its normal finally/cleanup cannot finish while the SSH handle
+remains open. This is a local transport startup failure, not a data/PDF/privacy/
+asset mismatch, and no smoke acceptance check or report is claimed.
+
+Bounded ownership-checked cleanup sent SIGTERM first to PID 15098. When the
+pending import did not settle, SIGTERM closed only its exact owned SSH PID 15106.
+Node then exited with status 13 and an unsettled-top-level-await diagnostic at
+the orchestrator entrypoint, independently corroborating the cycle. No SIGKILL
+was needed. Both PIDs subsequently returned ESRCH in an independent check, and
+both local loopback forwarding ports were confirmed free. Local snapshots showed
+only the orchestrator and its forward after issuance; no local browser or PDF
+parser child was launched. There are zero smoke output directories.
+
+Normal buffer-zeroing/finally attestation was not reached and is explicitly not
+claimed. Credential/attestation bytes remained confined to pipes and the now-exited
+processes' memory; no credential file, token-bearing output, raw response, or
+report was written. No issuer/consumer was invoked standalone and no retry ran.
+
+Read-only preflight and post-cleanup checks matched host/boot identity and all
+recorded PM2 pid-file IDs, kernel PIDs/start times/cwds, UID/GID sets, release
+pointers and available source stamps:
+
+| Runtime | PM2 ID / PID | Kernel start | Source/release identity unchanged |
+| --- | --- | --- | --- |
+| dashboard-next | 1 / 3722244 | 122353749 | `8f389a28df1c4b741ec33b7538f0354b74f5a40e`, `/var/www/dashboard` |
+| dashboard-zaruku | 2 / 791065 | 131477500 | `af1948c8b9a0f70d8696afb9c8abc254408a5daa`, `/var/www/dashboard-zaruku` |
+| dashboard-medroche | 4 / 1870897 | 139126198 | immutable `13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone` |
+| dashboard-abbott | 5 / 542693 | 160900613 | `f80607fbc8a693aa2c720b0976938e88732cdf1a`, `/var/www/dashboard-abbott` |
+
+Nginx remained a regular file with exact SHA-256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`
+before and after. No Nginx backup, edit, validation/reload, cutover or route change
+occurred. Route rollback target remains the combined runtime on port 3001.
+No neighbor restart/release, DB/auth/admin mutation, collector/cron operation or
+credential rotation occurred. The prior visual gate remains unresolved. Per the
+failed-smoke stop condition, no visual diagnostic change was implemented.
+
+STOP: the local ESM entrypoint cycle and bounded cancellation must receive a
+tested reviewed fix before another live attempt. This evidence-only update is
+local and unpushed.
