@@ -14,6 +14,43 @@ const registration: SiteRegistration = { profile, bindings: [{ bindingId: "gsc-f
 const period: Period = { kind: "iso_week", key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" };
 const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
 
+test("MedRoche intent requests exact weekly GSC queries while preserving the independent monthly SEO view", async () => {
+  const queries: CanonicalReadQuery[] = [];
+  const model = await loadDashboardReadModel({
+    registration: { ...registration, profile: { ...profile, seoRulesVersion: "medroche-medical-intent-v1" } },
+    claim: { dashboardId: 42, siteId: "site-med" }, selection, publicationId: "publication-7", filters: { country: "all" },
+    execute: async (query) => {
+      queries.push(query);
+      const meta = { sourceKey: "google_search_console" as const, period: query.period, state: "partial" as const,
+        collectionMode: "manual" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
+      return { meta, summary: null, daily: [], indexing: meta, dimensions: [
+        { dimension: "query" as const, value: "бевацизумаб", meta, metrics: { impressions: query.period.kind === "iso_week" ? 25 : 1000, clicks: 2, ctrPct: null, averagePosition: null } },
+      ] };
+    },
+  });
+  assert.deepEqual(queries.map(query => query.period.key), ["2026-01", "2026-W01"]);
+  assert.equal(model.gsc.dimensions[0].metrics.impressions, 1000);
+  assert.equal(model.intent?.medical.impressions, 25);
+  assert.equal(model.intent?.period.key, "2026-W01");
+  assert.equal(model.intent?.sources[1].included, false);
+  assert.ok(queries.every(query => query.publicationId === "publication-7" && query.scope.siteId === "site-med" && query.filters.country === "all"));
+});
+
+test("MedRoche reuses exact-week GSC reads and still renders unavailable intent without a source binding", async () => {
+  const scoped = { ...registration, profile: { ...profile, seoRulesVersion: "medroche-medical-intent-v1" } };
+  let reads = 0;
+  const model = await loadDashboardReadModel({ registration: scoped, claim: { dashboardId: 42, siteId: "site-med" },
+    selection: { ...selection, gsc: selection.traffic.primary }, publicationId: null, filters: {}, execute: async query => {
+      reads++;
+      const meta = { sourceKey: "google_search_console" as const, period: query.period, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+      return { meta, summary: null, dimensions: [], daily: [], indexing: meta };
+    } });
+  assert.equal(reads, 1);
+  assert.equal(model.intent?.medical.impressions, null);
+  const missing = await loadDashboardReadModel({ registration: { ...scoped, bindings: [] }, claim: { dashboardId: 42, siteId: "site-med" }, selection, publicationId: null, filters: {}, execute: async () => { throw new Error("must not query missing scope"); } });
+  assert.equal(missing.intent?.noise.impressions, null);
+});
+
 test("sends the complete server-resolved scope to the canonical reader", async () => {
   const queries: CanonicalReadQuery[] = [];
   const model = await loadDashboardReadModel({ registration, claim: { dashboardId: 42, siteId: "site-med" }, selection, publicationId: "publication-7", filters: { country: "RU" }, execute: async (query) => {
@@ -27,6 +64,18 @@ test("sends the complete server-resolved scope to the canonical reader", async (
   assert.equal(queries[0]?.publicationId, "publication-7");
   assert.deepEqual(queries[0]?.filters, { country: "RU" });
   assert.equal(model.gsc.meta.state, "complete_empty");
+});
+
+test("MedRoche preserves Webmaster failure without a fact payload in intent", async () => {
+  const scoped: SiteRegistration = {
+    profile: { ...profile, seoRulesVersion: "medroche-medical-intent-v1", sources: [{ sourceKey: "yandex_webmaster", mode: "automated", bindingId: "webmaster", importCadence: [] }] },
+    bindings: [{ ...registration.bindings[0], sourceKey: "yandex_webmaster", bindingId: "webmaster" }],
+  };
+  const model = await loadDashboardReadModel({ registration: scoped, claim: { dashboardId: 42, siteId: "site-med" }, selection, publicationId: null, filters: {},
+    execute: async query => ({ sourceKey: query.scope.sourceKey, period: query.period, state: "failed", collectionMode: "automated", completeness: "unknown", importId: null, exportedAt: null, loadedAt: null, freshness: "unknown", latestAttempt: "failed" }),
+  });
+  assert.equal(model.intent?.sources[1].reason, "failed");
+  assert.equal(model.intent?.sources[1].meta?.latestAttempt, "failed");
 });
 
 test("reports a missing source instead of querying an invented account", async () => {

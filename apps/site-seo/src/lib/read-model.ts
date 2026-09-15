@@ -1,10 +1,12 @@
 import type { DatasetMeta, Period, SiteRegistration, SourceKey } from "@reportingdash/site-seo-contract";
 import { type AliceCanonicalData, type AvailableMetrikaWeeksReadExecutor, type CanonicalDatasetData, type CanonicalReadExecutor, type MetrikaCanonicalData, type SeoOsCanonicalData, type WebmasterCanonicalData, type WordstatCanonicalData } from "./db.ts";
 import { loadGscView } from "./gsc.ts";
+import { buildMedicalIntent, MEDICAL_INTENT_VERSION, sameIntentPeriod, type MedicalIntentView } from "./medical-intent.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 import { MissingSourceScopeError, resolveSourceScope, type SiteScopeClaim } from "./scope.ts";
 
 export type DashboardReadModel = Readonly<{
+  intent?: MedicalIntentView;
   gsc: ReturnType<typeof loadGscView>;
   indexing: DatasetMeta;
   datasets: Readonly<Partial<Record<SourceKey, DatasetMeta>>>;
@@ -63,6 +65,8 @@ export async function loadDashboardReadModel(input: Readonly<{
   const missingGsc = missingMeta();
   let gsc = { meta: missingGsc, summary: null, daily: [], dimensions: [], dimensionMeta: {} } as ReturnType<typeof loadGscView>;
   let indexing = missingGsc;
+  const useMedicalIntent = input.registration.profile.seoRulesVersion === MEDICAL_INTENT_VERSION;
+  let weeklyGsc = gsc;
   const gscSource = input.registration.profile.sources.find((source) => source.sourceKey === "google_search_console");
   if (gscSource && gscSource.mode !== "disabled") {
     try {
@@ -70,6 +74,11 @@ export async function loadDashboardReadModel(input: Readonly<{
       const rows = await input.execute({ name: "gsc", scope, period: input.selection.gsc, publicationId: input.publicationId, filters: input.filters }) as import("./gsc.ts").GscReadRows;
       gsc = loadGscView(rows, input.selection.gsc);
       indexing = rows.indexing;
+      if (useMedicalIntent) {
+        weeklyGsc = sameIntentPeriod(input.selection.gsc, input.selection.traffic.primary)
+          ? gsc
+          : loadGscView(await input.execute({ name: "gsc", scope, period: input.selection.traffic.primary, publicationId: input.publicationId, filters: input.filters }) as import("./gsc.ts").GscReadRows, input.selection.traffic.primary);
+      }
     } catch (error) {
       if (!(error instanceof MissingSourceScopeError)) throw error;
     }
@@ -106,5 +115,8 @@ export async function loadDashboardReadModel(input: Readonly<{
       datasets[source.sourceKey] = missingMetaFor(source.sourceKey, source.mode === "manual" ? "manual" : "automated");
     }
   }
-  return { gsc, indexing, datasets, metrika, webmaster, wordstat, alice, seoOs, trafficComparison };
+  return {
+    gsc, indexing, datasets, metrika, webmaster, wordstat, alice, seoOs, trafficComparison,
+    ...(useMedicalIntent ? { intent: buildMedicalIntent({ period: input.selection.traffic.primary, gsc: weeklyGsc, webmaster, webmasterMeta: datasets.yandex_webmaster }) } : {}),
+  };
 }

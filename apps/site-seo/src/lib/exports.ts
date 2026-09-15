@@ -113,7 +113,7 @@ function buildSeoOsExportRows(input: Readonly<{ period: Period; data: SeoOsCanon
 export function buildDashboardExportRows(input: Readonly<{
   profile: Pick<SiteProfile, "sources">;
   selection: PeriodSelection;
-  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "metrika" | "webmaster" | "wordstat" | "alice" | "seoOs" | "trafficComparison">>;
+  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "intent" | "metrika" | "webmaster" | "wordstat" | "alice" | "seoOs" | "trafficComparison">>;
 }>): ExportRow[] {
   const gscEnabled = input.profile.sources.some((source) => source.sourceKey === "google_search_console" && source.mode !== "disabled");
   const rows: ExportRow[] = gscEnabled
@@ -134,6 +134,31 @@ export function buildDashboardExportRows(input: Readonly<{
     }
   }
   const comparison = input.selection.traffic.comparison;
+  const intent = input.model.intent;
+  if (intent) {
+    rows.push(
+      { field: "Медицинский интент", value: `${intent.period.from} — ${intent.period.to}` },
+      { field: "Правила интента", value: intent.version },
+      { field: "SHA-256 экспертного ядра", value: intent.sourceSha256 },
+      { field: "База долей", value: "Показы доступных запросов Google + Яндекс; клики не являются уникальными пользователями" },
+    );
+    for (const source of intent.sources) rows.push({
+      field: `Интент · ${source.source}`,
+      value: `${source.included ? "в расчёте" : "исключён"}; ${source.reason}; ${source.meta?.state ?? "missing"}; completeness ${source.meta?.completeness ?? "unknown"}; import ${source.meta?.importId ?? "нет"}; latestAttempt ${source.meta?.latestAttempt ?? "none"}`,
+    });
+    for (const [key, label] of [["noise", "Шум"], ["medical", "Мед. интент"]] as const) {
+      const card = intent[key];
+      rows.push(
+        { field: `${label} · показы`, value: card.impressions === null ? "нет данных" : String(card.impressions) },
+        { field: `${label} · клики`, value: card.clicks === null ? "нет данных" : String(card.clicks) },
+        { field: `${label} · доля показов, %`, value: card.sharePct === null ? "нет данных" : String(card.sharePct) },
+      );
+    }
+    for (const query of intent.queries) rows.push({
+      field: `Интент · ${query.source} · ${query.query}`,
+      value: `${query.category}; ${query.reason}; группа ${query.group ?? "вне ядра"}; показы ${query.metrics.impressions}; клики ${query.metrics.clicks}`,
+    });
+  }
   if (comparison) {
     rows.push({ field: "Сравнение", value: comparison.key });
     const metrika = input.model.trafficComparison?.yandex_metrika;

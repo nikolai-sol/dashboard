@@ -1397,3 +1397,59 @@ body {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Accepted MedRoche overview. Generic site profiles retain the original layout. */
+.site-seo-overview-grid[data-medical-intent="true"] {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: auto auto auto;
+  gap: 18px;
+}
+[data-medical-intent="true"] [data-panel-id="overview.north_star"] { grid-column: span 7; }
+[data-medical-intent="true"] [data-panel-id="overview.traffic_health"] { grid-column: span 5; }
+[data-medical-intent="true"] [data-panel-id="overview.channels"],
+[data-medical-intent="true"] [data-panel-id="overview.search_engines"] { grid-column: span 6; }
+[data-medical-intent="true"] [data-panel-id="overview.organic_search"] { grid-column: 1 / -1; }
+[data-medical-intent="true"] .site-seo-overview-panel-header { min-height: 72px; }
+[data-medical-intent="true"] .site-seo-overview-panel-header h2 { line-height: 1.35; }
+.site-seo-intent-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.site-seo-intent-card { border: 1px solid #e2e8f0; border-radius: 9px; padding: 14px 16px; background: #fff; min-width: 0; }
+.site-seo-intent-label { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: #475569; font-weight: 600; }
+.site-seo-intent-label > span { color: #64748b; }
+.site-seo-intent-value { font: 38px Georgia, serif; letter-spacing: -1px; color: #172033; margin-top: 9px; overflow-wrap: anywhere; }
+.site-seo-intent-card[data-category="medical"] .site-seo-intent-value,
+.site-seo-intent-card[data-category="medical"] .site-seo-intent-label > span { color: #0f766e; }
+.site-seo-intent-caption { font-size: 11px; color: #64748b; margin-top: 2px; }
+.site-seo-intent-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; border-top: 1px solid #f1f5f9; padding-top: 12px; margin-top: 14px; }
+.site-seo-intent-facts b { display: block; font-size: 16px; color: #334155; font-weight: 600; overflow-wrap: anywhere; }
+.site-seo-intent-facts span { display: block; font-size: 11px; color: #64748b; margin-top: 3px; }
+.site-seo-intent-coverage { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: #64748b; margin-top: 12px; }
+.site-seo-intent-coverage [data-included="false"] { color: #92400e; }
+.site-seo-intent-unavailable { font-size: 12px; color: #64748b; margin: 10px 0 0; }
+.site-seo-intent-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: 10px; color: #64748b; margin-top: 10px; }
+[data-medical-intent="true"] .site-seo-health-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+[data-medical-intent="true"] .site-seo-health-kpi { grid-column: span 2; border: 1px solid #e2e8f0; border-radius: 9px; padding: 13px 10px; min-height: 86px; gap: 6px; align-content: center; background: #fff; }
+[data-medical-intent="true"] .site-seo-health-kpi:nth-child(-n+2) { grid-column: span 3; }
+[data-medical-intent="true"] .site-seo-health-kpi > span { font-size: 11px; }
+[data-medical-intent="true"] .site-seo-health-kpi strong { font-size: 26px; }
+@media (max-width: 1150px) {
+  [data-medical-intent="true"] [data-panel-id="overview.north_star"],
+  [data-medical-intent="true"] [data-panel-id="overview.traffic_health"] { grid-column: 1 / -1; }
+  [data-medical-intent="true"] .site-seo-health-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  [data-medical-intent="true"] .site-seo-health-kpi,
+  [data-medical-intent="true"] .site-seo-health-kpi:nth-child(-n+2) { grid-column: span 1; }
+}
+@media (min-width: 701px) and (max-width: 1150px) {
+  [data-medical-intent="true"] .site-seo-health-kpi strong { font-size: 20px; }
+  [data-medical-intent="true"] .site-seo-health-kpi { padding: 12px 6px; }
+  [data-medical-intent="true"] .site-seo-health-kpi > span { font-size: 10px; }
+}
+@media (max-width: 700px) {
+  [data-medical-intent="true"] [data-panel-id="overview.channels"],
+  [data-medical-intent="true"] [data-panel-id="overview.search_engines"] { grid-column: 1 / -1; }
+  [data-medical-intent="true"] .site-seo-health-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  [data-medical-intent="true"] .site-seo-overview-panel-header { min-height: unset; }
+  .site-seo-intent-card { padding: 12px; }
+  .site-seo-intent-value { font-size: 32px; }
+  .site-seo-intent-facts { grid-template-columns: minmax(0, 1fr); }
+  .site-seo-intent-label { font-size: 12px; }
+}

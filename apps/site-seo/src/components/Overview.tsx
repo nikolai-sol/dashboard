@@ -2,6 +2,7 @@ import type { DatasetMeta } from "@reportingdash/site-seo-contract";
 import type { ReactNode } from "react";
 import type { MetrikaBreakdownRow } from "../lib/db.ts";
 import type { DashboardReadModel } from "../lib/read-model.ts";
+import { MedicalIntentPanel } from "./MedicalIntentPanel.tsx";
 
 type SourceState = DatasetMeta["state"];
 const number = new Intl.NumberFormat("ru-RU");
@@ -271,24 +272,24 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
   const searchEnginesState = hasSearchEngineRows ? metrikaState : metrikaState === "complete_empty" ? "complete_empty" : "missing";
 
   return (
-    <div id={id} className="site-seo-overview-grid">
+    <div id={id} className="site-seo-overview-grid" data-medical-intent={model.intent ? "true" : undefined}>
       <OverviewSlot id="north_star">
-        <section className="site-seo-panel site-seo-goal-panel">
+        {model.intent ? <MedicalIntentPanel intent={model.intent} /> : <section className="site-seo-panel site-seo-goal-panel">
           <h2>Цель: рост целевого органического трафика</h2>
           <div className="site-seo-goal-kpis">
             {showMetrika ? <GoalKpi label="Поисковые визиты" metric={model.metrika?.summary?.visits} detail={sourceDetail("Метрика · Россия", metrikaMeta)} /> : null}
             {showGsc ? <GoalKpi label="Google" metric={model.gsc.summary?.clicks} detail={sourceDetail("клики · GSC", gscMeta)} /> : null}
             {showWebmaster ? <GoalKpi label="Яндекс" metric={model.webmaster?.summary?.clicks} detail={sourceDetail("клики · Вебмастер", webmasterMeta)} /> : null}
           </div>
-        </section>
+        </section>}
       </OverviewSlot>
 
       {showMetrika ? <>
       <OverviewSlot id="traffic_health">
-        <OverviewPanel title="Здоровье трафика" subtitle={showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={trafficState} statusText={!showMetrika ? "источник отключён" : trafficHealth ? undefined : stateCopy(trafficState)}>
+        <OverviewPanel title="Здоровье трафика" subtitle={model.intent ? sourceDetail("Весь трафик", trafficMeta) : showMetrika ? "Весь трафик" : "Источник отключён"} source="Метрика" state={trafficState} statusText={!showMetrika ? "источник отключён" : trafficHealth ? undefined : stateCopy(trafficState)}>
           <div className="site-seo-health-grid">
-            {showMetrika ? <HealthKpi label="Визиты" metric={value(trafficHealth?.visits)} detail={sourceDetail("весь трафик", trafficMeta)} /> : null}
-            {showMetrika ? <HealthKpi label="Просмотры" metric={value(trafficHealth?.pageviews)} detail={sourceDetail("весь трафик", trafficMeta)} /> : null}
+            {showMetrika ? <HealthKpi label="Визиты" metric={value(trafficHealth?.visits)} detail={model.intent ? undefined : sourceDetail("весь трафик", trafficMeta)} /> : null}
+            {showMetrika ? <HealthKpi label="Просмотры" metric={value(trafficHealth?.pageviews)} detail={model.intent ? undefined : sourceDetail("весь трафик", trafficMeta)} /> : null}
             {showMetrika ? <HealthKpi label="Отказы" metric={percent(trafficHealth?.bounceRate)} /> : null}
             {showMetrika ? <HealthKpi label="Ср. время" metric={duration(trafficHealth?.avgVisitDurationSeconds)} /> : null}
             {showMetrika ? <HealthKpi label="Глубина" metric={decimal(trafficHealth?.pageDepth)} /> : null}
