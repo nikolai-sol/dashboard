@@ -18,7 +18,7 @@ function fixture(){
   files.set(p+'/stat',pid+' (node) '+['S',...Array(18).fill('0'),start].join(' '));
   files.set(p+'/status',`Uid:\t${[uid,uid,uid,uid].join('\t')}\nGid:\t${[gid,gid,gid,gid].join('\t')}\n`);
   files.set(p+'/cmdline','next-server (v16.1.6)\0\0');links.set(p+'/cwd',cwd);links.set(p+'/exe','/usr/bin/node');links.set(p+'/fd/10',`socket:[${port}]`);
-  files.set(p+'/net/tcp',`sl local_address rem_address st\n0: 0100007F:${port.toString(16).toUpperCase()} 00000000:0000 0A 0 0 0 ${uid} 0 ${port}\n`);files.set(p+'/net/tcp6','sl local_address rem_address st\n');
+  files.set(p+'/net/tcp',`  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 0100007F:${port.toString(16).toUpperCase().padStart(4,'0')} 00000000:0000 0A 00000000:00000000 00:00000000 00000000 ${uid} 0 ${port} 1 0000000000000000 100 0 0 10 0\n`);files.set(p+'/net/tcp6','  sl  local_address remote_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n');
  }
  const metadata=new Map(),fds=new Map(),buffers=[],opened=[],calls=[];let serial=1;
  function stat(p){const file=files.has(p),link=links.has(p),pid=Number(/^\/proc\/(\d+)/.exec(p)?.[1]),[uid,gid]=owners.get(pid)??[0,0],net=p.includes('/net');return{dev:1,ino:2,size:file?Buffer.byteLength(files.get(p)):0,uid:net?0:uid,gid:net?0:gid,mode:link?0o120777:file?0o100600:0o40755,nlink:1,mtimeMs:1,ctimeMs:1,isFile:()=>file,isDirectory:()=>!file&&!link,isSymbolicLink:()=>link,...metadata.get(p)};}
@@ -31,6 +31,17 @@ function fixture(){
 }
 test('fixed preflight uses only filesystem/kernel reads and checks exact existing Abbott plus protected neighbors',async()=>{
  const m=await api();assert.equal(typeof m.createAbbottDeploymentProof,'function');const f=fixture(),p=m.createAbbottDeploymentProof(f.options);try{p.preflight();p.perimeter();}catch{assert.fail(JSON.stringify(f.opened.slice(-5)));}assert.deepEqual(f.calls,['active','browser']);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(x=>x===0)));
+});
+
+test('Linux four-digit ports3001-3004 detect IPv6 listeners and reject malformed widths or case',async()=>{
+ const m=await api();
+ for(const index of [0,1,2,3])for(const mode of ['ipv6','short','long','lower','malformed_extra']){
+  const f=fixture(),[pid,,,,,port]=f.processes[index],p='/proc/'+pid,hex=port.toString(16).toUpperCase().padStart(4,'0');
+  const row=f.files.get(p+'/net/tcp').split('\n')[1];
+  if(mode==='ipv6')f.files.set(p+'/net/tcp6',f.files.get(p+'/net/tcp6')+row.replace('0100007F:','00000000000000000000000001000000:').replace('00000000:0000','00000000000000000000000000000000:0000')+'\n');
+  else {const wrong=mode==='long'?'0'+hex:mode==='lower'?hex.toLowerCase():hex.slice(1);f.files.set(p+'/net/tcp',mode==='malformed_extra'?f.files.get(p+'/net/tcp')+row.replace(hex,wrong)+'\n':f.files.get(p+'/net/tcp').replace(hex,wrong));}
+  assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},`${port}/${mode}`);
+ }
 });
 test('fixed proof refuses source, receipt, nginx, kernel, listener, binary and browser drift without child calls',async()=>{
  const m=await api();assert.equal(typeof m.createAbbottDeploymentProof,'function');

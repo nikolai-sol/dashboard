@@ -53,11 +53,13 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     const directory=proc+'/fd',a=io.lstatSync(directory);if(!a.isDirectory()||a.isSymbolicLink()||a.uid!==uid||a.gid!==gid||io.realpathSync(directory)!==directory)fail();
     const names=io.readdirSync(directory);if(names.length>4096||names.some(n=>!/^\d{1,10}$/.test(n)))fail();const sockets=new Set();
     for(const name of names){const file=directory+'/'+name,s=io.lstatSync(file);if(!s.isSymbolicLink()||s.uid!==uid||s.gid!==gid)fail();const target=io.readlinkSync(file);if(!stable(s,io.lstatSync(file)))fail();const m=/^socket:\[([1-9][0-9]*)\]$/.exec(target);if(m)sockets.add(m[1]);}
+    const portHex=port.toString(16).toUpperCase().padStart(4,'0');
     const listeners=[];for(const table of ['tcp','tcp6']){
       const lines=read(proc+'/net/'+table,2*1024*1024,{proc:true,ancestorUid:uid,ancestorGid:gid}).trim().split('\n');
-      for(const line of lines.slice(1)){const v=line.trim().split(/\s+/);if(v[3]==='0A'&&v[1]?.split(':')[1]===port.toString(16).toUpperCase()){if(v[7]!==String(uid))fail();listeners.push([table,v[1],v[9]]);}}
+      const address=new RegExp('^[0-9A-F]{'+(table==='tcp'?8:32)+'}:[0-9A-F]{4}$');
+      for(const line of lines.slice(1)){const v=line.trim().split(/\s+/);if(v.length<10||!address.test(v[1])||!address.test(v[2])||! /^[0-9A-F]{2}$/.test(v[3])||! /^\d+$/.test(v[7])||! /^\d+$/.test(v[9]))fail();if(v[3]==='0A'&&v[1].split(':')[1]===portHex){if(v[7]!==String(uid))fail();listeners.push([table,v[1],v[9]]);}}
     }
-    if(listeners.length!==1||listeners[0][0]!=='tcp'||listeners[0][1]!=='0100007F:'+port.toString(16).toUpperCase()||!sockets.has(listeners[0][2]))fail();
+    if(listeners.length!==1||listeners[0][0]!=='tcp'||listeners[0][1]!=='0100007F:'+portHex||!sockets.has(listeners[0][2]))fail();
     identity();link(proc+'/exe',executable,uid,gid);if(!stable(binary,io.lstatSync(executable))||!stable(boundary,io.lstatSync(proc)))fail();
   }
   function perimeter(){
@@ -611,6 +613,7 @@ async function stopRegistration(registration, proof, platform, account, guard, b
   guard();
   validateRuntimeRegistration(registration, account);
   const active = platform.registration(registration.pmId);
+  if(beforeStop&&(!active||active.status!=='online'||active.pid!==proof?.pid))fail('Predecessor disappeared before stop');
   if (active !== null) {
     if (!isDeepStrictEqual(active.registration, registration)) fail('PM2 registration ownership changed; no stop');
     if (Number.isSafeInteger(active.pid) && active.pid > 0) {
@@ -703,7 +706,7 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     // exactly owned candidate serving. Process identity remains mandatory.
     lockProof();
     await stopRegistration(registration,proof,platform,account,lockProof,checkPerimeter?()=>{
-      platform.assertDeploymentPerimeter();mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';
+      platform.assertDeploymentPerimeter();provePredecessor();
     }:undefined);
     if(proof)platform.exited(proof);
     const stopped=platform.registration(registration.pmId);
@@ -736,11 +739,23 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
       if(!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Predecessor process identity changed');
     }else{absent(APP);await noRegistration();}
   };
-  await before();await checkpoint();journal('prepared');
+  const provePredecessor=()=>{
+    lockProof();pointerProof();
+    if(old){
+      tree(APP,old,oldDirectory,oldEnv);absent(oldBackup);
+      const present=platform.registration(beforeProcess?.pmId);
+      if(!beforeProcess||!present||present.status!=='online'||present.pid!==beforeProcess.pid||!isDeepStrictEqual(present.registration,beforeProcess.registration)||!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Predecessor disappeared before activation');
+    }else{absent(APP);if(platform.registration()!==null)fail('Unexpected registration before activation');}
+  };
   try{
-    await checkpoint();await before();
+    await before();await checkpoint();await before();
+    // No activation write or process/layout operation precedes this marker.
+    // A missing registration is refusal, never an implicit successful stop.
+    guard();provePredecessor();platform.assertDeploymentPerimeter();provePredecessor();
+    mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';
+    journal('prepared');await checkpoint();
     if(old)await remove(beforeProcess.registration,beforeProcess,true);
-    else {platform.assertDeploymentPerimeter();mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';await noRegistration();}
+    else await noRegistration();
     journal('predecessor_removed');await checkpoint();
     await noRegistration();
     if(old){tree(APP,old,oldDirectory,oldEnv);absent(oldBackup);if(platform.registration()!==null)fail('Abbott registration reappeared');fs.renameSync(APP,oldBackup);oldMoved=true;}
@@ -757,7 +772,7 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     if(request.binding)durableFile(`${CONTROL}/ownership-${request.binding.runId}.json`,{version:1,binding:request.binding,transaction:owner,record,directory:directoryIdentity(),process:ownedProcess});
     await checkpoint();capture(true);tree(APP,record,candidateDirectory,envDigest);journal('committed');return record;
   }catch{
-    if(!mutated){journal('refused');fail('Abbott activation refused before process mutation');}
+    if(!mutated)fail('Abbott activation refused before process mutation');
     try{
       // Cancellation cannot disable identity checks or the bounded compensation.
       lockProof();

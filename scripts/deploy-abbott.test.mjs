@@ -227,18 +227,19 @@ test('perimeter drift immediately before predecessor stop refuses without any st
 
 test('perimeter drift after candidate health prevents pointer promotion and attests compensation',async()=>{
   const f=fixture();try{
-    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0,promotions=0;
-    f.platform.assertDeploymentPerimeter=()=>{if(++checks===2)throw Error('private nginx drift');};
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0,promotions=0,candidateHealth=false;
+    const health=f.platform.health;f.platform.health=async(proof)=>{if(proof.sourceSha==='b'.repeat(40))candidateHealth=true;return health(proof);};
+    f.platform.assertDeploymentPerimeter=()=>{if(++checks===3){assert.equal(candidateHealth,true);throw Error('private nginx drift');}};
     const rename=f.io.renameSync;f.io.renameSync=(from,to)=>{if(to==='/var/www/.dashboard-abbott-control/current.json')promotions++;return rename(from,to);};
     await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/attested predecessor restored/);
-    assert.equal(promotions,0);assert.equal(checks,4);assert.equal(f.installer.inspectActiveRuntime().sourceSha,old.sourceSha);
+    assert.equal(promotions,0);assert.equal(checks,5);assert.equal(f.installer.inspectActiveRuntime().sourceSha,old.sourceSha);
   }finally{f.cleanup();}
 });
 
 test('perimeter drift during compensation leaves owned Abbott stopped and retains review lock',async()=>{
   const f=fixture();try{
     const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0;
-    f.platform.assertDeploymentPerimeter=()=>{if(++checks>1)throw Error('private drift');};f.nextStartup('fail');
+    f.platform.assertDeploymentPerimeter=()=>{if(++checks>2)throw Error('private drift');};f.nextStartup('fail');
     await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
     assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
   }finally{f.cleanup();}
@@ -247,10 +248,64 @@ test('perimeter drift during compensation leaves owned Abbott stopped and retain
 test('late compensation perimeter drift also stops the restored registration before review',async()=>{
   const f=fixture();try{
     const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0;
-    f.platform.assertDeploymentPerimeter=()=>{if(++checks===3)throw Error('private late drift');};f.nextStartup('fail');
+    f.platform.assertDeploymentPerimeter=()=>{if(++checks===4)throw Error('private late drift');};f.nextStartup('fail');
     await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
     assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
   }finally{f.cleanup();}
+});
+
+test('exact disappearance after final predecessor health refuses before activation even when candidate health would fail',async()=>{
+  const f=fixture();try{
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+    let healthChecks=0,armed=false,disappeared=false,renames=0,journalWrites=0;
+    const health=f.platform.health,registration=f.platform.registration,rename=f.io.renameSync,write=f.io.writeFileSync;
+    f.io.writeFileSync=(file,...args)=>{if(typeof file==='string'&&file.includes('/activation-'))journalWrites++;return write(file,...args);};
+    f.platform.health=async(...args)=>{await health(...args);if(++healthChecks===2)armed=true;};
+    f.platform.registration=(...args)=>{if(armed&&!disappeared){disappeared=true;f.exitProcess();}return registration(...args);};
+    f.io.renameSync=(from,to)=>{if(from==='/var/www/dashboard-abbott'||to==='/var/www/dashboard-abbott')renames++;return rename(from,to);};
+    f.events.length=0;f.nextStartup('fail');
+    await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform));
+    assert.equal(disappeared,true);assert.equal(renames,0);assert.equal(f.events.some(e=>['stop','delete','fresh'].includes(e[0])),false);
+    assert.equal(journalWrites,0);
+    assert.equal(fs.readFileSync(f.map('/var/www/dashboard-abbott/.release-source-sha'),'utf8').trim(),old.sourceSha);
+    assert.equal(f.installer.inspectActiveRuntime().sourceSha,old.sourceSha);assert.equal(f.platform.registration(),null);
+  }finally{f.cleanup();}
+});
+
+test('disappearance after prepared journal enters compensation and preserves review lock if restart health fails',async()=>{
+  const f=fixture();try{
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),rename=f.io.renameSync;
+    let disappeared=false;
+    f.io.renameSync=(from,to)=>{const result=rename(from,to);if(!disappeared&&to.includes('/activation-')&&!to.endsWith('.next')){const j=JSON.parse(fs.readFileSync(f.map(to),'utf8'));if(j.predecessor?.id===old.id&&j.state==='prepared'){disappeared=true;f.exitProcess();}}return result;};
+    f.nextStartup('fail');const result=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},new AbortController().signal,f.platform);
+    assert.equal(disappeared,true);assert.equal(result.status,'REVIEW_REQUIRED');assert.equal(f.platform.registration(),null);
+    assert.equal(fs.readFileSync(f.map('/var/www/dashboard-abbott/.release-source-sha'),'utf8').trim(),old.sourceSha);
+    assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+    const journals=fs.readdirSync(f.map('/var/www/.dashboard-abbott-control')).filter(n=>n.startsWith('activation-')&&!n.endsWith('.next')).map(n=>JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/'+n),'utf8')));
+    assert.ok(journals.some(j=>j.predecessor?.id===old.id&&j.state==='review_required'));
+  }finally{f.cleanup();}
+});
+
+for(const drift of ['pid','release','stopped'])test(`predecessor ${drift} drift before first activation write refuses without activation mutation`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+  const health=f.platform.health,registration=f.platform.registration,write=f.io.writeFileSync;let healthChecks=0,armed=false,changed=false,writes=0;
+  f.platform.health=async(...args)=>{await health(...args);if(++healthChecks===2)armed=true;};
+  f.platform.registration=(...args)=>{if(armed&&!changed){changed=true;f.mutateRow(r=>{if(drift==='pid')r.pid+=100;else if(drift==='release')r.pm2_env.RUNTIME_RELEASE_ID='d'.repeat(32);else{r.pid=0;r.pm2_env.status='stopped';}});}return registration(...args);};
+  f.io.writeFileSync=(file,...args)=>{if(typeof file==='string'&&file.includes('/activation-'))writes++;return write(file,...args);};
+  f.events.length=0;await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform));
+  assert.equal(changed,true);assert.equal(writes,0);assert.equal(f.events.some(e=>['stop','delete','fresh'].includes(e[0])),false);assert.equal(f.installer.inspectActiveRuntime().sourceSha,old.sourceSha);
+ }finally{f.cleanup();}
+});
+
+test('first prepared-journal write failure is marked and cannot bypass compensation',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),write=f.io.writeFileSync;let failed=false;
+  f.io.writeFileSync=(file,...args)=>{if(!failed&&typeof file==='string'&&file.includes('/activation-')){failed=true;throw Error('synthetic write interruption');}return write(file,...args);};
+  const result=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},new AbortController().signal,f.platform);
+  assert.equal(failed,true);assert.equal(result.status,'RESTORED');assert.equal(f.installer.inspectActiveRuntime().sourceSha,old.sourceSha);
+  assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+ }finally{f.cleanup();}
 });
 
 function fixture(authority=RUNTIME_MANIFESTS.abbott) {

@@ -1,6 +1,10 @@
-# Abbott Task 9 — fixed deployment preflight source checkpoint
+# Abbott Task 9 — preflight port and activation-boundary corrections
 
-Status: DONE_WITH_CONCERNS, pending source review before deployment. Approved
+Status: DONE_WITH_CONCERNS, pending re-review before deployment. Two Important
+preflight/activation findings are corrected with source-only TDD: real Linux
+four-digit TCP ports, and unconditional mutation marking after exact predecessor
+and perimeter proof but before the first activation write. No live action ran.
+Approved
 header commit ece704e was published to both authorized refs. The planned deploy
 stopped before production contact because source inspection found missing
 neighbor/Nginx preflight gates and a mutating inspect action. The explicitly
@@ -3658,3 +3662,70 @@ The browser/PDF failure, six-image parity and Nginx structural checkpoint remain
 unresolved. Systematic source diagnosis identified the missing gate, TDD covered
 ordering/fail-closed behavior, and fresh verification supports only this local
 checkpoint. Commit and STOP for review; do not push or deploy this correction.
+
+## Important review corrections — Linux TCP format and activation race
+
+Verified both review findings against source and reproduced them locally before
+the correction. Changing the fixture to real Linux four-digit uppercase ports
+made the supposedly valid preflight fail. The exact predecessor-disappearance
+race after its final health check produced two active-tree renames; candidate
+health then failed while the stop-dependent mutation marker remained false.
+Those were synthetic local reproductions, never production observations.
+
+The TCP parser now compares only four-digit uppercase hexadecimal ports using
+padStart(4,'0'):3001=0BB9,3002=0BBA,3003=0BBB,3004=0BBC. Local/remote addresses
+must have the exact IPv4/IPv6 address width and four uppercase hex port digits;
+malformed widths or case fail closed, including malformed extra rows beside a
+valid listener. Fixtures use real Linux TCP column structure rather than the
+prior shortened port representation. Tests cover all four IPv4 listener ports,
+extra IPv6 listeners on each protected port, short/long/lowercase ports and
+malformed extra rows. IPv6 listeners remain forbidden by the existing sole
+IPv4 loopback contract; they are no longer skipped by a width mismatch.
+
+Activation now has one explicit beginning-of-mutation gate. After its existing
+health/tree checks it synchronously re-proves exact predecessor registration,
+positive PID, start/identity, active tree/pointer, and perimeter; predecessor
+proof repeats after the perimeter check. Missing, replaced or already stopped
+registration refuses before any activation journal write, tree rename, stop,
+delete or fresh registration. The marker and UNACKNOWLEDGED in-progress state
+are then set unconditionally before the prepared-journal write, not inside an
+optional stop callback. No successful implicit stop is inferred from absence.
+
+The exact disappearance regression, with candidate health configured to fail,
+now proves zero activation journal writes/renames/registration operations and
+retained predecessor files/pointer. PID, release-binding and stopped-state drift
+at the same boundary also refuse with zero activation mutation. This statement
+is about activation: earlier candidate materialization and transaction locking
+remain separate, already-reviewed preparation steps, not retroactively absent.
+
+After activation begins, any later failure enters compensation, including
+disappearance after the prepared journal and failure on the very first journal
+write. A failed predecessor restart/health after disappearance yields
+REVIEW_REQUIRED, no candidate registration, predecessor active files, and a
+retained review journal and lock. Verified compensation may instead return
+RESTORED with the old binding; it is never mislabeled as a pre-mutation refusal.
+The existing signal/stop/delete/rename/start/health/pointer interruption suite
+continues to pass. Boundary tests were adjusted to trigger at actual candidate
+health and compensation stages, not stale call counts. Non-Abbott behavior and
+the closed output protocol remain unchanged.
+
+Fresh gates: Abbott production build/exact routes and full authority suite
+532/532; app/runtime-contract68/68; post-build verification206/206; data/UI/
+private-store111/111; contract wiring and public-assets security pass. Combined
+production build, root/focused TypeScript, changed-source syntax and whitespace
+pass. Lint exits0 with0 errors and the same10 existing warnings.
+
+No push, production-host SSH, probe, credential issuance, deployment, recovery,
+PDF generation/capture, neighbor mutation, DB/auth/fact/collector/cron action,
+Nginx backup/edit/reload or route switch occurred. No real browser was launched;
+local test-owned processes use the bounded/reaped fixture lifecycle. Local
+ports3001/3004 and exact private transport evidence directories were absent at
+cleanup. Published refs remain the previously verifiedece704e. Last deployed
+6f09982/8c79, retainedf80607f/6cd2 rollback and public3001 rollback target remain
+historical evidence, not a new host attestation. Fixed checkpoint authority still
+needs re-review/re-pinning after a successful successor deployment.
+
+DONE_WITH_CONCERNS: source corrections verified; STOP for re-review before any
+push or live use. TDD and technical review verification supplied the reproduced
+failure evidence; completion verification does not claim that the blocked live
+PDF, visual parity or cutover work has been completed.

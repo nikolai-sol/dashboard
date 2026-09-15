@@ -39,7 +39,11 @@ are independently checked. Nginx remains the stable regular root-owned0644
 
 Neighbor/Nginx proof repeats immediately before predecessor PM2 stop, after
 candidate health immediately before pointer promotion, and at compensation
-completion. Pre-stop refusal cannot trigger a stop/delete. Post-health drift
+completion. The first activation gate re-proves predecessor presence/identity
+and perimeter before setting the mutation marker and writing the prepared
+journal. Refusal at that gate performs no activation mutation. Once the marker
+is set, every later failure enters compensation even if no stop command ran.
+Post-health drift
 prevents promotion and enters owned compensation; unverified compensation
 retains the lock/review journal and leaves the provably owned runtime stopped.
 No neighbor or Nginx mutation is introduced. Non-Abbott transactions keep their
@@ -62,6 +66,17 @@ candidate_pdf stage reason; absent or malformed labels remain candidate_5xx.
 Control PDF baseline policy is unchanged. This source-only checkpoint requires
 review and a separately authorized deployment before any live use; no new
 operator command, log read or retry is authorized by this documentation.
+
+Deployment preflight review correction: kernel TCP ports are exact uppercase
+four-digit hex (`0BB9`, `0BBA`, `0BBB`, `0BBC`), not unpadded numbers. Fixtures
+use Linux table columns; malformed address/port widths or case refuse. Extra
+IPv6 listeners on any protected port are detected and refused, preserving the
+single IPv4 loopback listener requirement. A predecessor disappearing between
+its final health check and the first activation mutation is refusal, not a
+successful implicit stop. After the prepared journal is written, disappearance
+or any write/start/health failure is compensating work; unresolved ownership or
+readiness retains the review journal/lock. These corrections are source-only
+and require re-review before live use.
 
 ### PDF log caller checkpoint — review required before host use
 
