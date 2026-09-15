@@ -1,9 +1,8 @@
-# Abbott Task 9 — Nginx location numeric-normalization source checkpoint
+# Abbott Task 9 — approved deployment stopped at Nginx preflight
 
-Current status: DONE_WITH_CONCERNS. Source-only location numeric-normalization correction pending
-re-review. Location and proxy paths now share the same canonical-path/Abbott-alias
-guard. The actual loader's identifier-normalization corpus is covered without a
-database connection. No push, live request, deployment or Nginx action ran.
+Current status: BLOCKED. Approved e719ad6 was published to both authorized refs;
+the single acknowledged deploy refused at preflight_nginx/failed before mutation.
+Cleanup verified. No retry, pin update, smoke, capture or Nginx change followed.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4293,3 +4292,42 @@ credential, DB, deployment, recovery, neighbor or Nginx operation ran. Published
 refs and deployed state remain historical evidence only, not newly attested.
 The conservative supported Nginx subset remains intentional. STOP for parent
 re-review before publication or live use; route-only rollback remains3001.
+
+## Approved operational attempt at e719ad6 — Nginx preflight refusal
+
+The active isolated feature worktree was clean at
+`e719ad6d11876c02d3eae189c6ae656b931f9cdc`. Ordinary non-force fast-forward pushes
+updated only `refs/heads/codex/abbott-runtime-isolation` and
+`refs/heads/release/abbott` from5b17026. An isolated Git lookup outside every
+repository, with system/global configuration disabled, verified both literal
+remote refs at the exact approved SHA. Its owned empty temporary directory was
+removed. The preceding source checkpoint records the approved full local gates;
+this operational turn does not claim a fresh full test run.
+
+Exactly one approved fixed command ran from the clean active isolated worktree:
+`/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott`.
+It exited1 with only the closed result:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=failed`
+
+This was the initial read-only inspect transaction's Nginx boundary, before
+lock creation, candidate build/preparation, filesystem writes or PM2 calls.
+The category covers fixed-file ancestry/metadata/stability/read and structural
+acceptance; it does not identify a directive or prove a config change. No raw
+config, exception or host data was output. The complete perimeter snapshot,
+current artifact/process proof and browser attestation did not finish, so no
+fresh full deployed/neighbor/browser attestation is claimed.
+
+The accepted REFUSED required the exact digest/status-paired terminal ACK,
+captured SSH PID/start ownership, observed and verified exit, and successful
+private identity-evidence cleanup. The session zeroed transported buffers.
+The local command exited; separate local-only checks found the exact private
+deploy/recovery evidence directories absent and no3001/3004 local listeners.
+No real browser, forwarding or credential session was created.
+
+No retry, new diagnostic, source fix, pin update or additional host read ran.
+No recovery, PDF request, smoke/capture, DB/auth/fact/collector/cron, neighbor
+mutation or Nginx edit/reload occurred. Historical active6f09982/8c79 and
+predecessor f80607f/6cd2 remain historical evidence. Public route-only rollback
+remains3001; routing was not switched. BLOCKED: STOP for review/direction at
+the closed Nginx preflight boundary.
