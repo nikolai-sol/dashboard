@@ -55,8 +55,8 @@ function OtherTable({ rows }: Readonly<{ rows: readonly TargetIntentClassifiedQu
 }
 
 export type IntentQueryNavigation = Readonly<{
-  target: Readonly<{ page: number; pageSize: number }>;
-  other: Readonly<{ page: number; pageSize: number }>;
+  target: Readonly<{ page: number; pageSize: number; open?: boolean }>;
+  other: Readonly<{ page: number; pageSize: number; open?: boolean }>;
   pageHref: (category: "target" | "other", page: number) => string;
   downloadHref: (category: "target" | "other", format: "csv" | "xlsx") => string;
 }>;
@@ -93,12 +93,12 @@ export function IntentQueryDisclosures({ view, navigation }: Readonly<{ view: Da
   const target = categoryRows(view, "target");
   const other = categoryRows(view, "other");
   return <div className="site-seo-intent-disclosures">
-    <details data-intent-category="target" open={navigation?.target.page !== undefined && navigation.target.page > 1}>
+    <details data-intent-category="target" open={navigation?.target.open === true || (navigation?.target.page !== undefined && navigation.target.page > 1)}>
       <summary>{view.target.label} — {target.length} {queryCountLabel(target.length)}</summary>
       <TargetTable rows={pageRows(target, "target", navigation)} label={view.target.label} />
       {navigation ? <DisclosureControls category="target" totalRows={target.length} navigation={navigation} /> : null}
     </details>
-    <details data-intent-category="other" open={navigation?.other.page !== undefined && navigation.other.page > 1}>
+    <details data-intent-category="other" open={navigation?.other.open === true || (navigation?.other.page !== undefined && navigation.other.page > 1)}>
       <summary>{view.other.label} — {other.length} {queryCountLabel(other.length)}</summary>
       <OtherTable rows={pageRows(other, "other", navigation)} />
       {navigation ? <DisclosureControls category="other" totalRows={other.length} navigation={navigation} /> : null}

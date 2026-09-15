@@ -99,6 +99,20 @@ test("paginates mounted review rows and links downloads to the selected active p
   assert.ok(hrefs.some((href) => href.includes("intent_category=other") && href.includes("intent_format=xlsx") && href.includes("intent_publication=92")));
 });
 
+test("keeps the paginated disclosure open after returning to page one", () => {
+  const html = renderToStaticMarkup(createElement(IntentQueryDisclosures, {
+    view: readyView,
+    navigation: {
+      target: { page: 1, pageSize: 50, open: true }, other: { page: 1, pageSize: 50, open: false },
+      pageHref: (category: string, page: number) => `?intent_${category}_page=${page}&intent_open=${category}`,
+      downloadHref: () => "/download",
+    },
+  }));
+
+  assert.match(html, /<details data-intent-category="target" open="">/);
+  assert.doesNotMatch(html, /<details data-intent-category="other" open="">/);
+});
+
 test("wires the public route to the bounded authorized intent handler", () => {
   const route = new URL("../src/app/api/dashboard/[siteSlug]/intent-queries/route.ts", import.meta.url);
   assert.ok(existsSync(route));
@@ -127,6 +141,7 @@ test("dashboard review links retain every selected period, filter, category and 
   assert.match(html, /intent_category=target/);
   assert.match(html, /intent_format=csv/);
   assert.match(html, /intent_publication=92/);
+  assert.match(html, /intent_open=target/);
 });
 
 test("dashboard page parses both disclosure pages through a bounded helper", () => {
@@ -134,15 +149,29 @@ test("dashboard page parses both disclosure pages through a bounded helper", () 
   assert.match(source, /boundedIntentPage/);
   assert.match(source, /intent_target_page/);
   assert.match(source, /intent_other_page/);
+  assert.match(source, /intent_open/);
   assert.match(source, /intentPages=/);
 });
 
 test("overview reaches the truthful not-configured panel for a resolved SEO query scope", () => {
   const notConfigured = { ...readyView, state: "not_configured" as const, versionId: null, provenance: null, queries: [], target: { ...readyView.target, impressions: null, clicks: null, sharePct: null, queryCount: null }, other: { ...readyView.other, impressions: null, clicks: null, sharePct: null, queryCount: null } };
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
-  const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model: { targetIntent: notConfigured, gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} }, showGsc: true }));
+  const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model: { targetIntent: notConfigured, gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} }, showGsc: true, targetIntentEnabled: true }));
   assert.match(html, /Классификация не настроена/);
   assert.doesNotMatch(html, /Поисковые визиты/);
+});
+
+test("unrelated dashboards retain the legacy overview until target intent is active or explicitly enabled", () => {
+  const notConfigured = { ...readyView, state: "not_configured" as const, versionId: null, provenance: null, queries: [], target: { ...readyView.target, impressions: null, clicks: null, sharePct: null, queryCount: null }, other: { ...readyView.other, impressions: null, clicks: null, sharePct: null, queryCount: null } };
+  const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
+  const model = { targetIntent: notConfigured, gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+
+  const unrelated = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true, targetIntentEnabled: false }));
+  const enabled = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true, targetIntentEnabled: true }));
+
+  assert.match(unrelated, /Цель: рост целевого органического трафика/);
+  assert.doesNotMatch(unrelated, /Классификация не настроена/);
+  assert.match(enabled, /Классификация не настроена/);
 });
 
 test("detects a stale intent publication before rendering a paginated review", () => {

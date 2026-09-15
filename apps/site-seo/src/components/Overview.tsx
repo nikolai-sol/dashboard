@@ -252,12 +252,13 @@ function SearchEngineGrid({ engines, missingCopy }: Readonly<{ engines: readonly
   </div>;
 }
 
-export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster = true, intentNavigation }: Readonly<{
+export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster = true, targetIntentEnabled = false, intentNavigation }: Readonly<{
   id: string;
   model: DashboardReadModel;
   showGsc: boolean;
   showMetrika?: boolean;
   showWebmaster?: boolean;
+  targetIntentEnabled?: boolean;
   intentNavigation?: IntentQueryNavigation;
 }>) {
   const metrikaMeta = showMetrika ? model.metrika ?? model.datasets.yandex_metrika : null;
@@ -272,7 +273,7 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
   const hasSearchEngineRows = searchEngines.some((engine) => engine.metrics !== null);
   const channelsState = breakdownState(channels, trafficState);
   const searchEnginesState = hasSearchEngineRows ? metrikaState : metrikaState === "complete_empty" ? "complete_empty" : "missing";
-  const showTargetIntent = model.targetIntent.state !== "not_configured" || model.targetIntent.sources.length > 0;
+  const showTargetIntent = model.targetIntent.state !== "not_configured" || targetIntentEnabled;
 
   return (
     <div id={id} className="site-seo-overview-grid" data-target-intent={showTargetIntent ? "true" : undefined}>

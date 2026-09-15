@@ -46,6 +46,7 @@ export type SiteProfile = Readonly<{
   locale: string;
   businessTimezone: string;
   templateVersion: string;
+  targetIntentEnabled?: boolean;
   sources: readonly {
     sourceKey: SourceKey;
     mode: "automated" | "manual" | "disabled";

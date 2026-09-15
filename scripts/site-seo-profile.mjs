@@ -18,7 +18,7 @@ const MODES = {
 const PROFILE_FIELDS = new Set([
   "schemaVersion", "profileVersion", "siteId", "clientId", "dashboardId", "slug",
   "domain", "allowedDomains", "title", "logoAsset", "locale", "businessTimezone",
-  "templateVersion", "sources", "seoSections", "taxonomyVersion", "seoRulesVersion", "authPolicyRef", "runtime",
+  "templateVersion", "targetIntentEnabled", "sources", "seoSections", "taxonomyVersion", "seoRulesVersion", "authPolicyRef", "runtime",
 ]);
 const SOURCE_FIELDS = new Set(["sourceKey", "mode", "bindingId", "importCadence"]);
 const SEO_SECTION_FIELDS = new Set(["id", "label", "pathPrefixes"]);
@@ -56,6 +56,7 @@ export function validateSiteProfile(value) {
   const domains = profile.allowedDomains.map((entry, index) => text(entry, `allowedDomains[${index}]`).toLowerCase());
   if (!domains.includes(profile.domain.toLowerCase()) || new Set(domains).size !== domains.length) throw new TypeError("domain must occur once in allowedDomains");
   if (profile.logoAsset !== null && typeof profile.logoAsset !== "string") throw new TypeError("logoAsset must be a string or null");
+  if (profile.targetIntentEnabled !== undefined && typeof profile.targetIntentEnabled !== "boolean") throw new TypeError("targetIntentEnabled must be a boolean");
   if (!Array.isArray(profile.sources)) throw new TypeError("sources must be an array");
   const sourceKeys = new Set();
   for (const [index, sourceValue] of profile.sources.entries()) {

@@ -87,6 +87,14 @@ test("profile schema accepts data-only SEO section path rules", () => {
   assert.deepEqual(assertSiteProfile(configured), configured);
 });
 
+test("profile schema accepts only an explicit boolean target-intent enablement flag", () => {
+  assert.equal(assertSiteProfile({ ...profile(), targetIntentEnabled: true } as SiteProfile).targetIntentEnabled, true);
+  assert.throws(
+    () => assertSiteProfile({ ...profile(), targetIntentEnabled: "yes" }),
+    /targetIntentEnabled/i,
+  );
+});
+
 test("profile schema rejects executable or ambiguous SEO section rules", () => {
   assert.throws(
     () => assertSiteProfile({ ...profile(), seoSections: [{ id: "bad", label: "Bad", pathPrefixes: ["https://evil.test/"] }] }),

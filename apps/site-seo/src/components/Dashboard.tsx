@@ -34,7 +34,7 @@ export function intentPublicationMatches(model: DashboardReadModel["targetIntent
   return expectedPublicationId === null || model.provenance?.publicationId === expectedPublicationId;
 }
 
-export function Dashboard({ profile, model, selection, publicationId, filters, availableWeeks = [selection.traffic.primary], activeTab: requestedTab, intentPages = { target: 1, other: 1 } }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>>; availableWeeks?: readonly PeriodSelection["traffic"]["primary"][]; activeTab?: string; intentPages?: Readonly<{ target: number; other: number }> }>) {
+export function Dashboard({ profile, model, selection, publicationId, filters, availableWeeks = [selection.traffic.primary], activeTab: requestedTab, intentPages = { target: 1, other: 1 }, intentOpen }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>>; availableWeeks?: readonly PeriodSelection["traffic"]["primary"][]; activeTab?: string; intentPages?: Readonly<{ target: number; other: number }>; intentOpen?: "target" | "other" }>) {
   const query = buildDashboardQuery(selection, publicationId, filters);
   const gscEnabled = enabled(profile, "google_search_console");
   const metrikaEnabled = enabled(profile, "yandex_metrika") && availableWeeks.length > 0;
@@ -47,13 +47,14 @@ export function Dashboard({ profile, model, selection, publicationId, filters, a
   const exports = <p><a href={`/api/dashboard/${profile.slug}?${query}`}>JSON</a>{" · "}<a href={`/api/dashboard/${profile.slug}/excel?${query}`}>Excel</a>{" · "}<a href={`/api/dashboard/${profile.slug}/pdf?${query}`}>PDF</a></p>;
   const intentPublication = model.targetIntent.provenance?.publicationId ?? null;
   const intentNavigation = intentPublication ? {
-    target: { page: intentPages.target, pageSize: 50 },
-    other: { page: intentPages.other, pageSize: 50 },
+    target: { page: intentPages.target, pageSize: 50, open: intentOpen === "target" },
+    other: { page: intentPages.other, pageSize: 50, open: intentOpen === "other" },
     pageHref: (category: "target" | "other", page: number) => {
       const params = new URLSearchParams(query);
       params.set("tab", "overview");
       params.set("intent_target_page", String(category === "target" ? page : intentPages.target));
       params.set("intent_other_page", String(category === "other" ? page : intentPages.other));
+      params.set("intent_open", category);
       params.set("intent_publication", intentPublication);
       return `?${params}`;
     },
@@ -67,7 +68,7 @@ export function Dashboard({ profile, model, selection, publicationId, filters, a
   } : undefined;
 
   let section;
-  if (activeTab === "overview") section = <Overview id="overview" model={model} showGsc={gscEnabled} showMetrika={metrikaEnabled} showWebmaster={webmasterEnabled} intentNavigation={intentNavigation} />;
+  if (activeTab === "overview") section = <Overview id="overview" model={model} showGsc={gscEnabled} showMetrika={metrikaEnabled} showWebmaster={webmasterEnabled} targetIntentEnabled={profile.targetIntentEnabled === true} intentNavigation={intentNavigation} />;
   else if (activeTab === "search") section = <Search id="search" profile={profile} model={model} showGsc={gscEnabled} showWebmaster={webmasterEnabled} comparison={webmasterComparison} comparisonKey={selection.traffic.comparison?.key} />;
   else if (activeTab === "wordstat") section = <Wordstat id="wordstat" meta={model.datasets.yandex_wordstat} data={model.wordstat} />;
   else if (activeTab === "alice") section = <Alice id="alice" meta={model.datasets.yandex_webmaster_alice_manual} data={model.alice} />;
