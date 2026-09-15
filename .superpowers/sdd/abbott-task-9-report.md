@@ -1,14 +1,15 @@
-# Abbott Task 9 — degraded control PDF policy awaits review
+# Abbott Task 9 — candidate PDF smoke refusal
 
-Status: DONE_WITH_CONCERNS. The requested degraded-baseline policy is implemented
-locally and awaits review; no live retry. Approved9af24ce was published and one smoke returned
-`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=control_5xx` after passing
-the corrected consumer pin gate. Stopped without retry, capture or Nginx action.
-That run's before/after checks verified unchanged6f09982/8c79 production,
-retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite, neighbors
-and Nginx. Owned process/port/output cleanup passed. Further parity, six-image
-comparison and cutover remain incomplete. Earlier
-sections are chronological history.
+Status: BLOCKED. Approved degraded-baseline policy d17712f was published to both
+authorized refs and the single approved live smoke returned
+`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`.
+The candidate failure remains fatal under that policy. No successful strict or
+baseline-exception report was produced. Stopped without retry, capture, source
+fix or Nginx action. Fresh before/after checks verified unchanged6f09982/8c79
+production, retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite,
+neighbors and Nginx. Owned process/port/output cleanup passed. Further parity,
+six-image comparison and cutover remain incomplete. Earlier sections are
+chronological history.
 
 ## Scope and authorization
 
@@ -3110,3 +3111,62 @@ Last verified deployed6f09982/release8c79 and retainedf80607f/release6cd2 rollba
 are unchanged by this local work, with no new host-state claim. The control PDF
 cause and visual/routing gates remain unresolved. DONE_WITH_CONCERNS; STOP for
 review before any live retry.
+
+## Approved d17712f publication and one live smoke — candidate PDF refusal
+
+The parent approved the degraded-control-PDF policy for operational use. Started
+from the clean exact isolation worktree at
+`d17712fde45ea115d503a0d7471c4a26bfa11415`; whitespace check passed. The previously
+recorded full source gates remain the evidence for this unchanged approved code.
+Ordinary non-force fast-forward publication used isolated fixed Git authority;
+the literal remote refs were read back and both equaled that exact SHA:
+
+- refs/heads/codex/abbott-runtime-isolation
+- refs/heads/release/abbott
+
+No application redeploy was necessary: this commit changes local verification
+policy, tests and documentation only. Independent read-only preflight and
+postflight both fully verified source6f09982, release/control8c79, manifesta5b5,
+the current pointer and exact fresh PM2 binding/UID982/GID984/cwd/launcher,
+sole loopback3004 listener and connected health. The sealedf806/6cd2 predecessor,
+interrupted9aa quarantine, committed root-only audit and restored recovery audit
+remain retained; no deploy lock/staging was present. Browser archive/executable,
+permissions, UID execution and library prerequisites remained attested.
+
+Exactly one smoke invocation ran through the reviewed observed orchestrator from
+the active isolated worktree using its exact installed Node, constructed clean
+environment, in-memory/pipe-only ephemeral credential protocol and owned fixed
+loopback SSH forwards. The fixed period was2026-09-01..2026-09-13. Its only
+verification result was:
+
+`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`
+
+This is not an accepted degraded baseline: candidate PDFs must succeed even if
+the control baseline is unavailable. The run did not finish all combinations or
+produce a passed report, so neither strict PDF parity nor a uniform unavailable
+control baseline is claimed. No raw response, URL/query, header, body, credential,
+remote stderr or browser log was output or saved to this report. The diagnostic
+does not identify a root cause; no speculative source fix or additional live
+probe was attempted.
+
+The observer returned ABBOTT_VERIFICATION_OWNED_CLEANUP_VERIFIED and exited1 for
+the refusal. It verified owned orchestrator/SSH/subprocess exit and both local
+forward ports closed; credential/attestation buffers use the reviewed finally
+zeroing path. Independent local checks confirmed no3001/3004 listeners, no
+private deploy/recovery identity evidence directories and no partial smoke or
+candidate output directories. No visual-capture browser was launched. All
+invoked operator/preflight/postflight/local commands exited.
+
+Before/after neighbor proof matched the previously pinned IDs/PIDs/start/release
+identities: dashboard-next1/3722244, dashboard-zaruku2/791065 and
+dashboard-medroche4/1870897, with their original release pointers unchanged.
+The Nginx config remained regular/single-link at SHA256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+No Nginx backup/change/reload occurred; public Abbott routing remains3001.
+The retained Abbott runtime rollback target remainsf80607f/release6cd2; the
+route-only rollback target remains3001. No neighbor restart/write, DB/auth/fact,
+collector/cron, password or admin-ID mutation occurred.
+
+Verification-before-completion required the independent post-state and cleanup
+proof before this evidence-only checkpoint. BLOCKED on candidate PDF5xx; no
+capture, Nginx implementation or application, retry, or unapproved code fix.
