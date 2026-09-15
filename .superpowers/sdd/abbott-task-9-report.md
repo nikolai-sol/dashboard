@@ -1,11 +1,12 @@
-# Abbott Task 9 — deploy control-framing correction
+# Abbott Task 9 — acknowledged shadow deployment and attestation pin
 
-Status: DONE_WITH_CONCERNS; source-only framing correction awaits re-review.
-Last verified production state is recovered f80607f/release6cd2 with matching
-active files, pointer and PM2 binding; candidate9aaed34 is quarantined. This
-checkpoint made no live request or mutation and does not freshly attest that
-state. Deployment repair execution, live parity, six-image comparison and
-cutover are not complete. Earlier sections are chronological history.
+Status: DONE_WITH_CONCERNS; successful approved shadow deployment, followed by
+a narrow local attestation-pin checkpoint awaiting review. Freshly verified
+production is6f09982/release8c79 with matching active files, current pointer,
+control, manifest and fresh Abbott PM2 binding. Predecessorf80607f/release6cd2
+is sealed in backups; interrupted9aaed34 remains quarantined. No live smoke,
+capture or Nginx operation followed deployment. Live parity, six-image comparison
+and cutover remain incomplete. Earlier sections are chronological history.
 
 ## Scope and authorization
 
@@ -2398,3 +2399,107 @@ f80607f/release6cd2 with candidate9aaed34 quarantined; no fresh host assertion i
 made. Latest published refs remain982dd1a; this builds on localc2b29d3. No new
 release, Nginx backup, live smoke or screenshot/diff evidence was produced.
 DONE_WITH_CONCERNS: STOP for re-review before push or any operational retry.
+
+## Approved acknowledged deployment — 2026-09-15
+
+Explicit approval authorized exactly6f09982 and one Abbott-only deployment,
+followed by a pin-only local checkpoint. Clean worktree and literal Git authority
+were verified; ordinary non-force fast-forward pushes updated only
+`refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`.
+Both literal remote SHAs were reread and exactly equal
+`6f09982fb1e8068f02340ddfcb5c945fb02ebfd5`. No other ref was written.
+
+Immediately before the deploy, the independent read-only proof returned
+`ABBOTT_POST_RECOVERY_VERIFIED`. It attested host/boot/source/parser identity,
+old active/current/control/PM2 bindingf80607f/release6cd2, Abbott ID5 service
+identity, exact kernel PID/start, sole loopback3004 and database-connected health.
+It also attested the quarantined9aa tree, restored root-only recovery journal,
+absent lock and old backup slot, browser package/build/archive/tree/UID execution
+and shared libraries, secret-file metadata, neighbors and Nginx hash. No secret
+values or environment contents were output.
+
+The one fixed `npm run deploy:abbott` invocation used `/usr/bin/env -i`, the
+verified installed Node/npm25.6.1 path and only its non-secret fixed executable
+PATH. The reviewed wrapper performed its clean-ref checks, `npm ci`, production
+Abbott build, full runtime gates, artifact verification/boot and the acknowledged
+transaction. The source gate has67 app/contract and512 authority/bootstrap/
+browser/recovery/deploy/artifact cases; the command exited0 after these gates.
+Build/test child logs remain suppressed by the reviewed deployer, rather than
+being relayed from the operational command. The final result was exactly
+`ABBOTT_DEPLOY_COMMITTED stage=complete reason=none`.
+
+An independent post-deploy read-only verifier then returned
+`ABBOTT_POST_DEPLOY_VERIFIED` with these exact non-secret release fields:
+
+| Field | Verified value |
+| --- | --- |
+| Release/control ID | `8c79caf495f147ad91b2174b9bc5f65c` |
+| Source commit | `6f09982fb1e8068f02340ddfcb5c945fb02ebfd5` |
+| Manifest SHA256 | `a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2` |
+| Predecessor/rollback | `6cd2f12e245a47dcbd5f6ce928c4ed83` / `f80607fbc8a693aa2c720b0976938e88732cdf1a` |
+
+Active tree, source stamp, byte-equal current/control record, trusted manifest and
+full artifact all attest. The new PM2 registration is different from old ID5;
+its exact PID/start/UID982/GID984, protected launcher, Abbott cwd and candidate
+source/control binding match the root-only ownership receipt. It is online, has
+the sole127.0.0.1:3004 listener and passes database-connected health, including
+repeat identity/readiness checks. PID/start metadata stayed in protected host
+evidence and in-memory verification, not raw PM2 output. The activation audit
+is committed, root:root0600 single-link; the lock and staging path are absent.
+The earlier restored recovery audit remains root:root0600, intact and restored.
+
+The predecessor full sealed tree now exists at
+`/var/www/dashboard-abbott-backups/6cd2f12e245a47dcbd5f6ce928c4ed83` and attests
+against its unchanged control/manifest. The interrupted candidate remains fully
+attested at its existing e9e548a quarantine path. No predecessor or quarantined
+tree was deleted. The verified browser remains chrome-headless-shell146.0.7680.76,
+puppeteer-core24.39.1 / browsers2.13.0, with unchanged archive SHA
+`fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04`.
+Package/build contract, immutable cache contents, UID982 execution, shared
+libraries and writable `/tmp` passed. The candidate rendered env contains the
+exact verified executable path and fixed loopback runtime settings; no values
+were printed. No browser install/download or live browser launch occurred here.
+
+Neighbor evidence passed identically before and after:
+
+| Runtime | PM2 ID / PID / kernel start | Unchanged release |
+| --- | --- | --- |
+| dashboard-next | 1 / 3722244 / 122353749 | `8f389a28df1c4b741ec33b7538f0354b74f5a40e` |
+| dashboard-zaruku | 2 / 791065 / 131477500 | `af1948c8b9a0f70d8696afb9c8abc254408a5daa` |
+| dashboard-medroche | 4 / 1870897 / 139126198 | `13d68b0b2c820ba5d223f254bc4eba6d0cf24418` immutable pointer |
+
+Each neighbor's exact cwd and UID/GID also matched. Nginx remained a regular
+single-link file with SHA256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+No Nginx backup, edit, test/reload or route switch occurred; public Abbott traffic
+still uses3001. No neighbor process/write/release, DB migration/fact/auth change,
+password rotation, collector/cron or shared-login change occurred.
+
+The deploy's three owned SSH transfers were observed through the reviewed
+0700/0600 local private evidence. Their exact PID/start metadata was captured
+only in memory; all three children and their wrapper exited. The observer
+returned `ABBOTT_LOCAL_DEPLOY_CLEANUP_VERIFIED transports=3`. Both fixed local
+private evidence directories are absent; independent read-only SSH also exited.
+No local3001/3004 listener remains. No manager/embed credential was minted or
+used; transport buffers were zeroed by the reviewed wrapper. There are no owned
+browser sessions or new screenshot artifacts to clean up.
+
+## Pin-only post-deployment review checkpoint
+
+Changed only the asset attestation's literal release ID, source SHA, manifest
+hash and exact observed predecessor pin. No attestation logic was weakened.
+TDD RED showed the new deployed fixture refused and the predecessorf806 fixture
+incorrectly accepted under the old pins. GREEN accepts the observed6f09982
+release and rejects oldf806 plus incorrect predecessor pointers:4/4 tests pass.
+The broader local smoke/asset/issuer/visual/orchestrator suite passes97/97 with
+its required `--import tsx` harness. An initial invocation without that harness
+failed three module/Next-import cases; the corrected invocation passed without
+any source change. Both TypeScript checks, changed-file syntax and whitespace
+checks pass. Lint exits0 with0 errors and10 unchanged warnings.
+
+Verification-before-completion required independent operational proofs and fresh
+pin checks; TDD constrained the change to the observed immutable authority.
+The pin commit is local only, not pushed or deployed. No live smoke, credential
+issuance, capture, PDF request or Nginx action is authorized by this checkpoint.
+No six-image dimensions/diff or post-cutover smoke result is claimed. STOP for
+focused pin review before its publication and any live parity retry.

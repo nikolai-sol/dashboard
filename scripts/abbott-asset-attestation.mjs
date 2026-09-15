@@ -1,7 +1,7 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash}from'node:crypto';
 const ROOT='/var/www/dashboard-abbott',CONTROL='/var/www/.dashboard-abbott-control';
-const ID='6cd2f12e245a47dcbd5f6ce928c4ed83',SHA='f80607fbc8a693aa2c720b0976938e88732cdf1a';
-const HASH='7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f';
+const ID='8c79caf495f147ad91b2174b9bc5f65c',SHA='6f09982fb1e8068f02340ddfcb5c945fb02ebfd5';
+const HASH='a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2',PREVIOUS='6cd2f12e245a47dcbd5f6ce928c4ed83';
 const fail=()=>{throw Error('ABBOTT_ASSET_ATTESTATION_REFUSED');};
 const same=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
 
@@ -14,7 +14,7 @@ export function readAttestedAbbottAssets({io=fs,hostname=os.hostname,proveSource
     for(const dir of [CONTROL,CONTROL+'/'+ID])if((check(dir,true).mode&0o7777)!==0o700)fail();
     const currentBytes=read(CONTROL+'/current.json',4096),recordBytes=read(CONTROL+'/'+ID+'/record.json',4096);
     const current=JSON.parse(currentBytes);
-    if(!currentBytes.equals(recordBytes)||current.id!==ID||current.scope!=='abbott'||current.sourceSha!==SHA||current.manifestDigest!==HASH||current.previousId!==null)fail();
+    if(!currentBytes.equals(recordBytes)||current.id!==ID||current.scope!=='abbott'||current.sourceSha!==SHA||current.manifestDigest!==HASH||current.previousId!==PREVIOUS)fail();
     const manifestBytes=read(CONTROL+'/'+ID+'/trusted-runtime-manifest.json',2*1024*1024);
     if(hash(manifestBytes)!==HASH)fail();const manifest=JSON.parse(manifestBytes);
     if(manifest.version!==1||manifest.scope!=='abbott'||manifest.sourceSha!==SHA||!Array.isArray(manifest.files)||manifest.files.length>10000)fail();
