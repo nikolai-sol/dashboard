@@ -34,3 +34,15 @@ Tests cover every exact expert query, all 802 queries with additional context, r
 Desktop review at 1440px: goal 640px and health 452px, same top and 322px height; no horizontal overflow. Mobile review at 390px: two intent cards and a two-column health grid; no horizontal overflow. Preview facts are explicitly synthetic.
 
 No source API, database migration, collector refresh, production deployment, secret change, scheduler or Telegram action is included.
+
+### Completed evidence — 2026-09-15
+
+- Source commit `b50cb39049c3ac3315a4467d5897936382d7cbf2`; MedRoche profile/registry pin in `84e31ff`.
+- `npm run test:site-seo`: 161 TypeScript tests + 27 build/isolation tests, 188 passed, zero failures, rerun with worktree-local dependencies.
+- `npm run typecheck:site-seo`: passed.
+- `node --import tsx scripts/site-seo-build.mjs --site medroche`: standalone build and artifact-policy inspection passed.
+- Standalone smoke on an ephemeral loopback port: health 200, site `site-medroche`, profile `2026.09.15-1`; dashboard 200 with login form, no unauthenticated intent data. Test process exited with code 0 and listener closure was verified.
+- Initial build using the parent checkout's dependencies compiled but could not start: tracing omitted external dependencies. Installing the locked dependencies inside this worktree with `npm ci --ignore-scripts --prefer-offline --no-audit --no-fund` and rebuilding fixed the smoke without source/lockfile changes.
+- Independent read-only review found and verified fixes for phrase expansion, overbroad nonmedical exclusions, and failed-source provenance.
+- The self-contained HTML preview uses actual updated components and explicitly synthetic facts. Temporary preview and smoke servers were stopped and listener closure verified.
+- Remaining release step: publish/deploy through the existing MedRoche release workflow. Finished implementation has not yet received owner acceptance; no accepted-work learning update performed.

@@ -20,8 +20,8 @@
 - [x] Test and implement same-period impression-weighted aggregation; preserve partial, missing, failed, confirmed-empty and zero-denominator semantics.
 - [x] Test and wire MedRoche-only read-model weekly query loading without altering SEO-tab GSC.
 - [x] Implement accepted overview cards and scoped responsive CSS; export weekly metrics and rule provenance.
-- [ ] Run complete site-seo tests, typecheck, build and desktop/mobile visual review of actual updated components.
-- [ ] Record evidence and leave deployment status explicit.
+- [x] Run complete site-seo tests, typecheck, build and desktop/mobile visual review of actual updated components.
+- [x] Record evidence and leave deployment status explicit.
 
 ## Files and interfaces
 
@@ -32,3 +32,5 @@
 - `apps/site-seo/src/lib/exports.ts`: include selected-week intent and classification evidence.
 
 Verification command: `npm run test:site-seo && npm run typecheck:site-seo`. Use existing dependencies; test before implementation for each behavioral unit. Render desktop and mobile with both available and missing sources.
+
+Completed locally on 2026-09-15. Evidence is recorded in `docs/medroche-medical-intent.md`. No deployment performed.
