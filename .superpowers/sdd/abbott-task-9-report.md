@@ -963,3 +963,45 @@ No real browser was launched; local test children were bounded/reaped and tempor
 fixtures cleaned. The last production evidence remains the preceding failed
 attempt's normal cleanup and unchanged runtime/Nginx identities. Smoke and visual
 acceptance remain outstanding, with public routing unchanged on port 3001.
+
+### Approved diagnostic smoke attempt — BLOCKED, 2026-09-15
+
+After dedicated diagnostics approval, clean HEAD
+`bf9059104411e102e3493e6149afd63dce61f07d` was ordinary fast-forward pushed only
+to `refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`.
+Isolated literal lookups verified both remote refs equal that exact SHA. Local
+gate evidence is recorded in the preceding checkpoint. The deployed shadow is
+still release `6cd2f12e245a47dcbd5f6ce928c4ed83`, source
+`f80607fbc8a693aa2c720b0976938e88732cdf1a`; no redeploy occurred.
+
+Ran the approved smoke orchestrator exactly once with its unchanged fixed period
+`2026-09-01..2026-09-13`, deployed-manifest attestation and ephemeral pipe/memory
+credential transport. Exit status was 1. Its sole failure diagnostic was:
+
+`ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=failed`
+
+No raw HTML, URL, request/response field, token, exception text or private row was
+read into the report or tool output. This code identifies the HTML asset-inventory
+gate, but does not identify the exact rejected construct or origin; no more
+specific cause is inferred. No smoke report/output directory was created and no
+complete parity/acceptance pass is claimed.
+
+Owned SSH PID 22564, start `Tue Sep 15 03:31:02 2026`, emitted normal
+`exitVerified: true`; its orchestrator parent was PID 22556. Normal finally clears
+retained credentials/attestation/output before closing the forward. Independent
+checks returned ESRCH for both PIDs, confirmed local forwarding ports 3001/3004
+free, and confirmed zero smoke output directories. No manual signal or forced
+termination was needed. No credential file or standalone issuer/consumer was used.
+
+Preflight and post-cleanup host/boot, PM2 IDs/PIDs, kernel starts/cwds, UID/GID sets,
+release pointers and available source stamps matched: dashboard-next 1/3722244,
+dashboard-zaruku 2/791065, dashboard-medroche 4/1870897, dashboard-abbott 5/542693.
+Their full source/release identities and starts remain those recorded above.
+Nginx remained a regular file with exact SHA-256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+
+STOP on the failed smoke gate. Capture was not started, no code fix or Nginx
+structural inserter was implemented, and no Nginx backup/edit/test/reload/cutover
+occurred. No app/neighbor restart/release, DB/auth/admin mutation, credential
+rotation, collector or cron action occurred. Public routing and its route-only
+rollback target remain port 3001. This evidence-only update is local/unpushed.
