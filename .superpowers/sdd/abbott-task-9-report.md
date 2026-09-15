@@ -1,9 +1,65 @@
-# Abbott Task 9 — fixed include perimeter source checkpoint
+# Abbott Task 9 — fixed include route refusal evidence
 
-Current status: DONE_WITH_CONCERNS. Source-only fixed two-include support is
-implemented and locally verified; STOP for independent review before any live
-read/push/deploy. Production fragment contents and modes have not been inspected.
-Historical active runtime pins and all deployment lifecycle rules are unchanged.
+Current status: BLOCKED. One approved deploy at cleanbbc9531 returned
+preflight_nginx/include_route during initial read-only inspect, before mutation.
+Owned transport cleanup and local evidence/port absence verified. STOP, no retry.
+No new runtime record/pins or complete neighbor/Nginx perimeter attestation.
+
+## Approved single deploy atbbc9531 — include-route refusal
+
+Verified clean exact HEADbbc9531b8d7b94b94762e564e9069fe64e3fa703, feature branch,
+fixed worktree/Git directory and backlink, installed Node realpath, origin URL
+and absence of local include/rewrite/push/mirror/worktree-config redirection.
+An isolated Git authority lookup outside all repositories used disabled system/
+global configuration, no replacement objects/hooks/fsmonitor and fixed SSH.
+Both authorized remote refs were verified ancestors. Ordinary non-force pushes
+updated only refs/heads/codex/abbott-runtime-isolation and
+refs/heads/release/abbott to the exact approved SHA; a second isolated lookup
+verified both. The owned empty Git lookup directory was removed and absence
+verified. No other refs were pushed. Approved source gates remain those in the
+preceding checkpoint; no source was changed before the command.
+
+Exactly one invocation from that clean active worktree:
+
+```sh
+/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott
+```
+
+Exit1, exact closed result:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=include_route`
+
+The reviewed initial inspect reached the fixed include-fragment validation and
+refused. Both fixed include reads had passed bounded nofollow/root:root0644/
+stable metadata/UTF-8 checks before fragment semantic analysis, but the closed
+code does not identify a file, directive, argument or rejected content. No raw
+configuration, included content, environment or PM2 data was output. This result
+is not approval of either fragment's routing and does not establish the precise
+rule beyond the closed include_route boundary.
+
+The refusal precedes neighbor snapshot discovery, current-record/full-artifact/
+browser verification, lock inspection/creation, account subprocesses, PM2,
+candidate build and activation. Thus this invocation performed no runtime,
+Nginx or neighbor mutation. Accepted REFUSED requires a canonical hash/status/
+diagnostic-paired remote ACK, captured owned SSH PID/start, observed and verified
+SSH exit, plus successful private evidence finalization/removal. The reviewed
+session zeroed source/request/output buffers. The local deploy process exited1;
+local-only checks verified both fixed deploy/recovery evidence directories absent
+and no3001/3004 TCP listener. No forward/browser/credential or candidate temporary
+boot session was started.
+
+Limitations: current active/source/control/manifest/predecessor values were not
+newly read or attested, and no new release record exists. Historical6f09982/8c79
+and predecessorf80607f/6cd2 are not promoted to fresh evidence. Existing remote
+lock/journal/temp absence, health3004 and complete neighbor/main+include perimeter
+unchanged comparison were not independently checked because initial preflight
+stopped earlier. No supplemental remote verifier was run or substituted. Those
+checks remain unperformed, not assumed successful. Public routing remains outside
+this operation; route-only rollback target3001 is unchanged.
+
+No retry, deploy follow-up, recovery, smoke, capture, PDF, credential issuance,
+DB/auth/fact change, collector/cron action, neighbor operation or Nginx edit/test/
+reload occurred. Evidence-only local commit; STOP for direction.
 
 ## Containing main-location lexical bypass — source-only follow-up
 
