@@ -87,7 +87,8 @@ test("login and unavailable responses use the local centred state-card wrapper",
   const page = readFileSync(new URL("../src/app/dashboard/[siteSlug]/page.tsx", import.meta.url), "utf8");
 
   assert.match(page, /site-seo-state-page/);
-  assert.equal(page.match(/site-seo-state-card/g)?.length, 2);
+  assert.equal(page.match(/site-seo-state-card/g)?.length, 3);
   assert.match(page, /<LoginForm dashboardId=\{runtime\.registration\.profile\.dashboardId\} siteSlug=\{siteSlug\} \/>/);
   assert.match(page, /Данные пока недоступны: не установлен canonical read model\./);
+  assert.match(page, /Классификация обновлена/);
 });

@@ -2,7 +2,8 @@ import type { DatasetMeta } from "@reportingdash/site-seo-contract";
 import type { ReactNode } from "react";
 import type { MetrikaBreakdownRow } from "../lib/db.ts";
 import type { DashboardReadModel } from "../lib/read-model.ts";
-import { MedicalIntentPanel } from "./MedicalIntentPanel.tsx";
+import { TargetIntentPanel } from "./TargetIntentPanel.tsx";
+import type { IntentQueryNavigation } from "./IntentQueryDisclosures.tsx";
 
 type SourceState = DatasetMeta["state"];
 const number = new Intl.NumberFormat("ru-RU");
@@ -251,12 +252,13 @@ function SearchEngineGrid({ engines, missingCopy }: Readonly<{ engines: readonly
   </div>;
 }
 
-export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster = true }: Readonly<{
+export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster = true, intentNavigation }: Readonly<{
   id: string;
   model: DashboardReadModel;
   showGsc: boolean;
   showMetrika?: boolean;
   showWebmaster?: boolean;
+  intentNavigation?: IntentQueryNavigation;
 }>) {
   const metrikaMeta = showMetrika ? model.metrika ?? model.datasets.yandex_metrika : null;
   const gscMeta = showGsc ? model.gsc.meta : null;
@@ -270,12 +272,12 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
   const hasSearchEngineRows = searchEngines.some((engine) => engine.metrics !== null);
   const channelsState = breakdownState(channels, trafficState);
   const searchEnginesState = hasSearchEngineRows ? metrikaState : metrikaState === "complete_empty" ? "complete_empty" : "missing";
-  const showTargetIntent = model.targetIntent.state !== "not_configured";
+  const showTargetIntent = model.targetIntent.state !== "not_configured" || model.targetIntent.sources.length > 0;
 
   return (
-    <div id={id} className="site-seo-overview-grid" data-target-intent={showTargetIntent ? "true" : undefined} data-medical-intent={showTargetIntent ? "true" : undefined}>
+    <div id={id} className="site-seo-overview-grid" data-target-intent={showTargetIntent ? "true" : undefined}>
       <OverviewSlot id="north_star">
-        {showTargetIntent ? <MedicalIntentPanel intent={model.targetIntent} /> : <section className="site-seo-panel site-seo-goal-panel">
+        {showTargetIntent ? <TargetIntentPanel intent={model.targetIntent} navigation={intentNavigation} /> : <section className="site-seo-panel site-seo-goal-panel">
           <h2>Цель: рост целевого органического трафика</h2>
           <div className="site-seo-goal-kpis">
             {showMetrika ? <GoalKpi label="Поисковые визиты" metric={model.metrika?.summary?.visits} detail={sourceDetail("Метрика · Россия", metrikaMeta)} /> : null}
