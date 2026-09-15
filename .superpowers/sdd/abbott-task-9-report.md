@@ -1,14 +1,14 @@
-# Abbott Task 9 — closed asset-attestation diagnostic checkpoint
+# Abbott Task 9 — diagnostic smoke still refused at asset attestation
 
-Status: DONE_WITH_CONCERNS; source-only diagnostics await review before retry.
-The last live smoke stopped at `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`
-before credential issuance. No deterministic live cause has been established.
-This turn made no live request, push, deploy, capture or Nginx action. Last verified
-production remains6f09982/release8c79 with matching files/pointer/control/manifest/
-fresh PM2 binding, predecessorf80607f/release6cd2 retained,9aaed34 quarantined,
-neighbors/Nginx unchanged and cleanup verified. These are prior operational
-proofs, not new host assertions. Live parity, six-image comparison and cutover
-remain incomplete. Earlier sections are chronological history.
+Status: BLOCKED. Approved diagnostics6393077 were published; the single retry
+returned `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`,
+without a more specific asset subreason and before credential issuance. No
+deterministic cause is established. No subsequent retry, source fix, capture,
+deployment or Nginx action occurred. Fresh before/after proofs attest unchanged
+production6f09982/release8c79 files/pointer/control/manifest/fresh PM2 binding,
+retainedf80607f/release6cd2 backup,9aaed34 quarantine, browser prerequisite,
+neighbors and Nginx. Local cleanup is verified. Live parity, six-image comparison
+and cutover remain incomplete. Earlier sections are chronological history.
 
 ## Scope and authorization
 
@@ -2631,3 +2631,54 @@ cron/neighbor, deployment or Nginx operation occurred. Published refs remain
 Nginx backup or live parity result is claimed. Rollback target remains the
 last-verifiedf80607f/release6cd2. DONE_WITH_CONCERNS: STOP for review before
 push, host diagnosis or any live retry.
+
+## Approved diagnostic publication and single retry — 2026-09-15
+
+Following independent approval, the clean exact HEAD
+`63930772a4e307727f404c21a156a0dcdfdd2a8e` was ordinary fast-forward pushed to
+only `refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`.
+Both literal remote refs were reread and matched exactly. No deployment was
+needed or performed; the deployed release remains6f09982/8c79/a5b56e3.
+
+The independent full read-only deployed-state proof passed before the attempt.
+Ran exactly one approved smoke via the existing orchestrator, fixed dates
+2026-09-01..2026-09-13 and literal loopback3001/3004, clean local invocation and
+owned-child observation. The only refusal returned was:
+
+`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`
+
+No more specific asset subreason was obtained; do not infer a pin, metadata,
+schema, tree or transport cause from this generic result. The asset stage still
+precedes issuer execution, so no real credential frame was minted/consumed and
+no credentialed smoke/PDF/Excel or capture phase was entered. No raw child
+streams, environment or credential values were exposed. The first failure
+stopped all further task actions except required read-only state/cleanup evidence:
+no retry, fix, capture, Nginx tooling implementation or production Nginx change.
+
+The owned observer returned `ABBOTT_VERIFICATION_OWNED_CLEANUP_VERIFIED`.
+Captured orchestrator/forward/descendant PID/start identities stayed in memory;
+all captured PIDs exited and the forward emitted its verified-exit record.
+Independent local checks returned
+`ABBOTT_SMOKE_OUTPUT_ABSENT_AND_LOCAL_CLEANUP_VERIFIED`: no3001/3004 listener,
+no private identity evidence directories, no smoke report or partial candidate
+directory. There was no browser session or credential temp file to remove;
+reviewed buffer cleanup completed. All local commands and read-only SSH children
+exited; no six-image dimensions/diff or visual acceptance is claimed.
+
+After refusal, the independent full proof again returned
+`ABBOTT_POST_DEPLOY_VERIFIED` for release`8c79caf495f147ad91b2174b9bc5f65c`,
+source`6f09982fb1e8068f02340ddfcb5c945fb02ebfd5`, manifest
+`a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2`
+and predecessor`6cd2f12e245a47dcbd5f6ce928c4ed83`. Exact runtime/ownership receipt,
+PID/start/UID982/GID984, soleloopback3004/health, active/backup/quarantine trees,
+browser package/archive/executable/env metadata, committed/restored root-only
+audits and absent deploy lock/staging remain verified. Neighbor IDs/PIDs/start/
+cwd/releases match the preceding table. Nginx remains unchanged at SHA256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+
+Public routes remain on3001; no Nginx backup/test/reload/cutover, deployment,
+neighbor write/restart/release, DB/auth/fact change, password rotation or collector/
+cron action occurred. Rollback target remains retainedf80607f/release6cd2.
+This checkpoint changes only the sanitized report. Verification-before-completion
+required fresh cleanup and independent state proofs, not a claimed smoke pass.
+BLOCKED pending further reviewed direction; no automatic retry.
