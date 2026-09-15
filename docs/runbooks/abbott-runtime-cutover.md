@@ -1,5 +1,43 @@
 # Abbott isolated-runtime cutover runbook
 
+### Fixed two-snippet perimeter support — source-only, STOP for review
+
+The deployment proof now conditionally supports only the observed selected-TLS
+include pair:
+
+- `/etc/nginx/snippets/coopervision-market-path.conf`
+- `/etc/nginx/snippets/reportingdash-public-coopervision-market-intelligence-c.conf`
+
+With no selected include, the baseline validator is unchanged and neither file
+is read. If any selected include exists, both exact unescaped literal paths must
+occur once each, with no extra arguments, block form, duplicate or third path.
+An invalid pair refuses before either file is opened. This is not a general
+include resolver and never follows includes from a fragment.
+
+Each fixed file must be root:root, regular, one link, exact mode0644, at most
+65,536 bytes, valid UTF-8, with non-symlink root-owned non-writable ancestry.
+Mode0644 is the conservative required convention, not a live observed fact.
+The proof uses bounded O_NOFOLLOW reads and stable descriptor/path metadata;
+file bytes, SHA256, metadata and ancestor identities remain in the single
+in-memory transaction snapshot. Both files are reread/rechecked at every existing
+perimeter boundary, including pre-stop, post-health/pre-pointer and compensation.
+Observed drift latches refusal even after reversion. No snapshots are accepted
+from the caller or stored in a temporary file; read/hash buffers are zeroed.
+
+Fragments are parsed and spliced at their include positions under the existing
+selected-server/location grammar. Every fragment node must have unambiguous
+literal lexical provenance; escapes/quote concatenation refuse. Nested includes,
+server/listen/server_name authority, unsupported blocks/directives, regex or
+variable routing, Abbott aliases/assets/3004 and non-3001/2/3 proxy targets refuse.
+The main parser and inactive-vhost acceptance are otherwise unchanged. Reader
+transport source hashes are refreshed only to attest the changed analyzer source.
+
+Closed additional preflight_nginx reasons are include_metadata, include_utf8,
+include_syntax, include_route and include_snapshot_drift. They expose no contents,
+arguments, paths or exception details. Existing status/ACK pairing remains strict.
+Source tests do not establish that either production fragment will pass. This
+checkpoint authorizes no remote read, push, deploy, smoke, capture or Nginx edit.
+
 ### Selected TLS include path inventory — source-only, STOP for review
 
 The same no-argument read-abbott-nginx.mjs caller now emits the separate strict

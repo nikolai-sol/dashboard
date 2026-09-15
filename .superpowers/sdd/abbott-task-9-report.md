@@ -1,9 +1,71 @@
-# Abbott Task 9 — approved read-only include inventory evidence
+# Abbott Task 9 — fixed include perimeter source checkpoint
 
-Current status: BLOCKED. One approved read-only inventory at cleancca7388
-returned two canonical selected-TLS include paths with verified owned cleanup.
-No include contents were loaded or printed, and deployment acceptance remains
-unchanged. No retry/push/deploy/Nginx action. STOP for direction.
+Current status: DONE_WITH_CONCERNS. Source-only fixed two-include support is
+implemented and locally verified; STOP for independent review before any live
+read/push/deploy. Production fragment contents and modes have not been inspected.
+Historical active runtime pins and all deployment lifecycle rules are unchanged.
+
+## Fixed two-include perimeter — source-only TDD checkpoint
+
+Base:53c6b656ee5ac8e1d8a0e03c664277831074973c. Implemented only the observed
+coopervision-market-path.conf and
+reportingdash-public-coopervision-market-intelligence-c.conf pair beneath the
+fixed /etc/nginx/snippets directory. Main config without selected includes keeps
+baseline acceptance and performs no snippet reads. With any selected include,
+exactly both unescaped literal paths must occur once, with no extras; invalid
+pairs refuse before either read. Selected includes are spliced at their original
+positions, not merged into a broader unrelated configuration inventory.
+
+Each file requires root:root, exact0644, regular nlink1, no symlink, at most
+65,536 bytes, valid UTF-8, stable nofollow descriptor/path metadata and verified
+root-owned non-writable ancestors. Exact0644 is the required safe convention,
+not an observed production mode. Bytes/hash/metadata/ancestor identities join the
+single in-memory perimeter snapshot. Both files are reread at existing perimeter
+boundaries and metadata checked around reads and after neighbor proof. Drift
+is latched even after reversion. No snapshot transport/temp or file writes were
+introduced; descriptor/read/hash buffers are closed/zeroed on failure.
+
+Fragments use the existing selected-TLS semantic validator, refusing nested
+includes, server/listen/server_name, unsupported blocks, regex/variable routing,
+Abbott aliases/assets/3004, non-loopback or non3001–3003 proxy targets. Every new
+fragment node additionally requires literal lexical provenance. Independent
+review reproduced an escaped-tab numeric alias bypass in the initial draft;
+RED tests confirmed it, then the fragment-only lexical check fixed it. Escaped
+tab/CR/LF aliases, quote concatenation, escaped proxy/header strings refuse;
+whole quoted unescaped safe literals remain accepted. Reviewer rechecked the fix
+and found no remaining issue in this narrow checkpoint.
+
+Closed preflight_nginx reasons include_metadata/include_utf8/include_syntax/
+include_route/include_snapshot_drift are strict REFUSED status-paired wire enums,
+never paths, values or errors. Reader source hash pins were refreshed for the
+changed analyzer; runtime release/source/control/manifest pins were not changed.
+
+Verification (fresh final runs):
+
+- RED missing pair support and proof refusal, then GREEN; closed diagnostic wire
+  initially refused new enums (RED), then GREEN. Lexical bypass RED then GREEN.
+- Focused parser/reader/proof/transport:400/400.
+- npm run test:abbott-runtime: focused build passed, app/runtime68/68,
+  authority/artifact855/855;12 exact routes and1 asset prefix passed.
+- New differential:60 baseline/no-include/inactive variants unchanged against
+  base53c6b65;12 fragment cases match their old inline semantics, with4 safe
+  documented exact-pair acceptance additions. Existing327 baseline comparisons
+  remain unchanged, plus prior16 bounded rate-limit additions.
+- npm run typecheck; ./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json;
+  npm run lint (0errors,10existing warnings); npm run build;
+  npm run test:deploy-source; npm run test:release-runtime; node --check on the
+  three changed runtime modules; git diff --check: all passed.
+- An attempted npm workspace typecheck alias was absent; the explicit reviewed
+  local tsc command above replaced it and passed. No dependency changes.
+
+No SSH/live request, production include read, push, deploy, PM2, credential,
+browser, smoke, capture, DB/auth/fact/cron, Nginx edit/test/reload or cutover ran.
+All local test/build subprocesses exited. No temporary service/forward/browser
+was created. Supplemental remote state checks were not run. Prior read-only
+inventory evidence below remains historical, not fresh runtime attestation.
+Unknown production fragment grammar/mode can still cause a safe refusal after
+approval; no automatic permissiveness or retry was added. Route rollback3001 and
+historical active6f09982/control8c79/predecessorf80607f/6cd2 remain unchanged.
 
 ## Approved single include inventory atcca7388
 
