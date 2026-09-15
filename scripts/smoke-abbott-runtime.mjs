@@ -8,8 +8,8 @@ import { markDiagnostic, carryDiagnostic } from './abbott-verification-diagnosti
 const fail = () => { throw new Error('ABBOTT_SMOKE_REFUSED'); };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const ORIGINS = ['http://127.0.0.1:3001','http://127.0.0.1:3004'];
-const RELEASE = '6cd2f12e245a47dcbd5f6ce928c4ed83';
-const SOURCE = 'f80607fbc8a693aa2c720b0976938e88732cdf1a';
+const RELEASE = '8c79caf495f147ad91b2174b9bc5f65c';
+const SOURCE = '6f09982fb1e8068f02340ddfcb5c945fb02ebfd5';
 const active = signal => { if(signal?.aborted)fail(); };
 
 export function scanEmbedPrivacy(value) {
@@ -152,7 +152,8 @@ export async function summarizePdf(bytes,signal) {
 }
 
 function validateManifest(manifest) {
-  if(manifest?.version!==1||manifest.releaseId!==RELEASE||manifest.sourceSha!==SOURCE||!Array.isArray(manifest.assets)||manifest.assets.length<1||manifest.assets.length>256)fail();
+  if(manifest?.releaseId!==RELEASE||manifest?.sourceSha!==SOURCE)throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),'asset_attestation','pin_mismatch');
+  if(manifest.version!==1||!Array.isArray(manifest.assets)||manifest.assets.length<1||manifest.assets.length>256)fail();
   const entries=new Map();
   for(const item of manifest.assets){safeAssetPath(item.path,ORIGINS[1]);if(entries.has(item.path)||!Number.isSafeInteger(item.size)||item.size<0||item.size>16*1024*1024||! /^[a-f0-9]{64}$/.test(item.sha256))fail();entries.set(item.path,item);}
   return entries;

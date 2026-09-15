@@ -7,6 +7,42 @@ import { execFileSync } from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 const api = async () => { try { return await import('./smoke-abbott-runtime.mjs'); } catch(e) { if(e.code==='ERR_MODULE_NOT_FOUND')return {};throw e; } };
 const hash = x => createHash('sha256').update(x).digest('hex');
+const deployed = JSON.parse(fs.readFileSync(new URL('./fixtures/abbott-deployed-record-6f09982.json',import.meta.url),'utf8'));
+
+test('smoke and remote attester pins agree with the observed deployed record',()=>{
+  const pin=(file,name,length)=>{
+    const source=fs.readFileSync(new URL(file,import.meta.url),'utf8');
+    const matches=[...source.matchAll(new RegExp(`(?:const\\s+|,)\\s*${name}\\s*=\\s*'([a-f0-9]{${length}})'`,'g'))];
+    assert.equal(matches.length,1);return matches[0][1];
+  };
+  const smoke={id:pin('./smoke-abbott-runtime.mjs','RELEASE',32),sourceSha:pin('./smoke-abbott-runtime.mjs','SOURCE',40)};
+  const attester={id:pin('./abbott-asset-attestation.mjs','ID',32),sourceSha:pin('./abbott-asset-attestation.mjs','SHA',40)};
+  assert.deepEqual(smoke,attester);assert.deepEqual(smoke,{id:deployed.id,sourceSha:deployed.sourceSha});
+});
+
+test('deployed attestation proceeds to an inert fetch shim without network access',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');let calls=0;
+  const manifest={version:1,releaseId:deployed.id,sourceSha:deployed.sourceSha,assets:[{path:'/_next-abbott/_next/static/fixture.js',size:1,sha256:'a'.repeat(64)}]};
+  await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest},new AbortController().signal,{fetchImpl:async()=>{calls++;throw Error('private-fetch-stop');}}),error=>{
+    assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=admin_manager reason=failed\n');return true;
+  });
+  assert.equal(calls,1);
+});
+
+test('predecessor and wrong identity refuse as pin_mismatch before any fetch',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const identity of [
+    {releaseId:'6cd2f12e245a47dcbd5f6ce928c4ed83',sourceSha:'f80607fbc8a693aa2c720b0976938e88732cdf1a'},
+    {releaseId:'private-release https://invalid/?access_token=private',sourceSha:deployed.sourceSha},
+    {releaseId:deployed.id,sourceSha:'private-source'},
+  ]){
+    let calls=0;const manifest={version:1,...identity,assets:[{path:'/_next-abbott/_next/static/fixture.js',size:1,sha256:'a'.repeat(64)}]};
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest},new AbortController().signal,{fetchImpl:async()=>{calls++;throw Error('private-fetch-stop');}}),error=>{
+      assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=pin_mismatch\n');return true;
+    });
+    assert.equal(calls,0);
+  }
+});
 
 test('recursive embed scan rejects identifier variants and private collections without leaking contents',async()=>{
   const m=await api();assert.equal(typeof m.scanEmbedPrivacy,'function');
@@ -170,7 +206,7 @@ test('PDF parser consumes pipes and returns only valid pages, dimensions and nor
 
 function fixture(change=()=>{}) {
   const requests=[],bodies=[];const asset=Buffer.from('synthetic-static');
-  const manifest={version:1,releaseId:'6cd2f12e245a47dcbd5f6ce928c4ed83',sourceSha:'f80607fbc8a693aa2c720b0976938e88732cdf1a',assets:[{path:'/_next-abbott/_next/static/chunks/shared.js',size:asset.length,sha256:hash(asset)}]};
+  const manifest={version:1,releaseId:deployed.id,sourceSha:deployed.sourceSha,assets:[{path:'/_next-abbott/_next/static/chunks/shared.js',size:asset.length,sha256:hash(asset)}]};
   const fetchImpl=async(url,options)=>{
     requests.push({url:new URL(url),options});const u=new URL(url);let body,status=200,type='application/json';
     if(u.pathname.endsWith('/abbott-admin-users')){status=u.searchParams.has('embed_key')?403:200;body=JSON.stringify(status===200?{user_ids:[]}:{error:'Forbidden'});}

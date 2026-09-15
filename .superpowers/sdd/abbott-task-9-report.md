@@ -1,12 +1,14 @@
-# Abbott Task 9 — approved b39c2d8 smoke refused
+# Abbott Task 9 — smoke consumer pin correction awaits review
 
-Status: BLOCKED. Approved b39c2d8 was published and one smoke diagnostic returned
+Status: DONE_WITH_CONCERNS. Source-only consumer pin correction awaits review.
+Approved b39c2d8 was published and one smoke diagnostic returned
 `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`; no finer
-boundary reason was exposed. Stopped without capture, retry or Nginx action.
-Fresh before/after checks verified unchanged6f09982/8c79 production,
+boundary reason was exposed then. The subsequent read-only architecture audit
+found stale predecessor pins in the consumer; the narrow TDD fix is not live.
+The prior before/after checks verified unchanged6f09982/8c79 production,
 retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite, neighbors
-and Nginx. Owned process/port/output cleanup passed. The live cause remains
-unproven; parity, six-image comparison and cutover remain incomplete. Earlier
+and Nginx. Owned process/port/output cleanup passed. Further parity, six-image
+comparison and cutover remain incomplete. Earlier
 sections are chronological history.
 
 ## Scope and authorization
@@ -2933,3 +2935,63 @@ f80607f/release6cd2. No screenshot/dimension/diff or parity acceptance is claime
 The runbook stop gate and verification-before-completion required the fresh
 state/cleanup proofs. This is an evidence-only commit; BLOCKED after the single
 approved result, awaiting direction.
+
+## Consumer pin root cause — audited and corrected locally
+
+The architecture audit recovered the last observer invocation and confirmed its
+child command was the fixed local Node25.6.1 binary followed by
+scripts/verify-abbott-shadow.mjs smoke, cwd the active isolated worktree. There
+was no package-script indirection or detached/deployed script copy. Repository-
+wide rg found one production copy of each orchestrator/diagnostics/smoke module.
+The last execution used clean b39c2d8; evidence-only d1b2ac0 changed no source.
+Retrospective SHA256 checks matched the b39c2d8 Git blobs exactly:
+
+- verify-abbott-shadow.mjs:7966f899b29554593821ebf858083ea33e12dd7e75a989ccff3b63bbe984b817
+- abbott-verification-diagnostics.mjs:cc75f4a0e3eeca4d22057567a9613dcdb4ea41a291c8fd7bd5a357262a339517
+- smoke-abbott-runtime.mjs:3384b7aa5da2434a792dc2bc10128b791fe7bcd6b382128a49c9e6289e63351a
+
+These are audit comparisons, not execution-time hash captures. The audit used
+only local source/metadata and an inert fetch shim; no live access occurred.
+
+The deterministic defect was duplicated stale authority: the remote attester
+correctly returned release8c79/source6f09982 while the consumer still required
+release6cd2/sourcef80607f. validateManifest rejected the mismatch and its consumer
+catch branded asset_attestation/failed. The orchestrator preserves that brand;
+its newly specific earlier transport checks therefore could not expose this
+consumer failure. Commit53f01c9 had updated the attester/test pins only; the smoke
+fixture continued to repeat the old values, so independently passing suites did
+not test agreement. The audit reproduced the observed diagnostic before any
+fetch-shim call for deployed identity; predecessor identity reached the shim.
+
+The requested minimal local correction updates only the smoke RELEASE/SOURCE to
+8c79caf495f147ad91b2174b9bc5f65c and
+6f09982fb1e8068f02340ddfcb5c945fb02ebfd5. A release/source mismatch is now privately
+branded asset_attestation/pin_mismatch, using the existing closed vocabulary.
+Other manifest version/inventory/size/hash/path restrictions remain unchanged;
+the remote attester's manifest hash, full-tree checks and SSH are unchanged.
+No shared runtime/remote module, configuration override or new abstraction was
+introduced. Smoke fixtures now use the existing sanitized deployed-record fixture.
+
+TDD RED3/3: cross-contract pin comparison, deployed identity reaching an inert
+fetch shim, and predecessor refusal failed before the implementation. GREEN3/3:
+source-parsed smoke/attester pins agree with each other and the observed record;
+the deployed identity reaches the deliberate local fetch stop; predecessor,
+wrong release and wrong source return pin_mismatch with zero fetch calls. The
+wrong identities contain secret-bearing synthetic text that never appears in
+diagnostics. No real credentials or network were used in these regressions.
+
+Fresh gates: focused smoke/attester/diagnostics51/51; broader verification140/140;
+app67/67; authority/bootstrap/browser/recovery/deploy/artifact512/512; dashboard
+contract111/111; comparator25/25. Production build, exact12-route/1-prefix, contract wiring,
+public-asset security, sealed2870-file/82-text artifact, both typechecks, syntax
+and whitespace gates pass. Lint exits0 with0 errors and10 existing warnings.
+All task-owned local test commands exited; local3001/3004 listeners and both
+private identity evidence directories are absent. No browser was launched.
+
+Systematic debugging located the cross-component mismatch; TDD reproduced it
+before the narrow fix and verification-before-completion required fresh gates.
+No push, SSH/live probe, credential issuance/use, smoke/capture, deploy, neighbor
+or Nginx action occurred. Published refs remain b39c2d8; deployed6f09982/release8c79
+and retainedf80607f/release6cd2 rollback have not been changed or newly inspected.
+Later parity/visual gates remain unverified. DONE_WITH_CONCERNS; STOP for review
+before any live retry.
