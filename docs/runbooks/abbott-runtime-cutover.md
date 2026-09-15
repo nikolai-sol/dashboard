@@ -1,5 +1,43 @@
 # Abbott isolated-runtime cutover runbook
 
+### PDF log caller checkpoint — review required before host use
+
+The fixed caller is now implemented locally; the preceding classifier-only
+checkpoint remains historical. Do not run it until this caller checkpoint is
+approved. It is the only proposed operator command, from the clean exact
+isolation worktree, without arguments or inherited authority:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-pdf-stage.mjs
+```
+
+The caller pins classifier/proof/worker source hashes, clean HEAD blobs, exact
+worktree/Git directory, its own script realpath and bytes, installed Node and
+local SSH key/known-host metadata. Its fixed SSH command uses root on beget's
+pinned host/address/key/known-host authority, LogLevel=ERROR, no config/proxy/
+agent/control reuse, and a clean remote Node environment. Only a bounded,
+canonical source frame travels through stdin, never credentials or arguments.
+The loader verifies exact schema, source hashes and size limits before importing
+the proof. No source or log file is created remotely.
+
+The read-only proof reconciles the exact6f09982/8c79/a5b5 current record and sealed
+ownership receipt with active-directory inode, kernel PID/start/UID982/GID984,
+PM2 registration/cwd/launcher/source/release/log-path, sole loopback3004 listener
+and bounded no-redirect health. It repeats process/record checks around the
+classifier and health afterward. No runtime.env or application .env is read.
+The classifier's strict0600,64KiB,complete-safe-record acceptance is unchanged;
+unknown remains unknown, without permission repair or broader log inspection.
+
+The local caller installs bounded drains/deadlines/exit handlers immediately
+after spawn, captures owned PID/start in private identity-only evidence before
+source dispatch and checks ownership before TERM/KILL. Exact child exit and
+private-evidence cleanup are required before a stage result can be accepted.
+All stderr, failing SSH exits, malformed/duplicate/extra stdout and unverifiable
+cleanup collapse to the same closed unknown line. Output contains no PIDs,
+paths, times, counts, command/error text or log content. The process exits nonzero
+on unknown. A classified historical marker is not per-request attribution and
+does not authorize smoke retry, deployment or Nginx changes.
+
 ### Gated source-only PDF log-stage diagnostic (2026-09-15)
 
 After the approved d17712f smoke returned `pdf_fetch/candidate_5xx`, stop live

@@ -1,8 +1,9 @@
-# Abbott Task 9 — PDF log-stage classifier awaits review
+# Abbott Task 9 — fixed PDF log caller awaits review
 
-Status: DONE_WITH_CONCERNS for the source-only diagnostic checkpoint. The bounded
-closed-output PDF log classifier and local fixtures are implemented; no host log
-read or live retry occurred. Operational Task9 remains blocked: approved
+Status: DONE_WITH_CONCERNS for the source-only caller checkpoint. The approved
+bounded classifier now has a fixed, hash-pinned read-only caller with local
+proof/transport fixtures; no host log read or live retry occurred. The caller
+awaits review. Operational Task9 remains blocked: approved
 degraded-baseline policy d17712f was published to both
 authorized refs and the single approved live smoke returned
 `ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`.
@@ -3253,3 +3254,97 @@ production remains6f09982/release8c79 with retainedf80607f/release6cd2 rollback.
 There is no fresh production-state claim from this source-only turn. TDD and
 verification-before-completion governed tests and closure. DONE_WITH_CONCERNS;
 STOP for review before any host log read or live retry.
+
+## Fixed PDF log caller — source/TDD checkpoint awaiting review
+
+Implemented scripts/read-abbott-pdf-stage.mjs and
+scripts/abbott-pdf-active-proof.mjs with focused tests. No classifier acceptance
+rule, runtime application code, deployment or SSH authority for other tools was
+changed. The existing6f worker is imported only for its reviewed pure process/
+registration/listener validators; mutation APIs are not called. The fixed proof
+does not read runtime.env or application .env and issues no credentials or export
+requests. Its only HTTP request is the bounded unauthenticated loopback health
+check; all test requests used injected local fixtures.
+
+The local entrypoint accepts no arguments, requires the exact clean worktree and
+Git-directory identity through the reviewed authority verifier, pins exact Node,
+checks its own script realpath and HEAD bytes, and requires approved8f5e8fe
+ancestry. Classifier, worker and proof bytes must match both clean HEAD and fixed
+SHA256 constants before serialization. The canonical three-key base64 source
+frame is capped at262,144 bytes, each source at131,072. Remote verification
+rejects duplicate/extra keys, whitespace/trailing fragments, malformed encoding,
+wrong hashes and size violations before importing code. No caller-supplied
+host, command, source path, credential or environment authority is accepted.
+
+SSH is fixed to beget/root5.35.85.218 with explicit identity/known-host files,
+LogLevel=ERROR, strict host checking and no configuration/proxy/agent/control
+reuse. SSH and remote Node receive clean constructed environments; the reviewed
+macOS local non-authority exception is unchanged. Source travels only through
+stdin. No remote source, log, credential or temporary file is written. A25-second
+remote watchdog returns unknown on abort/timeout; bounded subprocess and health
+timeouts constrain proof work. No raw remote stderr reaches the operator.
+
+The proof checks the pinned host/boot/supervisor, exact current and immutable
+record6f09982/8c79/a5b5, source/scope stamps, launcher equivalence, protected
+manifest digest and one root-only ownership receipt. Active directory dev/inode
+must match that receipt. Bounded PM2 JSON is captured internally; the sole Abbott
+online registration must match the protected receipt, exact launch/cwd/source/
+release binding and fixed error-log path/date/merge configuration. Kernel
+PID/start/UID982/GID984 and sole127.0.0.1:3004 listener are validated with the
+reviewed worker functions. The health body is capped at4KiB, no redirects, exact
+connected Abbott schema. Full snapshot proof runs before and during classifier
+reads and after final health, with identity equality required throughout.
+
+Local transport installs drains, child close/exit handlers and cleanup deadlines
+immediately after spawn, before identity probing/shared setup. Private evidence
+uses the existing ignored owner0700/file0600 identity-only directory and atomic
+writer. PID/start is captured before source dispatch; failed initial proof/setup
+sends EOF only and retains cleanup observation. Owned start identity is rechecked
+before TERM at40seconds and KILL at42seconds. If ownership is only recovered
+at42seconds, TERM still precedes the44-second KILL;45seconds yields unknown/unverified
+if exact exit cannot be established, never a cleanup-success claim. Late-close
+handlers remain for reaping. Output/stderr chunks and source buffers are erased.
+Only exact closed stage frames with successful child exit, verified absent PID
+and matching private-evidence exit summary can be accepted. Private evidence is
+finished/removed after its sanitized cleanup summary is consumed. All stderr,
+forged/extra/oversized stdout, SSH nonzero/signal, proof/cleanup error and timeout
+produce the fixed unknown line. The public CLI emits no identities or diagnostics
+beyond that line and exits nonzero for unknown.
+
+TDD exercised missing frame recognition, source dispatch/evidence ordering,
+cleanup and proof bracketing before implementation. A separate RED receipt
+directory-drift case added exact active-inode binding. A real inert loader RED
+duplicate-source-key case led to canonical JSON-frame equality before imports.
+Focused26/26 includes actual local Node subprocess loader success/refusal and
+PID reaping, pinned source hashes, secret-bearing forged stdout/stderr, partial/
+oversized/duplicate frames, initial proof/setup failure, PID reuse, bounded
+TERM/KILL, evidence refusal, health and receipt/kernel/PM2/log metadata drift.
+The classifier's prior mode/symlink/rotation/huge-file tests remain unchanged.
+The inert loader fixture adjusts only fixture source hashes/root platform guard;
+production pins and root requirement are not relaxed. Its macOS-only environment
+insertion is removed inside the inert test, not accepted on the Linux host.
+
+An additional RED late-ownership test prevented KILL before TERM when initial
+identity checks remained unavailable until the second cleanup deadline; it also
+proves source dispatch never resumes after the initial refusal.
+
+An actual local CLI subprocess regression also proves argument/ambient-authority
+refusal emits only unknown and exits/reaps before any SSH call.
+
+Fresh gates pass: focused26/26; combined verification199/199;
+authority/bootstrap/browser/recovery/deploy/artifact512/512; app67/67;
+contract111/111; additionally reused authority/evidence/transport31/31. Production
+build/exact12-route/1-prefix, contract wiring/public-asset security, both
+typechecks, changed-script syntax and whitespace checks pass. Lint exits0 with
+0 errors and10 existing warnings. All local test subprocesses are reaped; no
+actual browser or SSH session was created. Verification-before-completion
+required fresh gates; systematic debugging kept this to Phase1 diagnostics.
+
+No push, live host/log read, real health/export/credential request, deploy,
+neighbor change, DB/auth/fact/collector/cron mutation, smoke/capture or Nginx work
+occurred. The runbook contains only the gated fixed no-argument caller command,
+not a raw log command. Live log0600 metadata, rotation and per-request attribution
+remain unobserved; unknown does not authorize broader inspection or permission
+repair. Last verified production remains6f09982/release8c79, predecessorf80607f/
+release6cd2 retained, published refsd17712f; no fresh host-state claim from this
+source-only turn. DONE_WITH_CONCERNS; STOP for caller review before execution.
