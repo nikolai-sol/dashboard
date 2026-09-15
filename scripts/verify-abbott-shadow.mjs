@@ -9,6 +9,7 @@ import { HOST } from './bootstrap-abbott-host.mjs';
 import { captureBoundedChild } from './abbott-bounded-child.mjs';
 export { captureBoundedChild } from './abbott-bounded-child.mjs';
 import { markDiagnostic, carryDiagnostic, diagnosticFromChild, formatVerificationFailure } from './abbott-verification-diagnostics.mjs';
+import { ASSET_ATTESTATION_REASONS } from './abbott-asset-attestation.mjs';
 
 const ROOT = '/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
 const OUTPUT = '/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026-09-14';
@@ -218,7 +219,14 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     if(platform.loadConsumer){stage='consumer_load';consumer=await guarded(()=>platform.loadConsumer(mode,controller.signal));checkForward();}
     if(mode==='smoke'){
       stage='asset_attestation';assets=await guarded(()=>platform.readAssets(controller.signal));checkForward();
-      if(assets.status!==0||assets.signal||assets.stderr.length||!Buffer.isBuffer(assets.stdout)||assets.stdout.length>262144)refuse();
+      if(assets.status!==0||assets.signal||assets.stderr.length||!Buffer.isBuffer(assets.stdout)||assets.stdout.length>262144){
+        let reason='transport';
+        if(assets.status===1&&!assets.signal&&Buffer.isBuffer(assets.stdout)&&!assets.stdout.length&&Buffer.isBuffer(assets.stderr)&&assets.stderr.length<=96){
+          const match=/^ABBOTT_ASSET_ATTESTATION_REFUSED reason=([a-z_]+)\n$/.exec(assets.stderr.toString('utf8'));
+          if(match&&ASSET_ATTESTATION_REASONS.includes(match[1]))reason=match[1];
+        }
+        throw markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'asset_attestation',reason);
+      }
     }
     stage='issuer';issued = await guarded(() => platform.issue(code, controller.signal));
     checkForward();

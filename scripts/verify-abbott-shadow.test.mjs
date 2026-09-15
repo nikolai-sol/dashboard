@@ -186,6 +186,20 @@ test('failed asset attestation refuses before issuing a credential and never lea
   await assert.rejects(api.runAbbottVerification('smoke',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);assert.equal(issued,0);assert.ok(assets.every(x=>x===0));assert.ok(stderr.every(x=>x===0));
 });
 
+test('asset subreason frames are exact, closed, zeroed and propagated only after cleanup',async()=>{
+  const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs');
+  const secret='synthetic-secret https://invalid.test/?access_token=private';
+  const reasons=['record_schema','pin_mismatch','tree_hash','asset_prefix','predecessor','transport','source_proof','metadata','unknown'];
+  const cases=reasons.map(reason=>({status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from(`ABBOTT_ASSET_ATTESTATION_REFUSED reason=${reason}\n`),reason}));
+  for(const text of [secret,'ABBOTT_ASSET_ATTESTATION_REFUSED\n','ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\n'+secret,'ABBOTT_ASSET_ATTESTATION_REFUSED reason='+secret+'\n','ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\r\n','x'.repeat(262145)])cases.push({status:1,stdout:Buffer.alloc(0),stderr:Buffer.from(text),reason:'transport'});
+  for(const change of [{status:0},{signal:'SIGTERM'},{stdout:Buffer.from(secret)}])cases.push({status:1,signal:null,stdout:Buffer.alloc(0),stderr:Buffer.from('ABBOTT_ASSET_ATTESTATION_REFUSED reason=metadata\n'),reason:'transport',...change});
+  for(const response of cases){let issued=0,closed=0;const signals=new EventEmitter();
+    const platform={signalSource:signals,capsule:()=>Buffer.from('code'),prepareOutput(){},verifyForward(){},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{closed++;},readAssets:async()=>response,issue:async()=>{issued++;}};
+    await assert.rejects(api.runAbbottVerification('smoke',platform),e=>{assert.equal(d.formatVerificationFailure(e),`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=${response.reason}\n`);return true;});
+    assert.equal(issued,0);assert.equal(closed,1);assert.equal(signals.listenerCount('SIGTERM'),0);assert.ok(response.stdout.every(x=>x===0));assert.ok(response.stderr.every(x=>x===0));
+  }
+});
+
 test('parent propagates only branded or exact child enum diagnostics after cleanup',async()=>{
   const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs').catch(()=>({}));assert.equal(typeof d.formatVerificationFailure,'function');
   for(const kind of ['smoke','capture','forged','raw-child']){

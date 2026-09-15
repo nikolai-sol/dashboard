@@ -4,13 +4,14 @@ This runbook moves only Abbott's exact public routes from the combined runtime o
 
 Run the local commands from the reviewed isolated-runtime worktree as an unprivileged account. Run the server commands only through the established `beget` SSH alias. Stop on the first failure. Never put a password, access token, embed key, cookie, or authorized URL in shell arguments, environment variables, files, screenshots of browser chrome, or chat. Credentials must arrive through the approved ephemeral host issuer and a direct stdin pipe only.
 
-Current operational checkpoint (2026-09-15): PDF diagnostics `b9c8965` received
-review approval and both authorized refs were verified at that SHA. One live
-smoke stopped at `ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx`.
-Owned SSH/process cleanup and unchanged neighbors/Nginx were verified. No capture,
-redeploy or route change followed. STOP: no retry or speculative runtime fix
-without a separately reviewed next step. Earlier diagnostic-review notes below
-describe historical checkpoints; they do not authorize bypassing this failed gate.
+Current operational checkpoint (2026-09-15): acknowledged deploy6f09982 succeeded
+as release8c79, with predecessor6cd2 retained. Approved pin53f01c9 was published;
+one smoke stopped at `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`
+before credential issuance. Cleanup and independent deployed-runtime/browser/
+neighbor/Nginx checks passed. The source-only asset diagnostic checkpoint below
+requires review before any retry. No capture, redeploy or route change followed.
+Earlier diagnostic-review notes describe historical checkpoints, not authority
+to bypass the current failure.
 
 ## 1. Verify the clean reviewed commit
 
@@ -702,12 +703,28 @@ Any later runtime inspection/remediation requires its own reviewed scope.
 This mode uses the same strict credential frame and owned-forward lifecycle.
 Before credential issuance, a separate bounded read-only SSH capsule repeats the
 source proof and validates the exact installed release
-`6cd2f12e245a47dcbd5f6ce928c4ed83` / `f80607f`, current/record agreement, and trusted
-manifest SHA-256
-`7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f`.
+`8c79caf495f147ad91b2174b9bc5f65c` / `6f09982`, current/record agreement, exact
+predecessor`6cd2f12e245a47dcbd5f6ce928c4ed83`, and trusted manifest SHA-256
+`a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2`.
 It rejects links, mode/owner drift, modified public assets and unattested files;
 only public asset paths/sizes/hashes return through captured stdout. No manifest
 or credential transport file or extra credential descriptor is created.
+
+The local asset diagnostic change is STOP for review; it does not prove the live
+failure's cause. Remote refusals have one bounded frame whose reason is only
+record_schema, pin_mismatch, tree_hash, asset_prefix, predecessor, transport,
+source_proof, metadata or unknown. Reasons are privately branded, never read from
+exception fields. The parent propagates a reason only for exit1, no signal, empty
+stdout and exactly one bounded known frame. Unknown/forged/oversized/extra output,
+stderr accompanying exit0 and signal exits remain fatal transport refusals; raw
+streams are never displayed. Parent output retains the existing closed
+`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=<enum>` format.
+
+All deployed pins, current/record byte equality, manifest/file hashes, full public
+inventory, fixed prefix, bounded reads, ownership/modes and link checks remain.
+The record must contain exactly the observed five authority fields. The sanitized
+deployed-record fixture accepts8c79/6f09982/a5b56e3/6cd2 and rejects stale/wrong or
+extra fields. This narrows validation; it is not a speculative compatibility fix.
 
 The in-process consumer performs GET only on both literal loopback origins for
 both aliases `18`/`abbott`, both audiences, and the fixed period. Manager admin

@@ -1,14 +1,14 @@
-# Abbott Task 9 — shadow smoke refused at asset attestation
+# Abbott Task 9 — closed asset-attestation diagnostic checkpoint
 
-Status: BLOCKED. Approved pin53f01c9 was published; the single authorized smoke
-stopped at `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`,
-before credential issuance. No retry, source fix, capture or Nginx action followed.
-Fresh independent checks still attest production6f09982/release8c79 with matching
-active files, current pointer, control, manifest and fresh Abbott PM2 binding.
-Predecessorf80607f/release6cd2 is sealed in backups; interrupted9aaed34 remains
-quarantined. Neighbors/Nginx are unchanged and local cleanup is verified. Live
-parity, six-image comparison and cutover remain incomplete. Earlier sections are
-chronological history.
+Status: DONE_WITH_CONCERNS; source-only diagnostics await review before retry.
+The last live smoke stopped at `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`
+before credential issuance. No deterministic live cause has been established.
+This turn made no live request, push, deploy, capture or Nginx action. Last verified
+production remains6f09982/release8c79 with matching files/pointer/control/manifest/
+fresh PM2 binding, predecessorf80607f/release6cd2 retained,9aaed34 quarantined,
+neighbors/Nginx unchanged and cleanup verified. These are prior operational
+proofs, not new host assertions. Live parity, six-image comparison and cutover
+remain incomplete. Earlier sections are chronological history.
 
 ## Scope and authorization
 
@@ -2564,3 +2564,70 @@ process/write/release, DB/auth/fact migration/write, secret rotation or cron cha
 occurred in this turn. Rollback target remains the retainedf80607f/release6cd2.
 This checkpoint changes only sanitized report evidence; no source was altered.
 BLOCKED pending further reviewed direction, not an automatic retry.
+
+## Source-only asset-attestation diagnosis and closed subreasons
+
+Compared the fixed remote paths, invocation, current/record fields, predecessor,
+manifest schema, limits and public-prefix handling against the preceding
+sanitized6f09982/8c79/a5b56e3/6cd2 evidence and the committed installer. No
+deterministic mismatch was found: the current pins match the observed record;
+the installer publishes exactly those five record fields, and the preceding
+independent host proof checked their current/record byte agreement and full tree.
+Before rebuilding locally, the retained deployed artifact manifest independently
+hashed toa5b56e3, was version1/739144 bytes with2883 entries and13 public assets,
+all public entries of the expected schema, file type and0644 mode with permitted
+path characters. The asset capsule was28554 bytes, below262144. These bounded
+non-secret observations do not prove the live attestation transport or every
+metadata predicate passed; they therefore do not justify a speculative fix.
+
+Added a committed sanitized fixture containing only the actual observed release
+record. It accepts8c79/6f09982/a5b56e3 with predecessor6cd2; oldf806, wrong source/
+hash/predecessor and malformed records refuse. The exact-five-field check now
+also rejects additional authority fields. TDD demonstrated that extra fields
+were previously accepted; this validation tightening is not identified as the
+live refusal's cause. All fixed pins, full manifest/file hashing, exact pointer
+bytes, bounded reads, no-link/owner/mode checks, public inventory completeness,
+path and split-prefix mapping remain unchanged.
+
+Remote failure formatting now uses only privately branded enums:
+record_schema, pin_mismatch, tree_hash, asset_prefix, predecessor, transport,
+source_proof, metadata or unknown. Error messages, stacks, causes and arbitrary
+properties are never read for diagnostics. The local parent accepts the specific
+reason only with exit1, no signal, empty stdout and one exact bounded known
+stderr frame. Other status/signal/output/size/framing combinations remain fatal
+transport refusals; no raw child stream or value is relayed. Existing parent
+output remains `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=<enum>`.
+Attestation still precedes issuer execution, and the same forward abort/cleanup
+and buffer-zeroing paths remain in force.
+
+TDD RED showed the missing remote formatter, generic parent reason instead of
+the expected enum, and acceptance of extra record fields. GREEN includes each
+asset category, secret-bearing errors/properties, unknown/forged/extra/oversized/
+CRLF frames, exit0-with-stderr, signal/nonempty-stdout rejection, no issuance on
+refusal, buffer zeroing, handler removal and completed forward cleanup. A real
+local pipe-only child executes the data-URL module and emits only the fixed
+source-proof refusal. Its test-only setup models an empty remote environment:
+local macOS adds one environment entry even under env-i, so the first local
+fixture correctly refused at transport. No production environment rule was
+relaxed and no inference about the remote environment is made from that fixture.
+
+Fresh gates: focused asset/diagnostic/orchestrator36/36; broader smoke/asset/
+issuer/visual/orchestrator102/102; app/contract67/67; full authority/bootstrap/
+browser/recovery/deploy/artifact512/512; production build and exact12-route/
+1-prefix gate pass. Both TypeScript checks, source/test syntax and whitespace
+checks pass. ESLint initially caught a fixture variable named module; renaming
+that local variable resolved it. Final lint exits0 with0 errors and the same10
+existing warnings. Sealed local artifact verification passes (2870 files,
+82 text files). Runbook now records the current deployed pin and diagnostic
+review stop without authorizing new operations.
+
+Systematic debugging/code-review reception prevented a speculative compatibility
+change; TDD and verification-before-completion governed the diagnostic and gate
+evidence. All local test/loader processes completed, both fixed private evidence
+directories and local3001/3004 listeners are absent, and no browser/SSH was
+started in this turn. No real credential, runtime env, DB/auth/fact, collector/
+cron/neighbor, deployment or Nginx operation occurred. Published refs remain
+53f01c9; preceding local evidence commit is7b7b9ec. No new screenshot/diff,
+Nginx backup or live parity result is claimed. Rollback target remains the
+last-verifiedf80607f/release6cd2. DONE_WITH_CONCERNS: STOP for review before
+push, host diagnosis or any live retry.

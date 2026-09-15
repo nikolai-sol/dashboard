@@ -39,6 +39,13 @@ test('PDF origin/status class diagnostics survive only exact closed child frames
   }
 });
 
+test('asset reason vocabulary is closed and shared with parent diagnostics',async()=>{
+  const m=await api(),a=await import('./abbott-asset-attestation.mjs');
+  assert.deepEqual(a.ASSET_ATTESTATION_REASONS,['record_schema','pin_mismatch','tree_hash','asset_prefix','predecessor','transport','source_proof','metadata','unknown']);
+  for(const reason of a.ASSET_ATTESTATION_REASONS)assert.equal(m.formatVerificationFailure(m.markDiagnostic(Error(secret),'asset_attestation',reason)),`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=${reason}\n`);
+  for(const reason of ['tree_hash:'+secret,secret,'metadata\n','record_schema_private'])assert.equal(m.formatVerificationFailure(m.markDiagnostic(Error(secret),'asset_attestation',reason)),'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=unknown\n');
+});
+
 test('real parent and visual CLIs emit only the closed failure frame on invalid invocation',async()=>{
   const {captureBoundedChild}=await import('./abbott-bounded-child.mjs');
   for(const file of ['scripts/verify-abbott-shadow.mjs','scripts/capture-abbott-runtime.mjs']){
