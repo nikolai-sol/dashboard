@@ -1075,3 +1075,47 @@ fresh production observation is claimed. Shadow remains the previously attested
 f80607f release; screenshot dimensions/diffs, full smoke acceptance and Nginx
 structural review remain outstanding. The previously recorded Minor about the
 Python stamp helper's broader direct-input contract remains unchanged.
+
+### Exact asset attribute parser review fix — STOP for re-review, 2026-09-15
+
+Addressed the Important parser review finding locally with TDD. Six regression
+groups initially failed: three legitimate stylesheet attribute/rel variants,
+data-attribute masking, duplicate/malformed attributes, and critical rel tokens
+mixed with icon tokens. A seventh RED regression covered comments, quoted
+tag-like attribute content, script text and exact tag names. The previous loose
+lookup could mistake data-src for src, miss render-critical links and accept a
+duplicate critical attribute; no live probe was needed to establish these bugs.
+
+Replaced substring attribute lookup with a bounded quote-aware tag scan and
+exact, case-insensitive attribute parsing. Quoted values support optional ASCII
+whitespace around the equals sign; unquoted assignments, duplicate attributes,
+missing critical values, unsupported rel tokens/encoding and malformed relevant
+markup fail closed with the existing `malformed_html` code. Valueless boolean
+attributes such as async/defer remain valid, but src/href/rel require quoted
+values. Attribute text cannot mask a real source; comments and raw script text
+are not searched as resource tags. Only exact script/link tags are relevant.
+
+Rel is parsed as an ASCII-whitespace token list, case-insensitively. Critical
+stylesheet/preload/modulepreload tokens are recognized independent of order or
+padding, including alongside an icon token; icon/metadata exclusion occurs only
+after exact rel parsing. Query-bearing and foreign asset URLs remain refused.
+The fixed release/source/manifest authority, complete candidate public-file
+attestation/fetching, asset bounds, parity and credential/forward cleanup are
+unchanged. Synthetic secret strings in malformed attributes or unsafe URLs never
+enter formatted diagnostics. Local generated Next markup remains accepted.
+
+No push, live request, SSH, credential issuance, browser launch, deployment or
+Nginx action occurred. The prior live failure remains unconfirmed; public routing
+and rollback target are still recorded as port 3001 by the preceding historical
+production evidence, not a new observation.
+
+Fresh gates passed: 140 focused bootstrap/issuer/orchestrator/compare/capture/
+smoke/attestation/diagnostic tests (34 smoke); full Abbott build/runtime and 268
+authority/artifact tests; 108 auth/access/PDF-auth/app/runtime tests; 111 contract
+tests; contract wiring; public-asset security; exact route-fragment validation;
+trusted artifact verification (2,870 files, 82 text files); root and Abbott
+typechecks; syntax and whitespace checks. Full lint passed with zero errors and
+ten existing warnings. Ordered post-build tests avoided the prior build race.
+Temporary test children/fixtures retained their tested bounded cleanup; no real
+browser or SSH resource was created. STOP for dedicated re-review before push
+or any live smoke/capture retry. All earlier operational boundaries still apply.

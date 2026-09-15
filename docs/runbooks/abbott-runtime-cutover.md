@@ -328,6 +328,14 @@ Next's favicon content-hash query) and image elements are explicitly ignored, no
 accepted as query-bearing assets. Query-bearing scripts/styles/preloads remain
 refused. Candidate attestation and fetching of every attested public file remain
 exhaustive; this inventory scope does not remove files from the manifest gate.
+The pending parser correction must also receive dedicated re-review. Attribute
+names are exact and case-insensitive (`data-src` is never `src`); assignments
+require quoted values and permit ASCII whitespace around `=`. Duplicate
+attributes, missing critical values and unsupported/malformed relevant markup
+fail closed as `malformed_html`. Parse the exact `rel` attribute into ASCII
+whitespace-separated tokens before excluding metadata; stylesheet/preload/
+modulepreload tokens take precedence over accompanying icon tokens regardless of
+case or order. No query or off-origin exception is introduced by this parser.
 
 This mode uses the same strict credential frame and owned-forward lifecycle.
 Before credential issuance, a separate bounded read-only SSH capsule repeats the

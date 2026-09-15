@@ -84,6 +84,74 @@ test('inventory ignores favicon metadata queries but refuses script and styleshe
   }
 });
 
+for(const [name,attributes]of [
+  ['spaced_equals','rel = "stylesheet" href = "ASSET"'],
+  ['padded_mixed_case',"HREF='ASSET' ReL=' \tStyleSheet\r\n '"],
+  ['unordered_rel_tokens','rel="alternate\fpreload\tSTYLESHEET" href="ASSET"'],
+])test(`exact asset parser recognizes stylesheet ${name} and refuses its unsafe URL`,async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const origin of ['http://127.0.0.1:3001','http://127.0.0.1:3004']){
+    const prefix=(origin.endsWith('3004')?'/_next-abbott':'')+'/_next/static/';
+    const path=prefix+'css/a.css',script=`<script src="${prefix}chunks/a.js"></script>`;
+    assert.deepEqual(m.assetInventory(`<LiNk ${attributes.replace('ASSET',path)}>`,origin),[path]);
+    for(const [value,reason]of [[path+'?synthetic-secret','unexpected_asset_path'],['https://invalid.test/synthetic-secret.css','unexpected_asset_origin']]){
+      assert.throws(()=>m.assetInventory(script+`<LiNk ${attributes.replace('ASSET',value)}>`,origin),error=>{assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=${reason}\n`);return true;});
+    }
+  }
+});
+
+test('exact asset attribute names cannot be masked by data attributes or their values',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs'),origin='http://127.0.0.1:3001';
+  const safe='/_next/static/chunks/a.js',script=`<script src="${safe}"></script>`;
+  assert.deepEqual(m.assetInventory(script+`<script data-src="/_next/static/chunks/fake.js"></script>`,origin),[safe]);
+  assert.deepEqual(m.assetInventory(`<SCRIPT data-note="src='synthetic-secret' >" SRC = '${safe}' async></SCRIPT>`,origin),[safe]);
+  for(const tag of [
+    `<script data-src="${safe}" src="https://invalid.test/synthetic-secret.js"></script>`,
+    `<script data-src="${safe}" SRC = "/_next/static/chunks/b.js?synthetic-secret"></script>`,
+    '<link data-rel="icon" rel="stylesheet" data-href="/_next/static/css/a.css" href="https://invalid.test/synthetic-secret.css">',
+  ])assert.throws(()=>m.assetInventory(script+tag,origin),error=>{assert.match(d.formatVerificationFailure(error),/^ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=unexpected_asset_(origin|path)\n$/);return true;});
+});
+
+test('duplicate critical attributes and malformed relevant tags refuse without leaking values',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  const script='<script src="/_next/static/chunks/a.js"></script>';
+  for(const tag of [
+    '<script src="/_next/static/chunks/a.js" SRC="synthetic-secret"></script>',
+    '<link rel="icon" REL="stylesheet" href="synthetic-secret">',
+    '<link rel="stylesheet" href="/_next/static/css/a.css" HREF="synthetic-secret">',
+    '<link rel=stylesheet href="synthetic-secret">',
+    '<link rel="stylesheet" href=synthetic-secret>',
+    '<script src = synthetic-secret></script>',
+    '<link rel="stylesheet" href>',
+    '<link rel="stylesheet">',
+    '<link data-rel="stylesheet" href="synthetic-secret">',
+    '<link rel="style&#115;heet" href="synthetic-secret">',
+    '<link rel="icon" href=synthetic-secret>',
+    '<script src="/_next/static/chunks/a.js"data-x="synthetic-secret"></script>',
+    '<script src="synthetic-secret></script>',
+    '<link rel="stylesheet" href="synthetic-secret"',
+  ])assert.throws(()=>m.assetInventory(script+tag,'http://127.0.0.1:3001'),error=>{assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=malformed_html\n');return true;});
+});
+
+test('metadata links are ignored only after exact rel tokens; critical tokens take precedence',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  const script='<script src="/_next/static/chunks/a.js"></script>';
+  const icon='<LINK HREF = "/favicon.ico?synthetic-secret" REL = "  SHORTCUT\tICON  ">';
+  assert.deepEqual(m.assetInventory(icon+script,'http://127.0.0.1:3001'),['/_next/static/chunks/a.js']);
+  for(const rel of ['icon stylesheet','StyleSheet icon','icon\tMODULEPRELOAD','preload\nicon']){
+    assert.throws(()=>m.assetInventory(script+`<link rel="${rel}" href="/_next/static/css/a.css?synthetic-secret">`,'http://127.0.0.1:3001'),error=>{assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=asset_html reason=unexpected_asset_path\n');return true;});
+  }
+});
+
+test('asset tag scanning respects comments, quoted attributes, script text and exact tag names',async()=>{
+  const m=await api();const origin='http://127.0.0.1:3001',path='/_next/static/chunks/a.js';
+  const ignored='<!-- <link rel="stylesheet" href="https://invalid.test/synthetic-secret.css"> -->'+
+    '<div data-note=\'<script src="https://invalid.test/synthetic-secret.js">\'></div>'+
+    '<script>const text = \'<link rel="stylesheet" href="https://invalid.test/synthetic-secret.css">\';</script>'+
+    '<script-widget data-src="https://invalid.test/synthetic-secret.js"></script-widget>';
+  assert.deepEqual(m.assetInventory(ignored+`<script src="${path}"></script>`,origin),[path]);
+});
+
 function pdf(text='Synthetic Abbott') {
   const bodies=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
   const stream=`BT /F1 12 Tf 30 750 Td (${text}) Tj ET`;bodies.push(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);

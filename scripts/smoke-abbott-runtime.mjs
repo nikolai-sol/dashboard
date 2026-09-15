@@ -44,6 +44,66 @@ function safeAssetPath(value,origin,stage='asset_attestation') {
   return value;
 }
 
+const htmlSpace=character=>character!==undefined&&/[\t\n\f\r ]/.test(character);
+
+// Bounded lexical scan: never search for attributes inside another attribute,
+// comments or script text. This is deliberately not a general HTML validator.
+function* assetTags(html,reject) {
+  let cursor=0;
+  while((cursor=html.indexOf('<',cursor))!==-1){
+    if(html.startsWith('<!--',cursor)){
+      const end=html.indexOf('-->',cursor+4);if(end===-1)reject('malformed_html');cursor=end+3;continue;
+    }
+    const match=/^<([A-Za-z][A-Za-z0-9:-]*)(?=[\t\n\f\r />]|$)/.exec(html.slice(cursor));
+    if(!match){cursor++;continue;}
+    const name=match[1].toLowerCase(),start=cursor+match[0].length;
+    let end=start,quote=null;
+    for(;end<html.length;end++){
+      const c=html[end];
+      if(quote){if(c===quote)quote=null;}
+      else if(c==='"'||c==="'")quote=c;
+      else if(c==='>')break;
+    }
+    if(end===html.length)reject('malformed_html');
+    const attributes=html.slice(start,end);cursor=end+1;
+    if(name==='script'||name==='link')yield {name,attributes};
+    if(['script','style','textarea','title'].includes(name)){
+      const closing=new RegExp(`</${name}(?=[\\t\\n\\f\\r />])`,'gi');closing.lastIndex=cursor;
+      const found=closing.exec(html);if(!found)reject('malformed_html');
+      let finish=closing.lastIndex;while(htmlSpace(html[finish]))finish++;
+      if(html[finish]!=='>')reject('malformed_html');cursor=finish+1;
+    }
+  }
+}
+
+function assetAttributes(text,reject) {
+  const attributes=new Map();let cursor=0;
+  while(cursor<text.length){
+    const before=cursor;while(htmlSpace(text[cursor]))cursor++;
+    if(cursor===text.length||text[cursor]==='/'&&cursor===text.length-1)break;
+    if(cursor===before)reject('malformed_html');
+    const match=/^[A-Za-z_:][A-Za-z0-9_.:-]*/.exec(text.slice(cursor));
+    if(!match)reject('malformed_html');
+    const name=match[0].toLowerCase();cursor+=match[0].length;
+    if(attributes.has(name))reject('malformed_html');
+    const afterName=cursor;while(htmlSpace(text[cursor]))cursor++;
+    let value=null;
+    if(text[cursor]==='='){
+      cursor++;while(htmlSpace(text[cursor]))cursor++;
+      const quote=text[cursor++];if(quote!=='"'&&quote!=="'")reject('malformed_html');
+      const end=text.indexOf(quote,cursor);if(end===-1)reject('malformed_html');
+      value=text.slice(cursor,end);cursor=end+1;
+      if(/[\0-\x08\x0b\x0e-\x1f\x7f]/.test(value))reject('malformed_html');
+    }else{
+      // Valueless boolean attributes (e.g. async/defer) are legal, but URL/rel
+      // attributes must have a quoted value. Preserve the next separator.
+      if(['src','href','rel'].includes(name))reject('malformed_html');cursor=afterName;
+    }
+    attributes.set(name,value);
+  }
+  return attributes;
+}
+
 export function assetInventory(html,origin) {
   const reject=reason=>{throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),'asset_html',reason);};
   if(typeof html!=='string')reject('malformed_html');
@@ -52,13 +112,18 @@ export function assetInventory(html,origin) {
   // Only executable/render-critical Next resources belong to this inventory.
   // Icon/metadata links (including Next's favicon content-hash query) and img
   // elements are deliberately not fetched; attestation still covers all public files.
-  for(const tag of html.matchAll(/<(script|link)\b[^>]*(?:>|$)/gi)){
-    if(!tag[0].endsWith('>'))reject('malformed_html');
-    if(tag[1].toLowerCase()==='link'&&!/\brel=["'](?:stylesheet|preload|modulepreload)["']/i.test(tag[0]))continue;
-    const name=tag[1].toLowerCase()==='link'?'href':'src';
-    const match=new RegExp(`\\b${name}=["']([^"']+)["']`,'i').exec(tag[0]);
-    if(!match&&new RegExp(`\\s${name}\\s*=`,'i').test(tag[0]))reject('malformed_html');
-    if(match)paths.add(safeAssetPath(match[1],origin,'asset_html'));
+  for(const tag of assetTags(html,reject)){
+    const attributes=assetAttributes(tag.attributes,reject);
+    if(tag.name==='link'){
+      const rel=attributes.get('rel');if(typeof rel!=='string')reject('malformed_html');
+      const tokens=rel.toLowerCase().split(/[\t\n\f\r ]+/).filter(Boolean);
+      if(!tokens.length||tokens.some(token=>! /^[a-z][a-z0-9-]*$/.test(token)))reject('malformed_html');
+      // A critical token takes precedence over any accompanying icon/metadata token.
+      if(!tokens.some(token=>['stylesheet','preload','modulepreload'].includes(token)))continue;
+      if(!attributes.has('href'))reject('malformed_html');
+    }
+    const name=tag.name==='link'?'href':'src';
+    if(attributes.has(name))paths.add(safeAssetPath(attributes.get(name),origin,'asset_html'));
     if(paths.size>256)reject('inventory_limit');
   }
   if(!paths.size)reject('no_assets');
