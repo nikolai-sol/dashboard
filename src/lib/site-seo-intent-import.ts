@@ -94,11 +94,31 @@ function parseMatchType(value: unknown): "exact" | "phrase" | null {
   return null;
 }
 
+type WorkbookContainer = "zip" | "ole" | "text";
+
+function workbookContainer(bytes: Buffer): WorkbookContainer {
+  const signature = bytes.length >= 4 ? bytes.readUInt32LE(0) : null;
+  if (
+    signature === 0x04034b50 ||
+    signature === 0x06054b50 ||
+    signature === 0x08074b50 ||
+    signature === 0x02014b50
+  ) return "zip";
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from("d0cf11e0a1b11ae1", "hex"))) return "ole";
+  return "text";
+}
+
 function readLogicalTable(
   bytes: Buffer,
   format: "csv" | "xls" | "xlsx",
 ): { worksheet: string | null; cells: unknown[][] } {
-  if (format === "xlsx") assertBoundedXlsxZip(bytes);
+  const container = workbookContainer(bytes);
+  if (container === "zip") assertBoundedXlsxZip(bytes);
+  if (
+    (format === "xlsx" && container !== "zip") ||
+    (format === "xls" && container !== "ole") ||
+    (format === "csv" && container !== "text")
+  ) throw new Error("Workbook container does not match its filename suffix");
   const source = format === "csv"
     ? new TextDecoder("utf-8", { fatal: true }).decode(bytes)
     : bytes;

@@ -226,6 +226,43 @@ test("rejects malformed XLSX ZIP structure before SheetJS parsing", () => {
   }]);
 });
 
+test("preflights identical malformed ZIP OOXML bytes under XLSX and XLS suffixes", () => {
+  const zipBytes = workbookBytes([
+    ["Ключ", "Тип совпадения"],
+    ["HER2", "точное"],
+  ]);
+  assert.equal(zipBytes.subarray(0, 4).toString("hex"), "504b0304");
+  const malformed = Buffer.concat([zipBytes, Buffer.from("trailing archive payload")]);
+
+  const xlsx = parseTargetIntentWorkbook(malformed, "intent.xlsx");
+  const renamedXls = parseTargetIntentWorkbook(malformed, "intent.xls");
+
+  assert.equal(xlsx.state, "invalid");
+  assert.equal(renamedXls.state, "invalid");
+  assert.deepEqual(renamedXls.errors, xlsx.errors);
+});
+
+test("fails closed when OOXML ZIP and OLE BIFF workbook suffixes are swapped", () => {
+  const zipBytes = workbookBytes([
+    ["Ключ", "Тип совпадения"],
+    ["HER2", "точное"],
+  ]);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ["Ключ", "Тип совпадения"],
+    ["HER2", "точное"],
+  ]), "Интент");
+  const biffBytes = Buffer.from(XLSX.write(workbook, { bookType: "biff8", type: "buffer" }));
+
+  for (const result of [
+    parseTargetIntentWorkbook(zipBytes, "intent.xls"),
+    parseTargetIntentWorkbook(biffBytes, "intent.xlsx"),
+  ]) {
+    assert.equal(result.state, "invalid");
+    assert.equal(result.errors[0]?.code, "invalid_workbook");
+  }
+});
+
 test("bounds logical rows before materializing an unbounded catalogue", () => {
   const rows = Array.from({ length: 10_001 }, (_, index) => `key-${index},точное`);
   const result = parseTargetIntentWorkbook(
