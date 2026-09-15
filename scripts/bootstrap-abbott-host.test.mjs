@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import vm from 'node:vm';
+import * as bootstrapModule from './bootstrap-abbott-host.mjs';
 import { bootstrapAbbottHost, parseCombinedEnvironment, evaluateNextEnvironment, verifyAbbottBootstrapSource, INPUT_KEYS, HOST, runBootstrap } from './bootstrap-abbott-host.mjs';
 import { createRuntimeInstaller } from './runtime-release-remote.mjs';
 import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs';
@@ -15,6 +16,30 @@ const installedParser = fs.readFileSync(path.join(root, 'node_modules/@next/env/
 const localEvaluator = bytes => evaluateNextEnvironment(bytes, installedParser, execFileSync, process.execPath);
 const allowed = JSON.parse(fs.readFileSync(path.join(root, 'deploy/abbott/environment.json')));
 const generated = ['NODE_ENV', 'HOSTNAME', 'PORT', 'INTERNAL_BASE_URL'];
+
+test('issuer source reader repeats sealed proof without account operations or writes', () => {
+  const f = fixture();
+  try {
+    assert.equal(typeof bootstrapModule.readVerifiedAbbottSource, 'function');
+    let proofs = 0;
+    f.platform.verifySourceProcess = () => { proofs += 1; };
+    assert.deepEqual(bootstrapModule.readVerifiedAbbottSource(f.platform), values);
+    assert.equal(proofs, 2);
+    assert.deepEqual(f.events, []);
+    f.platform.verifySourceProcess = () => { throw Error('source drift'); };
+    assert.throws(() => bootstrapModule.readVerifiedAbbottSource(f.platform));
+    assert.deepEqual(f.events, []);
+  } finally { f.cleanup(); }
+});
+
+test('importing bootstrap as a transported data module cannot run its mutation entrypoint', async () => {
+  const source = fs.readFileSync(new URL('./bootstrap-abbott-host.mjs', import.meta.url), 'utf8');
+  const code = `process.argv=['node']; await import(${JSON.stringify('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))});`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env: {}, encoding: 'utf8', timeout: 3000 });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+});
 const values = Object.fromEntries(INPUT_KEYS.map(key => [key, `fixture-${key.toLowerCase()}`]));
 Object.assign(values, { DB_NAME: 'report_bd', ABBOTT_PRIVATE_DB_NAME: 'report_bd_private', ABBOTT_EMBED_DB_NAME: 'report_bd', ABBOTT_PRIVATE_DB_USER: 'private-reader', ABBOTT_EMBED_DB_USER: 'embed-reader' });
 const source = () => Object.entries({ ...values, NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: '3001', INTERNAL_BASE_URL: 'http://127.0.0.1:3001', METRIKA_TOKEN: 'private-source-canary' }).map(([key, value], i) => `${key}=${i % 3 === 0 ? `'${value}'` : i % 3 === 1 ? `"${value}"` : value}`).join('\n') + '\n';
@@ -326,7 +351,7 @@ test('real host adapter uses only fixed account commands and verifies the pinned
       },
     };
     vm.createContext(context);
-    const moduleSource = fs.readFileSync(path.join(root, 'scripts/bootstrap-abbott-host.mjs'), 'utf8').replace(/^import .*;\n/gm, '').replaceAll('export const ', 'const ').replaceAll('export function ', 'function ').split('\nif (process.argv.length')[0];
+    const moduleSource = fs.readFileSync(path.join(root, 'scripts/bootstrap-abbott-host.mjs'), 'utf8').replace(/^import .*;\n/gm, '').replaceAll('export const ', 'const ').replaceAll('export function ', 'function ').split('\nif (import.meta.url.startsWith')[0];
     vm.runInContext(moduleSource + '\nthis.hostPlatform = realPlatform; this.bootstrap = bootstrapAbbottHost;', context);
     context.hostPlatform.directoryPath = f.platform.directoryPath;
     context.hostPlatform.evaluateEnvironment = localEvaluator;

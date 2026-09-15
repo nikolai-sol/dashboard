@@ -247,16 +247,27 @@ const realPlatform = {
   createUser() { command('/usr/sbin/useradd', ['--system', '--gid', HOST.account, '--no-create-home', '--home-dir', '/nonexistent', '--shell', '/usr/sbin/nologin', HOST.account]); },
 };
 
-export function verifyAbbottBootstrapSource(platform = realPlatform) {
+export function readVerifiedAbbottSource(platform = realPlatform) {
   if (platform.uid() !== 0 || platform.hostname() !== HOST.hostname) refuse();
   const source = sourceSnapshot(platform);
-  let desired;
+  let desired, repeated, values, completed = false;
   try {
-    const values = parseCombinedEnvironment(source, bytes => platform.evaluateEnvironment(bytes));
+    values = parseCombinedEnvironment(source, bytes => platform.evaluateEnvironment(bytes));
     desired = serializeCredentialInput(values);
-    if (!sourceSnapshot(platform).equals(source)) refuse();
-    return { status: 'verified', allowlistedKeyCount: Object.keys(values).length };
-  } finally { source.fill(0); desired?.fill(0); }
+    repeated = sourceSnapshot(platform);
+    if (!repeated.equals(source)) refuse();
+    completed = true;
+    return values;
+  } finally {
+    source.fill(0); desired?.fill(0); repeated?.fill(0);
+    if (!completed && values) for (const key of Object.keys(values)) delete values[key];
+  }
+}
+
+export function verifyAbbottBootstrapSource(platform = realPlatform) {
+  const values = readVerifiedAbbottSource(platform);
+  try { return { status: 'verified', allowlistedKeyCount: Object.keys(values).length }; }
+  finally { for (const key of Object.keys(values)) delete values[key]; }
 }
 
 export function runBootstrap(platform, args, environment, emit) {
@@ -267,6 +278,6 @@ export function runBootstrap(platform, args, environment, emit) {
   } catch { emit('Abbott host bootstrap refused\n'); return 1; }
 }
 
-if (process.argv.length === 1 || process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+if (import.meta.url.startsWith('file:') && (process.argv.length === 1 || process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href)) {
   process.exitCode = runBootstrap(realPlatform, process.argv.slice(2), process.env, text => process.stdout.write(text));
 }

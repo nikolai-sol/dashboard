@@ -15,11 +15,12 @@ test("cutover runbook keeps every credential workflow on strict token stdin", as
   const postCutover = runbook.split("## 8. Post-cutover Abbott and neighbor smoke")[1].split("## 9.")[0];
   assert.match(postCutover, /issuer transport.*reviewed/i);
   assert.match(postCutover, /manager_access_token/);
-  assert.match(postCutover, /readCredentialFd\(0\)/);
-  assert.match(postCutover, /credentials\.managerAccessToken/);
-  assert.match(postCutover, /runParityComparison\(/);
-  assert.match(postCutover, /referenceBase: "http:\/\/127\.0\.0\.1:3001"/);
-  assert.match(postCutover, /candidateBase: "http:\/\/127\.0\.0\.1:3004"/);
+  assert.match(postCutover, /node scripts\/verify-abbott-shadow\.mjs compare/);
+  assert.match(postCutover, /node scripts\/verify-abbott-shadow\.mjs capture/);
+  assert.ok(!/node scripts\/(?:compare|capture)-abbott-runtime\.mjs|node --input-type=module -e|ssh -M|TUNNEL_DIR|cleanup_tunnel/.test(runbook));
+  assert.match(runbook, /Never invoke the issuer standalone or redirect its stdout/);
+  assert.match(runbook, /scripts\/abbott-parity-issuer\.test\.mjs/);
+  assert.match(runbook, /scripts\/verify-abbott-shadow\.test\.mjs/);
 });
 
 function managerTokenFixture(overrides = {}) {

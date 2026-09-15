@@ -29,7 +29,8 @@ non-force pushes only after the complete local gates pass.
 ```bash
 npm ci
 command -v python3 >/dev/null
-node --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs
+node --test scripts/compare-abbott-runtime.test.mjs scripts/capture-abbott-runtime.test.mjs \
+  scripts/abbott-parity-issuer.test.mjs scripts/verify-abbott-shadow.test.mjs
 npm run test:abbott-runtime
 npm run test:abbott-contract
 npm run test:abbott-contract-wiring
@@ -116,7 +117,8 @@ separate reviewed fix: the live configuration has a composite `server_name` in
 both HTTP and TLS blocks, so its literal single-name needle does not match. Do not
 edit Nginx or run section 7 until that fix is reviewed.
 
-Create one private evidence directory and a bounded local SSH tunnel. The trap stops the task-owned SSH process on every ordinary shell exit.
+Use this fixed private evidence directory. Do not open a manual tunnel: the
+reviewed local orchestrator exclusively owns bounded forwards for each run.
 
 ```bash
 umask 077
@@ -124,16 +126,6 @@ EVIDENCE_PARENT="/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026
 BASELINE="/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026-09-14"
 mkdir -p "$EVIDENCE_PARENT"
 chmod 0700 "$EVIDENCE_PARENT"
-TUNNEL_DIR="$(mktemp -d "$EVIDENCE_PARENT/tunnel.XXXXXX")"
-chmod 0700 "$TUNNEL_DIR"
-cleanup_tunnel() {
-  ssh -S "$TUNNEL_DIR/control" -O exit beget >/dev/null 2>&1 || true
-  rm -rf -- "$TUNNEL_DIR"
-}
-trap cleanup_tunnel EXIT INT TERM
-ssh -M -S "$TUNNEL_DIR/control" -fnNT -o ExitOnForwardFailure=yes \
-  -L 3001:127.0.0.1:3001 -L 3004:127.0.0.1:3004 beget
-ssh -S "$TUNNEL_DIR/control" -O check beget >/dev/null
 ```
 
 ## 3. Record neighbors, then install without Nginx
@@ -150,14 +142,14 @@ npm run deploy:abbott
 `deploy:abbott` installs and starts only `dashboard-abbott`; it does not edit or reload Nginx. Verify the direct listener before authorization:
 
 ```bash
-test "$(curl --fail --silent --show-error http://127.0.0.1:3004/api/health)" = \
+test "$(ssh beget 'curl --fail --silent --show-error http://127.0.0.1:3004/api/health')" = \
   '{"ok":true,"scope":"abbott","database":"connected"}'
 ```
 
 ## 4. Obtain ephemeral authorization and compare ports — token review checkpoint
 
 **Paused for focused review. Do not run live parity or mint credentials until the
-stdin token tooling is approved. No plaintext or legacy password fallback is
+exact issuer/orchestrator transport is approved. No plaintext or legacy password fallback is
 authorized for this operation.**
 
 The new stdin frame is three LF-delimited lines: the literal mode name
@@ -169,15 +161,30 @@ argument, or environment input is supported. Input buffers are cleared after
 parsing. The older two-line protocol remains available for separately authorized
 interactive use, but is not part of this production operation.
 
-After approval, the issuer must run only on `beget`, read the existing root-only
-Abbott input into memory, read the current dashboard 18 DB credential version
-without mutation, and call the existing `createSignedSession` signing code with
+Never invoke the issuer standalone or redirect its stdout. Run only the local
+orchestrator below, after its dedicated review. It sends committed code on SSH
+stdin to the fixed `beget` command under an empty remote environment. The issuer
+revalidates the exact combined host/source/process/UID/GID/Next-parser proof,
+selects the effective allowlisted environment in memory, reads dashboard 18's
+current DB credential version with a fixed SELECT, and calls the existing
+`createSignedSession` signing code with
 `type=viewer`, `dashboard_id=18`, `audience=manager`, that credential version, and
 an expiry 600 seconds ahead. The consumer rejects expired tokens or expiry more
-than 900 seconds ahead. Pipe its output directly into the relevant CLI; never
-save, echo, log, pass in argv/env, or send the credentials to chat. The exact
-host-side issuer transport still requires verification before execution; do not
-substitute copied signing logic or inspect the legacy plaintext password.
+than 900 seconds ahead. The signing implementation is the exact Git blob at the
+verified combined source SHA, SHA-256
+`71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f`, transpiled
+in memory and evaluated in a private VM. No combined file or ambient environment
+is changed. Missing DB credentials/version/embed key or source drift fails closed.
+
+The issuer refuses TTY/file-like stdout and emits at most one exact frame per
+process. Its stdout/stderr are captured, bounded and checked before consumer use,
+never inherited or teed to a terminal. The local orchestrator feeds only the
+validated frame into the consumer's stdin, clears buffers, and never saves a
+credential. It opens only literal loopback forwards 3001/3004, refuses occupied
+ports, disables ControlMaster/ControlPath reuse, records its SSH PID/start identity,
+checks owned listeners, and bounds startup and exit. Interrupt/error cleanup
+closes only that owned SSH process; capture receives time for its reviewed browser
+cleanup before escalation. No password or HTTP issuer endpoint exists.
 
 The consumer's envelope checks do not verify a signature. Both live runtimes
 must independently accept the session/current version through a read-only
@@ -187,17 +194,16 @@ redirects. Capture additionally intercepts requests before setting the cookie,
 permits only the literal candidate loopback origin, rejects redirect chains,
 bypasses service workers, and removes partial output on failure.
 
-The consumer command below is a reference, not a complete runnable pipeline until
-the exact issuer transport is verified. Connect only its protected pipe to stdin.
+The only authorized credential-bearing workflow entrypoint after review is:
 
 ```bash
-node scripts/compare-abbott-runtime.mjs \
-  --reference http://127.0.0.1:3001 \
-  --candidate http://127.0.0.1:3004 \
-  --output-parent "$EVIDENCE_PARENT"
+node scripts/verify-abbott-shadow.mjs compare
 ```
 
-Expected: `status=match mismatches=0`. The new mode-`0700` report directory contains one mode-`0600` JSON file with only redacted field paths, counts, and hashes. Review it without copying it into Git:
+Expected: fixed JSON status `passed`, mode `compare`, and owned-forward exit
+attestation. The consumer must report a match with zero mismatches internally.
+The new mode-`0700` report directory contains one mode-`0600` JSON file with only
+redacted field paths, counts, and hashes. Review it without copying it into Git:
 
 ```bash
 PARITY_REPORT="$(find "$EVIDENCE_PARENT" -maxdepth 2 -type f -name abbott-runtime-parity.json -print | sort | tail -n 1)"
@@ -210,18 +216,13 @@ A mismatch exits `1` and reports only redacted paths. Payload totals use order-i
 
 ## 5. Capture and compare the private visual candidate
 
-For the current operation, use the reviewed stdin token frame from section 4.
-Mint a fresh short-lived session for this
-separate capture only after the focused token checkpoint is approved.
+After issuer/orchestrator approval, the capture entrypoint issues a fresh
+short-lived frame itself; do not invoke the issuer or consumer separately.
 
 This captures the five baseline desktop tabs at CSS width `1440`, the users-summary tab at CSS `390x844`, and every conditional tab that is truthfully visible. The mobile device scale is exactly `800/390`, preserving the baseline's `800`-pixel raster width without changing the CSS viewport; the index records both CSS and raster dimensions. It waits for dashboard readiness, fonts, and chart animation settlement. Its private candidate directory is retained by directory identity and all files are created relative to that descriptor. On failure the retained inode is cleaned without following a replacement path. Browser close has a short deadline and falls back only to the exact recorded Chromium PID on failure, timeout, or signal cancellation.
 
 ```bash
-node scripts/capture-abbott-runtime.mjs \
-  --login http://127.0.0.1:3001 \
-  --candidate http://127.0.0.1:3004 \
-  --baseline "$BASELINE" \
-  --output-parent "$EVIDENCE_PARENT"
+node scripts/verify-abbott-shadow.mjs capture
 ```
 
 Expected: six captures unless a conditional tab is visible, zero console errors, matching dimensions, `changed_pixel_ratio <= 0.02`, and `mean_absolute_error <= 0.005` for every baseline-backed capture. The script exits `1` if a baseline-backed image misses either threshold. Open the candidate and baseline images side by side and confirm the tab heading, labels, KPI cards, charts, tables, and responsive layout; aggregate thresholds do not replace human review. The 13 documented chart-size warnings may recur, but any new warning requires review.
@@ -363,36 +364,19 @@ ssh beget '/usr/sbin/nginx -s reload'
 before token generation, live smoke, or cutover.** This section is not executable
 until that gate is satisfied; no issuer placeholder command is supplied.
 
-After approval, mint a fresh short-lived session on the authorized host and pipe
-the strict `manager_access_token\n<token>\n<embed key>\n` frame directly into
-stdin. Re-run the redacted parity and visual consumers from sections 4 and 5.
-The post-cutover smoke consumer below explicitly refuses the legacy two-line
-mode and calls the same dual-port manager authorization/parity path: both
+After approval, re-run the orchestrator; it obtains the strict
+`manager_access_token\n<token>\n<embed key>\n` frame in memory and feeds stdin.
+It refuses the legacy two-line mode and calls the same dual-port manager
+authorization/parity path: both
 manager-only administrator-list GETs must accept the current signature/version
 before manager/embed data and workbook comparisons. Authorization stays in
 memory on loopback ports 3001 and 3004 only, with redirects refused.
 
-This is the consumer side, run only with the approved issuer's direct pipe
-connected to descriptor 0; its command arguments contain code, not credentials.
+Use only these local entrypoints, with no credentials in arguments or redirects:
 
 ```bash
-node --input-type=module -e '
-import { readCredentialFd, runParityComparison } from "./scripts/compare-abbott-runtime.mjs";
-try {
-  const credentials = await readCredentialFd(0);
-  if (!credentials.managerAccessToken) throw new Error();
-  const report = await runParityComparison({
-    referenceBase: "http://127.0.0.1:3001",
-    candidateBase: "http://127.0.0.1:3004",
-    ...credentials,
-  });
-  if (report.status !== "match" || report.mismatch_count !== 0) throw new Error();
-  process.stdout.write("Abbott dual-port token smoke: pass\n");
-} catch {
-  process.stderr.write("ABBOTT_POST_CUTOVER_SMOKE_FAILED\n");
-  process.exitCode = 1;
-}
-'
+node scripts/verify-abbott-shadow.mjs compare
+node scripts/verify-abbott-shadow.mjs capture
 ```
 
 This parity consumer does not replace the remaining acceptance checks: PDF,
@@ -408,7 +392,7 @@ Verify representative neighbor pages and the three direct health endpoints, then
 for path in /dashboard/28 /dashboard/zaruku /dashboard/17; do
   test "$(curl --silent --output /dev/null --write-out '%{http_code}' "https://dashboards.adreports.ru$path")" = "200"
 done
-for port in 3001 3004; do curl --fail --silent --show-error "http://127.0.0.1:$port/api/health" >/dev/null; done
+ssh beget 'set -eu; for port in 3001 3004; do curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null; done'
 ssh beget 'set -eu; curl -fsS http://127.0.0.1:3002/api/health >/dev/null; curl -fsS http://127.0.0.1:3003/api/health >/dev/null'
 ssh beget 'set -eu; for app in dashboard-next dashboard-zaruku dashboard-medroche; do printf "%s " "$app"; pm2 pid "$app"; done' \
   > "$EVIDENCE_PARENT/neighbors.after-cutover"
@@ -426,10 +410,10 @@ Then repeat the Abbott page/API smoke against port `3001`, verify the neighbor P
 
 ## 9. Close owned temporary resources
 
-```bash
-cleanup_tunnel
-trap - EXIT INT TERM
-ssh -S "$TUNNEL_DIR/control" -O check beget >/dev/null 2>&1 && exit 1 || true
-```
+Each orchestrator invocation closes and verifies its exact owned SSH process
+before returning success and reports its PID/start identity plus exit attestation.
+Capture also records and verifies its browser PIDs in the private index as above.
+If cleanup refuses, stop and inspect only the recorded ownership proof; never
+kill another session's processes or start a replacement tunnel to conceal failure.
 
 Keep the mode-`0700` evidence and Nginx checkpoint for audit. They contain no credentials, raw JSON payloads, raw workbook rows, or cookie material. Do not commit them.

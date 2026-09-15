@@ -1,6 +1,6 @@
 # Abbott Task 9 — shadow deployment and token-tooling review checkpoint
 
-Status: DONE_WITH_CONCERNS at the requested stdin-token tooling review checkpoint.
+Status: DONE_WITH_CONCERNS at the requested issuer/orchestrator review checkpoint.
 Reviewed bootstrap and shadow deployment succeeded. Public routing is unchanged;
 live parity, six-image comparison and cutover are not complete. Earlier sections
 are chronological checkpoint history, superseded by the final execution section
@@ -448,3 +448,94 @@ This correction is local only. No token generation/use, production command,
 push/deploy, Nginx action, browser/tunnel launch, or production mutation occurred
 during this revision. The previously verified shadow remains the latest observed
 production state; public routing remains unchanged. Stop for quick re-review.
+
+## Fixed issuer and local orchestrator checkpoint — local only
+
+The token consumer and corrected runbook were approved. The parent then requested
+an exact issuer transport and local orchestrator, with a STOP before live use.
+This revision implements two focused modules: `abbott-parity-issuer.mjs` and
+`verify-abbott-shadow.mjs`. Neither was invoked against production.
+
+### Authority and issuance
+
+The orchestrator requires the exact clean isolated worktree and reciprocal Git
+directory identity. It reads committed issuer/bootstrap source plus the exact
+combined source blob `8f389a28:src/lib/access-auth.ts`; its SHA-256 must equal
+`71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f`.
+That existing implementation is transpiled in memory, not rewritten or copied
+into another signing implementation. The code capsule is bounded to 262,144 bytes
+and sent only on fixed SSH stdin. No code or credential control artifact is
+uploaded, and no combined runtime file is updated.
+
+SSH uses only `beget`, batch/strict-host checking, no TTY and no ControlMaster or
+ControlPath reuse. The fixed remote command starts Node with an empty environment.
+The issuer's read-only source helper reuses the reviewed bootstrap host, exact
+source stamp, process PID/start/boot/cwd/all UID/GID values, source ownership/modes,
+Next version/hash and effective-value equality proof. Both source snapshots and
+serialized scratch buffers are cleared. The bootstrap mutation entrypoint is now
+file-module-only, so importing it as the transported data module cannot run any
+account or credential write. Normal direct bootstrap behavior remains covered.
+
+The issuer performs one fixed SELECT through the existing host Python MySQL
+connector for dashboard 18, active client Abbott, and current shared credential
+version. Missing/non-positive/unsafe versions fail; no fallback, password hash
+read, auth rotation, grant, or DB mutation exists. Missing/malformed DB inputs
+fail before a child starts. The database child's credentials go only through
+stdin, with empty environment, timeout and captured bounded outputs.
+
+Existing `createSignedSession` runs in a bounded private VM with the existing
+signing secret, manager audience, dashboard 18, authoritative credential version
+and 600-second expiry. The embed key uses the same trim semantics as the existing
+authorizer. The one-shot issuer refuses TTY/file-like stdout and emits only one
+strict three-line UTF-8 frame, at most 65,536 bytes. One-use means one issuance
+per issuer instance/process workflow, not a new server-side token revocation
+mechanism; the token retains existing authentication/version semantics.
+
+### In-memory transport and lifecycle
+
+The local orchestrator captures issuer stdout/stderr, never inheriting or teeing
+them. Any nonzero/signal result, stderr, malformed/truncated/extra frame or size
+violation refuses before consumer use. The valid frame is passed directly to the
+selected comparator/capture child's stdin once. Child results are accepted only
+against exact safe output shapes; no raw child diagnostic reaches logs/reports.
+Input/result/chunk buffers are zeroed in success and failure paths. Remaining
+JavaScript strings are memory-only and die with their bounded child processes.
+
+Each run checks that local ports are free and creates one owned foreground SSH
+process, forwarding only literal local loopback 3001 and 3004. Its PID/start
+identity and exact owned listener addresses are verified. Startup is bounded;
+TERM/KILL cleanup checks the recorded identity and waits for exit. Signal/error
+paths close forwards and clear frames; capture receives a 30-second cleanup grace
+before consumer termination escalation so its reviewed browser lifecycle can
+finish. No reusable master, background daemon, manual tunnel, temp credential
+file, environment credential, or credential argument is used.
+
+The runbook now exposes only `node scripts/verify-abbott-shadow.mjs compare` or
+`capture` for credential-bearing workflows, including post-cutover parity.
+Standalone issuer invocation and stdout redirection are explicitly forbidden.
+Both commands remain gated on this checkpoint's approval. PDF/privacy/alias/asset
+smoke and the Nginx structural fix remain separately required before cutover.
+
+### Verification
+
+TDD RED demonstrated missing issuer/orchestrator interfaces, file-backed stdout
+and imported-bootstrap entrypoint hazards, stale manual runbook transport,
+missing DB input refusal and embed-trim disagreement. GREEN covers one-shot
+claims/version/expiry/frame, source revalidation, no ambient mutation, captured
+fixed-query transport, TTY/file refusal, wrong/missing data, extra/truncated frames,
+secret-looking child stdout/stderr rejection, interrupts and zeroed buffers,
+actual owned-child exit and start-identity drift refusal, existing-source hash,
+and orchestrator-only runbook entrypoints.
+
+Final focused bootstrap/issuer/orchestrator/comparator/capture suite: 82 tests,
+zero failures. Relevant auth/access/PDF-auth plus Abbott runtime tests: 108 pass.
+Full runtime gate: build passed, 67 app/runtime tests and 268 authority/artifact
+tests passed; the fixed Nginx fragment remains 12 exact routes plus one asset
+prefix. Root/Abbott typechecks, syntax, targeted lint and diff checks pass. Full
+lint passed with the same ten pre-existing warnings and zero errors.
+
+All tests used synthetic local inputs and reaped their owned child processes.
+No real credential was minted, no production/SSH command was run, no live browser
+or parity execution occurred, and no commit was pushed or deployed in this
+revision. The previous shadow/neighbor/Nginx evidence remains the latest observed
+live state, not a new verification claim. Stop for focused issuer review.
