@@ -1,11 +1,12 @@
-# Abbott Task 9 — approved Phase1 diagnostic run refused
+# Abbott Task 9 — remaining Phase1 boundaries instrumented
 
-Status: BLOCKED. Approved98cf58a was published and one smoke diagnostic returned
+Status: DONE_WITH_CONCERNS. Source-only boundary instrumentation awaits review.
+Approved98cf58a was published and one smoke diagnostic returned
 `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`; no finer
-boundary reason was exposed. Stopped after that result, before issuance/capture/
-Nginx. Fresh before/after checks again verify unchanged6f09982/8c79 production,
+boundary reason was exposed. No live retry was performed for this follow-up.
+The prior before/after checks verified unchanged6f09982/8c79 production,
 retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite, neighbors
-and Nginx. Owned process/port/output cleanup passed. The live cause remains
+and Nginx. That run's owned process/port/output cleanup passed. The live cause remains
 unproven; parity, six-image comparison and cutover remain incomplete. Earlier
 sections are chronological history.
 
@@ -2799,3 +2800,59 @@ checkpoint adds sanitized evidence only, with whitespace validation and a clean
 commit; it claims no new parity or image/dimension/diff result. Verification-
 before-completion required the fresh cleanup and state proofs. BLOCKED; stopped
 after the one approved result, awaiting further direction.
+
+## Remaining orchestrator boundaries — source-only Phase1 checkpoint
+
+The latest generic live result is not attributed to SSH or to any particular
+asset defect. This checkpoint enumerates and brands the plain-throw paths
+outside the already reviewed asset transport, without a live request.
+
+- Guard entry/operation setup, missing read method, synchronous throw or rejected
+  read: asset_attestation/asset_read fallback; private branded remote/transport
+  reasons still take precedence.
+- Post-read active/PID/start/listener check: temporarily forward/failed, then
+  restore asset_attestation only after it passes. This check previously ran
+  under the asset label and could reproduce the observed generic result; that
+  synthetic reproduction is not evidence of the actual host failure.
+- Undefined/null results, missing status, malformed stream/status types, property
+  access and result inspection failures: asset_attestation/result_contract.
+  Valid child outputs still pass the unchanged exit/signal/size/frame checks.
+- Guard cancellation/race: asset_attestation/cancelled or deadline; forward-loss
+  abort remains forward/failed. Pending work receives the same abort signal and
+  bounded drain, including late-output clearing.
+- Guard drain setup/clear, output erasure and final timer/listener cleanup:
+  cleanup/guarded_cleanup. Malformed stream values cannot call arbitrary fill
+  methods or prevent remaining result buffers/owned-forward cleanup attempts.
+- Final forward recheck: forward/failed. Forward close/exit-evidence failure:
+  cleanup/failed. Signal handlers remain through close; each final removal is
+  attempted even if another finalizer throws.
+
+TDD RED: 12 of the initial15 cases failed against the previous implementation;
+the independent final-watchdog and malformed-reflection cleanup regressions also
+failed before their fixes. GREEN:21 new boundary/lifecycle cases pass. Every case
+explicitly forbids
+asset_attestation/failed and expects a closed exact diagnostic with no raw
+exception properties, values or secret-bearing fixture text. Cases prove no
+credential issuance after asset failure, accessible stream/capsule zeroing,
+late-buffer zeroing, forward closure, cleared timers and signal-handler removal.
+Existing branded child/remote cases remain green. No acceptance weakening,
+SSH/capsule/remote-source change, pin change, or production workaround was made.
+
+Fresh full gates: Abbott production build, app/contract67/67, full authority/
+bootstrap/browser/recovery/deploy/artifact512/512 and exact12-route/1-prefix
+validation pass. Broader post-build leaf/asset/issuer/diagnostic/orchestrator/
+smoke/visual tests134/134 pass. Artifact2870 files/82 text files passes. Both
+TypeScript checks pass; lint exits0 with0 errors and10 existing warnings.
+Source/test syntax and whitespace verification pass before commit.
+
+No push, SSH, live credential read/issuance/use, smoke request, capture, deploy,
+DB/auth/fact/cron/collector/neighbor or Nginx action occurred. No browser was
+launched. All local test commands exited; owned-child fixtures verify reaping.
+Local3001/3004 listeners and both fixed private identity evidence directories
+are absent. The prior evidence-only commit0c5f6b1 is preserved in history; published
+refs remain98cf58a. Last live attestation remains6f09982/8c79 with retained
+f80607f/release6cd2 rollback, unchanged neighbors and Nginx hash from the preceding
+section. No new host-state, screenshot/dimension/diff or parity claim is made.
+Systematic debugging and TDD restricted this work to evidence instrumentation;
+verification-before-completion supplied fresh local gates. STOP for review,
+with the live cause, parity, six-image comparison and cutover still unresolved.

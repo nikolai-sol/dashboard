@@ -728,6 +728,21 @@ extra fields. This narrows validation; it is not a speculative compatibility fix
 
 ### Asset boundary diagnostics — Phase1, STOP for review
 
+The subsequent approved98cf58a diagnostic also stopped at the generic asset
+failure. The source-only follow-up distinguishes the remaining orchestrator
+boundaries; it is not approved for a live retry yet. Unbranded read/setup errors
+use asset_attestation/asset_read. Missing or malformed child result contracts
+and exceptions while inspecting them use asset_attestation/result_contract.
+The post-read PID/start/listener recheck runs under forward/failed, then restores
+the asset stage only after it passes. Signal/deadline reasons remain cancelled/
+deadline; forward abort remains forward/failed. Guard drain/finalizer failures
+use cleanup/guarded_cleanup, while owned-forward close/record failures retain
+cleanup/failed. The final forward recheck also reports forward/failed.
+Regression fixtures forbid asset_attestation/failed on these paths, verify no
+issuance after an asset refusal, clear available buffers, and verify cleanup and
+signal-handler removal. SSH options, capsule bytes, attestation pins, remote
+frame acceptance and all full-tree/hash/path/mode gates are unchanged.
+
 The approved6393077 retry still returned asset_attestation/failed; no finer reason
 was obtained. This source-only instrumentation must be reviewed before one more
 diagnostic run. It does not select a live fix, change SSH flags/LogLevel, relax

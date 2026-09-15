@@ -17,7 +17,18 @@ const BASELINE = '/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026
 const AUTH_HASH = '71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f';
 const refuse = () => { throw new Error('ABBOTT_VERIFICATION_REFUSED'); };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const erase = result => { result?.stdout?.fill(0); result?.stderr?.fill(0); };
+// A malformed child contract must not mask its diagnostic or skip tunnel
+// cleanup. Erase owned data buffers without invoking arbitrary accessors/fill.
+const erase = result => {
+  let failed=false;
+  for (const key of ['stdout','stderr']) {
+    try {
+      const value = result && Object.getOwnPropertyDescriptor(result,key)?.value;
+      if (Buffer.isBuffer(value)) Buffer.prototype.fill.call(value,0);
+    } catch { failed=true; }
+  }
+  if(failed)refuse();
+};
 
 export function fixedSshInvocation(kind) {
   const args = ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ConnectTimeout=10'];
@@ -189,7 +200,7 @@ const realPlatform = {
 };
 
 export async function runAbbottVerification(mode, platform = realPlatform) {
-  let proof, code, issued, consumed, assets, consumer, watchdog, failure, stage='setup', passed = false, tearingDown = false;
+  let proof, code, issued, consumed, assets, consumer, watchdog, failure, stage='setup', assetBoundary='asset_read', passed = false, tearingDown = false;
   const controller = new AbortController();
   const setTimer = platform.setTimer ?? setTimeout, clearTimer = platform.clearTimer ?? clearTimeout;
   const interrupt = () => { failure??=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),stage,'cancelled');controller.abort(); };
@@ -208,10 +219,16 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     finally {
       let drainTimer;
       try {
-        if(controller.signal.aborted)await Promise.race([pending.catch(() => {}),new Promise(resolve=>{drainTimer=setTimer(resolve,35000);})]);
-      } finally { if(drainTimer)clearTimer(drainTimer); }
-      controller.signal.removeEventListener('abort', rejectAbort);
-      if (controller.signal.aborted) erase(value);
+        try {
+          if(controller.signal.aborted)await Promise.race([pending.catch(() => {}),new Promise(resolve=>{drainTimer=setTimer(resolve,35000);})]);
+        } finally { if(drainTimer)clearTimer(drainTimer); }
+      } catch {
+        failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'cleanup','guarded_cleanup');
+        throw failure;
+      } finally {
+        controller.signal.removeEventListener('abort', rejectAbort);
+        if (controller.signal.aborted) erase(value);
+      }
     }
   };
   platform.signalSource.on('SIGINT', interrupt); platform.signalSource.on('SIGTERM', interrupt);
@@ -229,7 +246,12 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     platform.recordForward?.(proof, false);
     if(platform.loadConsumer){stage='consumer_load';consumer=await guarded(()=>platform.loadConsumer(mode,controller.signal));checkForward();}
     if(mode==='smoke'){
-      stage='asset_attestation';assets=await guarded(()=>platform.readAssets(controller.signal));checkForward();
+      stage='asset_attestation';assets=await guarded(()=>platform.readAssets(controller.signal));
+      // This is an independent transport-ownership gate, not asset parsing.
+      stage='forward';checkForward();stage='asset_attestation';assetBoundary='result_contract';
+      if(!assets||!Object.hasOwn(assets,'status')||!(assets.status===null||Number.isInteger(assets.status))||
+        !(assets.signal===undefined||assets.signal===null||typeof assets.signal==='string')||
+        !Buffer.isBuffer(assets.stdout)||!Buffer.isBuffer(assets.stderr))refuse();
       if(assets.status!==0||assets.signal||assets.stderr.length||!Buffer.isBuffer(assets.stdout)||assets.stdout.length>262144){
         let reason=assets.signal||assets.status!==0&&assets.status!==1||assets.status===1&&!assets.stderr.length?'ssh_exit':'ssh_stderr_frame';
         if(assets.status===1&&!assets.signal&&Buffer.isBuffer(assets.stdout)&&!assets.stdout.length&&Buffer.isBuffer(assets.stderr)&&assets.stderr.length<=96){
@@ -250,9 +272,13 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     const expected = mode === 'compare' ? /^status=match mismatches=0 report=created\n$/ : mode==='smoke'?/^smoke=passed checks=[1-9]\d*\n$/:/^captures=[1-9]\d* errors=0 index=created\n$/;
     if (consumed.status !== 0 || consumed.signal || consumed.stderr.length || !expected.test(consumed.stdout.toString())) throw diagnosticFromChild(consumed);
     passed = true;
-  } catch(error) { passed = false;failure??=carryDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),error,stage,stage==='unknown'?'unknown':'failed'); }
+  } catch(error) { passed = false;failure??=carryDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),error,stage,stage==='asset_attestation'?assetBoundary:stage==='unknown'?'unknown':'failed'); }
   finally {
-    code?.fill(0); erase(issued); erase(consumed); erase(assets);
+    // Attempt each buffer independently so a malformed result cannot prevent
+    // zeroing other output or running the owned-forward finalizer.
+    for(const result of [{stdout:code},issued,consumed,assets]){
+      try{erase(result);}catch{passed=false;failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'cleanup','guarded_cleanup');}
+    }
     try {
       if (proof) {
         // Only our deliberate shutdown may end the tunnel without cancelling
@@ -260,14 +286,15 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
         if (passed) checkForward();
         tearingDown = true;
       }
-    } catch { passed = false; tearingDown = true; }
+    } catch { passed = false; tearingDown = true;failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'forward','failed'); }
     try {
       if (proof) { await platform.closeForward(proof); platform.recordForward?.(proof, true); }
     } catch { passed = false;failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'cleanup','failed'); }
     finally {
-      clearTimer(watchdog);
-      proof?.failure?.removeEventListener('abort', forwardFailed);
-      platform.signalSource.removeListener('SIGINT', interrupt); platform.signalSource.removeListener('SIGTERM', interrupt);
+      for(const cleanup of [()=>clearTimer(watchdog),()=>proof?.failure?.removeEventListener('abort',forwardFailed),
+        ()=>platform.signalSource.removeListener('SIGINT',interrupt),()=>platform.signalSource.removeListener('SIGTERM',interrupt)]){
+        try{cleanup();}catch{passed=false;failure=markDiagnostic(new Error('ABBOTT_VERIFICATION_REFUSED'),'cleanup','guarded_cleanup');}
+      }
     }
   }
   if(controller.signal.aborted||!passed)throw failure??new Error('ABBOTT_VERIFICATION_REFUSED');

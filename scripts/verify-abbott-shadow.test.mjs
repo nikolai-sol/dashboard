@@ -209,6 +209,96 @@ test('asset capsule setup failures are branded before SSH and do not leak values
   const input=Buffer.from('synthetic-code');await assert.rejects(api.readAbbottAssetTransport(new AbortController().signal,{capsule:()=>input,capture:async()=>{throw Object.assign(Error('synthetic-secret'),{reason:'ssh_stdin'});}}),e=>{assert.equal(d.formatVerificationFailure(e),'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=unknown\n');return true;});assert.ok(input.every(x=>x===0));
 });
 
+for(const boundary of ['read_throw','read_missing','undefined','null','missing_fields','stderr_type','stdout_type','status_type','accessor','post_read_forward','signal','deadline','drain_setup','drain_clear','close']){
+  test(`asset boundary ${boundary} cannot escape as generic asset failure`,async()=>{
+    const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs');
+    const signals=new EventEmitter(),code=Buffer.from('private-code'),stdout=Buffer.from('private-assets'),stderr=Buffer.from('private-error');
+    const secret='private-secret https://invalid/?access_token=private';
+    let closed=0,issued=0,checks=0,lateResolve;const timers=new Set();
+    const output={status:0,stdout,stderr:Buffer.alloc(0)};
+    const malformed={undefined:undefined,null:null,missing_fields:{stdout,stderr},stderr_type:{status:0,stdout,stderr:secret},stdout_type:{status:0,stdout:secret,stderr},status_type:{status:secret,stdout,stderr},accessor:Object.defineProperty({stdout,stderr},'status',{get(){throw Error(secret);}})};
+    const platform={signalSource:signals,capsule:()=>code,prepareOutput(){},
+      openForward:async()=>({pid:4242,start:'proof'}),
+      verifyForward(){if(++checks===2&&boundary==='post_read_forward')throw Error(secret);},
+      readAssets:async()=>{
+        if(boundary==='read_throw')throw Object.assign(Error(secret),{reason:secret,cause:secret,stack:secret});
+        if(Object.hasOwn(malformed,boundary))return malformed[boundary];
+        if(['signal','deadline','drain_setup','drain_clear'].includes(boundary))return new Promise(resolve=>{lateResolve=resolve;if(boundary!=='deadline')setImmediate(()=>signals.emit('SIGTERM'));});
+        return output;
+      },
+      issue:async()=>{issued++;throw Error(secret);},
+      closeForward:async()=>{closed++;assert.equal(signals.listenerCount('SIGTERM'),1);if(boundary==='close')throw Error(secret);},
+      setTimer(fn,ms){
+        if(ms===35000&&boundary==='drain_setup')throw Error(secret);
+        const timer=setTimeout(()=>{timers.delete(timer);fn();},ms===540000?30:5);timers.add(timer);return timer;
+      },
+      clearTimer(timer){clearTimeout(timer);timers.delete(timer);if(boundary==='drain_clear'&&timer!==watchdog)throw Error(secret);},
+    };
+    let watchdog;const set=platform.setTimer;platform.setTimer=(fn,ms)=>{const timer=set(fn,ms);if(ms===540000)watchdog=timer;return timer;};
+    if(boundary==='read_missing')delete platform.readAssets;
+    const expected=['read_throw','read_missing'].includes(boundary)?'asset_attestation reason=asset_read':Object.hasOwn(malformed,boundary)?'asset_attestation reason=result_contract':boundary==='post_read_forward'?'forward reason=failed':boundary==='signal'?'asset_attestation reason=cancelled':boundary==='deadline'?'asset_attestation reason=deadline':['drain_setup','drain_clear'].includes(boundary)?'cleanup reason=guarded_cleanup':'cleanup reason=failed';
+    try{
+      await assert.rejects(api.runAbbottVerification('smoke',platform),error=>{
+        const diagnostic=d.formatVerificationFailure(error);
+        assert.notEqual(diagnostic,'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed\n');
+        assert.equal(diagnostic,`ABBOTT_VERIFICATION_REFUSED stage=${expected}\n`);
+        assert.doesNotMatch(diagnostic,/private|https|access_token/);return true;
+      });
+      assert.equal(closed,1);assert.equal(issued,boundary==='close'?1:0);
+      assert.ok(code.every(x=>x===0));assert.equal(signals.listenerCount('SIGTERM'),0);assert.equal(signals.listenerCount('SIGINT'),0);assert.equal(timers.size,0);
+      if(Object.hasOwn(malformed,boundary)&&malformed[boundary])for(const key of ['stdout','stderr']){const value=malformed[boundary][key];if(Buffer.isBuffer(value))assert.ok(value.every(x=>x===0));}
+      if(boundary==='post_read_forward')assert.ok(stdout.every(x=>x===0));
+      if(lateResolve){lateResolve(output);await new Promise(resolve=>setImmediate(resolve));assert.ok(stdout.every(x=>x===0));}
+    }finally{for(const timer of timers)clearTimeout(timer);code.fill(0);stdout.fill(0);stderr.fill(0);}
+  });
+}
+
+for(const boundary of ['guard_abort','forward_abort','final_forward','final_record','final_watchdog']){
+  test(`asset lifecycle ${boundary} has a closed non-generic outcome through finalization`,async()=>{
+    const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs');
+    const signals=new EventEmitter(),forward=new AbortController(),code=Buffer.from('private-code'),assets=Buffer.from('private-assets'),credentials=frame();
+    let closed=0,issued=0,checked=0;
+    const platform={signalSource:signals,capsule:()=>code,prepareOutput(){},
+      openForward:async()=>({pid:4242,start:'proof',failure:forward.signal}),
+      verifyForward(){if(++checked===6&&boundary==='final_forward')throw Error('private-final-error');},
+      readAssets:async()=>{if(boundary==='forward_abort')forward.abort();return{status:0,stdout:assets,stderr:Buffer.alloc(0)};},
+      issue:async()=>{issued++;return{status:0,stdout:credentials,stderr:Buffer.alloc(0)};},
+      consume:async()=>({status:0,stdout:Buffer.from('smoke=passed checks=1\n'),stderr:Buffer.alloc(0)}),
+      closeForward:async()=>{assert.equal(signals.listenerCount('SIGTERM'),1);assert.ok(code.every(x=>x===0));assert.ok(assets.every(x=>x===0));closed++;},
+      recordForward(proof,exited){if(exited&&boundary==='final_record')throw Error('private-final-error');},
+      clearTimer(timer){clearTimeout(timer);if(boundary==='final_watchdog')throw Error('private-final-error');},
+    };
+    if(boundary==='guard_abort')Object.defineProperty(platform,'readAssets',{get(){signals.emit('SIGTERM');return async()=>({status:0,stdout:assets,stderr:Buffer.alloc(0)});}});
+    const expected=boundary==='guard_abort'?'asset_attestation reason=cancelled':boundary==='final_record'?'cleanup reason=failed':boundary==='final_watchdog'?'cleanup reason=guarded_cleanup':'forward reason=failed';
+    try{
+      await assert.rejects(api.runAbbottVerification('smoke',platform),error=>{
+        const diagnostic=d.formatVerificationFailure(error);
+        assert.notEqual(diagnostic,'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed\n');
+        assert.equal(diagnostic,`ABBOTT_VERIFICATION_REFUSED stage=${expected}\n`);return true;
+      });
+      assert.equal(closed,1);assert.equal(issued,boundary.startsWith('final_')?1:0);
+      if(issued)assert.ok(credentials.every(x=>x===0));
+      assert.equal(signals.listenerCount('SIGINT'),0);assert.equal(signals.listenerCount('SIGTERM'),0);
+    }finally{code.fill(0);assets.fill(0);credentials.fill(0);}
+  });
+}
+
+test('malformed asset reflection cannot skip other buffers or owned cleanup',async()=>{
+  const api=await moduleUnderTest(),d=await import('./abbott-verification-diagnostics.mjs');
+  const signals=new EventEmitter(),stderr=Buffer.from('private-error'),code=Buffer.from('private-code');let closed=0,issued=0;
+  const result=new Proxy({status:0,stdout:Buffer.alloc(0),stderr},{
+    get(target,key){if(key==='status')throw Error('private-property');return Reflect.get(target,key);},
+    getOwnPropertyDescriptor(target,key){if(key==='stdout')throw Error('private-reflection');return Reflect.getOwnPropertyDescriptor(target,key);},
+  });
+  const platform={signalSource:signals,capsule:()=>code,prepareOutput(){},verifyForward(){},openForward:async()=>({pid:4242,start:'proof'}),
+    readAssets:async()=>result,issue:async()=>{issued++;},closeForward:async()=>{closed++;assert.equal(signals.listenerCount('SIGTERM'),1);}};
+  await assert.rejects(api.runAbbottVerification('smoke',platform),error=>{
+    const diagnostic=d.formatVerificationFailure(error);assert.notEqual(diagnostic,'ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed\n');
+    assert.equal(diagnostic,'ABBOTT_VERIFICATION_REFUSED stage=cleanup reason=guarded_cleanup\n');return true;
+  });
+  assert.equal(issued,0);assert.equal(closed,1);assert.ok(stderr.every(x=>x===0));assert.ok(code.every(x=>x===0));assert.equal(signals.listenerCount('SIGTERM'),0);
+});
+
 test('real asset capsule labels import versus unbranded runtime failure and preserves known remote reasons',async()=>{
   const api=await moduleUnderTest(),secret='synthetic-secret https://invalid.test/?access_token=private';
   for(const kind of ['remote_import','remote_attestation','tree_hash']){
