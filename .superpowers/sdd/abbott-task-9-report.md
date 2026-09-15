@@ -1,4 +1,14 @@
-# Abbott Task 9 — closed remote deployment diagnostics
+# Abbott Task 9 — combined-neighbor preflight refusal
+
+Current status: BLOCKED. Approvedd58404d was published to both authorized refs;
+one acknowledged deployment returned
+`ABBOTT_DEPLOY_REFUSED stage=preflight_neighbor_combined reason=failed`.
+The fixed read-only preflight stopped before lock creation, writes or PM2 actions.
+Owned transport exit/evidence cleanup and local port cleanup were verified.
+No retry, pin update, smoke, capture or Nginx action followed. Details are below;
+the source checkpoint and earlier operational results remain historical.
+
+## Previous source checkpoint — closed remote deployment diagnostics
 
 Current status: DONE_WITH_CONCERNS, source-only diagnostic checkpoint awaiting
 review. Strict status-paired remote phase/reason now survives the hash-bound
@@ -3885,3 +3895,42 @@ ran. Published refs remain the previously verified1ed80bd; production source and
 rollback records remain historical, with no new live attestation. Review/TDD
 verified the precedence defect rather than inferring a production root cause.
 DONE_WITH_CONCERNS: STOP for re-review before publication or any live retry.
+
+## Approved operational attempt atd58404d — combined-neighbor refusal
+
+The active isolated worktree was clean at approved commit
+`d58404d06b0ec4a74be5bd7c1ac02de8715cee5f`. Ordinary non-force pushes updated only
+`refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`.
+The isolated literal remote-ref lookup verified both at that exact SHA.
+
+Exactly one approved command ran from the active isolated worktree:
+`/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott`.
+The local command exited1 with the closed remote outcome:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_neighbor_combined reason=failed`
+
+The initial inspect transaction entered the fixed read-only host preflight and
+refused at the combined-neighbor boundary. This boundary includes the fixed
+source record and direct kernel process/listener proof; the closed code does not
+distinguish the individual failed field and is not evidence that the neighbor
+was changed. The preceding Nginx gate is ordered before that boundary, but the
+full neighbor/current/browser preflight did not complete. No successful full
+host-state or combined-neighbor attestation is claimed. The reviewed preflight
+precedes lock/directory/write/PM2 operations, so this attempt did not reach
+candidate preparation or activation. No new release record was returned.
+
+The accepted REFUSED outcome required exact hash/status-paired remote ACK plus
+captured SSH ownership, observed/verified exit and completed private identity
+evidence removal. Source/payload buffers were zeroed by the reviewed session
+finally path. A separate local-only check verified the deploy/recovery private
+evidence directories absent and no local3001/3004 listeners. The owned local
+command session exited. No browser, forward or credential process was launched.
+
+No retry, source fix, new verifier or additional host diagnostic ran. No pins
+changed. No PDF request, smoke/capture, recovery, DB/auth/fact/collector/cron,
+neighbor process or Nginx mutation occurred. Historical active6f09982/8c79 and
+rollbackf80607f/6cd2 remain historical records, not newly attested by this failed
+preflight. Public route-only rollback remains3001; no switch was attempted.
+This is sanitized operational evidence only, with no new full local gate claim;
+the approved source checkpoint's fresh gates are recorded immediately above.
+BLOCKED: STOP for review/direction with the closed combined-neighbor refusal.
