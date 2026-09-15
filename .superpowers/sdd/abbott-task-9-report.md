@@ -5,6 +5,9 @@ review. Strict status-paired remote phase/reason now survives the hash-bound
 result/ACK protocol; REFUSED can no longer be labeled complete/none. This does not
 fix or diagnose the underlying production refusal. No push or live action ran
 during this checkpoint. Details and fresh local gates are appended below.
+The subsequent review correction also preserves a verified terminal diagnostic
+over a prior cooperative-abort timeout, without permitting COMMITTED after abort
+or accepting an unverified cleanup. It awaits re-review as recorded below.
 
 ## Previous operational checkpoint — acknowledged deployment refused
 
@@ -3845,3 +3848,40 @@ DONE_WITH_CONCERNS: systematic debugging/TDD isolated and instrumented the missi
 diagnostic boundary; completion verification supports this source checkpoint
 only. The live refusal, PDF failure, visual parity and cutover remain unresolved.
 STOP for review before publication or any live diagnostic retry.
+
+## Review correction — verified terminal diagnostic precedence
+
+The Important finding was reproduced with the actual transport and session
+functions, using only synthetic SSH streams, bounded timer seams and identity
+evidence. After READY and RUN, the local deadline triggered ABORT; a later exact
+hash/status-paired RESTORED, REVIEW_REQUIRED or REFUSED ACK and verified SSH exit
+still became UNACKNOWLEDGED because the earlier timeout/deadline diagnostic
+reached strict session revalidation. These three cases failed RED as expected.
+
+The minimal transport correction assigns the parsed canonical remote diagnostic
+when a terminal result survives framing/digest/status validation, clean SSH exit
+and the existing no-COMMITTED-after-abort rule. Earlier local timeout diagnostics
+cannot replace that verified terminal pair. The session still independently
+requires captured ownership, observed/verified exit and successful private
+evidence completion; an evidence failure cannot become an acknowledged outcome.
+No timeout, abort, framing, cleanup or remote mutation behavior was relaxed.
+
+All13 new integrated cases pass: timeout followed by restored/review/refused;
+signal followed by restored; clean committed; timeout/signal followed by forbidden
+committed; forged ACK; unverified SSH cleanup; unverified or failed evidence;
+secret-bearing stderr; and nonzero SSH exit. Each proves no ACK-only settlement
+before close, buffer zeroing, bounded timer cleanup and closed secret-free output.
+Focused transport/session/evidence tests pass101/101. Full ordered authority
+suite556/556, app/runtime-contract68/68 and Abbott build/exact-route gate pass.
+Post-build verification206/206, Abbott contract111/111, contract wiring and
+public-assets security pass. Combined production build, root/focused TypeScript,
+changed-source syntax and whitespace pass; lint reports0 errors and the same10
+existing warnings. Private deploy/recovery evidence directories are absent;
+local3001/3004 listeners are absent after all owned fixture commands completed.
+
+No push, production SSH/probe/deploy/recovery, credentials, PDF generation,
+smoke/capture, real browser, DB/auth/fact/collector/cron, neighbor or Nginx action
+ran. Published refs remain the previously verified1ed80bd; production source and
+rollback records remain historical, with no new live attestation. Review/TDD
+verified the precedence defect rather than inferring a production root cause.
+DONE_WITH_CONCERNS: STOP for re-review before publication or any live retry.

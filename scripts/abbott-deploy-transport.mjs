@@ -57,7 +57,11 @@ export function runAbbottDeployTransport(source,payload,{signal,platform=real,on
    try{signal?.removeEventListener('abort',abort);}catch{invalid=true;}
    const exited=closed&&(pid===null||identity().kind==='absent');let result=exited&&!invalid&&dispatched&&runSent?parseAbbottDeployResult(output.toString(),digest):null;
    if(aborted&&result?.status==='COMMITTED')result=null;
-   if(!diagnostic){if(!exited)note('ssh_close','unverified');else if(result)note(result.diagnostic.stage,result.diagnostic.reason);else note('ack_framing',output.length?'malformed':'missing');}
+   // A verified terminal outcome supersedes a cooperative-abort timeout. The
+   // canonical status pair must survive session revalidation. Invalid transport,
+   // unverified exit and COMMITTED-after-abort never reach this branch.
+   if(result)diagnostic=result.diagnostic;
+   else if(!diagnostic){if(!exited)note('ssh_close','unverified');else note('ack_framing',output.length?'malformed':'missing');}
    try{evidence(closed,exited);}catch{result=null;}output.fill(0);for(const h of headers)h.fill(0);
    resolve({status:result?.status??'UNACKNOWLEDGED',record:result?.record??null,remoteAcknowledged:Boolean(result),sshExitVerified:exited,diagnostic});
   };

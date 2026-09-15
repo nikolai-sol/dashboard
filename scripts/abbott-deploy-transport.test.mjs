@@ -53,6 +53,27 @@ test('signal sends ABORT without closing control early and waits for compensated
  const pending=m.runAbbottDeployTransport(s,p,{...f.options,signal:abort.signal}).then(r=>{settled=true;return r;});f.child.stdout.write('ABBOTT_DEPLOY_READY\n');await new Promise(setImmediate);abort.abort();await Promise.resolve();assert.equal(settled,false);assert.ok(f.sent.join('').endsWith('RUN\nABORT\n'));assert.equal(f.child.stdin.writableEnded,false);
  f.child.stdout.write(m.encodeAbbottDeployResult('RESTORED',null,m.deploymentDigest(s,p),{stage:'compensation',reason:'restored'}));await Promise.resolve();assert.equal(settled,false);f.close();const r=await pending;assert.equal(r.status,'RESTORED');assert.equal(r.remoteAcknowledged,true);
 });
+
+for(const mode of ['timeout_restored','timeout_review','timeout_refused','signal_restored','clean_committed','timeout_committed','signal_committed','forged_ack','cleanup_unverified','evidence_unverified','evidence_failure','secret_stderr','nonzero'])test(`real transport/session terminal precedence ${mode}`,async()=>{
+ const m=await api(),{runAbbottDeployWithEvidence}=await import('./abbott-deploy-session.mjs'),f=fixture(),s=source(),p=payload(),digest=m.deploymentDigest(s,p),abort=new AbortController();let last,removed=false,raw,settled=false;
+ const evidence={record(r){last={...r};},finish(){removed=true;if(mode==='evidence_failure')throw Error('private-token');return{identityCaptured:Boolean(last?.pid&&last?.start),exitObserved:last?.exit??false,exitVerified:mode!=='evidence_unverified'&&Boolean(last?.exitVerified)};}};
+ const pending=runAbbottDeployWithEvidence(s,p,{signal:abort.signal,evidence,transport:async(a,b,o)=>{raw=await m.runAbbottDeployTransport(a,b,{...o,platform:f.platform});return raw;}}).then(r=>{settled=true;return r;});
+ f.child.stdout.write('ABBOTT_DEPLOY_READY\n');await new Promise(setImmediate);assert.ok(f.sent.join('').endsWith('RUN\n'));
+ if(mode!=='clean_committed'&&!mode.startsWith('signal'))f.timers.find(t=>t.ms===240000).fn();
+ if(mode.startsWith('signal'))abort.abort();
+ const status=mode.endsWith('committed')?'COMMITTED':mode==='timeout_review'?'REVIEW_REQUIRED':mode==='timeout_refused'?'REFUSED':'RESTORED';
+ const diagnostic=status==='COMMITTED'?{stage:'complete',reason:'none'}:status==='REVIEW_REQUIRED'?{stage:'compensation',reason:'review_required'}:status==='REFUSED'?{stage:'activation_precheck',reason:'failed'}:{stage:'compensation',reason:'restored'};
+ const wire=m.encodeAbbottDeployResult(status,status==='COMMITTED'?record:null,mode==='forged_ack'?'f'.repeat(64):digest,diagnostic);
+ if(mode==='secret_stderr')f.child.stderr.write('private-token https://private/?key=secret');
+ f.child.stdout.write(wire);await Promise.resolve();assert.equal(settled,false,'ACK alone cannot establish cleanup');
+ if(mode==='cleanup_unverified')f.platform.identity=()=> 'Tue Sep 15 10:00:00 2026';
+ f.close(mode==='nonzero'?255:0);const result=await pending;
+ const accepted=['timeout_restored','timeout_review','timeout_refused','signal_restored','clean_committed'].includes(mode);
+ assert.equal(result.status,accepted?status:'UNACKNOWLEDGED');
+ if(accepted){assert.deepEqual(result.diagnostic,diagnostic);assert.deepEqual(raw.diagnostic,diagnostic);assert.equal(raw.remoteAcknowledged,true);assert.equal(raw.sshExitVerified,true);}
+ else if(!['evidence_unverified','evidence_failure'].includes(mode))assert.equal(raw.remoteAcknowledged,false);
+ assert.equal(removed,true);assert.ok(s.every(x=>x===0));assert.ok(p.every(x=>x===0));assert.doesNotMatch(JSON.stringify(result)+m.formatAbbottDeployResult(result),/private-token|https|key=|secret/);assert.ok(f.cleared.length>=4);
+});
 test('early result before RUN, callback write errors and abort during upload never authorize mutation success',async()=>{
  const m=await api();for(const mode of['early_result','callback_error','abort_upload']){const f=fixture(),s=source(),p=payload(),abort=new AbortController(),write=f.child.stdin.write.bind(f.child.stdin);let calls=0;
   if(mode==='callback_error')f.child.stdin.write=(b,...args)=>{if(++calls===2)throw Error('private');return write(b,...args);};

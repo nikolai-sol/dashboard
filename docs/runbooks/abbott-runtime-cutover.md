@@ -462,6 +462,14 @@ compensation outcome takes precedence over the original failed activation phase.
 No acceptance gate, host authority or deployment behavior is relaxed. This is
 Phase1 instrumentation only, pending review before any live diagnostic retry.
 
+A local cooperative-abort timeout does not override a later exact, verified
+terminal ACK. Once framing/digest/status pairing and SSH exit are valid, the
+canonical remote diagnostic is passed to session revalidation; private evidence
+cleanup must still verify before any acknowledged result is accepted. RESTORED,
+REVIEW_REQUIRED and REFUSED can therefore survive a prior timeout with their
+proper diagnostic pairs. COMMITTED is never accepted after local timeout/abort.
+Forged frames, stderr, nonzero SSH exit or unverified cleanup remain unacknowledged.
+
 Immediately after spawn, drains, exit handlers and deadlines remain installed
 through PID proof, upload, RUN and compensation. At 240 seconds the parent sends
 ABORT (or EOF before RUN), then allows 300 seconds for remote compensation before
