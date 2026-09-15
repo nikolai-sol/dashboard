@@ -151,17 +151,19 @@
 - `IntentQueryDisclosures({ view })` renders two independent native disclosures with query count and accessible tables.
 - Export handlers filter by selected period/category and preserve the active publication ID.
 
-- [ ] Write component tests asserting the status sentence is absent; both links include positive-impression row counts; each disclosure table has required columns; zero-impression rows are excluded; sorting is impressions, clicks, query, source; not-configured copy is truthful.
-- [ ] Run the component test; expect failures against the current MedRoche panel.
-- [ ] Implement the generic panel and two independent native `details/summary` link-style disclosures so server rendering and accessibility work without client state.
-- [ ] Add pagination/download behavior using bounded query parameters and current server-resolved period/category. Preserve dashboard authorization and source scope.
-- [ ] Re-run component, route and export tests; expect pass.
-- [ ] Run `npm run test:site-seo`, `npm run typecheck:site-seo`, root admin tests covering new routes/components and `npm run build`; expect zero failures.
-- [ ] Build MedRoche through `node --import tsx scripts/site-seo-build.mjs --site medroche` and run an ephemeral standalone health/login smoke. Stop and verify the owned process exits.
-- [ ] Visually verify desktop at 1440px and mobile at 390px: goal/health pairing, disclosures, wide-table containment and no horizontal page overflow. Use synthetic labeled facts only.
-- [ ] Request independent read-only code review; fix Critical and Important findings with failing tests first.
-- [ ] Record exact test/build/smoke evidence, final commit IDs and explicit non-deployment status in documentation.
-- [ ] Commit: `git commit -m "feat(site-seo): add target intent review tables"`.
+- [x] Write component tests asserting the status sentence is absent; both links include positive-impression row counts; each disclosure table has required columns; zero-impression rows are excluded; sorting is impressions, clicks, query, source; not-configured copy is truthful.
+- [x] Run the component test; expect failures against the current MedRoche panel.
+- [x] Implement the generic panel and two independent native `details/summary` link-style disclosures so server rendering and accessibility work without client state.
+- [x] Add pagination/download behavior using bounded query parameters and current server-resolved period/category. Preserve dashboard authorization and source scope.
+- [x] Re-run component, route and export tests; expect pass.
+- [x] Run `npm run test:site-seo`, `npm run typecheck:site-seo`, root admin tests covering new routes/components and `npm run build`; expect zero failures.
+- [x] Build MedRoche through `node --import tsx scripts/site-seo-build.mjs --site medroche` and run an ephemeral standalone health/login smoke. Stop and verify the owned process exits.
+- [x] Visually verify desktop at 1440px and mobile at 390px: goal/health pairing, disclosures, wide-table containment and no horizontal page overflow. Use synthetic labeled facts only.
+- [x] Request independent read-only code review; fix Critical and Important findings with failing tests first.
+- [x] Record exact test/build/smoke evidence, final commit IDs and explicit non-deployment status in documentation.
+- [x] Commit: `git commit -m "feat(site-seo): add target intent review tables"`.
+
+Task 5 feature commit is `a46fd4bb9706b42b61ee699101b53eaae810ca75`; reviewed source head `96ab3e4f66e7899e980340fe7c7f5c256407e163` fixes the explicit enablement boundary and preserves the paginated disclosure. Full RED/GREEN, review, build, standalone-smoke and synthetic visual evidence is recorded in `.superpowers/sdd/task-5-report.md`. The documentation/profile attestation commit is reported in the final handoff because a commit cannot contain its own SHA. No production action occurred.
 
 ## Self-review
 
