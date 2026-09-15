@@ -1,9 +1,39 @@
 # Abbott Task 9 — acknowledged preflight refusal: include
 
-Current status: BLOCKED. Approved clean c80d7c2 was published to both authorized
-refs. Exactly one deploy invocation returned the acknowledged closed refusal
-preflight_nginx/include before mutation. No retry or Nginx change followed;
-complete runtime/perimeter post-attestation was not reached. Details below.
+Current status: BLOCKED. The one approved read-only caller at clean439d486
+classified the first rejection as selected_include. The preceding c80d7c2
+deploy refused preflight_nginx/include before mutation. No retry or Nginx change
+followed; complete runtime/perimeter post-attestation remains unperformed.
+
+## Approved single read-only classification at439d486
+
+Verified exact clean HEAD
+`439d4860814bca39280687e307f371f804ab449b`. Exactly one reviewed command ran:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+Exit0, exact closed line:
+
+`ABBOTT_NGINX_FIRST_REJECTION code=selected_include`
+
+The result locates the first rejecting directive in the selected TLS context.
+It does not reveal or authorize include paths, arguments, contents or semantics.
+The bounded read-only reader performed its own stable nofollow/metadata and
+parser authority checks; no host writes, process changes or network probes run
+inside that reader.
+
+The accepted result requires owned SSH PID/start capture, verified child exit
+and successful private identity-evidence removal. The caller exited; local-only
+checks confirmed both fixed deploy/recovery evidence directories absent and no
+local3001/3004 listeners. No browser, forward, credential or remote temporary
+artifact was created. Supplemental remote runtime, neighbor and Nginx hash
+comparisons were not run; do not treat this classification as full deployment
+or perimeter health evidence.
+
+No push, deploy, retry, smoke, capture, PDF, recovery or Nginx edit/reload occurred.
+No release pins or acceptance grammar changed. STOP for direction/review.
 
 ## Previous source checkpoint — proxy URI aliases
 
