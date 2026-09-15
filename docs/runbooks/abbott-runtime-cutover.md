@@ -8,8 +8,12 @@ categories: selected_include_letsencrypt_options for the literal
 /etc/nginx/snippets/ssl-params.conf; selected_include_proxy_params for
 /etc/nginx/proxy_params; selected_include_mime_types for /etc/nginx/mime.types.
 Mapping requires a non-block directive with exactly one parsed argument matching
-the literal path. Quotes use the existing tokenizer; there is no filesystem
-resolution, normalization or include read. Globs, variables, relative paths,
+the literal path. Observer-only lexical provenance also requires no escapes,
+no quote concatenation, and unambiguous ASCII token boundaries. A plain literal
+or one whole unescaped single/double-quoted literal can match; an adjacent
+comment without whitespace or non-ASCII boundary cannot. Deployment token
+values and acceptance are unchanged. There is no filesystem resolution,
+normalization or include read. Globs, variables, relative paths,
 extra/missing arguments, blocks and every other path map selected_include_other.
 Only the category enters output, never arguments or paths. The old generic
 selected_include wire code is no longer accepted. This changes diagnostics only:

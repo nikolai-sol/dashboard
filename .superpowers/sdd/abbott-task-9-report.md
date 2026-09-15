@@ -1,9 +1,60 @@
-# Abbott Task 9 — selected include diagnostic refinement
+# Abbott Task 9 — selected include lexical provenance correction
 
-Current status: DONE_WITH_CONCERNS. Source-only refinement maps selected include
-arguments to four fixed safe categories or other. No include is loaded or newly
-accepted, and no live call/push occurred. STOP for independent review. The last
-live classification remains selected_include; the actual path is still unknown.
+Current status: DONE_WITH_CONCERNS. Source-only lexical provenance correction
+prevents escaped or ambiguous include arguments from receiving a known category.
+No include is loaded or newly accepted; no live call/push occurred. STOP for
+independent re-review. The actual production include path is still unknown.
+
+## Include lexical exactness follow-up — source-only
+
+Important review reproduced the legacy tokenizer stripping unknown escapes:
+the plain and quoted proxy-backslash-underscore-params forms could be diagnosed
+as a known exact path. The production tokenizer's token values and acceptance
+are intentionally unchanged. Observer-only raw-span provenance now marks only
+unescaped plain or wholly quoted tokens with unambiguous ASCII boundaries.
+The selected include category requires the directive's provenance to be exact;
+escape, quote concatenation or ambiguous separator yields other. Metadata is
+private in bounded token/node WeakSets and gap positions, never output.
+
+RED reproduced escaped slash/punctuation forms across all four known paths,
+then comment adjacency/non-ASCII boundaries. Independent review found a further
+Important padded-Unicode separator bypass; an additional RED test reproduced
+it and the observer now carries skipped non-ASCII separator taint through the
+entire directive. Genuine comment content is excluded from that taint. Known
+plain and single/double-quoted forms and comments separated by whitespace retain
+their categories. No include contents, raw paths or arguments enter output.
+
+Final GREEN:43/43 focused;836/836 full authority plus Abbott app/runtime tests
+and12routes/1prefix. New320-case lexical differential against be848ec proves
+zero deployment acceptance or phase drift. Existing84 include cases and the
+327 unchanged original cases/16 approved rate-limit deltas still pass. Both
+builds, root/focused typechecks, deploy-source/release-runtime, syntax and diff
+checks passed. Lint:0errors and10pre-existing warnings. Independent re-review
+confirmed the padded-Unicode finding fixed, no remaining findings, and43/43
+focused tests including320 lexical comparisons.
+
+```sh
+node --test --test-name-pattern='selected include lexical' scripts/abbott-nginx-readonly.test.mjs
+node --test --test-name-pattern='ambiguous comment adjacency' scripts/abbott-nginx-readonly.test.mjs
+node --test --test-name-pattern='skipped ambiguous separators' scripts/abbott-nginx-readonly.test.mjs
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+npm run build
+npm run test:deploy-source
+npm run test:release-runtime
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+git diff --check
+```
+
+Only diagnostic analysis source hash was refreshed; deployed pins, reader hash,
+SSH authority/lifecycle and acceptance remain unchanged. All owned test
+commands exited; no live SSH/browser/credential resources were started. No push,
+remote read, deploy/retry, smoke/capture, PDF, DB/auth/fact/collector/cron,
+neighbor or Nginx action occurred. STOP for independent re-review.
 
 ## Selected include category refinement — source-only checkpoint
 

@@ -12,17 +12,18 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     const refuse=code=>{nginxReason(code);const error=Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');rejected.set(error,code);throw error;};
     nginxReason('syntax');
     if(/abbott/i.test(text)||/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/.test(text))refuse(/abbott/i.test(text)?'existing_abbott_route':'syntax');
-    const tokens=[];let word='',quote=null,started=false;
-    const flush=()=>{if(started){tokens.push({word});word='';started=false;}if(tokens.length>32768)fail();};
-    for(let i=0;i<text.length;i++){const c=text[i];if(quote){if(c==='\\'){if(++i>=text.length)fail();word+=text[i];}else if(c===quote)quote=null;else word+=c;continue;}
-      if(c==='"'||c==="'"){quote=c;started=true;continue;}if(c==='#'){flush();while(i<text.length&&text[i]!=='\n')i++;continue;}
+    const tokens=[],literalTokens=new WeakSet(),ambiguousGaps=new Set();let word='',quote=null,started=false,wordStart=0;
+    // Observer-only provenance: token values and deployment parsing stay unchanged.
+    const flush=end=>{if(started){const token={word};if(onFirstRejection){const raw=text.slice(wordStart,end),boundary=i=>i<0||i===text.length||/[ \t\r\n{};]/.test(text[i]);if(boundary(wordStart-1)&&boundary(end)&&!raw.includes('\\')&&[word,'"'+word+'"',"'"+word+"'"].includes(raw))literalTokens.add(token);}tokens.push(token);word='';started=false;}if(tokens.length>32768)fail();};
+    for(let i=0;i<text.length;i++){if(!started)wordStart=i;const c=text[i];if(quote){if(c==='\\'){if(++i>=text.length)fail();word+=text[i];}else if(c===quote)quote=null;else word+=c;continue;}
+      if(c==='"'||c==="'"){quote=c;started=true;continue;}if(c==='#'){flush(i);while(i<text.length&&text[i]!=='\n')i++;continue;}
       if(c==='\\'){if(++i>=text.length)fail();word+=text[i];started=true;continue;}
       if(c==='$'&&text[i+1]==='{'){const end=text.indexOf('}',i+2);if(end<0||! /^[A-Za-z0-9_]+$/.test(text.slice(i+2,end)))fail();word+=text.slice(i,end+1);i=end;started=true;continue;}
-      if(/\s/.test(c)){flush();continue;}if('{};'.includes(c)){flush();tokens.push({syntax:c});}else{word+=c;started=true;}
-    }flush();if(quote)fail();
-    const nodes=[],stack=[nodes];let directive=[];
-    for(const token of tokens){if(token.syntax==='{'||token.syntax===';'){if(!directive.length||!directive[0])fail();const node={name:directive[0],args:directive.slice(1),block:token.syntax==='{',children:[]};stack.at(-1).push(node);directive=[];if(node.block){stack.push(node.children);if(stack.length>32)fail();}}
-      else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else directive.push(token.word);
+      if(/\s/.test(c)){flush(i);if(onFirstRejection&&!/[ \t\r\n]/.test(c))ambiguousGaps.add(tokens.length);continue;}if('{};'.includes(c)){flush(i);tokens.push({syntax:c});}else{word+=c;started=true;}
+    }flush(text.length);if(quote)fail();
+    const nodes=[],stack=[nodes],literalNodes=new WeakSet();let directive=[],literal=true;
+    for(const [tokenIndex,token] of tokens.entries()){if(onFirstRejection&&ambiguousGaps.has(tokenIndex))literal=false;if(token.syntax==='{'||token.syntax===';'){if(!directive.length||!directive[0])fail();const node={name:directive[0],args:directive.slice(1),block:token.syntax==='{',children:[]};if(onFirstRejection&&literal)literalNodes.add(node);stack.at(-1).push(node);directive=[];literal=true;if(node.block){stack.push(node.children);if(stack.length>32)fail();}}
+      else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else{directive.push(token.word);if(onFirstRejection&&!literalTokens.has(token))literal=false;}
     }if(stack.length!==1||directive.length)fail();
     // conf.d is already in the HTTP context. A nested server cannot supply TLS authority.
     // Names are diagnostic vocabulary only, never an acceptance allowlist.
@@ -93,7 +94,7 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
         }else if(!passive.has(n.name))refuse(unsupported(n,active));
       }
       visit(n.children,n.name,active,childLocation);
-      }catch(error){const code=rejected.get(error);if(onFirstRejection&&selected&&!['server','location'].includes(n.name)&&['server','location'].includes(context)&&typeof code==='string'&&(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))onFirstRejection('selected',n.name,n.args,n.block);if(!onUnsupported||!(selected||n===targets[0])||n.block&&!['server','location'].includes(context)||['server','location'].includes(n.name)||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
+      }catch(error){const code=rejected.get(error);if(onFirstRejection&&selected&&!['server','location'].includes(n.name)&&['server','location'].includes(context)&&typeof code==='string'&&(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))onFirstRejection('selected',n.name,n.args,n.block,literalNodes.has(n));if(!onUnsupported||!(selected||n===targets[0])||n.block&&!['server','location'].includes(context)||['server','location'].includes(n.name)||typeof code!=='string'||!(code.startsWith('unsupported_')||['include','variable_routing'].includes(code)))throw error;onUnsupported(n.name);}
     }};visit(nodes);
   }
 
@@ -102,7 +103,7 @@ export function abbottNginxDiagnosticNames(){return ["add_header","alias","auth_
 export function diagnoseAbbottNginxText(text){const names=new Set(),known=new Set(abbottNginxDiagnosticNames());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},name=>names.add(known.has(name)?name:'other'));return [...names].sort();}catch{return {reason:'parser_ambiguity'};}}
 const nginxIncludeCategories=Object.freeze([['/etc/letsencrypt/options-ssl-nginx.conf','letsencrypt_options'],['/etc/nginx/snippets/ssl-params.conf','ssl_params'],['/etc/nginx/proxy_params','proxy_params'],['/etc/nginx/mime.types','mime_types']]);
 export function abbottNginxFirstRejectionCodes(){return ['none',...['upstream','map','geo','split_clients','log_format','proxy_cache_path','limit_req_zone','limit_conn_zone','other'].map(n=>'top_'+n),...abbottNginxDiagnosticNames().filter(n=>n!=='include').map(n=>'selected_'+n),...[...nginxIncludeCategories.map(([,category])=>category),'other'].map(n=>'selected_include_'+n)];}
-export function classifyAbbottNginxFirstRejection(text){let first;const known=new Set(abbottNginxFirstRejectionCodes());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},null,(context,name,args,block)=>{if(context==='selected'&&name==='include'){const category=!block&&args?.length===1?nginxIncludeCategories.find(([literal])=>literal===args[0])?.[1]:null;first??='selected_include_'+(category??'other');}else first??=known.has(context+'_'+name)?context+'_'+name:context+'_other';});return {rejection:'none'};}catch{return first?{rejection:first}:{reason:'parser_ambiguity'};}}
+export function classifyAbbottNginxFirstRejection(text){let first;const known=new Set(abbottNginxFirstRejectionCodes());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},null,(context,name,args,block,literal)=>{if(context==='selected'&&name==='include'){const category=literal&&!block&&args?.length===1?nginxIncludeCategories.find(([literal])=>literal===args[0])?.[1]:null;first??='selected_include_'+(category??'other');}else first??=known.has(context+'_'+name)?context+'_'+name:context+'_other';});return {rejection:'none'};}catch{return first?{rejection:first}:{reason:'parser_ambiguity'};}}
 
 // Fixed checkpoint authority, not a caller-selected inventory. This proof makes
 // no subprocess, supervisor/socket connection, network request or filesystem write.
