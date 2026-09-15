@@ -164,22 +164,24 @@ function unavailableCard(label: string): TargetIntentCard {
 function unavailableView(
   input: BuildTargetIntentViewInput,
   state: "not_configured" | "unavailable",
+  discloseRuleSet = true,
 ): TargetIntentView {
-  const configuredLabel = isNonEmptyText(input.ruleSet?.label)
-    ? input.ruleSet.label.trim()
+  const visibleRuleSet = discloseRuleSet ? input.ruleSet : null;
+  const configuredLabel = isNonEmptyText(visibleRuleSet?.label)
+    ? visibleRuleSet.label.trim()
     : "";
   const requestedLabel = isNonEmptyText(input.label) ? input.label.trim() : "";
   const label = configuredLabel || requestedLabel || DEFAULT_TARGET_LABEL;
   return {
     siteId: input.siteId,
     dashboardId: input.dashboardId,
-    versionId: isNonEmptyText(input.ruleSet?.versionId)
-      ? input.ruleSet.versionId
+    versionId: isNonEmptyText(visibleRuleSet?.versionId)
+      ? visibleRuleSet.versionId
       : null,
     label,
     state,
-    provenance: hasValidProvenance(input.ruleSet?.provenance ?? null)
-      ? input.ruleSet!.provenance
+    provenance: hasValidProvenance(visibleRuleSet?.provenance ?? null)
+      ? visibleRuleSet!.provenance
       : null,
     target: unavailableCard(label),
     other: unavailableCard(OTHER_LABEL),
@@ -199,6 +201,12 @@ export function buildTargetIntentView(
   input: BuildTargetIntentViewInput,
 ): TargetIntentView {
   if (input.ruleSet === null) return unavailableView(input, "not_configured");
+  if (
+    input.ruleSet.siteId !== input.siteId ||
+    input.ruleSet.dashboardId !== input.dashboardId
+  ) {
+    return unavailableView(input, "unavailable", false);
+  }
   if (
     !hasValidRuleIntegrity(input.ruleSet, input.siteId, input.dashboardId) ||
     input.queries.some((query) => !hasValidQueryMetrics(query))

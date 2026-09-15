@@ -58,6 +58,7 @@ test("normalization applies NFKC, case folding, yo and punctuation boundaries", 
     "her 2 терапия еж",
   );
   assert.equal(normalizeIntentKey("рак___лёгкого"), "рак легкого");
+  assert.notEqual(normalizeIntentKey("cafe"), normalizeIntentKey("café"));
 });
 
 test("exact and phrase rules use whole normalized tokens", () => {
@@ -171,6 +172,38 @@ test("invalid rule-set integrity fails closed", () => {
   assert.equal(result.target.impressions, null);
   assert.equal(result.other.impressions, null);
   assert.deepEqual(result.queries, []);
+});
+
+test("a scope mismatch discloses no foreign catalogue metadata", () => {
+  const result = buildTargetIntentView({
+    siteId: "medroche",
+    dashboardId: 71,
+    label: "Мед. интент",
+    ruleSet: ruleSet({
+      siteId: "foreign-site",
+      dashboardId: 999,
+      versionId: "foreign-version-secret",
+      label: "Foreign secret label",
+      provenance: {
+        importId: "foreign-import-secret",
+        publicationId: "foreign-publication-secret",
+        sourceTransport: "google_sheet",
+        sourceIdentity: "foreign-source-secret",
+        contentSha256: "b".repeat(64),
+        publishedAt: "2026-09-15T10:00:00.000Z",
+        publishedBy: "foreign-actor-secret",
+        comment: "foreign-comment-secret",
+      },
+    }),
+    queries: [],
+  });
+
+  assert.equal(result.state, "unavailable");
+  assert.equal(result.versionId, null);
+  assert.equal(result.label, "Мед. интент");
+  assert.equal(result.target.label, "Мед. интент");
+  assert.equal(result.provenance, null);
+  assert.doesNotMatch(JSON.stringify(result), /foreign|secret/i);
 });
 
 test("totals and shares are impression-weighted over positive-impression rows", () => {

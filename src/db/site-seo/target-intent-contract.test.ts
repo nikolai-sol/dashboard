@@ -110,6 +110,45 @@ test("versions and rules cannot cross site or dashboard scope", () => {
   assert.match(rules, /source_row_ordinal/);
 });
 
+test("rules can be inserted only before the version is sealed for publication", () => {
+  const versions = tableDefinition("site_seo_intent_versions");
+  assert.match(versions, /\bsealed_at\b/);
+  assert.match(versions, /\bsealed_by\b/);
+  assert.match(
+    ddl,
+    /CREATE TRIGGER trg_site_seo_intent_versions_immutable_update[\s\S]*?OLD\.sealed_at IS NULL[\s\S]*?NEW\.sealed_at IS NOT NULL[\s\S]*?NEW\.sealed_by[\s\S]*?SIGNAL SQLSTATE '45000'/,
+  );
+  assert.match(
+    ddl,
+    /CREATE TRIGGER trg_site_seo_intent_rules_unsealed_insert[\s\S]*?BEFORE INSERT ON site_seo_intent_rules[\s\S]*?site_seo_intent_versions[\s\S]*?sealed_at IS NULL[\s\S]*?SIGNAL SQLSTATE '45000'/,
+  );
+  assert.match(
+    ddl,
+    /CREATE TRIGGER trg_site_seo_intent_publications_sealed_insert[\s\S]*?BEFORE INSERT ON site_seo_intent_publications[\s\S]*?site_seo_intent_versions[\s\S]*?sealed_at IS NOT NULL[\s\S]*?SIGNAL SQLSTATE '45000'/,
+  );
+});
+
+test("publication import identity must be the version import identity", () => {
+  const versions = tableDefinition("site_seo_intent_versions");
+  const publications = tableDefinition("site_seo_intent_publications");
+  assert.match(
+    versions,
+    /UNIQUE KEY uq_intent_version_import_identity\s*\(site_id, dashboard_id, id, import_id\)/,
+  );
+  assert.match(
+    publications,
+    /FOREIGN KEY \(site_id, dashboard_id, version_id, import_id\)[\s\S]*?REFERENCES site_seo_intent_versions \(site_id, dashboard_id, id, import_id\)[\s\S]*?ON DELETE RESTRICT/,
+  );
+});
+
+test("normalized rule identity uses binary collation like the JS normalizer", () => {
+  const rules = tableDefinition("site_seo_intent_rules");
+  assert.match(
+    rules,
+    /normalized_key VARCHAR\(512\) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL/,
+  );
+});
+
 test("one active pointer exists per site and dashboard", () => {
   const active = tableDefinition("site_seo_intent_active");
   assert.match(active, /PRIMARY KEY \(site_id, dashboard_id\)/);
@@ -145,7 +184,7 @@ test("publication receipts preserve the full site-scoped audit chain", () => {
   }
   assert.match(
     publications,
-    /FOREIGN KEY \(site_id, dashboard_id, version_id\)[\s\S]*?REFERENCES site_seo_intent_versions \(site_id, dashboard_id, id\)[\s\S]*?ON DELETE RESTRICT/,
+    /FOREIGN KEY \(site_id, dashboard_id, version_id, import_id\)[\s\S]*?REFERENCES site_seo_intent_versions \(site_id, dashboard_id, id, import_id\)[\s\S]*?ON DELETE RESTRICT/,
   );
   assert.match(
     publications,
