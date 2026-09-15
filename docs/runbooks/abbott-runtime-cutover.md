@@ -1,5 +1,17 @@
 # Abbott isolated-runtime cutover runbook
 
+### Correlated PDF failure-stage header — review required before deploy
+
+The focused Abbott handler now adds `X-Abbott-PDF-Failure-Stage` only to its
+private, no-store500 response, with the request-local closed stage authorize,
+launch, prepare, navigate, ready or render. Success,401 and404 carry no stage
+header. The generic body and bounded log contract are unchanged. Smoke reads
+this header only for candidate PDF5xx and reports the corresponding closed
+candidate_pdf stage reason; absent or malformed labels remain candidate_5xx.
+Control PDF baseline policy is unchanged. This source-only checkpoint requires
+review and a separately authorized deployment before any live use; no new
+operator command, log read or retry is authorized by this documentation.
+
 ### PDF log caller checkpoint — review required before host use
 
 The fixed caller is now implemented locally; the preceding classifier-only

@@ -191,6 +191,10 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
           }
           const side=origin===ORIGINS[0]?'control':'candidate';
           const category=response.status>=400&&response.status<500?'4xx':response.status>=500&&response.status<600?'5xx':'other_status';
+          if(side==='candidate'&&category==='5xx'){
+            const failureStage=response.headers.get('X-Abbott-PDF-Failure-Stage');
+            if(['authorize','launch','prepare','navigate','ready','render'].includes(failureStage))reject(`candidate_pdf_${failureStage}`);
+          }
           reject(`${side}_${category}`);
         }
         reject(kind==='html'?'http_status':'status');

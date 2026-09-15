@@ -29,7 +29,7 @@ test('child diagnostics accept exactly one bounded allowlisted frame and never r
 
 test('PDF origin/status class diagnostics survive only exact closed child frames',async()=>{
   const m=await api();
-  for(const reason of ['control_4xx','control_5xx','candidate_4xx','candidate_5xx','control_other_status','candidate_other_status']){
+  for(const reason of ['control_4xx','control_5xx','candidate_4xx','candidate_5xx','control_other_status','candidate_other_status',...['authorize','launch','prepare','navigate','ready','render'].map(stage=>`candidate_pdf_${stage}`)]){
     const frame=`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=${reason}\n`;
     assert.equal(m.formatVerificationFailure(m.markDiagnostic(Error(secret),'pdf_fetch',reason)),frame);
     assert.equal(m.formatVerificationFailure(m.diagnosticFromChild({status:1,stdout:Buffer.alloc(0),stderr:Buffer.from(frame)})),frame);

@@ -58,6 +58,7 @@ test("PDF renders isolated page with existing dimensions and headers, then close
     const handler=createAbbottPdfHandler({authorize:async()=>access(audience),launch:fixture.launch as never,wait:async()=>undefined});
     const response=await handler(new Request("https://example.test/pdf?from=2026-09-01&to=2026-09-13&embed_key=fixture"),{params:{id}});
     assert.equal(response.status,200);
+    assert.equal(response.headers.get("X-Abbott-PDF-Failure-Stage"),null);
     assert.equal(response.headers.get("content-type"),"application/pdf");
     assert.equal(response.headers.get("cache-control"),"private, no-store");
     assert.match(response.headers.get("content-disposition")!,new RegExp(`dashboard-${id}-\\d{4}-\\d{2}-\\d{2}\\.pdf`));
@@ -99,7 +100,9 @@ test("each failure after launch closes Chromium exactly once; launch failure own
 test("foreign alias or identity and unauthorized access reject before Chromium launch", async () => {
   let authCalls=0;
   const handler=createAbbottPdfHandler({authorize:async()=>{authCalls++;return access();},launch:async()=>assert.fail("must not launch")});
-  assert.equal((await handler(new Request("https://example.test"),{params:{id:"28"}})).status,404);
+  const foreign=await handler(new Request("https://example.test"),{params:{id:"28"}});
+  assert.equal(foreign.status,404);
+  assert.equal(foreign.headers.get("X-Abbott-PDF-Failure-Stage"),null);
   assert.equal(authCalls,0);
   for(const [result,status] of [
     [{context:null,authorized:false,reason:"not_found"},404],
@@ -110,11 +113,28 @@ test("foreign alias or identity and unauthorized access reject before Chromium l
     const handler=createAbbottPdfHandler({authorize:async()=>result as never,launch:async()=>assert.fail("must not launch")});
     const response=await handler(new Request("https://example.test"),{params:{id:"18"}});
     assert.equal(response.status,status);
+    assert.equal(response.headers.get("X-Abbott-PDF-Failure-Stage"),null);
     assert.equal(response.headers.get("cache-control"),"private, no-store");
   }
 });
 
-test("navigation and generation failures log only bounded diagnostics and still close the browser", async (t) => {
+test("overlapping requests keep their own failure stage on the same handler", async (t) => {
+  t.after(()=>mock.restoreAll());mock.method(console,"error",()=>undefined);
+  let rejectAuthorization!: (error: Error)=>void;
+  const pendingAuthorization=new Promise<never>((_,reject)=>{rejectAuthorization=reject;});
+  const fixture=browserFixture("pdf");
+  const handler=createAbbottPdfHandler({
+    authorize:async(request)=>new URL(request.url).pathname==="/blocked"?pendingAuthorization:access(),
+    launch:fixture.launch as never,wait:async()=>undefined,
+  });
+  const first=handler(new Request("https://example.test/blocked"),{params:{id:"18"}});
+  const second=await handler(new Request("https://example.test/render"),{params:{id:"abbott"}});
+  rejectAuthorization(new Error("private-secret"));
+  assert.equal(second.headers.get("X-Abbott-PDF-Failure-Stage"),"render");
+  assert.equal((await first).headers.get("X-Abbott-PDF-Failure-Stage"),"authorize");
+});
+
+test("every failure stage is request-local and exposes only fixed header/body/log diagnostics", async (t) => {
   const logs: unknown[][] = [];
   const errorLog = mock.method(console, "error", (...args: unknown[]) => { logs.push(args); });
   t.after(() => errorLog.mock.restore());
@@ -132,11 +152,14 @@ test("navigation and generation failures log only bounded diagnostics and still 
     cause: new Error(`Nested failure at ${credentialUrl}; request ${incomingUrl}`),
   });
 
-  for (const [stage, diagnosticStage] of [["goto", "navigate"], ["pdf", "render"]] as const) {
+  for (const thrown of [failure, credentialUrl]) for (const [stage, diagnosticStage] of [
+    ["authorize", "authorize"], ["launch", "launch"], ["newPage", "prepare"],
+    ["goto", "navigate"], ["waitForSelector", "ready"], ["pdf", "render"],
+  ] as const) {
     logs.length = 0;
-    const fixture = browserFixture(stage, failure);
+    const fixture = browserFixture(stage, thrown);
     const handler = createAbbottPdfHandler({
-      authorize: async () => access(),
+      authorize: async () => { if(stage==="authorize")throw thrown;return access(); },
       launch: fixture.launch as never,
       wait: async () => undefined,
     });
@@ -145,17 +168,19 @@ test("navigation and generation failures log only bounded diagnostics and still 
     }), { params: { id: "18" } });
 
     assert.equal(response.status, 500);
+    assert.equal(response.headers.get("X-Abbott-PDF-Failure-Stage"), diagnosticStage);
     assert.equal(response.headers.get("cache-control"), "private, no-store");
-    assert.deepEqual(await response.json(), { error: "PDF generation failed" });
-    assert.equal(fixture.calls.filter(([name]) => name === "close").length, 1);
-    const output = logs.map((args) => format(...args)).join("\n");
+    const body=await response.json();
+    assert.deepEqual(body, { error: "PDF generation failed" });
+    assert.equal(fixture.calls.filter(([name]) => name === "close").length, ["authorize","launch"].includes(stage)?0:1);
+    const output = logs.map((args) => format(...args)).join("\n")+JSON.stringify([...response.headers])+JSON.stringify(body);
     for (const secret of [signedToken, incomingToken, embedKey, "private-auth-header", "private-session-cookie"]) {
       assert.equal(output.includes(secret), false, "console output must not include credentials");
     }
     assert.doesNotMatch(output, /access_token|embed_key|https?:\/\//);
     assert.deepEqual(logs, [["Abbott PDF generation failed", {
       stage: diagnosticStage,
-      error_class: "Error",
+      error_class: thrown instanceof Error ? "Error" : "NonError",
     }]]);
   }
 });

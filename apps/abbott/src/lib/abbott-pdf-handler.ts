@@ -168,7 +168,7 @@ export function createAbbottPdfHandler(overrides: Partial<{
       });
       return privateJson(
         { error: "PDF generation failed" },
-        { status: 500 },
+        { status: 500, headers: { "X-Abbott-PDF-Failure-Stage": stage } },
       );
     } finally {
       if (browser) {

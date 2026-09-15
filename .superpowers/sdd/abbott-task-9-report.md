@@ -1,4 +1,14 @@
-# Abbott Task 9 — approved PDF stage read returned unknown
+# Abbott Task 9 — correlated PDF header source checkpoint
+
+Status: DONE_WITH_CONCERNS, pending source review before deployment. Focused
+Abbott PDF500 responses now carry only a fixed request-local failure-stage
+header; smoke maps its six exact labels to closed candidate PDF reasons.
+No live probe, SSH, credential issuance, push, deployment, capture or Nginx
+action occurred in this checkpoint. The production PDF failure remains
+unresolved; source tests do not establish its cause. Details and fresh local
+gate evidence are appended below. Earlier operational results are historical.
+
+## Previous operational checkpoint — approved stage read returned unknown
 
 Status: BLOCKED. Approved7555a40 was published and its read-only log-stage caller
 ran exactly once, returning `ABBOTT_PDF_STAGE stage=unknown class=unknown`.
@@ -3492,3 +3502,59 @@ port3001 and last verified immutable Abbott rollback remainsf80607f/release6cd2.
 Verification-before-completion required distinguishing execution from a passing
 diagnostic and verifying owned cleanup. Evidence-only checkpoint, whitespace
 verified; no retry or source fix. BLOCKED on unknown; STOP for direction.
+
+## Correlated PDF failure header — source/TDD checkpoint
+
+Implemented the explicitly authorized minimal diagnostic path, with no live
+request. Only the focused Abbott handler's existing500 response changes:
+`X-Abbott-PDF-Failure-Stage` carries its local authorize, launch, prepare,
+navigate, ready or render stage. Cache-Control remains private, no-store;
+the generic JSON body and bounded stage/Error-or-NonError log contract remain
+unchanged. Success,401 and404 responses have no stage header. No combined
+handler, launcher, runtime environment, auth policy or export request changed.
+
+Smoke reads the exact header only for candidate PDF5xx. Exact labels map to
+candidate_pdf_authorize, candidate_pdf_launch, candidate_pdf_prepare,
+candidate_pdf_navigate, candidate_pdf_ready or candidate_pdf_render. Missing,
+unknown, padded, differently cased, duplicate/combined or secret-bearing labels
+retain candidate_5xx. Error bodies are cancelled unread. The closed parent
+diagnostic protocol accepts only the six new reasons, never raw header values.
+Control status policy and uniform baseline exception remain unchanged; the
+header is not inspected on control5xx or successful PDFs. Candidate errors
+remain fatal. Data/Excel/assets/privacy acceptance is unchanged.
+
+TDD RED reproduced the absent authorize-stage response header and the existing
+generic candidate_5xx instead of a correlated reason, including the real
+focused handler's launch failure. GREEN tests exercise all six handler stages
+with Error and NonError secret-bearing failures, exact generic body/header/log
+redaction, browser cleanup, absence on success/401/404, and overlapping requests
+through the same handler. The overlapping authorization/render failures prove
+the stage belongs to its request, not a previous or concurrent failure. Smoke
+tests cover exact labels, malformed fallback, unread error-body cancellation,
+unchanged control behavior, and the actual focused handler/auth/request fixture
+producing candidate_pdf_launch. Its historical contract comparison permits
+only the already-approved browser-launch difference and this exact header line.
+
+Fresh local gates all passed:
+- Focused app/smoke/diagnostic run:119 tests.
+- Focused build and full Abbott runtime/authority/artifact suite:512 authority
+  tests; separately confirmed68 app/runtime-contract tests.
+- Issuer/transport/attestation/smoke/capture/comparator/log-proof verification:
+  206 tests.
+- Abbott data/UI/private-store contracts:111 tests; contract wiring passed.
+- Combined application production build passed.
+- Root and focused TypeScript checks passed; lint0 errors,10 existing warnings.
+- Public-assets security, changed-module syntax and whitespace checks passed.
+
+No SSH, credential generation, production log read, PDF request, capture,
+deployment, recovery, push, PM2 action, DB/auth/fact change or Nginx action ran.
+No browser was launched. Local3001/3004 listeners and private transport evidence
+directories were absent after the local tests. No new production identity,
+neighbor or Nginx hash claim is made. Last deployed6f09982/8c79 does not include
+this source change; a separately authorized reviewed deployment and live smoke
+are still necessary. Last retained rollback remainsf80607f/release6cd2, public
+route rollback remains3001. No Nginx backup/switch occurred.
+
+TDD guided the RED/GREEN diagnostic regressions; verification-before-completion
+required fresh full gates without treating synthetic success as a live fix.
+DONE_WITH_CONCERNS: commit and STOP for review before any push/deploy/live use.
