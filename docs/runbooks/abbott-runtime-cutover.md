@@ -151,7 +151,9 @@ test "$(ssh beget 'curl --fail --silent --show-error http://127.0.0.1:3004/api/h
 
 **Issuer/orchestrator `bb9fad5` was approved and used for comparison and capture.
 Comparison passed; capture failed without retained images/index. The additional
-smoke mode below remains paused for dedicated review and has not run live. No
+smoke source was approved at `af33ac7`, but its live attempt stalled before smoke
+checks on an ESM entrypoint cycle. The local startup correction below remains
+paused for review before retry. No
 plaintext or legacy password fallback is authorized for this operation.**
 
 The new stdin frame is three LF-delimited lines: the literal mode name
@@ -266,14 +268,28 @@ NODE
 
 ## 6. Verify every neighbor PID is unchanged
 
-### Additional read-only smoke transport — STOP for review
+### Additional read-only smoke transport — startup correction STOP for review
 
-The following entrypoint is implemented but must not run live until its dedicated
-review approves it. It does not waive the failed visual gate:
+The approved `af33ac7` attempt produced no smoke report. Its owned orchestrator
+and forward were closed and their exits independently verified; neighbors and
+Nginx were unchanged. The following entrypoint must not be retried until the
+startup correction receives dedicated review. It does not waive the failed
+visual gate:
 
 ```bash
 node scripts/verify-abbott-shadow.mjs smoke
 ```
+
+The local correction moves the bounded child runner into a node-only leaf module
+so smoke never imports its awaiting CLI. The orchestrator installs signal handlers
+and a fixed overall watchdog before setup/consumer loading: four minutes for
+comparison, eleven for capture, nine for smoke (which retains its own eight-minute
+request deadline). Smoke is loaded before attestation or credential issuance.
+Abort permits up to 35 seconds for existing child/browser cleanup, then proceeds
+to clear retained buffers and close/verify the owned forward rather than waiting
+forever on an unresolved import/setup promise. Late returned buffers are also
+cleared. Signal handlers remain until forward cleanup completes. No timeout or
+module authority can be supplied through CLI arguments or environment.
 
 This mode uses the same strict credential frame and owned-forward lifecycle.
 Before credential issuance, a separate bounded read-only SSH capsule repeats the
@@ -414,8 +430,9 @@ ssh beget '/usr/sbin/nginx -s reload'
 
 ## 8. Post-cutover Abbott and neighbor smoke
 
-**Gated preceding step: the additional smoke transport must be reviewed and
-approved, and the failed visual gate resolved, before cutover.** The initial
+**Gated preceding step: the smoke startup correction must be reviewed and
+approved, live smoke must pass, and the failed visual gate must be resolved before
+cutover.** The initial
 issuer transport was reviewed and approved; no issuer placeholder command is supplied.
 
 After approval, re-run the orchestrator; it obtains the strict
@@ -435,7 +452,8 @@ node scripts/verify-abbott-shadow.mjs smoke
 ```
 
 The additional smoke mode covers the separately required PDF/privacy/admin/
-alias/asset checks described above, but it is not approved or run live yet.
+alias/asset checks described above, but its first approved live attempt stalled
+before those checks; the startup correction has not been approved or retried.
 All of these and visual parity must pass before any route mutation; do not
 improvise a public-token URL, credential file, extra descriptor, or plaintext
 fallback to perform them.

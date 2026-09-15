@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 
 async function moduleUnderTest() {
@@ -182,3 +185,77 @@ test('failed asset attestation refuses before issuing a credential and never lea
   const platform={signalSource:new EventEmitter(),capsule:()=>Buffer.from('code'),prepareOutput:()=>{},verifyForward:()=>{},openForward:async()=>({pid:4242,start:'proof'}),closeForward:async()=>{},readAssets:async()=>({status:1,stdout:assets,stderr}),issue:async()=>{issued++;}};
   await assert.rejects(api.runAbbottVerification('smoke',platform),/^Error: ABBOTT_VERIFICATION_REFUSED$/);assert.equal(issued,0);assert.ok(assets.every(x=>x===0));assert.ok(stderr.every(x=>x===0));
 });
+
+test('real CLI entrypoint can load smoke without an ESM top-level-await cycle',async()=>{
+  const api=await moduleUnderTest();
+  const directory=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'abbott-entrypoint-test-'));
+  const original=new URL('./verify-abbott-shadow.mjs',import.meta.url);
+  const entry=path.join(directory,'verify-abbott-shadow.mjs'),smoke=path.join(directory,'smoke-abbott-runtime.mjs');
+  const relocate=(source,owner)=>source.replace(/(['"])(\.\/[^'"]+\.mjs)\1/g,(all,quote,relative)=>{
+    const name=path.basename(relative),url=['verify-abbott-shadow.mjs','smoke-abbott-runtime.mjs'].includes(name)
+      ?pathToFileURL(path.join(directory,name)):new URL(relative,owner);
+    return JSON.stringify(url.href);
+  });
+  try{
+    const source=fs.readFileSync(original,'utf8');assert.ok(source.includes('platform = realPlatform'));
+    // Change only the platform seam, retaining the actual CLI top-level await
+    // and actual consumer dependency graph. No production authority is invoked.
+    fs.writeFileSync(entry,relocate(source.replace('platform = realPlatform','platform = globalThis.abbottFixture'),original));
+    fs.writeFileSync(smoke,relocate(fs.readFileSync(new URL('./smoke-abbott-runtime.mjs',import.meta.url),'utf8'),new URL('./smoke-abbott-runtime.mjs',import.meta.url)));
+    const setup=path.join(directory,'fixture.mjs');
+    fs.writeFileSync(setup,`const payload={type:'viewer',dashboard_id:18,audience:'manager',credential_version:7,exp:Math.floor(Date.now()/1000)+600};
+      const token=Buffer.from(JSON.stringify(payload)).toString('base64url')+'.'+'a'.repeat(43);
+      const bytes=Buffer.from('manager_access_token\\n'+token+'\\nsynthetic-embed\\n');
+      globalThis.abbottFixture={signalSource:process,capsule:()=>Buffer.from('fixture'),prepareOutput(){},verifyForward(){},
+        openForward:async()=>({pid:4242,start:'fixture'}),closeForward:async()=>{},
+        loadConsumer:async()=>import(${JSON.stringify(pathToFileURL(smoke).href)}),
+        readAssets:async()=>({status:0,stdout:Buffer.from('{}'),stderr:Buffer.alloc(0)}),
+        issue:async()=>({status:0,stdout:bytes,stderr:Buffer.alloc(0)}),
+        consume:async()=>{const m=await import(${JSON.stringify(pathToFileURL(smoke).href)});if(typeof m.runReadOnlySmoke!=='function')throw Error();return{status:0,stdout:Buffer.from('smoke=passed checks=1\\n'),stderr:Buffer.alloc(0)};}};
+      process.on('exit',()=>{if(!bytes.every(x=>x===0))process.exitCode=1;});`);
+    const result=await api.captureBoundedChild(process.execPath,['--import',pathToFileURL(setup).href,entry,'smoke'],{input:Buffer.alloc(0),timeout:2000,graceMs:50,maxBytes:4096});
+    try{assert.equal(result.status,0,JSON.stringify({refused:result.stderr.includes('ABBOTT_VERIFICATION_REFUSED'),unsettled:result.stderr.includes('unsettled'),moduleMissing:result.stderr.includes('ERR_MODULE_NOT_FOUND'),syntax:result.stderr.includes('SyntaxError')}));assert.equal(result.stderr.length,0);assert.equal(JSON.parse(result.stdout).status,'passed');}
+    finally{result.stdout.fill(0);result.stderr.fill(0);}
+  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('verification consumer graph is acyclic and child runner is a node-only leaf',()=>{
+  const active=new Set(),done=new Set();
+  function visit(url){
+    assert.ok(!active.has(url.href),'consumer dependency cycle');if(done.has(url.href))return;
+    active.add(url.href);const source=fs.readFileSync(url,'utf8');
+    for(const [,relative]of source.matchAll(/(?:from\s*|import\s*\()\s*['"](\.\/[^'"]+\.mjs)['"]/g))visit(new URL(relative,url));
+    active.delete(url.href);done.add(url.href);
+  }
+  visit(new URL('./verify-abbott-shadow.mjs',import.meta.url));
+  const leaf=fs.readFileSync(new URL('./abbott-bounded-child.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(leaf,/(?:from\s*|import\s*\()\s*['"](?!node:)/);
+});
+
+for(const phase of ['load','consumer'])for(const cause of ['deadline','signal','reject']){
+  test(`bounded ${phase} ${cause} clears retained buffers and verifies forward cleanup`,async()=>{
+    const api=await moduleUnderTest(),signals=new EventEmitter(),bytes=frame(),assets=Buffer.from('{}'),code=Buffer.from('code');
+    let loaded=0,issued=0,consumed=0,closed=0,lateResolve;const timers=new Set();
+    const pending=()=>cause==='reject'?Promise.reject(Error('synthetic-private')):new Promise(resolve=>{lateResolve=resolve;if(cause==='signal')setImmediate(()=>signals.emit('SIGTERM'));});
+    const platform={signalSource:signals,
+      setTimer:(fn,ms)=>{assert.equal(signals.listenerCount('SIGINT'),1);assert.equal(signals.listenerCount('SIGTERM'),1);const timer=setTimeout(()=>{timers.delete(timer);fn();},ms===540000?20:10);timers.add(timer);return timer;},
+      clearTimer:timer=>{clearTimeout(timer);timers.delete(timer);},
+      capsule:()=>code,prepareOutput(){},verifyForward(){},openForward:async()=>({pid:4242,start:'proof'}),
+      loadConsumer:async()=>{loaded++;return phase==='load'?pending():{};},
+      readAssets:async()=>({status:0,stdout:assets,stderr:Buffer.alloc(0)}),
+      issue:async()=>{issued++;return{status:0,stdout:bytes,stderr:Buffer.alloc(0)};},
+      consume:async()=>{consumed++;return phase==='consumer'?pending():{status:0,stdout:Buffer.from('smoke=passed checks=1\n'),stderr:Buffer.alloc(0)};},
+      closeForward:async()=>{assert.equal(signals.listenerCount('SIGTERM'),1);assert.ok(code.every(x=>x===0));if(issued){assert.ok(bytes.every(x=>x===0));assert.ok(assets.every(x=>x===0));}closed++;},
+    };
+    let guard;
+    try{
+      const safety=new Promise((_,reject)=>{guard=setTimeout(()=>reject(Error('HARNESS_DEADLINE')),200);});
+      await assert.rejects(Promise.race([api.runAbbottVerification('smoke',platform),safety]),/^Error: ABBOTT_VERIFICATION_REFUSED$/);
+      assert.equal(loaded,1);assert.equal(closed,1);assert.ok(code.every(x=>x===0));
+      assert.equal(issued,phase==='load'?0:1);assert.equal(consumed,phase==='load'?0:1);
+      if(issued){assert.ok(bytes.every(x=>x===0));assert.ok(assets.every(x=>x===0));}
+      assert.equal(signals.listenerCount('SIGINT'),0);assert.equal(signals.listenerCount('SIGTERM'),0);assert.equal(timers.size,0);
+      if(lateResolve){const output={status:0,stdout:Buffer.from('late-private'),stderr:Buffer.from('late-private')};lateResolve(output);await new Promise(resolve=>setImmediate(resolve));assert.ok(output.stdout.every(x=>x===0));assert.ok(output.stderr.every(x=>x===0));}
+    }finally{clearTimeout(guard);for(const timer of timers)clearTimeout(timer);bytes.fill(0);assets.fill(0);code.fill(0);}
+  });
+}

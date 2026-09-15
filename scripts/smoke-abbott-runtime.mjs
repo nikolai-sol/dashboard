@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { buildAuthorizedRequest, summarizeAbbottPayload, summarizeWorkbook } from './compare-abbott-runtime.mjs';
-import { captureBoundedChild } from './verify-abbott-shadow.mjs';
+import { captureBoundedChild } from './abbott-bounded-child.mjs';
 
 const fail = () => { throw new Error('ABBOTT_SMOKE_REFUSED'); };
 const hash = value => createHash('sha256').update(value).digest('hex');

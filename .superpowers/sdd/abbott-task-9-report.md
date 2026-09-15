@@ -811,3 +811,55 @@ failed-smoke stop condition, no visual diagnostic change was implemented.
 STOP: the local ESM entrypoint cycle and bounded cancellation must receive a
 tested reviewed fix before another live attempt. This evidence-only update is
 local and unpushed.
+
+### ESM startup / bounded cancellation correction — local review checkpoint
+
+The prior failed-attempt evidence commit `b499089` remains in history unchanged.
+Extracted `captureBoundedChild` into `scripts/abbott-bounded-child.mjs`, a node-only
+leaf with no imports back into verification or smoke. Both callers now import
+that leaf. Its existing child pipe, output/time bounds and reaping behavior are
+preserved; the orchestrator re-export preserves the existing tested interface.
+
+The orchestrator now loads smoke before attestation or credential issuance.
+Signal handlers and a fixed overall watchdog are installed before setup/loading:
+240 seconds for compare, 660 seconds for capture, 540 seconds for smoke. Smoke's
+existing 480-second request deadline is unchanged. There is no CLI/environment
+timeout override. On abort, guarded pending work gets at most 35 seconds to
+finish the existing child/browser cleanup; an unresolved import or setup promise
+can no longer prevent the outer finally from clearing retained code, credential,
+attestation and consumer-output buffers and closing/verifying the owned forward.
+Late returned output buffers are also cleared. Signals and the watchdog stay
+installed until forward cleanup completes, then listeners/timers are removed.
+
+TDD RED covered the dependency cycle, missing pre-issuance loading/watchdog and
+unbounded hanging-consumer abort. The real CLI entrypoint fixture uses the actual
+top-level-await entrypoint and real smoke import graph, with only host/consumer
+operations replaced by local seams. Its temporary path is canonicalized so the
+CLI guard actually executes. Temporarily restoring the old smoke-to-orchestrator
+import reproduced a bounded child timeout; restoring the leaf import passed.
+No SSH/network or real credential is used by this fixture. Synthetic token bytes
+are generated only in its child memory, not stored in the fixture file.
+
+New tests also cover deadline, SIGTERM and rejection during consumer loading and
+after issuance; they verify no issuance after failed load, zeroed retained buffers
+before forward closure, retained signal handlers during cleanup, no leftover
+timers/listeners, and clearing of late results. A static traversal asserts an
+acyclic local consumer graph and a node-only child-runner leaf. Existing forward
+loss and bounded child/browser cleanup tests remain passing.
+
+Fresh verification: 120 focused bootstrap/issuer/orchestrator/compare/capture/
+smoke/asset tests; 108 relevant auth/access/PDF-auth/app/runtime tests; full Abbott
+production build with 67 app/runtime and 268 authority/artifact tests; 111 Abbott
+contract tests; contract wiring; public-asset security check; explicit trusted
+artifact verification (2,870 files, 82 text files); unchanged exact Nginx fragment
+validation. Root and Abbott typechecks, full lint (zero errors, ten existing
+warnings), targeted lint, changed JavaScript syntax and whitespace checks passed.
+After the fixture-only refinement, all 22 orchestrator tests passed again.
+
+STOP for review. This correction is local/unpushed and has not been used for live
+issuance, smoke or capture. No SSH, production read/write, deploy, Nginx action,
+browser launch, DB/auth/admin mutation or neighbor process operation occurred in
+this correction turn. The last production evidence remains the preceding failed
+attempt's verified unchanged runtime/Nginx identities and exited owned processes.
+Live smoke and visual acceptance are still outstanding; this code checkpoint
+does not convert either failed gate into a pass.

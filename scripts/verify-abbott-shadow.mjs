@@ -6,6 +6,8 @@ import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { parseCredentialLines, createPrivateOutputDirectory, writePrivateExclusiveFile, releasePrivateOutputDirectory, cleanupPrivateOutputDirectory } from './compare-abbott-runtime.mjs';
 import { HOST } from './bootstrap-abbott-host.mjs';
+import { captureBoundedChild } from './abbott-bounded-child.mjs';
+export { captureBoundedChild } from './abbott-bounded-child.mjs';
 
 const ROOT = '/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
 const OUTPUT = '/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026-09-14';
@@ -21,35 +23,6 @@ export function fixedSshInvocation(kind) {
   else if (kind === 'forward') args.push('-N', '-o', 'ExitOnForwardFailure=yes', '-L', '127.0.0.1:3001:127.0.0.1:3001', '-L', '127.0.0.1:3004:127.0.0.1:3004', '--', 'beget');
   else refuse();
   return { binary: '/usr/bin/ssh', args };
-}
-
-export function captureBoundedChild(binary, args, { input, timeout, maxBytes, signal, cwd = ROOT, graceMs = 2000 }) {
-  return new Promise((resolve, reject) => {
-    const output = [], errors = [];
-    let bytes = 0, failed = false, killTimer;
-    const child = spawn(binary, args, { cwd, env: { PATH: '/usr/bin:/bin' }, stdio: ['pipe', 'pipe', 'pipe'] });
-    const stop = () => {
-      failed = true;
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
-      killTimer ??= setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, graceMs);
-    };
-    const collect = target => chunk => {
-      bytes += chunk.length;
-      if (failed || bytes > maxBytes) { chunk.fill(0); stop(); } else target.push(chunk);
-    };
-    const timer = setTimeout(stop, timeout);
-    child.stdout.on('data', collect(output)); child.stderr.on('data', collect(errors));
-    child.stdin.on('error', () => { failed = true; });
-    child.on('error', () => { failed = true; });
-    child.on('close', (status, childSignal) => {
-      clearTimeout(timer); clearTimeout(killTimer); signal?.removeEventListener('abort', stop);
-      const result = { status, signal: childSignal, stdout: Buffer.concat(output), stderr: Buffer.concat(errors) };
-      for (const buffer of [...output, ...errors]) buffer.fill(0);
-      if (failed) { erase(result); reject(new Error('ABBOTT_VERIFICATION_REFUSED')); } else resolve(result);
-    });
-    signal?.addEventListener('abort', stop, { once: true });
-    if (signal?.aborted) stop(); else child.stdin.end(input);
-  });
 }
 
 export function buildIssuerCapsule({ bootstrapSource, issuerSource, authSource }) {
@@ -173,12 +146,14 @@ const realPlatform = {
     const input=productionCapsule('assets'),invocation=fixedSshInvocation('issuer');
     try{return await captureBoundedChild(invocation.binary,invocation.args,{input,signal,timeout:30000,maxBytes:262144});}finally{input.fill(0);}
   },
-  async consume(mode, input, signal, attestation) {
+  loadConsumer: mode => mode === 'smoke' ? import('./smoke-abbott-runtime.mjs') : undefined,
+  async consume(mode, input, signal, attestation, consumer) {
+    if(signal.aborted)refuse();
     if(mode==='smoke'){
       const credentials=parseCredentialLines(new TextDecoder('utf8',{fatal:true}).decode(input));let directory;
       try{
         if(!credentials.managerAccessToken)refuse();
-        const {runReadOnlySmoke}=await import('./smoke-abbott-runtime.mjs');
+        const {runReadOnlySmoke}=consumer;
         const manifest=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(attestation));
         const report=await runReadOnlySmoke({...credentials,manifest},signal);
         if(signal.aborted)refuse();
@@ -201,23 +176,27 @@ const realPlatform = {
 };
 
 export async function runAbbottVerification(mode, platform = realPlatform) {
-  let proof, code, issued, consumed, assets, passed = false, tearingDown = false;
+  let proof, code, issued, consumed, assets, consumer, watchdog, passed = false, tearingDown = false;
   const controller = new AbortController();
+  const setTimer = platform.setTimer ?? setTimeout, clearTimer = platform.clearTimer ?? clearTimeout;
   const interrupt = () => controller.abort();
   const forwardFailed = () => { if (!tearingDown) controller.abort(); };
   const active = () => { if (controller.signal.aborted) refuse(); };
   const checkForward = () => { active(); platform.verifyForward(proof); active(); };
-  // Failure wins the race, but still await the aborted operation's bounded
-  // shutdown so browser/child cleanup finishes before the tunnel is reaped.
+  // Allow child/browser shutdown its existing 30-second grace, but never await
+  // an uncooperative module import/setup forever. Late output is erased too.
   const guarded = async operation => {
     active();
     let value, rejectAbort;
     const aborted = new Promise((_, reject) => { rejectAbort = () => reject(new Error('ABBOTT_VERIFICATION_REFUSED')); });
     controller.signal.addEventListener('abort', rejectAbort, { once: true });
-    const pending = Promise.resolve().then(() => { active(); return operation(); }).then(result => { value = result; return result; });
+    const pending = Promise.resolve().then(() => { active(); return operation(); }).then(result => { value = result; if(controller.signal.aborted)erase(result); return result; });
     try { return await Promise.race([pending, aborted]); }
     finally {
-      await pending.catch(() => {});
+      let drainTimer;
+      try {
+        if(controller.signal.aborted)await Promise.race([pending.catch(() => {}),new Promise(resolve=>{drainTimer=setTimer(resolve,35000);})]);
+      } finally { if(drainTimer)clearTimer(drainTimer); }
       controller.signal.removeEventListener('abort', rejectAbort);
       if (controller.signal.aborted) erase(value);
     }
@@ -225,6 +204,9 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
   platform.signalSource.on('SIGINT', interrupt); platform.signalSource.on('SIGTERM', interrupt);
   try {
     if (!['compare','capture','smoke'].includes(mode)) refuse();
+    // Covers capsule/setup/import as well as issuance and consuming work. The
+    // fixed CLI has no caller-provided timeout or environment override.
+    watchdog = setTimer(interrupt, {compare:240000,capture:660000,smoke:540000}[mode]);
     code = platform.capsule(); active();
     platform.prepareOutput(); active();
     proof = await platform.openForward(controller.signal); active();
@@ -232,6 +214,7 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     if (proof.failure?.aborted) interrupt();
     checkForward();
     platform.recordForward?.(proof, false);
+    if(platform.loadConsumer){consumer=await guarded(()=>platform.loadConsumer(mode,controller.signal));checkForward();}
     if(mode==='smoke'){
       assets=await guarded(()=>platform.readAssets(controller.signal));checkForward();
       if(assets.status!==0||assets.signal||assets.stderr.length||!Buffer.isBuffer(assets.stdout)||assets.stdout.length>262144)refuse();
@@ -242,7 +225,7 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
     const credentials = parseCredentialLines(new TextDecoder('utf8',{fatal:true}).decode(issued.stdout));
     try { if (!credentials.managerAccessToken || !issued.stdout.toString().endsWith('\n')) refuse(); }
     finally { for (const key of Object.keys(credentials)) delete credentials[key]; }
-    consumed = await guarded(() => { checkForward(); return platform.consume(mode, issued.stdout, controller.signal, assets?.stdout); });
+    consumed = await guarded(() => { checkForward(); return platform.consume(mode, issued.stdout, controller.signal, assets?.stdout, consumer); });
     checkForward();
     const expected = mode === 'compare' ? /^status=match mismatches=0 report=created\n$/ : mode==='smoke'?/^smoke=passed checks=[1-9]\d*\n$/:/^captures=[1-9]\d* errors=0 index=created\n$/;
     if (consumed.status !== 0 || consumed.signal || consumed.stderr.length || !expected.test(consumed.stdout.toString())) refuse();
@@ -262,6 +245,7 @@ export async function runAbbottVerification(mode, platform = realPlatform) {
       if (proof) { await platform.closeForward(proof); platform.recordForward?.(proof, true); }
     } catch { passed = false; }
     finally {
+      clearTimer(watchdog);
       proof?.failure?.removeEventListener('abort', forwardFailed);
       platform.signalSource.removeListener('SIGINT', interrupt); platform.signalSource.removeListener('SIGTERM', interrupt);
     }
