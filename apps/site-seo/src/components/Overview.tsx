@@ -270,12 +270,12 @@ export function Overview({ id, model, showGsc, showMetrika = true, showWebmaster
   const hasSearchEngineRows = searchEngines.some((engine) => engine.metrics !== null);
   const channelsState = breakdownState(channels, trafficState);
   const searchEnginesState = hasSearchEngineRows ? metrikaState : metrikaState === "complete_empty" ? "complete_empty" : "missing";
-  const showTargetIntent = Boolean(model.targetIntent && model.targetIntent.state !== "not_configured");
+  const showTargetIntent = model.targetIntent.state !== "not_configured";
 
   return (
     <div id={id} className="site-seo-overview-grid" data-target-intent={showTargetIntent ? "true" : undefined} data-medical-intent={showTargetIntent ? "true" : undefined}>
       <OverviewSlot id="north_star">
-        {showTargetIntent && model.targetIntent ? <MedicalIntentPanel intent={model.targetIntent} /> : <section className="site-seo-panel site-seo-goal-panel">
+        {showTargetIntent ? <MedicalIntentPanel intent={model.targetIntent} /> : <section className="site-seo-panel site-seo-goal-panel">
           <h2>Цель: рост целевого органического трафика</h2>
           <div className="site-seo-goal-kpis">
             {showMetrika ? <GoalKpi label="Поисковые визиты" metric={model.metrika?.summary?.visits} detail={sourceDetail("Метрика · Россия", metrikaMeta)} /> : null}

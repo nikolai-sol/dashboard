@@ -30,7 +30,11 @@ test("any configured site classifies exact-week GSC while preserving the indepen
       queries.push(query);
       if (query.name === "target_intent") return ruleSet;
       const meta = { sourceKey: "google_search_console" as const, period: query.period, state: "partial" as const,
-        collectionMode: "manual" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
+        collectionMode: "manual" as const, completeness: "limited" as const, importId: query.period.kind === "iso_week" ? "weekly-query-publication" : "monthly-publication", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
+      if (query.period.kind === "iso_week" && query.publicationId !== null) return {
+        meta: { ...meta, state: "complete_empty" as const, completeness: "complete" as const, importId: "wrong-monthly-pin" },
+        summary: null, daily: [], indexing: meta, dimensions: [],
+      };
       return { meta, summary: null, daily: [], indexing: meta, dimensions: [
         { dimension: "query" as const, value: "бевацизумаб", meta, metrics: { impressions: query.period.kind === "iso_week" ? 25 : 1000, clicks: 2, ctrPct: null, averagePosition: null } },
       ] };
@@ -39,11 +43,13 @@ test("any configured site classifies exact-week GSC while preserving the indepen
   assert.deepEqual(queries.map(query => query.name), ["target_intent", "gsc", "gsc"]);
   assert.deepEqual(queries.filter(isSourceQuery).filter(query => query.name === "gsc").map(query => query.period.key), ["2026-01", "2026-W01"]);
   assert.equal(model.gsc.dimensions[0].metrics.impressions, 1000);
-  assert.equal(model.targetIntent!.target.impressions, 25);
-  assert.equal(model.targetIntent!.period.key, "2026-W01");
-  assert.equal(model.targetIntent!.versionId, "intent-v7");
+  assert.equal(model.targetIntent.target.impressions, 25);
+  assert.equal(model.targetIntent.period.key, "2026-W01");
+  assert.equal(model.targetIntent.versionId, "intent-v7");
+  assert.equal(model.targetIntent.sources.find(({ source }) => source === "google")?.meta?.importId, "weekly-query-publication");
   assert.deepEqual(queries[0]?.scope, { clientId: "client-med", siteId: "site-med", dashboardId: 42 });
-  assert.ok(queries.filter(isSourceQuery).filter(query => query.name === "gsc").every(query => query.publicationId === "publication-7" && query.scope.siteId === "site-med" && query.filters.country === "all"));
+  assert.deepEqual(queries.filter(isSourceQuery).filter(query => query.name === "gsc").map(query => query.publicationId), ["publication-7", null]);
+  assert.ok(queries.filter(isSourceQuery).filter(query => query.name === "gsc").every(query => query.scope.siteId === "site-med" && query.filters.country === "all"));
 });
 
 test("configured sites combine exact selected-week GSC and Webmaster queries without changing the broader GSC period", async () => {
@@ -80,9 +86,9 @@ test("configured sites combine exact selected-week GSC and Webmaster queries wit
   });
 
   assert.equal(model.gsc.dimensions[0]?.metrics.impressions, 1000);
-  assert.equal(model.targetIntent!.target.impressions, 55);
-  assert.deepEqual(model.targetIntent!.queries.map(({ source, impressions }) => [source, impressions]), [["yandex", 30], ["google", 25]]);
-  assert.equal("queryFacts" in (model.targetIntent!.sources.find(({ source }) => source === "yandex")!.meta ?? {}), false);
+  assert.equal(model.targetIntent.target.impressions, 55);
+  assert.deepEqual(model.targetIntent.queries.map(({ source, impressions }) => [source, impressions]), [["yandex", 30], ["google", 25]]);
+  assert.equal("queryFacts" in (model.targetIntent.sources.find(({ source }) => source === "yandex")!.meta ?? {}), false);
   assert.deepEqual(queries.filter(isSourceQuery).map(({ scope, period }) => `${scope.sourceKey}:${period.key}`), [
     "google_search_console:2026-01",
     "google_search_console:2026-W01",
@@ -100,8 +106,8 @@ test("a missing catalogue is not configured and does not enable an extra weekly 
       return { meta, summary: null, dimensions: [], daily: [], indexing: meta };
     } });
   assert.equal(reads, 2);
-  assert.equal(model.targetIntent!.state, "not_configured");
-  assert.equal(model.targetIntent!.target.impressions, null);
+  assert.equal(model.targetIntent.state, "not_configured");
+  assert.equal(model.targetIntent.target.impressions, null);
 });
 
 test("rejects a mismatched viewer scope before reading the target catalogue", async () => {
@@ -142,8 +148,8 @@ test("configured target intent fails closed when the selected-week query sources
   const model = await loadDashboardReadModel({ registration: scoped, claim: { dashboardId: 42, siteId: "site-med" }, selection, publicationId: null, filters: {},
     execute: async query => query.name === "target_intent" ? ruleSet : ({ sourceKey: query.scope.sourceKey, period: query.period, state: "failed", collectionMode: "automated", completeness: "unknown", importId: null, exportedAt: null, loadedAt: null, freshness: "unknown", latestAttempt: "failed" }),
   });
-  assert.equal(model.targetIntent!.state, "unavailable");
-  assert.equal(model.targetIntent!.target.impressions, null);
+  assert.equal(model.targetIntent.state, "unavailable");
+  assert.equal(model.targetIntent.target.impressions, null);
 });
 
 test("reports a missing source instead of querying an invented account", async () => {

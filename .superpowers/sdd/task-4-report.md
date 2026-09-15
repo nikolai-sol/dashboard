@@ -23,7 +23,7 @@ The work followed test-first slices:
 
 - `apps/site-seo/src/lib/db.ts` now implements an exact-scope, single active-snapshot MySQL join over active/version/publication/import/rule rows. It returns explicit `ready`, `not_configured`, or `unavailable` states; validates scope and snapshot metadata, sealed state, source SHA shape, rule count, ordinals, normalized identities, match types, and the rule-set hash against the immutable validated import receipt; and never falls back across sites.
 - `apps/site-seo/src/lib/read-model.ts` resolves the viewer/profile scope before reads, loads the target catalogue independent of source bindings, issues an extra exact-week GSC read only for a ready catalogue, combines exact-week GSC and Webmaster query facts, preserves source failure/empty/partial/period semantics, and fails the target view closed when no selected-week source is usable.
-- `DashboardReadModel.targetIntent` is emitted on every runtime load. Its TypeScript property remains temporarily optional only so pre-existing isolated component fixture literals compile; no old classifier or MedRoche fallback remains at runtime.
+- `DashboardReadModel.targetIntent` is required and emitted on every runtime load. All isolated component fixture models explicitly carry a `not_configured` state; no old classifier or MedRoche fallback remains at runtime.
 - `scripts/site-seo/import-target-intent.ts` emits a deterministic, preview-only MedRoche publication manifest from the frozen 802-row seed and reviewed explicit extensions. `--apply` requires an explicit `--intent-manifest` and deliberately refuses to write, directing application to the reviewed administrator workflow.
 - The legacy runtime `apps/site-seo/src/lib/medical-intent.ts`, its test, and its packaged JSON location were removed only after parity passed. The historical rows now live only as a migration fixture.
 - Generic export rows used by Excel and PDF contain target label/state/version, full publication/import/source/SHA provenance, source coverage, category, matched rule, match type, group, impressions, and clicks. The authenticated JSON response exposes the same generic `targetIntent` model and no legacy `intent` key.
@@ -76,9 +76,19 @@ The parity proof covers every expert row as an exact query, every expert row ins
 4. Runtime-removal/export review: confirmed no runtime import of `medical-intent.ts` or the packaged JSON remains, and JSON/Excel/PDF expose generic target-intent evidence.
 5. Regression/build review: ran focused, full, typecheck, attestation dry-run, and isolated compile checks after the fixes.
 
+## Independent review correction
+
+An independent Task 4 review identified three important defects and one minor contract gap. Each was reproduced before its fix:
+
+- RED: a valid catalogue whose MySQL `DATETIME(6)` values arrived as `Date` objects returned `unavailable`; equal Date instances were rejected by string/reference checks. GREEN: timestamps now normalize from `Date|string` to an ISO instant, equal instants are accepted, differing instants fail closed, and the exported publication timestamp is canonical ISO text.
+- RED: a monthly GSC publication pin was silently reused for the additional ISO-week read, producing no target impressions (`null` instead of `25`). GREEN: the broader SEO GSC view keeps its explicit publication while the distinct selected-week query read passes `publicationId: null`, allowing the canonical exact-period query to resolve its own weekly publication. The test asserts weekly provenance `weekly-query-publication` and no reuse of the monthly pin.
+- RED: an import receipt `rule_count` mismatch still returned `ready`. GREEN: the canonical join now reads `imported.rule_count AS import_rule_count` and requires equality with both the sealed version count and persisted/validated rule rows.
+- RED: making `DashboardReadModel.targetIntent` required exposed all legacy fixture constructors at compile time. GREEN: every dashboard fixture now supplies an explicit target-intent state, the component no longer has optional guards, and site-seo typecheck passes.
+
+Focused review-fix verification passed 71/71 component/read-path tests plus site-seo typecheck. The replacement source and attestation commit hashes, and the final full-suite/build evidence, are recorded in the final handoff; they supersede the first source/attestation pair above.
+
 ## Residuals and preserved state
 
 - The preview was not applied. Until an administrator publishes a canonical MedRoche catalogue, the MedRoche runtime correctly reports `not_configured` rather than using the historical packaged classifier.
 - The profile's historical `seoRulesVersion` field and the old one-off XLS conversion script remain as inert compatibility/history; runtime target-intent selection does not read them.
-- Requiring `DashboardReadModel.targetIntent` in every old isolated component fixture is deferred to a later fixture cleanup; the runtime loader always returns the field.
 - The unrelated modified `.superpowers/sdd/task-1-report.md` and pre-existing untracked `apps/site-seo/.next-medroche/` were preserved and excluded from both commits.

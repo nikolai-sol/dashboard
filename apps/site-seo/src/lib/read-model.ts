@@ -6,8 +6,7 @@ import type { PeriodSelection } from "./period-selection.ts";
 import { MissingSourceScopeError, resolveSourceScope, type SiteScopeClaim } from "./scope.ts";
 
 export type DashboardReadModel = Readonly<{
-  /** Runtime reads always populate this; optional only for pre-existing isolated component fixtures. */
-  targetIntent?: DashboardTargetIntentView;
+  targetIntent: DashboardTargetIntentView;
   gsc: ReturnType<typeof loadGscView>;
   indexing: DatasetMeta;
   datasets: Readonly<Partial<Record<SourceKey, DatasetMeta>>>;
@@ -140,7 +139,7 @@ export async function loadDashboardReadModel(input: Readonly<{
       if (useTargetIntent) {
         weeklyGsc = sameIntentPeriod(input.selection.gsc, input.selection.traffic.primary)
           ? gsc
-          : loadGscView(await input.execute({ name: "gsc", scope, period: input.selection.traffic.primary, publicationId: input.publicationId, filters: input.filters }) as import("./gsc.ts").GscReadRows, input.selection.traffic.primary);
+          : loadGscView(await input.execute({ name: "gsc", scope, period: input.selection.traffic.primary, publicationId: null, filters: input.filters }) as import("./gsc.ts").GscReadRows, input.selection.traffic.primary);
       }
     } catch (error) {
       if (!(error instanceof MissingSourceScopeError)) throw error;

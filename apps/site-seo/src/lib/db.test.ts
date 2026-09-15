@@ -18,7 +18,7 @@ const intentScope = {
   dashboardId: scope.dashboardId,
 };
 
-function intentRows(overrides: Record<string, unknown> = {}) {
+function intentRows(overrides: Record<string, unknown> = {}): Record<string, unknown>[] {
   const validationRows = [
     { sourceRowOrdinal: 1, key: "бевацизумаб", normalizedKey: "бевацизумаб", group: "Препараты", matchType: "phrase" },
     { sourceRowOrdinal: 2, key: "ros1", normalizedKey: "ros1", group: "Мутации", matchType: "exact" },
@@ -30,6 +30,7 @@ function intentRows(overrides: Record<string, unknown> = {}) {
     version_uid: "version-12",
     label: "Мед. интент",
     expected_rule_count: 2,
+    import_rule_count: 2,
     publication_id: 13,
     import_id: 14,
     source_transport: "upload",
@@ -62,6 +63,7 @@ test("target-intent reads one exact active site/dashboard snapshot with ordered 
   assert.match(calls[0]!.sql, /site_seo_intent_versions/);
   assert.match(calls[0]!.sql, /site_seo_intent_publications/);
   assert.match(calls[0]!.sql, /site_seo_intent_imports/);
+  assert.match(calls[0]!.sql, /imported\.rule_count\s+AS\s+import_rule_count/i);
   assert.match(calls[0]!.sql, /site_seo_intent_rules/);
   assert.match(calls[0]!.sql, /WHERE\s+active\.site_id\s*=\s*\?\s+AND\s+active\.dashboard_id\s*=\s*\?/i);
   assert.doesNotMatch(calls[0]!.sql, /LIMIT\s+1/i, "rules must not be truncated to one row");
@@ -70,6 +72,26 @@ test("target-intent reads one exact active site/dashboard snapshot with ordered 
   assert.equal(result?.provenance?.publicationId, "13");
   assert.deepEqual(result?.rules.map((rule) => rule.key), ["бевацизумаб", "ros1"]);
   assert.ok(!/api\.|oauth|token/i.test(calls[0]!.sql));
+});
+
+test("target-intent accepts MySQL DATETIME values as equal Date instants and rejects differing instants", async () => {
+  const sameInstantRows = intentRows({
+    sealed_at: new Date("2026-09-15T11:59:00.000Z"),
+    published_at: new Date("2026-09-15T12:00:00.000Z"),
+  });
+  sameInstantRows[1] = {
+    ...sameInstantRows[1]!,
+    sealed_at: new Date("2026-09-15T11:59:00.000Z"),
+    published_at: new Date("2026-09-15T12:00:00.000Z"),
+  };
+  const ready = await readTargetIntentData({ async execute() { return [sameInstantRows, []]; } }, { name: "target_intent", scope: intentScope });
+  assert.equal(ready.state, "ready");
+  assert.equal(ready.provenance?.publishedAt, "2026-09-15T12:00:00.000Z");
+
+  const differingInstantRows = intentRows({ published_at: new Date("2026-09-15T12:00:00.000Z") });
+  differingInstantRows[1] = { ...differingInstantRows[1]!, published_at: new Date("2026-09-15T12:00:00.001Z") };
+  const unavailable = await readTargetIntentData({ async execute() { return [differingInstantRows, []]; } }, { name: "target_intent", scope: intentScope });
+  assert.equal(unavailable.state, "unavailable");
 });
 
 test("target-intent fails closed when rule count or source hash integrity differs", async () => {
@@ -87,6 +109,7 @@ test("target-intent fails closed when rule count or source hash integrity differ
   });
   for (const rows of [
     intentRows({ expected_rule_count: 3 }),
+    intentRows({ import_rule_count: 3 }),
     intentRows({ content_sha256: "not-a-sha" }),
     intentRows({ validation_state: "invalid" }),
     changedValidatedRows,

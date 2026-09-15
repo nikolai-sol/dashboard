@@ -168,6 +168,7 @@ type TargetIntentRow = Readonly<{
   version_uid?: unknown;
   label?: unknown;
   expected_rule_count?: unknown;
+  import_rule_count?: unknown;
   publication_id?: unknown;
   import_id?: unknown;
   source_transport?: unknown;
@@ -212,6 +213,11 @@ function notConfiguredTargetIntent(query: TargetIntentReadQuery): TargetIntentRu
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim() !== "";
+}
+
+function normalizedTimestamp(value: unknown): string | null {
+  const epoch = value instanceof Date ? value.getTime() : nonEmptyString(value) ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(epoch) ? new Date(epoch).toISOString() : null;
 }
 
 function targetIntentRulesHash(rules: readonly Readonly<{
@@ -281,6 +287,7 @@ export async function readTargetIntentData(
                  imported.source_transport,
                  imported.source_identity,
                  imported.content_sha256,
+                 imported.rule_count AS import_rule_count,
                  imported.validation_state,
                  imported.validation_result_json,
                  rule.source_row_ordinal,
@@ -314,6 +321,9 @@ export async function readTargetIntentData(
 
   const first = rows[0]!;
   const expectedRuleCount = Number(first.expected_rule_count);
+  const importRuleCount = Number(first.import_rule_count);
+  const sealedAt = normalizedTimestamp(first.sealed_at);
+  const publishedAt = normalizedTimestamp(first.published_at);
   const inScope = rows.every((row) =>
     row.site_id === query.scope.siteId &&
     Number(row.dashboard_id) === query.scope.dashboardId &&
@@ -323,12 +333,13 @@ export async function readTargetIntentData(
     row.import_id === first.import_id &&
     row.label === first.label &&
     row.expected_rule_count === first.expected_rule_count &&
-    row.sealed_at === first.sealed_at &&
+    row.import_rule_count === first.import_rule_count &&
+    normalizedTimestamp(row.sealed_at) === sealedAt &&
     row.source_transport === first.source_transport &&
     row.source_identity === first.source_identity &&
     row.content_sha256 === first.content_sha256 &&
     row.validation_state === first.validation_state &&
-    row.published_at === first.published_at &&
+    normalizedTimestamp(row.published_at) === publishedAt &&
     row.published_by === first.published_by &&
     row.publication_comment === first.publication_comment,
   );
@@ -336,16 +347,17 @@ export async function readTargetIntentData(
     inScope &&
     nonEmptyString(first.version_uid) &&
     nonEmptyString(first.label) &&
-    nonEmptyString(first.sealed_at) &&
+    sealedAt !== null &&
     Number.isInteger(expectedRuleCount) &&
     expectedRuleCount > 0 &&
+    Number.isInteger(importRuleCount) &&
+    importRuleCount === expectedRuleCount &&
     rows.length === expectedRuleCount &&
     ["upload", "google_sheet"].includes(String(first.source_transport)) &&
     nonEmptyString(first.source_identity) &&
     /^[a-f0-9]{64}$/i.test(String(first.content_sha256 ?? "")) &&
     first.validation_state === "valid" &&
-    nonEmptyString(first.published_at) &&
-    !Number.isNaN(Date.parse(first.published_at)) &&
+    publishedAt !== null &&
     nonEmptyString(first.published_by);
   if (!validSnapshot) return unavailableTargetIntent(query);
 
@@ -396,7 +408,7 @@ export async function readTargetIntentData(
       sourceTransport: first.source_transport as "upload" | "google_sheet",
       sourceIdentity: first.source_identity,
       contentSha256: String(first.content_sha256),
-      publishedAt: first.published_at,
+      publishedAt,
       publishedBy: first.published_by,
       comment: first.publication_comment === null || first.publication_comment === undefined
         ? null
