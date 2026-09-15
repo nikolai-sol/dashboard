@@ -1,5 +1,53 @@
 # Abbott isolated-runtime cutover runbook
 
+### Standalone read-only Nginx name inventory — STOP for review
+
+The b273294 live attempt returned `preflight_nginx/unsupported_other` before
+mutation. Supplemental remote release/lock/neighbor checks were not performed;
+that refusal is not a new full host attestation. The following new caller is
+source-only and must be reviewed before any host invocation:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+It has no arguments or caller-selected host/path/env. The clean exact worktree,
+Git identity, installed Node, SSH key/known-host metadata, executing caller bytes,
+and pinned analysis/reader source hashes must match. Only hash-verified committed
+source travels over stdin. Fixed root/beget SSH uses strict host verification,
+LogLevel=ERROR, no proxy/agent/config/control reuse and empty inherited env.
+
+The remote reader opens only `/etc/nginx/conf.d/dashboard-next.conf` for content:
+regular root:root0644, one link, O_NOFOLLOW, bounded1MiB, strict UTF-8, unchanged
+file/descriptor and root-owned nonwritable ancestry metadata around analysis.
+It checks the fixed hostname/root identity and creates no files, runs no command,
+reads no includes/env/PM2 state, and makes no host network request. The analysis
+source contains installer definitions but the reader calls only the pure Nginx
+name diagnosis; no installer, lifecycle or deployment function executes.
+
+Strict deploy validation and name diagnosis use the same private tokenizer and
+TLS/visitor logic. Strict validation remains fail-fast. Batch mode records only
+existing refused directive sites in the selected dashboards TLS server and
+already-proven literal locations. Opaque blocks, malformed syntax, ambiguous
+shared TLS listeners or other analysis failures discard the entire collected
+result. No partial success is returned and no previously refused syntax gains
+acceptance. The fixed broad common-directive vocabulary is declared by
+`abbottNginxDiagnosticNames`; unknown names map to `other`. Names are unique and
+lexically sorted, never source order. Arguments, values, paths, offsets, counts,
+hashes, raw config or stderr never enter the result.
+
+Output is one bounded line `ABBOTT_NGINX_UNSUPPORTED names=<closed list>`.
+An empty complete inventory uses `none`; refusal/unknown uses `other`. This is
+diagnostic information only, not a deployment or Nginx validation approval.
+The parent accepts only canonical sorted unique allowlisted names, verified zero
+SSH exit and private identity cleanup. Source/input/output buffers are zeroed.
+The existing fixed private recovery-evidence directory is exclusively owned for
+this invocation, refuses preexisting contents, and is removed after verified
+identity-only evidence. Deadline40s initiates exact owned TERM, bounded escalation
+ends observation at45s; PID reuse/unverifiable identity is never killed or called
+clean. INT/TERM/HUP handlers remain through cleanup. No forward or browser exists.
+Stop for separate review before use; do not invoke the remote loader standalone.
+
 ### Unsupported directive vocabulary — source-only review checkpoint
 
 The approved ae5634f attempt refused before mutation with

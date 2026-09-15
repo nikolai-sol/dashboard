@@ -1,0 +1,37 @@
+import test from'node:test';import assert from'node:assert/strict';import fs from'node:fs';import path from'node:path';import vm from'node:vm';import{execFileSync}from'node:child_process';
+const api=()=>import('./runtime-release-remote.mjs');
+const base=body=>'server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; '+body+' }\n';
+test('batch diagnosis uses shared selected TLS parser and fixed sorted unique names only',async()=>{
+ const m=await api();assert.equal(typeof m.diagnoseAbbottNginxText,'function');
+ const text=base('sendfile on; tcp_nopush on; location / { proxy_hide_header "private-token"; proxy_redirect off; sendfile off; private_token "https://private.invalid/secret"; }');
+ assert.deepEqual(m.diagnoseAbbottNginxText(text),['other','proxy_hide_header','proxy_redirect','sendfile','tcp_nopush']);
+ assert.deepEqual(m.diagnoseAbbottNginxText(base('location / { proxy_pass http://127.0.0.1:3001; }')),[]);
+ assert.deepEqual(m.diagnoseAbbottNginxText(base('location / { proxy_pass http://127.0.0.1:3001; }').replace('return 301','sendfile on; return 301')),[]);
+});
+test('batch diagnosis fails closed with no partial result for ambiguous TLS or unproven nesting',async()=>{
+ const m=await api();assert.equal(typeof m.diagnoseAbbottNginxText,'function');
+ for(const text of [base('sendfile on; location ~* /private { root /secret; }'),base('sendfile on; if ($private) { root /secret; }'),base('sendfile on; location / { server { listen 443 ssl; } }'),base('sendfile on;')+'server { listen 443; server_name dashboards.adreports.ru; }',base('sendfile on;')+'}',base('sendfile on;').replace('443 ssl','80')])assert.deepEqual(m.diagnoseAbbottNginxText(text),['other']);
+});
+test('batch diagnostic ignores names in arguments and comments and keeps strict acceptance unchanged',async()=>{
+ const m=await api();assert.equal(typeof m.validateAbbottNginxText,'function');
+ const text=base('private_token "sendfile root https://private.invalid/secret"; # proxy_redirect private\nlocation / { proxy_pass http://127.0.0.1:3001; }');
+ assert.deepEqual(m.diagnoseAbbottNginxText(text),['other']);assert.throws(()=>m.validateAbbottNginxText(text));
+ assert.throws(()=>m.validateAbbottNginxText(base('sendfile on;')));
+ assert.doesNotThrow(()=>m.validateAbbottNginxText(base('location / { proxy_pass http://127.0.0.1:3001; }')));
+ assert.doesNotMatch(JSON.stringify(m.diagnoseAbbottNginxText(text)),/private|secret|https/);
+});
+test('fixed reader only opens stable nofollow config, clears bounded buffers and refuses drift',async()=>{
+ const m=await import('./abbott-nginx-readonly.mjs').catch(()=>({}));assert.equal(typeof m.readAbbottNginxNames,'function');
+ const file='/etc/nginx/conf.d/dashboard-next.conf',content=Buffer.from(base('sendfile on;')),buffers=[],opened=[];let closed=0;
+ const stat=p=>({dev:1,ino:2,uid:0,gid:0,nlink:1,mode:p===file?0o100644:0o40755,size:p===file?content.length:0,mtimeMs:1,ctimeMs:1,isFile:()=>p===file,isDirectory:()=>p!==file,isSymbolicLink:()=>false});
+ const io={constants:fs.constants,lstatSync:stat,realpathSync:p=>p,openSync(p,flags){assert.equal(p,file);assert.equal(flags,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);opened.push(p);return 3;},fstatSync:()=>stat(file),readSync(fd,b,o,l,p){buffers.push(b);return content.copy(b,o,p,p+l);},closeSync(){closed++;}};
+ assert.deepEqual(m.readAbbottNginxNames({io,hostname:()=> 'ybjqbzojln',getuid:()=>0}),['sendfile']);assert.equal(closed,1);assert.equal(opened.length,1);assert.ok(buffers.every(b=>b.every(v=>v===0)));
+ for(const mode of ['owner','symlink','mode','size','drift','host']){let calls=0;const mutated={...io,lstatSync(p){const s=stat(p);if(p===file){if(mode==='owner')s.uid=1;if(mode==='symlink')s.isSymbolicLink=()=>true;if(mode==='mode')s.mode=0o100666;if(mode==='size')s.size=1048577;if(mode==='drift'&&++calls>1)s.ino++;}return s;}};assert.deepEqual(m.readAbbottNginxNames({io:mutated,hostname:()=>mode==='host'?'private-token':'ybjqbzojln',getuid:()=>0}),['other']);}
+});
+test('differential strict deployment acceptance stays identical to reviewed b273294 parser',async()=>{
+ const m=await api(),source=execFileSync('/usr/bin/git',['show','b27329424965540b8b6338d9dff682078db5d55f:scripts/runtime-release-remote.mjs'],{cwd:new URL('..',import.meta.url),env:{PATH:'/usr/bin:/bin'},encoding:'utf8',stdio:['ignore','pipe','pipe']}),start=source.indexOf('  function nginxSanity(text){'),end=source.indexOf('  function listenerTable()',start);assert.ok(start>0&&end>start);
+ const original=vm.runInNewContext(source.slice(start,end)+'\nnginxSanity',{path,nginxReason(){},fail(){throw Error('REFUSED');}}),accept=(fn,text)=>{try{fn(text);return true;}catch{return false;}};
+ const bodies=['location / { proxy_pass http://127.0.0.1:3001; }','sendfile on;','include /private;','location ~ /x { return 404; }','if ($x) { return 404; }','server { listen 443 ssl; }','location / { add_header Location /x; }','location / { proxy_pass http://$private; }','set $x private;'];
+ for(const id of ['18','018','0x12','0b10010','1.8e1','+18','abbott','AbBoTt','19','%31%38',' 18 ','18/../19'])for(const directive of ['location = /dashboard/ID { return 404; }','location /api/dashboard/ID { return 404; }','location = /status { proxy_pass http://127.0.0.1:3001/dashboard/ID; }'])bodies.push(directive.replace('ID',id));
+ let comparisons=0;for(const body of bodies)for(const variant of [base(body),base(body).replace('443 ssl','443'),base(body)+'server { listen 443; server_name dashboards.adreports.ru; }',base(body)+'# private-token\n',base(body)+'}',base(body).replace('alias.example dashboards.adreports.ru','dashboards.adreports.ru alias.example')]){assert.equal(accept(m.validateAbbottNginxText,variant),accept(original,variant));comparisons++;}assert.equal(comparisons,270);
+});

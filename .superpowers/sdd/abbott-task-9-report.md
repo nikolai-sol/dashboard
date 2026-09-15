@@ -1,9 +1,9 @@
-# Abbott Task 9 — approved diagnostic stopped at unsupported_other
+# Abbott Task 9 — standalone read-only Nginx inventory source checkpoint
 
-Current status: BLOCKED. Approved b273294 was published and one diagnostic deploy
-returned preflight_nginx/unsupported_other before mutation. Owned cleanup verified.
-No retry, pin update, smoke, capture or Nginx action followed. Supplemental remote
-state checks were not completed; no fresh full perimeter attestation is claimed.
+Current status: DONE_WITH_CONCERNS. Standalone bounded read-only Nginx name caller
+is implemented locally and awaits review. The previous approved b273294 live
+refusal remains preflight_nginx/unsupported_other; supplemental remote checks
+were not completed. No new live read, deploy, push or Nginx action occurred.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4509,3 +4509,69 @@ smoke/capture, DB/auth/fact/collector/cron, neighbor mutation or Nginx edit/relo
 followed. Historical active6f09982/8c79 and predecessor f80607f/6cd2 remain report
 history only. Route-only rollback remains3001; cutover did not occur. BLOCKED:
 STOP for direction at unsupported_other and the stated supplemental-proof gap.
+
+## Standalone read-only Nginx inventory — source-only checkpoint
+
+Parent explicitly approved a standalone diagnostic design, not execution.
+Systematic-debugging/TDD first established missing shared batch/read/caller APIs,
+then the implementation. Strict preflight and standalone diagnosis now share one
+private tokenizer/TLS/visitor analysis implementation in the existing worker
+module. Strict validation passes no collector and remains fail-fast. Batch mode
+collects only existing rejection sites inside the selected TLS server and proven
+literal locations. Unproven blocks/locations, shared-listener TLS ambiguity,
+syntax or other failure discards the whole partial result. A separate broad fixed
+common-name enum maps unknown names to other. Sorted unique output reveals no
+source order, counts, offsets, hashes, arguments, values, paths or raw content.
+No accepted directive or deployment semantics were expanded.
+
+The new reader verifies fixed hostname/root identity and reads content only from
+the fixed Nginx config: root:root0644 single-link regular, stable nofollow bounded
+1MiB, strict UTF-8, protected ancestry and post-analysis metadata. It neither
+loads includes/environment nor executes a command, connects to PM2, requests
+health/network or writes host files. Importing the pinned analysis source defines
+installer functions but never calls them. Caller transports only two hash-pinned
+clean-HEAD sources via bounded canonical stdin, not a filesystem artifact.
+
+The dedicated caller mirrors the reviewed PDF caller's fixed SSH authority and
+identity-only evidence lifecycle: exact key/host/root/known-hosts, LogLevel=ERROR,
+no proxy/agent/config/control reuse, clean env, PID/start proof before source,
+bounded stdout/stderr handling, exact owned escalation and verified exit. It uses
+the existing fixed private recovery evidence directory exclusively and removes
+owned evidence after verification. INT/TERM/HUP remain installed through cleanup.
+Source and captured buffers are zeroed. Unknown/forged/extra/noncanonical output
+or unverified cleanup yields only the fixed other line, never raw diagnostics.
+No generic transport framework or change to another caller was introduced.
+
+Local evidence:14 new tests pass; new+existing PDF caller25/25; full authority
+805/805 and Abbott app/runtime suite passed. Differential strict parser comparison
+against reviewed b273294 covered270 configurations with zero acceptance drift.
+Tests exercise batched names, fixed enum including http2, no partial scope result,
+metadata drift/link/size/host refusal, secret-bearing fields, canonical frames,
+source hashes, inert actual loader, early proof failure, reused PID, signals and
+cleanup. HUP handler coverage and digit-bearing name framing each had a RED
+regression before their narrow caller fix. Read-only independent review found
+no findings and separately passed the original13 new tests/differential corpus;
+the final additional name-roundtrip test passed in the fresh full suite.
+
+Abbott/combined builds, contract suite/wiring, public-assets security, root/focused
+typechecks, deploy-source/release-runtime, source syntax and whitespace passed.
+Lint has0 errors and the same10 existing warnings. Full gates include both new
+test files through test:abbott-runtime. The final compare/capture/issuer/
+orchestrator/smoke/attestation/bounded/diagnostics regression suite passed175/175.
+Focused reproduction command:
+
+```sh
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs scripts/read-abbott-pdf-stage.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+npm run lint
+```
+
+No live/push/SSH/credential/browser/forward/deploy/recovery/PDF/smoke/capture,
+DB/auth/fact/collector/cron, neighbor or Nginx action ran. All test-owned subprocesses
+were reaped; exact private deploy/recovery evidence is absent. The local
+protected-port listener check returned no listeners on3001 or3004. Historical
+active6f09982/8c79, predecessor f80607f/6cd2 and route-only rollback3001 remain history,
+not newly attested by this source work. The preceding unsupported_other refusal
+and incomplete supplemental remote checks remain explicitly unresolved. STOP
+for independent source review before any standalone diagnostic invocation.
