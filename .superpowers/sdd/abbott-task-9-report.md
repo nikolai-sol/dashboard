@@ -1,9 +1,58 @@
-# Abbott Task 9 — acknowledged preflight refusal: include
+# Abbott Task 9 — selected include diagnostic refinement
 
-Current status: BLOCKED. The one approved read-only caller at clean439d486
-classified the first rejection as selected_include. The preceding c80d7c2
-deploy refused preflight_nginx/include before mutation. No retry or Nginx change
-followed; complete runtime/perimeter post-attestation remains unperformed.
+Current status: DONE_WITH_CONCERNS. Source-only refinement maps selected include
+arguments to four fixed safe categories or other. No include is loaded or newly
+accepted, and no live call/push occurred. STOP for independent review. The last
+live classification remains selected_include; the actual path is still unknown.
+
+## Selected include category refinement — source-only checkpoint
+
+The prior exact first rejection was selected_include, without path evidence.
+This checkpoint adds only a diagnostic observer mapping for four fixed literal
+paths documented in the runbook: letsencrypt_options, ssl_params, proxy_params,
+mime_types. They emit selected_include_<category>. Any other path, glob,
+variable, relative path, extra/missing arguments or block emits
+selected_include_other. Exact matching uses the existing parsed argument; no
+filesystem resolution, path normalization, traversal or include loading occurs.
+Deployment validator acceptance and phase codes remain unchanged. The old
+generic selected_include wire code is removed from the closed reader enum.
+
+TDD RED: the classifier returned generic selected_include and the strict frame
+parser rejected the new category. GREEN:39/39 focused;832/832 authority plus
+Abbott app/runtime and12routes/1prefix. The new84-case differential against
+c80d7c2 proves zero acceptance or phase drift across selected server/location,
+inactive HTTP, top-level, block and missing-TLS variants. Existing327 unchanged
+baseline cases and16previously documented safe rate-limit deltas still pass.
+Secret-bearing fixture arguments and forged frame fields never enter output;
+each new category passes the existing owned transport cleanup contract.
+Independent read-only review reported no Critical, Important or Minor findings,
+independently running39/39 focused tests including the84-case differential.
+
+Fresh combined/Abbott builds, root/focused typechecks, deploy-source,
+release-runtime, syntax and diff checks passed. Lint:0errors,10pre-existing
+warnings. Commands:
+
+```sh
+node --test --test-name-pattern='selected include exact|include category frames' scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+npm run build
+npm run test:deploy-source
+npm run test:release-runtime
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+git diff --check
+```
+
+Only diagnostic analysis source hash was refreshed in both transport pins.
+Reader hash, SSH authority/lifecycle, deployment pins, snapshot grammar and
+runtime behavior remain unchanged. All owned test commands completed; no live
+SSH/browser/forward/credential resource was started. No push, remote read,
+deploy, retry, smoke, capture, PDF, DB/auth/fact/collector/cron or Nginx action
+occurred. STOP for independent review before one separately approved live use.
 
 ## Approved single read-only classification at439d486
 

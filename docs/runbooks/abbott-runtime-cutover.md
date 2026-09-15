@@ -1,5 +1,21 @@
 # Abbott isolated-runtime cutover runbook
 
+### Selected include classification — source-only, STOP for review
+
+The first-rejection reader refines selected include into exactly these diagnostic
+categories: selected_include_letsencrypt_options for the literal
+/etc/letsencrypt/options-ssl-nginx.conf; selected_include_ssl_params for
+/etc/nginx/snippets/ssl-params.conf; selected_include_proxy_params for
+/etc/nginx/proxy_params; selected_include_mime_types for /etc/nginx/mime.types.
+Mapping requires a non-block directive with exactly one parsed argument matching
+the literal path. Quotes use the existing tokenizer; there is no filesystem
+resolution, normalization or include read. Globs, variables, relative paths,
+extra/missing arguments, blocks and every other path map selected_include_other.
+Only the category enters output, never arguments or paths. The old generic
+selected_include wire code is no longer accepted. This changes diagnostics only:
+all includes still fail deployment validation. It grants no authority to load
+includes, expand grammar, deploy, or edit Nginx. Live use requires separate approval.
+
 ### Bounded rate-limiter preflight grammar — STOP for review
 
 The approved first-rejection read identified top_limit_req_zone only. The
