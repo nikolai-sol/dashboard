@@ -1,6 +1,8 @@
 import * as XLSX from "xlsx";
+import { assertBoundedXlsxZip } from "./xlsx-zip-preflight";
 
 export const MAX_TARGET_INTENT_UPLOAD_BYTES = 5 * 1024 * 1024;
+export const MAX_TARGET_INTENT_LOGICAL_ROWS = 10_000;
 
 export type TargetIntentImportRow = Readonly<{
   sourceRowOrdinal: number;
@@ -18,9 +20,13 @@ export type TargetIntentImportError = Readonly<{
     | "file_too_large"
     | "unsupported_file"
     | "invalid_workbook"
+    | "invalid_encoding"
     | "source_unavailable"
+    | "row_limit"
     | "missing_column"
     | "unknown_column"
+    | "duplicate_column"
+    | "unnamed_column"
     | "empty_key"
     | "unknown_match_type"
     | "exact_duplicate"
@@ -91,7 +97,11 @@ function readLogicalTable(
   bytes: Buffer,
   format: "csv" | "xlsx",
 ): { worksheet: string | null; cells: unknown[][] } {
-  const workbook = XLSX.read(format === "csv" ? bytes.toString("utf8") : bytes, {
+  if (format === "xlsx") assertBoundedXlsxZip(bytes);
+  const source = format === "csv"
+    ? new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    : bytes;
+  const workbook = XLSX.read(source, {
     type: format === "csv" ? "string" : "buffer",
     raw: true,
     cellFormula: false,
@@ -104,6 +114,10 @@ function readLogicalTable(
   const worksheetName = workbook.SheetNames[0];
   if (!worksheetName) return { worksheet: null, cells: [] };
   const worksheet = workbook.Sheets[worksheetName];
+  const range = worksheet["!ref"] ? XLSX.utils.decode_range(worksheet["!ref"]) : null;
+  if (range && range.e.r - range.s.r > MAX_TARGET_INTENT_LOGICAL_ROWS) {
+    throw new RangeError("target_intent_row_limit");
+  }
   const cells = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
     header: 1,
     raw: true,
@@ -141,7 +155,21 @@ export function parseTargetIntentWorkbook(
   let table: { worksheet: string | null; cells: unknown[][] };
   try {
     table = readLogicalTable(bytes, detectedFormat);
-  } catch {
+  } catch (error) {
+    if (error instanceof RangeError && error.message === "target_intent_row_limit") {
+      return emptyResult({
+        row: null,
+        code: "row_limit",
+        message: `Таблица содержит более ${MAX_TARGET_INTENT_LOGICAL_ROWS} строк правил`,
+      }, detectedFormat);
+    }
+    if (error instanceof TypeError && /encoded data was not valid|UTF-8/i.test(error.message)) {
+      return emptyResult({
+        row: null,
+        code: "invalid_encoding",
+        message: "CSV должен быть в кодировке UTF-8",
+      }, detectedFormat);
+    }
     return emptyResult({
       row: null,
       code: "invalid_workbook",
@@ -155,8 +183,12 @@ export function parseTargetIntentWorkbook(
   const headers = table.cells[0].map((value) => normalizedText(value));
   const columns = new Map<"key" | "group" | "matchType", number>();
   const headerErrors: TargetIntentImportError[] = [];
+  const unnamedColumns: number[] = [];
   headers.forEach((header, index) => {
-    if (!header) return;
+    if (!header) {
+      unnamedColumns.push(index);
+      return;
+    }
     const field = expectedHeaders.get(header.toLocaleLowerCase("ru-RU") as never);
     if (!field) {
       headerErrors.push({
@@ -167,8 +199,28 @@ export function parseTargetIntentWorkbook(
       });
       return;
     }
+    if (columns.has(field)) {
+      headerErrors.push({
+        row: 1,
+        column: header,
+        code: "duplicate_column",
+        message: `Столбец указан повторно: ${header}`,
+      });
+      return;
+    }
     columns.set(field, index);
   });
+  for (let rowIndex = 1; rowIndex < table.cells.length; rowIndex += 1) {
+    for (const columnIndex of unnamedColumns) {
+      if (!normalizedText(table.cells[rowIndex]?.[columnIndex])) continue;
+      headerErrors.push({
+        row: rowIndex + 1,
+        column: String(columnIndex + 1),
+        code: "unnamed_column",
+        message: `Строка ${rowIndex + 1} содержит значение в безымянном столбце ${columnIndex + 1}`,
+      });
+    }
+  }
   for (const [header, field] of expectedHeaders) {
     if (field !== "group" && !columns.has(field)) {
       headerErrors.push({

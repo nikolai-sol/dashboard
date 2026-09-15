@@ -164,3 +164,89 @@ test("rejects bytes beyond the upload limit before parsing", () => {
     message: `Файл превышает лимит ${MAX_TARGET_INTENT_UPLOAD_BYTES} байт`,
   }]);
 });
+
+test("rejects malformed XLSX ZIP structure before SheetJS parsing", () => {
+  const valid = workbookBytes([
+    ["Ключ", "Тип совпадения"],
+    ["HER2", "точное"],
+  ]);
+  const result = parseTargetIntentWorkbook(
+    Buffer.concat([valid, Buffer.from("trailing archive payload")]),
+    "intent.xlsx",
+  );
+
+  assert.equal(result.state, "invalid");
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.errors, [{
+    row: null,
+    code: "invalid_workbook",
+    message: "Не удалось прочитать таблицу",
+  }]);
+});
+
+test("bounds logical rows before materializing an unbounded catalogue", () => {
+  const rows = Array.from({ length: 10_001 }, (_, index) => `key-${index},точное`);
+  const result = parseTargetIntentWorkbook(
+    Buffer.from(`Ключ,Тип совпадения\n${rows.join("\n")}\n`),
+    "intent.csv",
+  );
+
+  assert.equal(result.state, "invalid");
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.errors, [{
+    row: null,
+    code: "row_limit",
+    message: "Таблица содержит более 10000 строк правил",
+  }]);
+});
+
+test("rejects invalid UTF-8 CSV bytes instead of decoding replacement characters", () => {
+  const result = parseTargetIntentWorkbook(
+    Buffer.concat([
+      Buffer.from("Ключ,Тип совпадения\n"),
+      Buffer.from([0xc3, 0x28]),
+      Buffer.from(",точное\n"),
+    ]),
+    "intent.csv",
+  );
+
+  assert.equal(result.state, "invalid");
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.errors, [{
+    row: null,
+    code: "invalid_encoding",
+    message: "CSV должен быть в кодировке UTF-8",
+  }]);
+});
+
+test("rejects duplicate recognized headers", () => {
+  const result = parseTargetIntentWorkbook(
+    Buffer.from("Ключ,КЛЮЧ,Тип совпадения\nHER2,neu,точное\n"),
+    "intent.csv",
+  );
+
+  assert.equal(result.state, "invalid");
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.errors, [{
+    row: 1,
+    column: "КЛЮЧ",
+    code: "duplicate_column",
+    message: "Столбец указан повторно: КЛЮЧ",
+  }]);
+});
+
+test("rejects populated cells under an unnamed column", () => {
+  const result = parseTargetIntentWorkbook(
+    Buffer.from("Ключ,Тип совпадения,\nHER2,точное,скрытое значение\n"),
+    "intent.csv",
+  );
+
+  assert.equal(result.state, "invalid");
+  assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.errors, [{
+    row: 2,
+    column: "3",
+    code: "unnamed_column",
+    message: "Строка 2 содержит значение в безымянном столбце 3",
+  }]);
+});

@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile } from "node:fs/promises";
+import { mkdir, open, rename, rm, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
   MAX_TARGET_INTENT_UPLOAD_BYTES,
@@ -12,6 +12,7 @@ import {
 
 export type TargetIntentScope = Readonly<{
   siteId: string;
+  clientId: string;
   dashboardId: number;
 }>;
 
@@ -98,6 +99,16 @@ export type TargetIntentAdminState = Readonly<{
   previews: readonly TargetIntentPreviewReceipt[];
 }>;
 
+export class TargetIntentServiceError extends Error {
+  constructor(
+    readonly status: 404 | 409 | 422,
+    message: string,
+  ) {
+    super(message);
+    this.name = "TargetIntentServiceError";
+  }
+}
+
 type StoredImportRow = {
   id: string | number;
   import_uid?: string;
@@ -138,8 +149,17 @@ function positiveId(value: unknown, field: string): number {
 
 function scopeFrom(deps: TargetIntentStoreDependencies): TargetIntentScope {
   const siteId = requiredText(deps.scope.siteId, "siteId", 96);
+  const clientId = requiredText(deps.scope.clientId, "clientId", 255);
   const dashboardId = positiveId(deps.scope.dashboardId, "dashboardId");
-  return { siteId, dashboardId };
+  return { siteId, clientId, dashboardId };
+}
+
+function operationId(value: unknown): string {
+  const id = requiredText(value, "operationId", 36).toLocaleLowerCase("en-US");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(id)) {
+    throw new Error("operationId must be a UUID");
+  }
+  return id;
 }
 
 function sha256(value: Buffer | string): string {
@@ -242,10 +262,7 @@ export function normalizeGoogleSheetsUrl(value: string): string {
 }
 
 export function createFilesystemTargetIntentSnapshotStore(directory: string) {
-  const root = path.resolve(requiredText(directory, "SITE_SEO_INTENT_SPOOL_DIR", 4096));
-  if (!path.isAbsolute(directory)) {
-    throw new Error("SITE_SEO_INTENT_SPOOL_DIR must be an absolute path");
-  }
+  const configured = requiredText(directory, "SITE_SEO_INTENT_SPOOL_DIR", 4096);
   return {
     async save(
       bytes: Buffer,
@@ -258,87 +275,235 @@ export function createFilesystemTargetIntentSnapshotStore(directory: string) {
       if (!/^[a-f0-9]{64}$/u.test(requiredText(evidence.sourceIdentityHash, "sourceIdentityHash", 64))) {
         throw new Error("Invalid source identity hash");
       }
-      await mkdir(root, { recursive: true, mode: 0o750 });
-      const rootMetadata = await lstat(root);
-      if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
-        throw new Error("Protected snapshot root must be a directory, not a symlink");
-      }
-      const artifacts = path.join(root, "artifacts");
-      await mkdir(artifacts, { recursive: true, mode: 0o750 });
-      const artifactMetadata = await lstat(artifacts);
-      if (!artifactMetadata.isDirectory() || artifactMetadata.isSymbolicLink()) {
-        throw new Error("Protected snapshot artifact path must be a directory, not a symlink");
-      }
-      const protectedRef = path.join(artifacts, `${expectedHash}.bin`);
-      let handle;
+      const { absolute } = configuredProtectedSpoolPath(configured);
+      const root = await protectedDirectory(configured, true);
+      let artifacts: ProtectedDirectory | null = null;
+      let temporary: string | null = null;
+      let target: string | null = null;
+      let filename: string | null = null;
       try {
-        handle = await open(
-          protectedRef,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-          0o640,
-        );
-        await handle.writeFile(bytes);
-        await handle.chmod(0o640);
-        await handle.sync();
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const existing = await readFile(protectedRef);
-        if (sha256(existing) !== expectedHash) {
-          throw new Error("Protected snapshot content-address collision");
+        artifacts = await openProtectedChild(root, "artifacts", true);
+        const anchoredArtifacts = descriptorPath(artifacts.handle);
+        filename = `${randomUUID()}.bin`;
+        target = path.join(anchoredArtifacts, filename);
+        temporary = path.join(anchoredArtifacts, `.${randomUUID()}.tmp`);
+        const file = await open(temporary, FILE_CREATE_FLAGS, 0o640);
+        try {
+          await file.writeFile(bytes);
+          await file.chmod(0o640);
+          await file.sync();
+        } finally {
+          await file.close();
         }
+        await rename(temporary, target);
+        temporary = null;
+        await artifacts.handle.sync();
+        const protectedRef = path.join(absolute, "artifacts", filename);
+        const retainedArtifacts = artifacts.handle;
+        artifacts = null;
+        return {
+          protectedRef,
+          release: () => retainedArtifacts.close(),
+          discard: () => removeProtectedArtifact(retainedArtifacts, filename!),
+        };
+      } catch (error) {
+        if (temporary) await rm(temporary, { force: true });
+        if (target) await rm(target, { force: true });
+        throw error;
       } finally {
-        await handle?.close();
+        if (artifacts) await artifacts.handle.close();
+        await root.handle.close();
       }
-      return {
-        protectedRef,
-        release: async () => {},
-        // Content-addressed evidence may already belong to another immutable
-        // preview, so duplicate/error cleanup never unlinks the shared blob.
-        discard: async () => {},
-      };
     },
   };
 }
 
+const DIRECTORY_OPEN_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+const FILE_CREATE_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
+
+type ProtectedDirectory = { handle: FileHandle };
+
+function requireDescriptorAnchoredWrites(): void {
+  if (process.platform !== "linux") {
+    throw new Error("Protected spool descriptor-anchored writes are only supported on Linux");
+  }
+}
+
+function descriptorPath(handle: FileHandle): string {
+  requireDescriptorAnchoredWrites();
+  return path.join("/proc/self/fd", String(handle.fd));
+}
+
+function configuredProtectedSpoolPath(directory: string): { absolute: string; components: string[] } {
+  if (!path.isAbsolute(directory)) {
+    throw new Error("SITE_SEO_INTENT_SPOOL_DIR must be an absolute path");
+  }
+  const parsed = path.parse(directory);
+  const components = directory.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  if (components.some((component) => component === "." || component === "..")) {
+    throw new Error("Protected spool path may not contain traversal components");
+  }
+  return { absolute: path.join(parsed.root, ...components), components };
+}
+
+function protectedSpoolError(entry: string, error: unknown): Error | null {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ELOOP") return new Error(`Protected spool path may not contain symlinks: ${entry}`);
+  if (code === "ENOTDIR") return new Error(`Protected spool path must be a directory: ${entry}`);
+  return null;
+}
+
+async function openNoFollowDirectory(entry: string): Promise<FileHandle> {
+  let handle: FileHandle | null = null;
+  try {
+    handle = await open(entry, DIRECTORY_OPEN_FLAGS);
+    const metadata = await handle.stat();
+    if (!metadata.isDirectory()) throw new Error(`Protected spool path must be a directory: ${entry}`);
+    return handle;
+  } catch (error) {
+    await handle?.close();
+    const safeError = protectedSpoolError(entry, error);
+    if (safeError) throw safeError;
+    throw error;
+  }
+}
+
+async function openProtectedChild(parent: ProtectedDirectory, name: string, create: boolean): Promise<ProtectedDirectory> {
+  const anchored = path.join(descriptorPath(parent.handle), name);
+  try {
+    return { handle: await openNoFollowDirectory(anchored) };
+  } catch (error) {
+    if (!create || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  try {
+    await mkdir(anchored, { mode: 0o750 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  return { handle: await openNoFollowDirectory(anchored) };
+}
+
+async function protectedDirectory(directory: string, create: boolean): Promise<ProtectedDirectory> {
+  requireDescriptorAnchoredWrites();
+  const { absolute, components } = configuredProtectedSpoolPath(directory);
+  const parsed = path.parse(absolute);
+  let current: ProtectedDirectory = { handle: await openNoFollowDirectory(parsed.root) };
+  try {
+    for (const component of components) {
+      const child = await openProtectedChild(current, component, create);
+      await current.handle.close();
+      current = child;
+    }
+    await current.handle.chmod(0o750);
+    return current;
+  } catch (error) {
+    await current.handle.close();
+    throw error;
+  }
+}
+
+async function removeProtectedArtifact(directory: FileHandle, filename: string): Promise<void> {
+  let failed = false;
+  let failure: unknown;
+  try {
+    await rm(path.join(descriptorPath(directory), filename), { force: true });
+  } catch (error) {
+    failed = true;
+    failure = error;
+  } finally {
+    try {
+      await directory.close();
+    } catch (closeError) {
+      if (!failed) throw closeError;
+    }
+  }
+  if (failed) throw failure;
+}
+
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-export function createGoogleSheetsSnapshotTransport(fetchImpl: FetchLike = fetch) {
+function cancelAndReleaseReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
+  try {
+    void reader.cancel()
+      .catch(() => undefined)
+      .finally(() => {
+        try { reader.releaseLock(); } catch { /* The response owns final stream cleanup. */ }
+      });
+  } catch {
+    try { reader.releaseLock(); } catch { /* The response owns final stream cleanup. */ }
+  }
+}
+
+export function createGoogleSheetsSnapshotTransport(
+  fetchImpl: FetchLike = fetch,
+  options: Readonly<{ timeoutMs?: number }> = {},
+) {
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000) {
+    throw new Error("Google Sheets timeout must be between 1 and 60000 milliseconds");
+  }
   return {
     async fetchSnapshot(normalizedUrl: string): Promise<{ bytes: Buffer; filename: string }> {
       const identity = normalizeGoogleSheetsUrl(normalizedUrl);
       const parsed = new URL(identity);
       const gid = new URLSearchParams(parsed.hash.slice(1)).get("gid") ?? "0";
       const exportUrl = `https://docs.google.com${parsed.pathname}/export?format=xlsx&gid=${gid}`;
-      const response = await fetchImpl(exportUrl, {
-        method: "GET",
-        redirect: "error",
-        credentials: "omit",
-        headers: { accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
-      });
-      if (!response.ok || !response.body) throw new Error("Google Sheets snapshot request failed");
-      const contentLength = Number(response.headers.get("content-length"));
-      if (Number.isFinite(contentLength) && contentLength > MAX_TARGET_INTENT_UPLOAD_BYTES) {
-        throw new Error("Google Sheets snapshot exceeds the upload limit");
-      }
-      const chunks: Buffer[] = [];
-      let size = 0;
-      const reader = response.body.getReader();
+      const abort = new AbortController();
+      let timedOut = false;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+      let rejectDeadline: ((error: Error) => void) | null = null;
+      const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+      const timer = setTimeout(() => {
+        timedOut = true;
+        abort.abort();
+        rejectDeadline?.(new Error("Google Sheets snapshot request timed out"));
+      }, timeoutMs);
       try {
+        const response = await Promise.race([
+          fetchImpl(exportUrl, {
+            method: "GET",
+            redirect: "error",
+            credentials: "omit",
+            signal: abort.signal,
+            headers: { accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+          }),
+          deadline,
+        ]);
+        if (!response.ok || !response.body) throw new Error("Google Sheets snapshot request failed");
+        const contentLength = Number(response.headers.get("content-length"));
+        if (Number.isFinite(contentLength) && contentLength > MAX_TARGET_INTENT_UPLOAD_BYTES) {
+          throw new Error("Google Sheets snapshot exceeds the upload limit");
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        reader = response.body.getReader();
         while (true) {
-          const chunk = await reader.read();
+          const chunk = await Promise.race([reader.read(), deadline]);
           if (chunk.done) break;
           size += chunk.value.byteLength;
           if (size > MAX_TARGET_INTENT_UPLOAD_BYTES) {
-            await reader.cancel();
+            const oversizedReader = reader;
+            reader = null;
+            cancelAndReleaseReader(oversizedReader);
             throw new Error("Google Sheets snapshot exceeds the upload limit");
           }
           chunks.push(Buffer.from(chunk.value));
         }
+        if (size === 0) throw new Error("Google Sheets snapshot is empty");
+        return { bytes: Buffer.concat(chunks), filename: "target-intent.xlsx" };
+      } catch (error) {
+        abort.abort();
+        if (reader) {
+          const failedReader = reader;
+          reader = null;
+          cancelAndReleaseReader(failedReader);
+        }
+        if (timedOut) throw new Error("Google Sheets snapshot request timed out");
+        throw error;
       } finally {
-        reader.releaseLock();
+        clearTimeout(timer);
+        reader?.releaseLock();
       }
-      if (size === 0) throw new Error("Google Sheets snapshot is empty");
-      return { bytes: Buffer.concat(chunks), filename: "target-intent.xlsx" };
     },
   };
 }
@@ -414,48 +579,70 @@ export async function previewTargetIntent(
     contentSha256,
   );
   const artifact = await deps.snapshots.save(bytes, { contentSha256, sourceIdentityHash });
-  const connection = await deps.database.getConnection();
+  let connection: TargetIntentSqlConnection | null = null;
+  let transactionStarted = false;
+  let committed = false;
+  let artifactReferenced = false;
+  let artifactSettled = false;
   try {
-    await connection.execute(
-      `INSERT INTO site_seo_intent_imports
-         (site_id, dashboard_id, import_uid, source_transport, source_identity,
-          source_identity_hash, original_filename, accepted_worksheet, protected_artifact_ref,
-          content_sha256, validation_state, validation_result_json, rule_count,
-          duplicate_count, conflict_count, imported_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-      [
-        scope.siteId,
-        scope.dashboardId,
-        importUid,
-        input.transport,
-        sourceIdentity,
-        sourceIdentityHash,
-        input.transport === "upload" ? filename : null,
-        validation.worksheet,
-        artifact.protectedRef,
-        contentSha256,
-        sourceFailure ? "failed" : validation.state,
-        JSON.stringify(validation),
-        validation.rows.length,
-        validation.duplicateCount,
-        validation.conflictCount,
-        actor,
-      ],
-    );
+    connection = await deps.database.getConnection();
+    await connection.beginTransaction();
+    transactionStarted = true;
+    try {
+      await connection.execute(
+        `INSERT INTO site_seo_intent_imports
+           (site_id, dashboard_id, import_uid, source_transport, source_identity,
+            source_identity_hash, original_filename, accepted_worksheet, protected_artifact_ref,
+            content_sha256, validation_state, validation_result_json, rule_count,
+            duplicate_count, conflict_count, imported_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          scope.siteId,
+          scope.dashboardId,
+          importUid,
+          input.transport,
+          sourceIdentity,
+          sourceIdentityHash,
+          input.transport === "upload" ? filename : null,
+          validation.worksheet,
+          artifact.protectedRef,
+          contentSha256,
+          sourceFailure ? "failed" : validation.state,
+          JSON.stringify(validation),
+          validation.rows.length,
+          validation.duplicateCount,
+          validation.conflictCount,
+          actor,
+        ],
+      );
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== "ER_DUP_ENTRY") throw error;
+    }
     const persisted = firstRow<StoredImportRow>(await connection.execute(
       importSelectSql(),
       [scope.siteId, scope.dashboardId, importUid],
     ));
     if (!persisted) throw new Error("Preview receipt was not persisted");
-    if (persisted.protected_artifact_ref === artifact.protectedRef) await artifact.release();
+    artifactReferenced = persisted.protected_artifact_ref === artifact.protectedRef;
+    await connection.commit();
+    committed = true;
+    artifactSettled = true;
+    if (artifactReferenced) await artifact.release();
     else await artifact.discard();
     return previewReceipt(persisted);
   } catch (error) {
-    try { await artifact.discard(); } catch { /* Preserve the primary failure. */ }
+    if (connection && transactionStarted && !committed) {
+      try { await connection.rollback(); } catch { /* Preserve the primary failure. */ }
+    }
+    if (!artifactSettled) {
+      try {
+        if (committed && artifactReferenced) await artifact.release();
+        else await artifact.discard();
+      } catch { /* Preserve the primary failure. */ }
+    }
     throw error;
   } finally {
-    connection.release();
+    connection?.release();
   }
 }
 
@@ -464,15 +651,19 @@ function validPreviewRows(row: {
   validation_result_json: unknown;
   rule_count: unknown;
 }): readonly TargetIntentImportRow[] {
-  if (row.validation_state !== "valid") throw new Error("Предпросмотр содержит ошибки и не может быть опубликован");
-  const validation = parseValidation(row.validation_result_json);
-  if (
-    validation.state !== "valid" ||
-    validation.errors.length !== 0 ||
-    validation.rows.length === 0 ||
-    validation.rows.length !== Number(row.rule_count)
-  ) throw new Error("Предпросмотр содержит ошибки и не может быть опубликован");
-  return validation.rows;
+  try {
+    if (row.validation_state !== "valid") throw new Error("invalid state");
+    const validation = parseValidation(row.validation_result_json);
+    if (
+      validation.state !== "valid" ||
+      validation.errors.length !== 0 ||
+      validation.rows.length === 0 ||
+      validation.rows.length !== Number(row.rule_count)
+    ) throw new Error("invalid validation receipt");
+    return validation.rows;
+  } catch {
+    throw new TargetIntentServiceError(422, "Предпросмотр содержит ошибки и не может быть опубликован");
+  }
 }
 
 type ExistingPublicationRow = {
@@ -498,15 +689,15 @@ function publicationReceipt(row: ExistingPublicationRow): TargetIntentPublicatio
 }
 
 async function lockScope(connection: TargetIntentSqlConnection, scope: TargetIntentScope): Promise<void> {
-  const dashboard = firstRow<{ id: string | number }>(await connection.execute(
-    `SELECT id
+  const dashboard = firstRow<{ id: string | number; client_id: string }>(await connection.execute(
+    `SELECT id, client_id
        FROM dashboards
-      WHERE id = ? AND dashboard_type = 'site_seo'
+      WHERE id = ? AND client_id = ? AND dashboard_type = 'site_seo' AND is_active = TRUE
       LIMIT 1
       FOR UPDATE`,
-    [scope.dashboardId],
+    [scope.dashboardId, scope.clientId],
   ));
-  if (!dashboard) throw new Error("Дашборд не найден или не поддерживает целевой интент");
+  if (!dashboard) throw new TargetIntentServiceError(409, "Область дашборда изменилась");
 }
 
 async function activeVersionId(connection: TargetIntentSqlConnection, scope: TargetIntentScope): Promise<number | null> {
@@ -625,12 +816,20 @@ export async function publishTargetIntent(
   label: string,
   actorValue: string,
   deps: TargetIntentStoreDependencies,
+  operationIdValue: string,
 ): Promise<TargetIntentPublicationReceipt> {
   const scope = scopeFrom(deps);
   const importId = positiveId(previewId, "previewId");
   const normalizedLabel = requiredText(label, "label", 191);
   const actor = normalizedActor(actorValue);
-  const requestUid = stableUid("target-intent-publish-v1", scope.siteId, scope.dashboardId, importId, normalizedLabel, actor);
+  const requestUid = stableUid(
+    "target-intent-publish-v2",
+    scope.siteId,
+    scope.dashboardId,
+    operationId(operationIdValue),
+    importId,
+    normalizedLabel,
+  );
   const connection = await deps.database.getConnection();
   try {
     await connection.beginTransaction();
@@ -654,7 +853,7 @@ export async function publishTargetIntent(
         FOR UPDATE`,
       [scope.siteId, scope.dashboardId, importId],
     ));
-    if (!imported) throw new Error("Предпросмотр не найден");
+    if (!imported) throw new TargetIntentServiceError(404, "Предпросмотр не найден");
     const rows = validPreviewRows(imported);
     const receipt = await writeVersionAndPublication(connection, {
       scope, importId, sourceVersionId: null, label: normalizedLabel, actor, rows,
@@ -662,8 +861,9 @@ export async function publishTargetIntent(
     });
     await connection.commit();
     return receipt;
-  } catch {
+  } catch (error) {
     try { await connection.rollback(); } catch { /* Preserve the safe service error. */ }
+    if (error instanceof TargetIntentServiceError) throw error;
     throw new Error("Не удалось опубликовать каталог");
   } finally {
     connection.release();
@@ -674,11 +874,18 @@ export async function restoreTargetIntent(
   versionIdValue: string | number,
   actorValue: string,
   deps: TargetIntentStoreDependencies,
+  operationIdValue: string,
 ): Promise<TargetIntentPublicationReceipt> {
   const scope = scopeFrom(deps);
   const sourceVersionId = positiveId(versionIdValue, "versionId");
   const actor = normalizedActor(actorValue);
-  const requestUid = stableUid("target-intent-restore-v1", scope.siteId, scope.dashboardId, sourceVersionId, actor);
+  const requestUid = stableUid(
+    "target-intent-restore-v2",
+    scope.siteId,
+    scope.dashboardId,
+    operationId(operationIdValue),
+    sourceVersionId,
+  );
   const connection = await deps.database.getConnection();
   try {
     await connection.beginTransaction();
@@ -698,7 +905,7 @@ export async function restoreTargetIntent(
         FOR UPDATE`,
       [scope.siteId, scope.dashboardId, sourceVersionId],
     ));
-    if (!historical) throw new Error("Историческая версия не найдена");
+    if (!historical) throw new TargetIntentServiceError(404, "Историческая версия не найдена");
     const ruleRecords = rowsFrom(await connection.execute(
       `SELECT version.id, version.import_id, version.label, version.rule_count,
               rules.source_row_ordinal, rules.rule_key, rules.normalized_key,
@@ -713,7 +920,7 @@ export async function restoreTargetIntent(
       [scope.siteId, scope.dashboardId, sourceVersionId],
     )) as Array<Record<string, unknown>>;
     if (ruleRecords.length !== Number(historical.rule_count) || ruleRecords.length === 0) {
-      throw new Error("Историческая версия повреждена");
+      throw new TargetIntentServiceError(409, "Историческая версия повреждена");
     }
     const rows: TargetIntentImportRow[] = ruleRecords.map((row) => ({
       sourceRowOrdinal: positiveId(row.source_row_ordinal, "source row ordinal"),
@@ -736,8 +943,9 @@ export async function restoreTargetIntent(
     });
     await connection.commit();
     return receipt;
-  } catch {
+  } catch (error) {
     try { await connection.rollback(); } catch { /* Preserve the safe service error. */ }
+    if (error instanceof TargetIntentServiceError) throw error;
     throw new Error("Не удалось восстановить каталог");
   } finally {
     connection.release();
@@ -748,6 +956,7 @@ export async function restorePublishedTargetIntent(
   publicationIdValue: string | number,
   actorValue: string,
   deps: TargetIntentStoreDependencies,
+  operationIdValue: string,
 ): Promise<TargetIntentPublicationReceipt> {
   const scope = scopeFrom(deps);
   const publicationId = positiveId(publicationIdValue, "publicationId");
@@ -762,12 +971,12 @@ export async function restorePublishedTargetIntent(
         LIMIT 1`,
       [scope.siteId, scope.dashboardId, publicationId],
     ));
-    if (!publication) throw new Error("Историческая публикация не найдена");
+    if (!publication) throw new TargetIntentServiceError(404, "Историческая публикация не найдена");
     versionId = String(publication.version_id);
   } finally {
     connection.release();
   }
-  return restoreTargetIntent(versionId, actorValue, deps);
+  return restoreTargetIntent(versionId, actorValue, deps, operationIdValue);
 }
 
 export async function readTargetIntentState(

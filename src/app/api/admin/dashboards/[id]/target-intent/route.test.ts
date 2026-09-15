@@ -5,12 +5,20 @@ import {
   createAdminSession,
   verifyAdminSession,
 } from "@/lib/access-auth";
+import { TargetIntentServiceError } from "@/lib/site-seo-intent-store";
 import { createTargetIntentAdminRouteHandlers } from "./route";
 
-const scope = { siteId: "site-med", dashboardId: 41 } as const;
+const scope = { siteId: "site-med", clientId: "client-med", dashboardId: 41 } as const;
 const context = { params: Promise.resolve({ id: "41" }) };
+const OPERATION_ID = "11111111-1111-4111-8111-111111111111";
 
-function request(path: string, method = "GET", body?: unknown, authenticated = true) {
+function request(
+  path: string,
+  method = "GET",
+  body?: unknown,
+  authenticated = true,
+  origin: string | null = method === "GET" ? null : "http://localhost",
+) {
   return new Request(`http://localhost${path}`, {
     method,
     headers: {
@@ -18,6 +26,7 @@ function request(path: string, method = "GET", body?: unknown, authenticated = t
         ? { cookie: `${ADMIN_SESSION_COOKIE}=${encodeURIComponent(createAdminSession("ADMIN@example.test"))}` }
         : {}),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
+      ...(origin === null ? {} : { origin }),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -78,8 +87,8 @@ test("every handler rejects a non-positive or non-integer dashboard id before sc
   for (const [handler, path, body] of [
     [handlers.GET, "/api/admin/dashboards/0/target-intent", undefined],
     [handlers.preview, "/api/admin/dashboards/0/target-intent/preview", { transport: "google_sheet", source_url: "https://docs.google.com/spreadsheets/d/x" }],
-    [handlers.publish, "/api/admin/dashboards/0/target-intent/publish", { preview_id: "7", label: "Целевой интент" }],
-    [handlers.restore, "/api/admin/dashboards/0/target-intent/restore", { publication_id: "8" }],
+    [handlers.publish, "/api/admin/dashboards/0/target-intent/publish", { preview_id: "7", label: "Целевой интент", operation_id: OPERATION_ID }],
+    [handlers.restore, "/api/admin/dashboards/0/target-intent/restore", { publication_id: "8", operation_id: OPERATION_ID }],
   ] as const) {
     const response = await handler(request(path, body === undefined ? "GET" : "POST", body), invalidContext);
     assert.equal(response.status, 400);
@@ -186,6 +195,7 @@ test("publish rejects browser-selected version identity and restore resolves a s
   const deniedPublish = await handlers.publish(
     request("/api/admin/dashboards/41/target-intent/publish", "POST", {
       preview_id: "7", label: "Мед. интент", version_id: "foreign-version",
+      operation_id: OPERATION_ID,
     }),
     context,
   );
@@ -193,6 +203,7 @@ test("publish rejects browser-selected version identity and restore resolves a s
   const deniedRestore = await handlers.restore(
     request("/api/admin/dashboards/41/target-intent/restore", "POST", {
       version_id: "4",
+      operation_id: OPERATION_ID,
     }),
     context,
   );
@@ -200,20 +211,69 @@ test("publish rejects browser-selected version identity and restore resolves a s
 
   const publishResponse = await handlers.publish(
     request("/api/admin/dashboards/41/target-intent/publish", "POST", {
-      preview_id: "7", label: "Мед. интент",
+      preview_id: "7", label: "Мед. интент", operation_id: OPERATION_ID,
     }),
     context,
   );
   const restoreResponse = await handlers.restore(
     request("/api/admin/dashboards/41/target-intent/restore", "POST", {
-      publication_id: "8",
+      publication_id: "8", operation_id: OPERATION_ID,
     }),
     context,
   );
   assert.equal(publishResponse.status, 200);
   assert.equal(restoreResponse.status, 200);
-  assert.deepEqual(published, { scope, actor: "admin@example.test", previewId: "7", label: "Мед. интент" });
-  assert.deepEqual(restored, { scope, actor: "admin@example.test", publicationId: "8" });
+  assert.deepEqual(published, {
+    scope, actor: "admin@example.test", previewId: "7", label: "Мед. интент", operationId: OPERATION_ID,
+  });
+  assert.deepEqual(restored, {
+    scope, actor: "admin@example.test", publicationId: "8", operationId: OPERATION_ID,
+  });
+});
+
+test("cookie-authenticated mutations require an exact same-origin Origin header", async () => {
+  let mutations = 0;
+  const handlers = createTargetIntentAdminRouteHandlers(baseDependencies({
+    preview: async () => { mutations += 1; return { previewId: "7" }; },
+    publish: async () => { mutations += 1; return { publicationId: "8" }; },
+    restorePublication: async () => { mutations += 1; return { publicationId: "9" }; },
+  }));
+  const cases = [
+    [handlers.preview, "/api/admin/dashboards/41/target-intent/preview", {
+      transport: "upload", filename: "intent.csv", content_base64: Buffer.from("Ключ,Тип совпадения\nHER2,точное\n").toString("base64"),
+    }],
+    [handlers.publish, "/api/admin/dashboards/41/target-intent/publish", {
+      preview_id: "7", label: "Мед. интент", operation_id: OPERATION_ID,
+    }],
+    [handlers.restore, "/api/admin/dashboards/41/target-intent/restore", {
+      publication_id: "8", operation_id: OPERATION_ID,
+    }],
+  ] as const;
+
+  for (const [handler, path, body] of cases) {
+    for (const origin of [null, "https://evil.example"] as const) {
+      const response = await handler(request(path, "POST", body, true, origin), context);
+      assert.equal(response.status, 403);
+      assert.deepEqual(await response.json(), { error: "Недопустимый источник запроса" });
+    }
+    const accepted = await handler(request(path, "POST", body), context);
+    assert.equal(accepted.status, 200);
+  }
+  assert.equal(mutations, 3);
+});
+
+test("publish and restore require a valid browser operation UUID", async () => {
+  const handlers = createTargetIntentAdminRouteHandlers(baseDependencies());
+
+  for (const [handler, path, body] of [
+    [handlers.publish, "/api/admin/dashboards/41/target-intent/publish", { preview_id: "7", label: "Мед. интент" }],
+    [handlers.publish, "/api/admin/dashboards/41/target-intent/publish", { preview_id: "7", label: "Мед. интент", operation_id: "not-a-uuid" }],
+    [handlers.restore, "/api/admin/dashboards/41/target-intent/restore", { publication_id: "8" }],
+    [handlers.restore, "/api/admin/dashboards/41/target-intent/restore", { publication_id: "8", operation_id: "not-a-uuid" }],
+  ] as const) {
+    const response = await handler(request(path, "POST", body), context);
+    assert.equal(response.status, 400);
+  }
 });
 
 test("unexpected failures are logged without returning database, URL, or protected-path details", async () => {
@@ -232,4 +292,27 @@ test("unexpected failures are logged without returning database, URL, or protect
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "Не удалось выполнить операцию с целевым интентом" });
   assert.deepEqual(logged, [["target_intent_get_failed", 41]]);
+});
+
+test("expected publish validation errors retain safe 404, 409, and 422 responses", async () => {
+  for (const [status, message] of [
+    [404, "Предпросмотр не найден"],
+    [409, "Область дашборда изменилась"],
+    [422, "Предпросмотр содержит ошибки и не может быть опубликован"],
+  ] as const) {
+    let logged = false;
+    const handlers = createTargetIntentAdminRouteHandlers(baseDependencies({
+      publish: async () => { throw new TargetIntentServiceError(status, message); },
+      logFailure: () => { logged = true; },
+    }));
+    const response = await handlers.publish(
+      request("/api/admin/dashboards/41/target-intent/publish", "POST", {
+        preview_id: "7", label: "Мед. интент", operation_id: OPERATION_ID,
+      }),
+      context,
+    );
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { error: message });
+    assert.equal(logged, false);
+  }
 });

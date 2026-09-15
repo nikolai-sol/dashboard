@@ -12,6 +12,7 @@ import {
   publishTargetIntent,
   readTargetIntentState,
   restorePublishedTargetIntent,
+  TargetIntentServiceError,
   type TargetIntentScope,
   type TargetIntentSqlConnection,
   type TargetIntentStoreDependencies,
@@ -46,11 +47,13 @@ type TargetIntentRouteDependencies = {
     actor: string;
     previewId: string;
     label: string;
+    operationId: string;
   }): Promise<unknown>;
   restorePublication(input: {
     scope: TargetIntentScope;
     actor: string;
     publicationId: string;
+    operationId: string;
   }): Promise<unknown>;
   logFailure(operation: string, dashboardId: number): void;
 };
@@ -83,6 +86,24 @@ function positiveBodyId(value: unknown): string | null {
   if (!/^\d+$/u.test(text)) return null;
   const parsed = Number(text);
   return Number.isSafeInteger(parsed) && parsed > 0 ? text : null;
+}
+
+function operationBodyId(value: unknown): string | null {
+  const id = String(value ?? "").trim().toLocaleLowerCase("en-US");
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(id)
+    ? id
+    : null;
+}
+
+function isSameOrigin(request: Request): boolean {
+  const supplied = request.headers.get("origin");
+  if (!supplied) return false;
+  try {
+    const parsed = new URL(supplied);
+    return supplied === parsed.origin && parsed.origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
 }
 
 function decodeBoundedBase64(value: unknown): Buffer | null {
@@ -136,14 +157,21 @@ export function createTargetIntentAdminRouteHandlers(deps: TargetIntentRouteDepe
     request: Request,
     context: RouteContext,
     action: (authorized: { actor: string; dashboardId: number; scope: TargetIntentScope }) => Promise<Response>,
+    mutation = false,
   ): Promise<Response> {
     let parsedId = -1;
     try {
       const authorized = await authorizeAndResolve(request, context);
       if ("response" in authorized) return authorized.response;
       parsedId = authorized.dashboardId;
+      if (mutation && !isSameOrigin(request)) {
+        return json({ error: "Недопустимый источник запроса" }, 403);
+      }
       return await action(authorized);
-    } catch {
+    } catch (error) {
+      if (error instanceof TargetIntentServiceError) {
+        return json({ error: error.message }, error.status);
+      }
       deps.logFailure(operation, parsedId);
       return json({ error: "Не удалось выполнить операцию с целевым интентом" }, 500);
     }
@@ -188,6 +216,7 @@ export function createTargetIntentAdminRouteHandlers(deps: TargetIntentRouteDepe
       }
       return json({ error: "Неизвестный способ загрузки" }, 400);
     },
+    true,
   );
 
   const publish = (request: Request, context: RouteContext) => execute(
@@ -196,16 +225,18 @@ export function createTargetIntentAdminRouteHandlers(deps: TargetIntentRouteDepe
     context,
     async ({ actor, scope }) => {
       const body = record(await request.json().catch(() => null));
-      if (!body || !exactFields(body, ["preview_id", "label"])) {
+      if (!body || !exactFields(body, ["preview_id", "label", "operation_id"])) {
         return json({ error: "Запрос содержит недопустимые поля" }, 400);
       }
       const previewId = positiveBodyId(body.preview_id);
       const label = String(body.label ?? "").trim();
-      if (!previewId || !label || label.length > 191) {
+      const operationId = operationBodyId(body.operation_id);
+      if (!previewId || !label || label.length > 191 || !operationId) {
         return json({ error: "Некорректные параметры публикации" }, 400);
       }
-      return json(await deps.publish({ scope, actor, previewId, label }), 200);
+      return json(await deps.publish({ scope, actor, previewId, label, operationId }), 200);
     },
+    true,
   );
 
   const restore = (request: Request, context: RouteContext) => execute(
@@ -214,13 +245,15 @@ export function createTargetIntentAdminRouteHandlers(deps: TargetIntentRouteDepe
     context,
     async ({ actor, scope }) => {
       const body = record(await request.json().catch(() => null));
-      if (!body || !exactFields(body, ["publication_id"])) {
+      if (!body || !exactFields(body, ["publication_id", "operation_id"])) {
         return json({ error: "Запрос содержит недопустимые поля" }, 400);
       }
       const publicationId = positiveBodyId(body.publication_id);
-      if (!publicationId) return json({ error: "Некорректная публикация" }, 400);
-      return json(await deps.restorePublication({ scope, actor, publicationId }), 200);
+      const operationId = operationBodyId(body.operation_id);
+      if (!publicationId || !operationId) return json({ error: "Некорректная публикация" }, 400);
+      return json(await deps.restorePublication({ scope, actor, publicationId, operationId }), 200);
     },
+    true,
   );
 
   return { GET, preview, publish, restore };
@@ -245,8 +278,9 @@ async function resolveProductionScope(id: number): Promise<ScopeResolution> {
     profile?.dashboardId === id && profile?.clientId === row.client_id,
   );
   const siteId = String(registration?.profile?.siteId ?? "").trim();
-  if (!siteId) return { status: "unsupported" };
-  return { status: "ok", scope: { siteId, dashboardId: id } };
+  const clientId = String(row.client_id ?? "").trim();
+  if (!siteId || !clientId) return { status: "unsupported" };
+  return { status: "ok", scope: { siteId, clientId, dashboardId: id } };
 }
 
 function storeDependencies(scope: TargetIntentScope): TargetIntentStoreDependencies {
@@ -269,8 +303,10 @@ export const targetIntentAdminHandlers = createTargetIntentAdminRouteHandlers({
   resolveScope: resolveProductionScope,
   readState: (scope) => readTargetIntentState(storeDependencies(scope)),
   preview: ({ scope, actor, input }) => previewTargetIntent({ ...input, actor }, storeDependencies(scope)),
-  publish: ({ scope, actor, previewId, label }) => publishTargetIntent(previewId, label, actor, storeDependencies(scope)),
-  restorePublication: ({ scope, actor, publicationId }) => restorePublishedTargetIntent(publicationId, actor, storeDependencies(scope)),
+  publish: ({ scope, actor, previewId, label, operationId }) =>
+    publishTargetIntent(previewId, label, actor, storeDependencies(scope), operationId),
+  restorePublication: ({ scope, actor, publicationId, operationId }) =>
+    restorePublishedTargetIntent(publicationId, actor, storeDependencies(scope), operationId),
   logFailure: (operation, id) => console.error(operation, id),
 });
 
