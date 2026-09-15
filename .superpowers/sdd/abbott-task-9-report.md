@@ -1439,3 +1439,40 @@ test/build subprocess sessions exited. This is implementation evidence only, not
 browser installation or live PDF acceptance.
 The refreshed 111 contract tests, contract wiring and public-asset security gates
 also passed before commit.
+
+### Approved browser bootstrap attempt — 2026-09-15 — BLOCKED locally
+
+The clean approved commit `9aaed34feeb9b73b4d177dccab5a2b750776b4c3`
+was pushed with ordinary fast-forward pushes to only
+`refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`.
+Isolated literal remote-ref lookups verified both exact SHAs. No force push or
+other ref change occurred. The local gate counts above remain the approved
+source verification evidence; no implementation changed in this attempt.
+
+The exact reviewed `node scripts/bootstrap-abbott-browser.mjs` invocation
+returned only `ABBOTT_BROWSER_REFUSED`, exit 1. A read-only invocation check
+proved the first local guard rejects inherited key names `GIT_PAGER` and
+`NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S`; their values were not inspected or
+printed. That guard precedes capsule creation and SSH spawn, so no remote
+bootstrap, download, staging, account/cache write, or install was attempted.
+Local bootstrap PID 62611 was independently verified absent (ESRCH). No retry
+or environment workaround was performed. Read-only proof SSH sessions exited.
+
+Full preflight before and after the failed local invocation passed: hostname
+`ybjqbzojln`, root PM2 daemon 1316; dashboard-next ID1/PID3722244/start122353749,
+dashboard-zaruku ID2/PID791065/start131477500, dashboard-medroche
+ID4/PID1870897/start139126198 all retained their recorded UID/GID, cwd and
+release/source identity. Abbott remained ID5/PID542693/start160900613,
+UID982/GID984, source `f80607fbc8a693aa2c720b0976938e88732cdf1a`, release
+`6cd2f12e245a47dcbd5f6ce928c4ed83`; immutable control identity, account and
+secret/rendered-env metadata passed. Its sole listener remained loopback3004,
+direct database health200, with zero Abbott/combined child processes.
+Nginx stayed at SHA-256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+
+STOP: no deploy, attestation-pin edit, smoke, capture or Nginx action followed.
+No new browser/archive stamp, screenshot/diff or PDF parity result is claimed.
+No browser or credential resource was created. No Nginx backup was needed;
+public routing and route-only rollback target remain combined port3001.
+The parent authorized a narrow new-release attestation pin update after a
+successful deploy, but that prerequisite was not reached.
