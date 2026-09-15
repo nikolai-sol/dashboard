@@ -1,9 +1,10 @@
-# Abbott Task 9 — standalone read-only Nginx inventory operational checkpoint
+# Abbott Task 9 — Nginx read outcome separation source checkpoint
 
-Current status: DONE_WITH_CONCERNS. One approved standalone read-only Nginx caller
-at clean0ec4a305 returned names=other, exit1. Local absence checks passed; the
-closed result does not identify the refusal boundary or attest remote state.
-No retry, push, deploy, smoke, capture or Nginx edit occurred. STOP for direction.
+Current status: DONE_WITH_CONCERNS. Source-only follow-up separates successful
+unknown-name analysis from closed reader/authority/metadata/parser/transport
+refusals. Known opaque block names can be diagnosed without visiting contents.
+The previous names=other/exit1 remains unresolved operational evidence, not a
+new host attestation. No retry, push or live action occurred. STOP for review.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4609,3 +4610,70 @@ supplemental remote active/release/lock/journal/browser/neighbor/Nginx hash chec
 were run. The preceding preflight_nginx/unsupported_other remains historical.
 No push, deploy, recovery, smoke, capture, PDF request, Nginx edit or other host
 mutation was attempted. This commit changes sanitized evidence only. STOP.
+
+## Source-only follow-up — distinguish analysis from refusal
+
+Systematic source inspection found the exact ambiguity: the pure analyzer,
+fixed-file reader, remote loader and parent transport all collapsed failures into
+the same names=other result. The CLI then treated every other result as exit1,
+including genuine unknown directive names. The prior live output therefore
+cannot establish which boundary failed; no remote retry or new inference was
+used to choose a production directive or extend deploy acceptance.
+
+TDD changed the diagnostic-only contract. Successful complete analysis retains
+the canonical sorted unique names frame, including other for unknown names and
+none for an empty inventory, now with exit0 after verified owned cleanup. Reader
+failures have an exact one-key reason object; the remote and local protocol emits
+only ABBOTT_NGINX_READ_REFUSED reason=<fixed enum>, exit1. The finite enum covers
+local_authority, local_source, remote_authority, source_frame, remote_import,
+reader, metadata, utf8, parser_ambiguity, transport, framing, cleanup, aborted,
+timeout, unknown. No exception fields are consulted. Partial inventory never
+accompanies a refusal. Invalid/noncanonical/extra frames become framing; stderr
+and unsuccessful SSH remain fatal. Unverified exit/evidence supersedes remote
+outcome with cleanup. Verified local cancellation yields aborted, not a false
+cleanup failure. Source/output buffer clearing and bounded owned PID lifecycle
+are preserved; only the diagnostic source capsule hashes changed.
+
+The shared analyzer has one diagnostic-only exception at existing rejected
+block boundaries: if, types and limit_except in selected TLS or proven literal
+locations contribute only the external fixed name. Their contents are not
+visited, and unknown blocks or ambiguity elsewhere discard the whole result.
+No directive vocabulary expansion was needed. Strict validation has no collector
+and keeps the same rejection and traversal behavior. No deployed/current pins,
+runtime/deploy acceptance, PM2, browser, or Nginx lifecycle was changed.
+
+RED evidence: successful-unknown versus parser refusal; opaque block name versus
+generic fallback; closed refusal framing; reader metadata/authority refusal;
+loader failure versus other. The enum roundtrip additionally caught utf8 being
+incorrectly rejected by a letter-only frame regex, fixed to digits plus the same
+strict finite enum. Independent review found no Critical/Important issues and
+one Minor: verified cancellation was mislabelled cleanup. Its reproduced RED
+test now passes with aborted, while unverified cancellation remains cleanup.
+
+Final gates: new reader/caller21/21; full authority812/812 plus focused Abbott
+app/runtime and12routes/1prefix; contract111/111; differential270 configurations,
+zero deployment acceptance drift. Independent re-review confirmed the Minor
+fixed and no remaining findings. Combined and Abbott builds, deploy-source,
+release-runtime, contract-wiring, public-asset security, root/focused typechecks,
+syntax and whitespace pass. Lint0errors, same10pre-existing warnings. The initial
+workspace typecheck alias did not exist and ran no check; the explicit focused
+tsc command below replaced it and passed. Reproduction commands:
+
+```sh
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run test:abbott-contract
+npm run test:abbott-contract-wiring
+npm run security:public-assets
+npm run test:deploy-source
+npm run test:release-runtime
+npm run build
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+```
+
+No remote calls, live credentials, push, deploy, retry, smoke, capture, PDF,
+Nginx edit, database or neighbor action ran in this follow-up. Test subprocesses
+are local inert fixtures and verify their own exit. Production uncertainty from
+the prior operational entry remains. STOP for independent review before use.

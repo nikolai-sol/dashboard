@@ -5,7 +5,9 @@
 The b273294 live attempt returned `preflight_nginx/unsupported_other` before
 mutation. Supplemental remote release/lock/neighbor checks were not performed;
 that refusal is not a new full host attestation. The following new caller is
-source-only and must be reviewed before any host invocation:
+source-only and must be reviewed before any host invocation. The one approved
+0ec4a305 invocation returned the old ambiguous names=other/exit1; no retry ran.
+The follow-up protocol below remains gated for review:
 
 ```sh
 /usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
@@ -28,17 +30,27 @@ name diagnosis; no installer, lifecycle or deployment function executes.
 Strict deploy validation and name diagnosis use the same private tokenizer and
 TLS/visitor logic. Strict validation remains fail-fast. Batch mode records only
 existing refused directive sites in the selected dashboards TLS server and
-already-proven literal locations. Opaque blocks, malformed syntax, ambiguous
-shared TLS listeners or other analysis failures discard the entire collected
-result. No partial success is returned and no previously refused syntax gains
+already-proven literal locations. Only the known opaque block names if, types,
+and limit_except may be collected at those boundaries: their contents are never
+visited and no nested names are reported. Other opaque blocks, malformed syntax,
+ambiguous shared TLS listeners or other analysis failures discard the entire
+collected result. No partial success is returned and no refused syntax gains
 acceptance. The fixed broad common-directive vocabulary is declared by
 `abbottNginxDiagnosticNames`; unknown names map to `other`. Names are unique and
 lexically sorted, never source order. Arguments, values, paths, offsets, counts,
 hashes, raw config or stderr never enter the result.
 
-Output is one bounded line `ABBOTT_NGINX_UNSUPPORTED names=<closed list>`.
-An empty complete inventory uses `none`; refusal/unknown uses `other`. This is
-diagnostic information only, not a deployment or Nginx validation approval.
+Output is one bounded line `ABBOTT_NGINX_UNSUPPORTED names=<closed list>` with
+exit0 only after completed analysis and verified transport/evidence cleanup.
+An empty complete inventory uses `none`; a genuinely unknown directive name
+uses `other` and is no longer a refusal. Failures use only
+`ABBOTT_NGINX_READ_REFUSED reason=<closed enum>` with exit1. The finite reasons
+are local_authority, local_source, remote_authority, source_frame, remote_import,
+reader, metadata, utf8, parser_ambiguity, transport, framing, cleanup, aborted,
+timeout, and unknown. They never derive from exception text. A valid remote
+refusal is retained only after verified transport/evidence cleanup; unverified
+cleanup supersedes it with cleanup. This is diagnostic information only, not a
+deployment or Nginx validation approval. No refused line includes partial names.
 The parent accepts only canonical sorted unique allowlisted names, verified zero
 SSH exit and private identity cleanup. Source/input/output buffers are zeroed.
 The existing fixed private recovery-evidence directory is exclusively owned for
