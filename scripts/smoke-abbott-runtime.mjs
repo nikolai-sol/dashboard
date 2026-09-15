@@ -10,6 +10,7 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 const ORIGINS = ['http://127.0.0.1:3001','http://127.0.0.1:3004'];
 const RELEASE = '8c79caf495f147ad91b2174b9bc5f65c';
 const SOURCE = '6f09982fb1e8068f02340ddfcb5c945fb02ebfd5';
+const CONTROL_PDF_UNAVAILABLE = Symbol('control_pdf_unavailable_5xx');
 const active = signal => { if(signal?.aborted)fail(); };
 
 export function scanEmbedPrivacy(value) {
@@ -167,7 +168,7 @@ function assetType(p,type) {
 export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},signal,seams={}) {
   signal=AbortSignal.any([signal,AbortSignal.timeout(480000)]);
   const fetchImpl=seams.fetchImpl??fetch,parsePdf=seams.parsePdf??summarizePdf;
-  let checks=0,stage='setup';const summaries=new Map(),inventories=new Map(),assetResults=new Map();
+  let checks=0,stage='setup',controlPdfBaseline;const summaries=new Map(),inventories=new Map(),assetResults=new Map();
   const reject=reason=>{throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),stage,reason);};
   try{
     active(signal);
@@ -185,6 +186,9 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       const type=(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase();
       if(response.status!==200){
         if(kind==='pdf'){
+          if(origin===ORIGINS[0]&&response.status>=500&&response.status<600){
+            await response.body?.cancel();active(signal);checks++;return CONTROL_PDF_UNAVAILABLE;
+          }
           const side=origin===ORIGINS[0]?'control':'candidate';
           const category=response.status>=400&&response.status<500?'4xx':response.status>=500&&response.status<600?'5xx':'other_status';
           reject(`${side}_${category}`);
@@ -202,6 +206,7 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
     }
     async function inspect(origin,endpoint,credential,kind,operation) {
       const result=await request(origin,endpoint,credential,kind);
+      if(result===CONTROL_PDF_UNAVAILABLE)return result;
       try{return await operation(result.bytes,result.type);}finally{result.bytes.fill(0);}
     }
     for(const audience of ['manager','embed'])for(const origin of ORIGINS)for(const alias of ['18','abbott']){
@@ -218,13 +223,21 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
         return summarizeAbbottPayload(data,{audience,administratorExclusionCount});
       });
       stage='pdf_fetch';const pdf=await inspect(origin,'/api/dashboard/'+alias+'/pdf',credential,'pdf',bytes=>{stage='pdf_parse';return parsePdf(bytes,signal);});
+      if(origin===ORIGINS[0]){
+        const outcome=pdf===CONTROL_PDF_UNAVAILABLE?'unavailable_5xx':'available';
+        stage='pdf_compare';if(controlPdfBaseline&&controlPdfBaseline!==outcome)reject('mismatch');controlPdfBaseline=outcome;
+      }
       stage='excel_fetch';const workbook=await inspect(origin,'/api/dashboard/'+alias+'/excel',credential,'excel',bytes=>{stage='excel_parse';return summarizeWorkbook(bytes);});
       stage='asset_html';
       const paths=await inspect(origin,'/dashboard/'+alias,credential,'html',bytes=>{
         let html;try{html=new TextDecoder('utf8',{fatal:true}).decode(bytes);}catch{reject('malformed_html');}
         return assetInventory(html,origin);
       });
-      const combined={summary,pdf,workbook};if(summaries.has(audience))for(const [key,code]of [['summary','json_compare'],['pdf','pdf_compare'],['workbook','excel_compare']]){stage=code;if(!isDeepStrictEqual(summaries.get(audience)[key],combined[key]))reject('mismatch');}summaries.set(audience,combined);
+      const combined={summary,pdf,workbook};if(summaries.has(audience))for(const [key,code]of [['summary','json_compare'],['pdf','pdf_compare'],['workbook','excel_compare']]){
+        const previous=summaries.get(audience)[key];
+        if(key==='pdf'&&(previous===CONTROL_PDF_UNAVAILABLE||pdf===CONTROL_PDF_UNAVAILABLE))continue;
+        stage=code;if(!isDeepStrictEqual(previous,combined[key]))reject('mismatch');
+      }summaries.set(audience,combined);
       stage='asset_html';
       if(inventories.has(origin)&&!isDeepStrictEqual(inventories.get(origin),paths))reject('alias_mismatch');inventories.set(origin,paths);
     }
@@ -242,6 +255,6 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       }
     }
     active(signal);
-    return {status:'passed',period:{from:'2026-09-01',to:'2026-09-13'},aliases:2,audiences:2,checks,pdfs:Object.fromEntries([...summaries].map(([key,value])=>[key,value.pdf])),workbooks:Object.fromEntries([...summaries].map(([key,value])=>[key,hash(JSON.stringify(value.workbook))])),candidate_assets:approved.size,reference_assets:inventories.get(ORIGINS[0]).length};
+    return {status:'passed',verification:controlPdfBaseline==='available'?'strict_parity':'candidate_functional_with_baseline_exception',control_pdf_baseline:controlPdfBaseline,pdf_parity:controlPdfBaseline==='available'?'matched':'not_compared',period:{from:'2026-09-01',to:'2026-09-13'},aliases:2,audiences:2,checks,pdfs:Object.fromEntries([...summaries].map(([key,value])=>[key,value.pdf])),workbooks:Object.fromEntries([...summaries].map(([key,value])=>[key,hash(JSON.stringify(value.workbook))])),candidate_assets:approved.size,reference_assets:inventories.get(ORIGINS[0]).length};
   }catch(error){throw carryDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),error,stage,signal.aborted?'cancelled':'failed');}
 }

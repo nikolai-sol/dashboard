@@ -1,9 +1,10 @@
-# Abbott Task 9 — approved9af24ce smoke stopped at control PDF
+# Abbott Task 9 — degraded control PDF policy awaits review
 
-Status: BLOCKED. Approved9af24ce was published and one smoke returned
+Status: DONE_WITH_CONCERNS. The requested degraded-baseline policy is implemented
+locally and awaits review; no live retry. Approved9af24ce was published and one smoke returned
 `ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=control_5xx` after passing
 the corrected consumer pin gate. Stopped without retry, capture or Nginx action.
-Fresh before/after checks verified unchanged6f09982/8c79 production,
+That run's before/after checks verified unchanged6f09982/8c79 production,
 retainedf80607f/6cd2 backup,9aaed34 quarantine, browser prerequisite, neighbors
 and Nginx. Owned process/port/output cleanup passed. Further parity, six-image
 comparison and cutover remain incomplete. Earlier
@@ -3045,3 +3046,67 @@ retainedf80607f/release6cd2 remains the application rollback target. No new
 screenshot/dimension/diff or complete parity acceptance is claimed. The reviewed
 runbook stop gate and verification-before-completion required fresh state and
 cleanup evidence. Evidence-only commit; BLOCKED after the single approved result.
+
+## Strict degraded control PDF policy — local reviewed-design implementation
+
+After the control_5xx refusal, the owner requested an explicit, narrow baseline
+exception. The proposed exact control-flow/reporting design was approved before
+implementation. It chooses fail-closed mixed control outcomes rather than
+partially accepting a mixed baseline. This changes the smoke acceptance policy;
+it does not diagnose or fix the combined runtime's PDF failure.
+
+Only PDF5xx from literal control3001 can return a private unavailable sentinel,
+after successful body cancellation without reading the error content. All four
+control combinations (manager/embed x aliases18/abbott) must have the same outcome
+class: available200 or unavailable5xx. Mixed outcomes refuse with pdf_compare/
+mismatch. Control4xx/other statuses, redirect/boundary errors, failed cancellation,
+and malformed/non-PDF/unparseable control200 responses remain failures.
+
+All four candidate PDFs remain mandatory200/application-pdf, bounded and parsed
+with the existing real page/dimension/normalized-text checks. Candidate errors
+always refuse; candidate alias semantic differences still refuse even without
+a control baseline. When control is available, strict PDF semantic parity is
+unchanged. JSON/Excel/asset parity, manager-admin acceptance, embed-admin denial,
+recursive privacy, fixed dates, loopback authority and process lifecycle remain
+unchanged. No control error bytes, raw headers or bodies are retained.
+
+Successful reports now explicitly distinguish:
+
+- verification=strict_parity; control_pdf_baseline=available; pdf_parity=matched.
+- verification=candidate_functional_with_baseline_exception;
+  control_pdf_baseline=unavailable_5xx; pdf_parity=not_compared.
+
+The second result is candidate functional verification with a disclosed baseline
+exception, not PDF parity. No sentinel can appear as a candidate PDF summary;
+report PDF summaries are the validated candidate results. The runbook documents
+this distinction and still requires review before any live use or routing work.
+
+TDD RED4/4 initial policy groups reproduced the short-circuit, missing reporting
+and mixed-outcome behavior before implementation. GREEN includes eight new groups:
+all control5xx/candidate success, both mixed-order patterns, candidate status/
+type/body-limit/parse failures, every candidate alias/audience failing separately,
+control4xx/other/cancel refusal, control200 match/mismatch, candidate alias mismatch
+without a baseline, and strict JSON/Excel/assets/privacy under the exception.
+The real route-handler test also verifies uniform combined launch5xx still checks
+all four focused PDF generations and closes every owned fixture browser. Real
+PDF parsing is used by the new functional and semantic regressions. Synthetic
+control bodies expose a failing reader and counted cancellation, proving zero
+content reads; no real credentials/network/browser were used.
+
+Fresh gates: focused59/59; combined verification/comparator173/173; app67/67;
+authority/bootstrap/browser/recovery/deploy/artifact512/512; dashboard contract
+111/111. Production build, exact12-route/1-prefix, wiring, public-asset security,
+sealed2870-file/82-text artifact, both typechecks, syntax and whitespace pass.
+Lint exits0 with0 errors and10 existing warnings. All local commands exited;
+owned-child tests verify reaping. Local3001/3004 listeners and both private
+identity evidence directories are absent. No visual browser session was started.
+
+Brainstorming required approval of the intentional policy change before coding;
+TDD established the failing cases and verification-before-completion required
+fresh gates. No push, SSH/live request, real credential issuance/use, smoke/
+capture invocation, deploy, neighbor, DB/auth/fact/collector/cron or Nginx action
+occurred. Prior evidence commit0c2f737 is preserved; published refs remain9af24ce.
+Last verified deployed6f09982/release8c79 and retainedf80607f/release6cd2 rollback
+are unchanged by this local work, with no new host-state claim. The control PDF
+cause and visual/routing gates remain unresolved. DONE_WITH_CONCERNS; STOP for
+review before any live retry.

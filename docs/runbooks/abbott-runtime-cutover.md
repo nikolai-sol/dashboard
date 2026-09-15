@@ -771,14 +771,41 @@ a frame, forged/oversized output, outer import/runtime exceptions and a valid
 remote reason. Every refusal precedes credential issuance and uses the existing
 forward-loss/cleanup path. No automatic retry or standalone remote probe is added.
 
+### Degraded control PDF baseline policy — STOP for review, no live use
+
+After the approved9af24ce smoke stopped at control_5xx, the requested local policy
+permits only a narrowly labeled unavailable control PDF baseline. Do not use this
+policy live until this exact source checkpoint is reviewed and approved.
+
+Only PDF5xx responses from literal control port3001 may produce the private
+unavailable sentinel, and only after their body is canceled without reading it.
+Control4xx/other statuses, redirects, cancellation failures, malformed control200
+PDFs and all candidate failures still refuse. The four control combinations
+(manager/embed and aliases18/abbott) must all be available or all unavailable;
+mixed outcomes fail closed. All four candidate PDFs must independently be200,
+application/pdf, bounded and parse-valid, and candidate aliases must agree.
+Available control PDFs retain strict normalized page/dimension/text comparison.
+JSON, Excel, assets, administration and recursive embed privacy remain strict.
+
+The report distinguishes `verification: strict_parity`,
+`control_pdf_baseline: available`, `pdf_parity: matched` from
+`verification: candidate_functional_with_baseline_exception`,
+`control_pdf_baseline: unavailable_5xx`, `pdf_parity: not_compared`.
+The latter is candidate functional verification with an explicit exception,
+never a claim of PDF parity. No raw response/status/body is retained. Overall
+smoke may pass with this labeled exception; all subsequent visual and routing
+review gates remain in force. There is no automatic retry or control-runtime fix.
+
 The in-process consumer performs GET only on both literal loopback origins for
 both aliases `18`/`abbott`, both audiences, and the fixed period. Manager admin
 reads must succeed; embed admin reads must return 401/403. JSON aliases must match
 the existing redacted payload contract and parity; embed JSON additionally gets
 a recursive private-identifier/collection scan. Both Excel aliases are parsed and
-compared using the existing redacted workbook semantics. PDF responses must be 200 with
-the PDF content type and valid parse, equal page counts/dimensions and normalized
-text digest. PDF metadata/compression bytes are not compared. Installed Poppler
+compared using the existing redacted workbook semantics. Candidate PDF responses
+must be200 with the PDF content type and valid parse; available control PDFs must
+also have equal page counts/dimensions and normalized text digest. The uniform
+control5xx exception is governed solely by the reviewed policy above. PDF
+metadata/compression bytes are not compared. Installed Poppler
 26.04.0 at its exact `/opt/homebrew/Cellar/poppler/26.04.0/bin` paths receives PDF
 bytes only through bounded stdin/stdout pipes; raw PDF/text never reaches files,
 arguments, diagnostics, or the report. Parser children are reaped on abort.

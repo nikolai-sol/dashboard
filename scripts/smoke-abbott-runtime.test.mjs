@@ -232,6 +232,112 @@ function fixture(change=()=>{}) {
   return {requests,bodies,manifest,fetchImpl};
 }
 
+function pdfPolicyFixture(statuses=[500,502,503,599],change=()=>{}) {
+  const f=fixture(r=>{if(r.u.port==='3004'&&r.u.pathname.endsWith('/pdf'))change(r);});
+  let cancelled=0,read=0,controls=0;const candidates=[];
+  const fetchImpl=async(url,options)=>{
+    if(url.pathname.endsWith('/pdf')){
+      if(url.port==='3004')candidates.push([url.pathname.split('/')[3],url.searchParams.has('embed_key')?'embed':'manager']);
+      if(url.port==='3001'){
+        const status=statuses[controls++];
+        if(status!==200)return {status,redirected:false,url:url.href,headers:new Headers({'content-type':'text/private-error'}),body:{
+          async cancel(){cancelled++;},getReader(){read++;throw Error('private-control-body');},
+        }};
+      }
+    }
+    return f.fetchImpl(url,options);
+  };
+  return {...f,fetchImpl,counts:()=>({cancelled,read,controls,candidates})};
+}
+
+test('uniform control PDF5xx cancels unread bodies and validates all candidate PDFs with explicit exception',async()=>{
+  const m=await api(),f=pdfPolicyFixture();
+  const result=await m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
+  assert.equal(result.status,'passed');assert.equal(result.control_pdf_baseline,'unavailable_5xx');assert.equal(result.pdf_parity,'not_compared');
+  assert.equal(result.verification,'candidate_functional_with_baseline_exception');
+  assert.deepEqual(f.counts(),{cancelled:4,read:0,controls:4,candidates:[['18','manager'],['abbott','manager'],['18','embed'],['abbott','embed']]});
+  assert.equal(result.pdfs.manager.pages,1);assert.equal(result.pdfs.embed.pages,1);
+  assert.doesNotMatch(JSON.stringify(result),/private|inert|https|access_token/);
+});
+
+test('control PDF outcome must be uniformly available or uniformly5xx',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const statuses of [[200,500,500,500],[500,500,200,500]]){
+    const f=pdfPolicyFixture(statuses);
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl}),error=>{
+      assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=mismatch\n');return true;
+    });assert.equal(f.counts().read,0);
+  }
+});
+
+test('unavailable control PDF never exempts candidate status type bounds or parse validity',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const [kind,stage,reason]of [['status','pdf_fetch','candidate_5xx'],['forbidden','pdf_fetch','candidate_4xx'],['other','pdf_fetch','candidate_other_status'],['type','pdf_fetch','content_type'],['limit','pdf_fetch','body_limit'],['parse','pdf_parse','failed']]){
+    const f=pdfPolicyFixture(undefined,r=>{if(kind==='status')r.status=503;if(kind==='forbidden')r.status=403;if(kind==='other')r.status=201;if(kind==='type')r.type='text/private';if(kind==='parse')r.body='private-not-pdf';});
+    const fetchImpl=async(url,options)=>{const response=await f.fetchImpl(url,options);if(kind==='limit'&&url.port==='3004'&&url.pathname.endsWith('/pdf'))response.headers.set('content-length',String(32*1024*1024+1));return response;};
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl}),error=>{
+      assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=${reason}\n`);return true;
+    });assert.equal(f.counts().read,0);assert.ok(f.counts().candidates.length>0);
+  }
+});
+
+test('available control PDFs keep strict semantic parity and an explicit matched report',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const mismatch of [false,true]){
+    const f=pdfPolicyFixture([200,200,200,200],r=>{if(mismatch)r.body=pdf('different candidate text');});
+    const pending=m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
+    if(mismatch)await assert.rejects(pending,error=>{assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=mismatch\n');return true;});
+    else{const result=await pending;assert.equal(result.control_pdf_baseline,'available');assert.equal(result.pdf_parity,'matched');assert.equal(result.verification,'strict_parity');assert.equal(f.counts().candidates.length,4);}
+  }
+});
+
+test('every candidate PDF alias and audience remains mandatory with an unavailable baseline',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const [alias,audience]of [['18','manager'],['abbott','manager'],['18','embed'],['abbott','embed']]){
+    const f=pdfPolicyFixture(undefined,r=>{if(r.u.pathname===`/api/dashboard/${alias}/pdf`&&r.u.searchParams.has('embed_key')===(audience==='embed'))r.status=503;});
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl}),error=>{
+      assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=candidate_5xx\n');return true;
+    });assert.deepEqual(f.counts().candidates.at(-1),[alias,audience]);assert.equal(f.counts().read,0);
+  }
+});
+
+test('control4xx other statuses and unsuccessful body cancellation cannot grant the exception',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const [kind,reason]of [['4xx','control_4xx'],['other','control_other_status'],['cancel','failed']]){
+    const f=pdfPolicyFixture(kind==='4xx'?[403]:kind==='other'?[201]:undefined);
+    const fetchImpl=async(url,options)=>{const response=await f.fetchImpl(url,options);if(kind==='cancel'&&url.port==='3001'&&url.pathname.endsWith('/pdf'))response.body.cancel=async()=>{throw Error('private-cancel');};return response;};
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl}),error=>{
+      assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=${reason}\n`);return true;
+    });assert.equal(f.counts().read,0);
+  }
+});
+
+test('candidate PDF aliases still compare semantically without a control baseline',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  const f=pdfPolicyFixture(undefined,r=>{if(r.u.pathname==='/api/dashboard/abbott/pdf')r.body=pdf('alias differs');});
+  await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl}),error=>{
+    assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=mismatch\n');return true;
+  });
+});
+
+test('baseline exception preserves strict JSON Excel asset and embed privacy gates',async()=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
+  for(const [kind,stage]of [['json','json_compare'],['excel','excel_compare'],['asset','asset_attestation'],['privacy','privacy_shape']]){
+    const f=pdfPolicyFixture();
+    const fetchImpl=async(url,options)=>{
+      const response=await f.fetchImpl(url,options);let body;
+      if(kind==='json'&&url.port==='3004'&&/^\/api\/dashboard\/(18|abbott)$/.test(url.pathname)){body=await response.json();body.kpi.total_clicks=7;body=JSON.stringify(body);}
+      if(kind==='privacy'&&url.searchParams.has('embed_key')&&/^\/api\/dashboard\/(18|abbott)$/.test(url.pathname)){body=await response.json();body.abbott_bi.private={user_id:'private-user'};body=JSON.stringify(body);}
+      if(kind==='excel'&&url.port==='3004'&&url.pathname.endsWith('/excel')){const book=new ExcelJS.Workbook();book.addWorksheet('fixture').addRow([1]);body=await book.xlsx.writeBuffer();}
+      if(kind==='asset'&&url.port==='3004'&&url.pathname.endsWith('.js'))body='private-asset-mismatch';
+      return body===undefined?response:new Response(body,{status:200,headers:response.headers});
+    };
+    await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl}),error=>{
+      const diagnostic=d.formatVerificationFailure(error);assert.match(diagnostic,new RegExp(`^ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=(mismatch|failed)\\n$`));assert.doesNotMatch(diagnostic,/private/);return true;
+    });assert.equal(f.counts().read,0);
+  }
+});
+
 async function actualPdfFixture(t) {
   // Execute the real pinned handlers/auth code. Only database/browser I/O and
   // the fixed animation wait are stubbed; no socket or real browser is opened.
@@ -314,12 +420,16 @@ test('smoke GET/body/auth/date contract executes both real pinned PDF handlers f
   assert.equal(result.pdfs.manager.pages,1);assert.deepEqual(result.pdfs.manager,result.pdfs.embed);
 });
 
-test('real PDF authorization/render failures give only the closed origin/status class after cleanup',async(t)=>{
+test('real PDF handlers preserve hard failures and explicitly report uniform control5xx after cleanup',async(t)=>{
   const m=await api(),d=await import('./abbott-verification-diagnostics.mjs'),f=await actualPdfFixture(t);
   for(const port of ['3001','3004'])for(const kind of ['4xx','5xx']){
     f.refuse({port,kind});
-    const error=await m.runReadOnlySmoke(f,new AbortController().signal,{fetchImpl:f.fetchImpl}).catch(e=>e);
-    assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=${port==='3001'?'control':'candidate'}_${kind}\n`);
+    const before=f.counts().generated;
+    const result=await m.runReadOnlySmoke(f,new AbortController().signal,{fetchImpl:f.fetchImpl}).catch(e=>e);
+    if(port==='3001'&&kind==='5xx'){
+      assert.equal(result.status,'passed');assert.equal(result.control_pdf_baseline,'unavailable_5xx');assert.equal(result.pdf_parity,'not_compared');
+      assert.equal(result.verification,'candidate_functional_with_baseline_exception');assert.equal(f.counts().generated-before,4);
+    }else assert.equal(d.formatVerificationFailure(result),`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=${port==='3001'?'control':'candidate'}_${kind}\n`);
     assert.equal(f.counts().launches,f.counts().closed);
   }
 });
