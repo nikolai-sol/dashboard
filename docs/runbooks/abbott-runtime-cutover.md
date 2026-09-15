@@ -1,5 +1,36 @@
 # Abbott isolated-runtime cutover runbook
 
+### Bounded rate-limiter preflight grammar — STOP for review
+
+The approved first-rejection read identified top_limit_req_zone only. The
+validator follow-up permits the following intentionally bounded subset of the
+[official limit_req module grammar](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html).
+This is source-only and does not authorize deployment or any Nginx mutation.
+
+Only top-level non-block limit_req_zone declarations are added: one literal key
+(1–128 ASCII alphanumeric/underscore/dot/hyphen characters) or one simple variable
+(identifier up to128 characters), exactly one zone=name:size and one rate=Nr/s
+or rate=Nr/m, in either order after the key. Zone names start with a letter or
+underscore and contain at most64 letters/digits/underscores/hyphens. Sizes use
+positive decimal bytes or k/K/m/M and must be64KiB–1GiB; numeric size component
+has at most10digits. Rates are positive decimal integers at most1,000,000.
+At most64 unique declarations are permitted. Empty/combined/encoded/route-like
+keys, duplicate zones/args, blocks, includes, unknown options, dynamic rate/zone,
+sync, and the existing Abbott/3004 markers remain refused.
+
+Within the selected TLS server and proven literal locations, limit_req requires
+exactly one literal zone matching a valid top-level declaration. It may add one
+burst=1..1,000,000 and either nodelay or delay=1..1,000,000. Explicit delay=0 is
+invalid; omission uses Nginx's default. One zone cannot be applied twice in the
+same server/location context, but distinct zones and parent/child applications
+remain permitted. Duplicate/conflicting options, variables, unknown args, blocks
+and context misuse refuse. This follows the module's
+[argument and per-context duplicate checks](https://github.com/nginx/nginx/blob/master/src/http/modules/ngx_http_limit_req_module.c).
+No rate
+limiter directive is synthesized or changed on the host. Snapshot metadata/hash
+capture and exact rechecks are unchanged; a rate-only drift also refuses.
+All other top-level nodes and existing route/TLS checks keep their restrictions.
+
 ### Standalone read-only Nginx first-rejection classifier — STOP for review
 
 The b273294 live attempt returned `preflight_nginx/unsupported_other` before

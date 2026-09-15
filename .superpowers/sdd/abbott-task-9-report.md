@@ -1,9 +1,9 @@
-# Abbott Task 9 — first rejection operational checkpoint
+# Abbott Task 9 — bounded rate-limiter grammar source checkpoint
 
-Current status: DONE_WITH_CONCERNS. One approved read-only invocation at clean
-fafe1b0 returned top_limit_req_zone, exit0, with verified owned cleanup. This
-identifies only the first rejected directive, not deployment/Nginx acceptance.
-No retry or other live action occurred. STOP for direction.
+Current status: DONE_WITH_CONCERNS. Source-only bounded limit_req_zone and
+selected limit_req validation follows the proven top_limit_req_zone blocker.
+No production call, push, deploy or Nginx mutation occurred. STOP for independent
+review; actual production compatibility and later gates are not yet attested.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4868,3 +4868,72 @@ or selected TLS acceptance is established by first-failure analysis. No remote
 supplemental release/neighbor/Nginx hash/state inventory was run. No retry, push,
 deploy, recovery, smoke, capture, PDF request, Nginx edit or other host mutation
 occurred. Evidence-only local commit; STOP for direction.
+
+## Source-only bounded request-rate declarations and applications
+
+Parent authorized this one non-routing grammar addition after the exact
+top_limit_req_zone evidence. Public official documentation and module source
+were read (no production access):
+[module grammar](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html),
+[argument/duplicate checks](https://github.com/nginx/nginx/blob/master/src/http/modules/ngx_http_limit_req_module.c).
+The validator accepts an intentionally bounded subset, not every Nginx option.
+
+Top-level non-block limit_req_zone must have exactly a nonempty bounded literal
+key or one simple variable, one literal zone=name:size and one positive literal
+rate=Nr/s or rate=Nr/m. Names/key syntax and bounds are recorded in the runbook;
+zone size64KiB–1GiB, rate at most1,000,000 and at most64unique zones. Invalid,
+duplicate/missing declarations, unsupported size/rate formats, route-looking or
+encoded keys, sync, dynamic parameters and all other top-level constructs refuse.
+Selected server/proven-location limit_req must reference a declared zone; only
+bounded positive burst/delay or nodelay is permitted, with no conflicting or
+duplicate options. A zone cannot be applied twice in one context. Distinct zones
+and normal parent/child use remain valid. No declaration/application is created
+or edited on the host; this only attests already-existing snapshot syntax.
+
+RED/GREEN: valid bounded fixture originally refused, then passed; adversarial
+grammar tests cover blocks, malformed/missing/duplicate args, undeclared zones,
+variables, rate/size/name bounds and context misuse. Snapshot proof tests verify
+rate-only drift still refuses and malformed input stops before process/mutation
+actions. An initial test incorrectly expected active/browser callbacks before
+the Nginx rejection; actual existing preflight refuses earlier with zero such
+callbacks. The assertion was corrected to the stricter observed ordering.
+
+Independent review found one Important (same-zone application duplicates) and
+one Minor (numeric1GiB endpoint). Both were reproduced RED and fixed. Inspection
+of official C source also established that explicit delay=0 is invalid despite
+the omitted default; an added RED/GREEN regression tightened explicit delay to
+positive values. The size suffix and decimal byte endpoint now agree. No remote
+experiment was used for these fixes.
+
+Final verification:35/35 focused,828/828 full authority plus Abbott app/runtime
+and12routes/1prefix. Independent re-review confirmed both findings fixed and no
+remaining findings, independently running35/35. Abbott and combined builds,
+root/focused typechecks, deploy-source/release-runtime, source syntax and
+whitespace passed; lint0errors with the same10pre-existing warnings. Owned test
+sessions completed and private deployment/recovery evidence is absent. Commands:
+
+```sh
+node --test scripts/abbott-nginx-readonly.test.mjs scripts/read-abbott-nginx.test.mjs
+npm run test:abbott-runtime
+npm run typecheck
+./node_modules/.bin/tsc --noEmit -p apps/abbott/tsconfig.json
+npm run lint
+npm run test:deploy-source
+npm run test:release-runtime
+npm run build
+node --check scripts/runtime-release-remote.mjs
+node --check scripts/read-abbott-nginx.mjs
+git diff --check
+```
+
+The original279 differential cases retain exact acceptance and diagnostic
+sequences;16additional explicitly documented safe rate-limit cases alone change
+from rejected to accepted. Snapshot/metadata/hash rechecks, exact selected TLS,
+route/alias guards, deployed/current release pins and lifecycle are unchanged.
+Only the diagnostic analysis source hash was updated alongside changed parser
+bytes; reader hash and SSH configuration are unchanged. No source OAuth/env,
+credentials, raw config or production rows were read or emitted.
+
+No production SSH/read, push, deploy, retry, smoke, capture, PDF, Nginx edit,
+DB/auth/collector/cron or neighbor action occurred. Production uncertainty after
+the historical first rejection remains; STOP for independent review before use.

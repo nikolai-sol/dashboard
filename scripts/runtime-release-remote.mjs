@@ -28,8 +28,20 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     // Names are diagnostic vocabulary only, never an acceptance allowlist.
     const unsupportedName=(n,selected=false)=>selected&&['location','proxy_pass','return','add_header','root','alias','index','try_files','error_page','proxy_redirect','proxy_cache','ssl_ecdh_curve','ssl_conf_command','client_body_buffer_size','charset','gzip_vary','if'].includes(n.name)?'unsupported_'+n.name:'unsupported_other';
     const unsupported=(n,selected=false)=>n.name==='include'?'include':['set','map','rewrite'].includes(n.name)?'variable_routing':n.name==='server'?'nested_server':unsupportedName(n,selected);
-    if(nodes.some(n=>n.name!=='server'||!n.block||n.args.length)){
-      const n=nodes.find(n=>n.name!=='server'||!n.block||n.args.length),containsServer=n=>n.children.some(c=>c.name==='server'||containsServer(c));
+    // Deliberately bounded subset of ngx_http_limit_req_module, never routing.
+    // sync and dynamic rate/zone/option values are not supported by this gate.
+    const zones=new Set(),zoneNodes=new Set();
+    for(const n of nodes){if(n.name!=='limit_req_zone'||n.block||n.args.length!==3)continue;
+      const [key,...options]=n.args;if(!/^(?:[A-Za-z0-9_.-]{1,128}|\$[A-Za-z_][A-Za-z0-9_]{0,127})$/.test(key))continue;
+      const declarations=options.filter(v=>v.startsWith('zone=')),rates=options.filter(v=>v.startsWith('rate='));
+      if(declarations.length!==1||rates.length!==1)continue;
+      const z=/^zone=([A-Za-z_][A-Za-z0-9_-]{0,63}):([1-9][0-9]{0,9})([kKmM]?)$/.exec(declarations[0]),r=/^rate=([1-9][0-9]{0,6})r\/[sm]$/.exec(rates[0]);
+      if(!z||!r||Number(r[1])>1000000)continue;const size=Number(z[2])*({k:1024,m:1048576}[z[3].toLowerCase()]??1);
+      if(size<65536||size>1073741824||zones.has(z[1])||zones.size>=64)continue;zones.add(z[1]);zoneNodes.add(n);
+    }
+    const invalidTop=n=>!zoneNodes.has(n)&&(n.name!=='server'||!n.block||n.args.length);
+    if(nodes.some(invalidTop)){
+      const n=nodes.find(invalidTop),containsServer=n=>n.children.some(c=>c.name==='server'||containsServer(c));
       if(onFirstRejection&&n.name!=='server'){const containsServerBlock=node=>node.children.some(c=>c.name==='server'&&c.block||containsServerBlock(c));if(!containsServerBlock(n))onFirstRejection('top',n.name);}
       refuse(containsServer(n)?'nested_server':unsupported(n));
     }
@@ -41,13 +53,20 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     // Every other same-host block must be explicitly confined to non-SSL port80.
     for(const n of hostBlocks.filter(n=>n!==targets[0])){const listens=n.children.filter(x=>x.name==='listen');if(!listens.length||listens.some(x=>x.block||x.args.includes('ssl')||! /^(?:80|\[::\]:80|[0-9.]+:80)$/.test(x.args[0])))fail();}
     const passive=new Set(['listen','server_name','ssl_certificate','ssl_certificate_key','ssl_protocols','ssl_ciphers','ssl_prefer_server_ciphers','ssl_session_cache','ssl_session_timeout','ssl_session_tickets','ssl_dhparam','ssl_stapling','ssl_stapling_verify','ssl_trusted_certificate','resolver','resolver_timeout','access_log','error_log','client_max_body_size','client_body_timeout','send_timeout','keepalive_timeout','proxy_http_version','proxy_set_header','proxy_read_timeout','proxy_connect_timeout','proxy_send_timeout','proxy_buffering','proxy_request_buffering','proxy_cache_bypass','proxy_no_cache','proxy_buffers','proxy_buffer_size','proxy_busy_buffers_size','add_header','expires','etag','gzip','gzip_types']);
+    const validLimit=n=>{if(n.block||n.args.length<1||n.args.length>3)return false;const seen=new Set();let name;
+      for(const arg of n.args){if(arg==='nodelay'){if(seen.has('delay'))return false;seen.add('delay');continue;}
+        const m=/^(zone|burst|delay)=(.+)$/.exec(arg);if(!m||seen.has(m[1]))return false;seen.add(m[1]);
+        if(m[1]==='zone'){if(!/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(m[2]))return false;name=m[2];}
+        else if(!/^[1-9][0-9]{0,6}$/.test(m[2])||Number(m[2])>1000000)return false;
+      }return name&&zones.has(name)?name:null;};
     const unrelatedPath=(literal,diagnostic)=>{
       if(literal&&(literal.includes('//')||path.posix.normalize(literal)!==literal))refuse(diagnostic);
       const segments=literal.toLowerCase().split('/').filter(Boolean);
       if(segments.some((part,i)=>part==='_next-abbott'||part==='dashboard'&&(segments[i+1]==='abbott'||Number(segments[i+1])===18)))refuse('existing_abbott_route');
     };
-    const visit=(list,context='root',selected=false,location=null)=>{for(const n of list){try{nginxReason('unknown');let childLocation=location;const active=selected||n===targets[0],args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))refuse(/abbott/i.test(n.name+' '+args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args)?'existing_abbott_route':'existing_3004');
+    const visit=(list,context='root',selected=false,location=null)=>{const appliedZones=new Set();for(const n of list){try{nginxReason('unknown');let childLocation=location;const active=selected||n===targets[0],args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))refuse(/abbott/i.test(n.name+' '+args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args)?'existing_abbott_route':'existing_3004');
       // Includes are outside this single-file snapshot: never silently authorize them.
+      if(n.name==='limit_req_zone'&&(context!=='root'||!zoneNodes.has(n))||n.name==='limit_req'&&!['server','location'].includes(context))refuse(unsupported(n,active));
       if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))refuse(unsupported(n,active));
       if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))refuse(unsupported(n,active));
       if(active&&n.name!=='server'){
@@ -65,6 +84,8 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
           // Prefix replacement appends unmatched request bytes. Only identity
           // replacement is provable here; other static rewrites require exact locations.
           if(uri&&!location.exact&&uri!==location.literal)refuse(unsupportedName(n,active));
+        }else if(n.name==='limit_req'){
+          const name=validLimit(n);if(!name||appliedZones.has(name))refuse(unsupported(n,active));appliedZones.add(name);
         }else if(n.name==='return'){
           if(n.args.length!==1||! /^[1-5][0-9]{2}$/.test(n.args[0]))refuse(args.includes('$')?'variable_routing':unsupportedName(n,active));
         }else if(n.name==='add_header'){
