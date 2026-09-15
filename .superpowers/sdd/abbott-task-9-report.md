@@ -1,9 +1,9 @@
-# Abbott Task 9 — bounded rate-limiter grammar source checkpoint
+# Abbott Task 9 — acknowledged preflight refusal: include
 
-Current status: DONE_WITH_CONCERNS. Source-only inactive-vhost compatibility
-correction scopes the new rate-limiter guard to the selected TLS server.
-No production call, push, deploy or Nginx mutation occurred. STOP for independent
-review; actual production compatibility and later gates are not yet attested.
+Current status: BLOCKED. Approved clean c80d7c2 was published to both authorized
+refs. Exactly one deploy invocation returned the acknowledged closed refusal
+preflight_nginx/include before mutation. No retry or Nginx change followed;
+complete runtime/perimeter post-attestation was not reached. Details below.
 
 ## Previous source checkpoint — proxy URI aliases
 
@@ -4983,3 +4983,52 @@ pins, SSH configuration, snapshot and runtime lifecycle are unchanged. All
 owned test sessions completed; no browser or SSH resource was started. No
 push, live read, deploy, smoke, capture, PDF, Nginx, DB/auth, collector/cron or
 neighbor action occurred. STOP for independent re-review before operational use.
+## Approved operational checkpoint at c80d7c2 — include refusal
+
+Verified exact clean HEAD
+`c80d7c2c505b892427a6ad1ffbf2143435493dc1`, real isolated worktree and expected
+Git directory. Local origin matched the fixed repository; push URL, rewrite,
+include, mirror and worktree-config redirection were absent. An isolated Git
+lookup outside every repository, with system/global config disabled, resolved
+only the two authorized literal refs. Both prior SHAs were ancestors of the
+approved HEAD. Ordinary non-force pushes updated only
+refs/heads/codex/abbott-runtime-isolation and refs/heads/release/abbott, and a
+second isolated lookup verified both exact SHAs. The owned empty lookup directory
+was removed. No other ref was pushed.
+
+Exactly one command ran from that clean active worktree:
+
+```sh
+/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott
+```
+
+Exit1, exact closed line:
+
+`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=include`
+
+The initial read-only inspect reached the fixed Nginx parser and refused before
+neighbor snapshot discovery, current-record/full-artifact/browser verification,
+lock inspection/creation, account subprocesses, PM2 or candidate build/activation.
+No runtime, routing or neighbor mutation occurred in this invocation. The result
+does not reveal include arguments, paths or contents, or imply any particular
+included configuration is safe. No acceptance adjustment or follow-up host read
+was attempted.
+
+Accepted REFUSED requires the strict digest/status/diagnostic-paired terminal
+ACK plus owned SSH PID/start capture, observed/verified exit and private identity
+evidence cleanup. Source/request buffers were zeroed by the reviewed session.
+The deploy command exited; local-only checks verified both fixed private deploy
+and recovery evidence directories absent and no local3001/3004 listeners. No
+forward/browser/credential session or candidate temporary boot process started.
+
+Limitations: no new release/source/control/manifest/previous values exist from
+this refused transaction. Historical6f09982/8c79 and predecessor f80607f/6cd2 are
+not promoted to fresh evidence. Existing remote lock/journal/temp absence, direct
+health3004 and complete current/neighbor/Nginx unchanged comparison were not
+independently checked: the embedded preflight stopped earlier. No supplemental
+unreviewed verifier was used. These requested post-attestation checks remain
+unperformed, not assumed passed.
+
+No retry, recovery, smoke, capture, PDF, credential issuance, DB/auth/fact,
+collector/cron, neighbor operation or Nginx edit/reload occurred. No pins changed.
+Route-only rollback remains3001. STOP for direction at preflight_nginx/include.
