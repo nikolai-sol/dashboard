@@ -182,7 +182,14 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       if(response.redirected||response.url&&new URL(response.url).origin!==origin)reject('boundary');
       if(denied){if(![401,403].includes(response.status))reject('status');await response.body?.cancel();checks++;return null;}
       const type=(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase();
-      if(response.status!==200)reject(kind==='html'?'http_status':'status');
+      if(response.status!==200){
+        if(kind==='pdf'){
+          const side=origin===ORIGINS[0]?'control':'candidate';
+          const category=response.status>=400&&response.status<500?'4xx':response.status>=500&&response.status<600?'5xx':'other_status';
+          reject(`${side}_${category}`);
+        }
+        reject(kind==='html'?'http_status':'status');
+      }
       if((kind==='json'&&type!=='application/json')||(kind==='html'&&type!=='text/html')||(kind==='pdf'&&type!=='application/pdf')||(kind==='excel'&&type!=='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')||(kind==='asset'&&!assetType(endpoint,type)))reject('content_type');
       if(kind!=='asset'&&(!/private/.test(response.headers.get('cache-control')??'')||!/no-store/.test(response.headers.get('cache-control')??'')))reject('cache_policy');
       const max=kind==='pdf'?32*1024*1024:16*1024*1024;

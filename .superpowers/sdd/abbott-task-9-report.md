@@ -1189,3 +1189,76 @@ Public routing and its route-only rollback target remain port 3001. No neighbor
 restart/release, DB/admin/auth/fact mutation, migration, collector/cron change or
 credential rotation occurred. STOP at the failed PDF status gate. This sanitized
 evidence-only commit is local/unpushed.
+
+### PDF source-contract diagnosis and bounded origin/status diagnostics — STOP for review
+
+Inspected the exact combined PDF source at
+`8f389a28df1c4b741ec33b7538f0354b74f5a40e` and focused handler at deployed
+`f80607fbc8a693aa2c720b0976938e88732cdf1a`, alongside smoke and shared request/auth
+code. Both routes export GET and use query-string dates; neither has a POST/body
+schema. Smoke already sends GET with no body, exact aliases, the fixed
+`2026-09-01..2026-09-13` dates, manager cookie or embed key, and redirect refusal.
+Both handlers preserve dates into the rendered dashboard URL, derive export
+tokens with the authorized audience, and retain manager credential_version.
+Focused internal URL defaults to loopback3004; combined defaults to loopback3001.
+No deterministic method/body/date/auth contract mismatch was found. No request
+or application behavior was changed speculatively.
+
+Added actual-handler integration tests, not a replacement PDF response schema.
+Tests hash-check current handler source against the exact pinned Git blobs,
+execute both real handler/auth/store-read paths using the smoke-built Request,
+and stub database/browser I/O. All eight alias/audience/origin combinations return
+the real route's PDF response; existing Poppler pipe parsers verify the synthetic
+render bytes. Tests assert no request body, exact GET/query fields, real signed
+manager-cookie acceptance, embed acceptance, export audience/version/date
+propagation, PDF headers, and closure of every fixture browser. Only SELECT
+fixtures are available; database writes/connections are refused.
+
+The first local integration-test shim intercepted Puppeteer's ESM singleton but
+not its separate CJS singleton used by tsx's TS handlers. Its failure occurred
+before fixture launch was called, so a real local browser launch could be reached
+in those initial test attempts; exact transient browser PIDs were not captured.
+No production tunnel or real credential was used. Corrected the ESM/CJS seams,
+then independently verified zero local Puppeteer/Chrome-for-Testing/headless-shell
+processes remained. The final fixture additionally guards child spawning at both
+CJS/ESM built-in bindings, permitting only the two fixed Poppler executables and
+refusing a browser child before spawn. Both actual-handler tests pass with this
+guard. The original route's finally path returned, and no process was killed.
+
+Per review direction, PDF response-status refusals now distinguish only closed
+origin/classes: control_4xx, control_5xx, candidate_4xx, candidate_5xx, and
+control_other_status/candidate_other_status. Control/candidate derive solely from
+the fixed 3001/3004 origins. No exact HTTP number, header/body, URL, alias, audience
+or exception property is emitted. Existing PDF type/body limits remain unchanged.
+TDD RED proved the missing codes; real handler credential-version denial and
+synthetic renderer failure produce the appropriate 4xx/5xx categories for both
+origins after fixture-browser cleanup. Exact child frames and every closed enum
+remain redaction-tested; arbitrary suffixes, exact numeric status strings and
+secret-bearing error fields never pass the allowlist.
+
+Source-only dependency inspection found a conditional, unconfirmed prerequisite
+difference: the sealed candidate launcher removes HOME/PUPPETEER_CACHE_DIR and
+runs UID982 with /nonexistent home. PUPPETEER_EXECUTABLE_PATH is allowed but
+optional in the unchanged secret/bootstrap/renderer contract. Installed Puppeteer
+uses that explicit path when configured, otherwise its home-based cache. The PDF
+handler does not supply a separate executable. Production path presence, binary
+permissions/cache availability and shared-library state were not inspected in
+this turn. The earlier status code did not identify which origin failed, so this
+is not attributed as the live cause. No environment/worker contract, browser
+installation, cache permission or runtime source was changed.
+
+No live production request, SSH, push, deployment, database operation, production
+log read or Nginx action occurred. The previous live PDF status refusal remains
+the outstanding blocker; visual acceptance/cutover remain unperformed. Review
+this diagnostic/test checkpoint before any retry or additional runtime inspection.
+
+Fresh local gates: Abbott build and exact-route validation passed; 67 app/runtime
+tests and 268 authority/artifact tests passed. Bootstrap/issuer/orchestrator/
+comparison/capture/smoke/attestation/diagnostic suite passed 143/143 (rerun after
+the final spawn guard); auth/access/runtime suite passed 108/108; contract suite
+passed 111/111. Artifact verification passed for 2,870 files / 82 text files.
+Root and Abbott typechecks, contract wiring, public-asset security, four changed
+script syntax checks and whitespace checks passed. Lint has zero errors and the
+same ten existing warnings. Final independent local test-browser inventory was
+zero; all test command sessions exited. This checkpoint is local/unpushed and
+requires review; it does not establish live PDF or visual parity.

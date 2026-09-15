@@ -3,6 +3,8 @@ import test from 'node:test';
 import { createHash } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 const api = async () => { try { return await import('./smoke-abbott-runtime.mjs'); } catch(e) { if(e.code==='ERR_MODULE_NOT_FOUND')return {};throw e; } };
 const hash = x => createHash('sha256').update(x).digest('hex');
 
@@ -193,6 +195,94 @@ function fixture(change=()=>{}) {
   };
   return {requests,bodies,manifest,fetchImpl};
 }
+
+async function actualPdfFixture(t) {
+  // Execute the real pinned handlers/auth code. Only database/browser I/O and
+  // the fixed animation wait are stubbed; no socket or real browser is opened.
+  for(const [ref,file]of [['8f389a28df1c4b741ec33b7538f0354b74f5a40e','src/app/api/dashboard/[id]/pdf/route.ts'],['f80607fbc8a693aa2c720b0976938e88732cdf1a','apps/abbott/src/lib/abbott-pdf-handler.ts']]){
+    const pinned=execFileSync('/usr/bin/git',['--no-replace-objects','show',`${ref}:${file}`],{env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null'},stdio:['ignore','pipe','pipe'],maxBuffer:65536});
+    assert.equal(hash(fs.readFileSync(new URL('../'+file,import.meta.url))),hash(pinned));pinned.fill(0);
+  }
+  const saved=Object.fromEntries(['DASHBOARD_AUTH_SECRET','ABBOTT_DASHBOARD_EMBED_KEY','INTERNAL_BASE_URL','ABBOTT_INTERNAL_BASE_URL'].map(key=>[key,process.env[key]]));
+  t.after(()=>{for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});
+  process.env.DASHBOARD_AUTH_SECRET='synthetic-pdf-auth';process.env.ABBOTT_DASHBOARD_EMBED_KEY='synthetic-pdf-embed';
+  delete process.env.INTERNAL_BASE_URL;delete process.env.ABBOTT_INTERNAL_BASE_URL;
+  const {default:pool}=await import('../src/lib/db.ts');
+  const auth=await import('../src/lib/access-auth.ts');
+  const {default:puppeteer}=await import('puppeteer');
+  const combined=await import('../src/app/api/dashboard/[id]/pdf/route.ts');
+  const focused=await import('../apps/abbott/src/lib/abbott-pdf-handler.ts');
+  // Defense against a missed ESM/CJS browser seam: only the two existing PDF
+  // parsers may spawn. A regression must fail before a real browser can start.
+  const children=createRequire(import.meta.url)('node:child_process'),originalSpawn=children.spawn;
+  const spawnGuard=t.mock.method(children,'spawn',(command,...args)=>{
+    assert.ok(['/opt/homebrew/Cellar/poppler/26.04.0/bin/pdfinfo','/opt/homebrew/Cellar/poppler/26.04.0/bin/pdftotext'].includes(command),'Unapproved PDF test child');
+    return originalSpawn(command,...args);
+  });
+  syncBuiltinESMExports();t.after(()=>{spawnGuard.mock.restore();syncBuiltinESMExports();});
+  assert.throws(()=>children.spawn('unapproved-test-browser'),/Unapproved PDF test child/);
+  assert.equal(typeof combined.GET,'function');assert.equal(combined.POST,undefined);
+  let current,refusal=null,launches=0,closed=0,selects=0,generated=0;
+  t.mock.method(pool,'execute',async(sql,params)=>{
+    assert.match(sql.trim(),/^SELECT\b/);selects++;
+    if(sql.includes('LEFT JOIN dashboard_access_users'))return [[{id:18,client_id:'abbott',client_name:'Abbott',dashboard_name:'Abbott BI',dashboard_type:'abbott_bi',is_active:true,access_users_count:0}],[]];
+    assert.ok(sql.includes('LEFT JOIN dashboard_shared_access_settings'));assert.deepEqual(params,[18]);
+    return [[{client_id:'abbott',password_hash:'synthetic-unused-hash',credential_version:refusal?.port===current.port&&refusal.kind==='4xx'?8:7,updated_at:null}],[]];
+  });
+  t.mock.method(pool,'getConnection',()=>assert.fail('No database writes/connections'));
+  t.mock.method(pool,'query',()=>assert.fail('Unexpected database query'));
+  t.mock.method(console,'error',()=>{});
+  const originalTimeout=globalThis.setTimeout;
+  t.mock.method(globalThis,'setTimeout',(callback,delay,...args)=>originalTimeout(callback,delay===1200?0:delay,...args));
+  const launch=async()=>{
+    if(refusal?.port===current.port&&refusal.kind==='5xx')throw Object.assign(Error('synthetic-private'),{url:'synthetic-private',body:'synthetic-private',headers:'synthetic-private'});
+    launches++;
+    return {async newPage(){return {
+      async setViewport(){},async emulateMediaType(){},async waitForSelector(){},async evaluate(){},
+      async goto(value){
+        const url=new URL(value),audience=current.searchParams.has('embed_key')?'embed':'manager';
+        assert.equal(url.origin,current.origin);assert.equal(url.pathname,current.pathname.replace('/api','').replace('/pdf',''));
+        assert.equal(url.searchParams.get('from'),'2026-09-01');assert.equal(url.searchParams.get('to'),'2026-09-13');assert.equal(url.searchParams.get('pdf'),'true');
+        assert.deepEqual([...url.searchParams.keys()].sort(),['access_token','from','pdf','to',...(audience==='embed'?['embed_key']:[])].sort());
+        const claim=auth.verifyViewerSession(url.searchParams.get('access_token'),18);
+        assert.equal(claim?.audience,audience);assert.equal(claim?.credential_version,audience==='manager'?7:undefined);
+        assert.equal(url.searchParams.get('embed_key'),audience==='embed'?'synthetic-pdf-embed':null);
+      },
+      async pdf(){generated++;return pdf();},
+    };},async close(){closed++;}};
+  };
+  // tsx loads the TS handlers through Puppeteer's CJS condition, whereas this
+  // mjs test imports its ESM condition. Stub both distinct singleton instances.
+  for(const instance of new Set([puppeteer,createRequire(import.meta.url)('puppeteer').default]))t.mock.method(instance,'launch',launch);
+  const candidate=focused.createAbbottPdfHandler();
+  const f=fixture();
+  const fetchImpl=async(url,options)=>{
+    if(!url.pathname.endsWith('/pdf'))return f.fetchImpl(url,options);
+    current=new URL(url);assert.equal(options.method,'GET');assert.equal(options.body,undefined);assert.equal(options.redirect,'error');
+    assert.deepEqual([...current.searchParams.keys()].sort(),['from','to',...(current.searchParams.has('embed_key')?['embed_key']:[])].sort());
+    const request=new Request(url,options);assert.equal(request.body,null);
+    const alias=current.pathname.split('/')[3];assert.ok(['18','abbott'].includes(alias));
+    return (current.port==='3001'?combined.GET:candidate)(request,{params:Promise.resolve({id:alias})});
+  };
+  return {manifest:f.manifest,fetchImpl,managerAccessToken:auth.createViewerSession(18,'synthetic@invalid.test','manager',7),embedKey:'synthetic-pdf-embed',refuse(value){refusal=value;},counts:()=>({launches,closed,selects,generated})};
+}
+
+test('smoke GET/body/auth/date contract executes both real pinned PDF handlers for both aliases/audiences',async(t)=>{
+  const m=await api(),f=await actualPdfFixture(t),d=await import('./abbott-verification-diagnostics.mjs');
+  const result=await m.runReadOnlySmoke(f,new AbortController().signal,{fetchImpl:f.fetchImpl}).catch(error=>assert.fail(d.formatVerificationFailure(error)+JSON.stringify(f.counts())));
+  assert.equal(result.status,'passed');assert.equal(f.counts().generated,8);assert.equal(f.counts().launches,8);assert.equal(f.counts().closed,8);assert.equal(f.counts().selects,12);
+  assert.equal(result.pdfs.manager.pages,1);assert.deepEqual(result.pdfs.manager,result.pdfs.embed);
+});
+
+test('real PDF authorization/render failures give only the closed origin/status class after cleanup',async(t)=>{
+  const m=await api(),d=await import('./abbott-verification-diagnostics.mjs'),f=await actualPdfFixture(t);
+  for(const port of ['3001','3004'])for(const kind of ['4xx','5xx']){
+    f.refuse({port,kind});
+    const error=await m.runReadOnlySmoke(f,new AbortController().signal,{fetchImpl:f.fetchImpl}).catch(e=>e);
+    assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=${port==='3001'?'control':'candidate'}_${kind}\n`);
+    assert.equal(f.counts().launches,f.counts().closed);
+  }
+});
 test('real API shape without dashboard.id passes exact aliases, audiences, exports and attested assets',async()=>{
   const m=await api();assert.equal(typeof m.runReadOnlySmoke,'function');const f=fixture();
   const result=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})});
@@ -257,7 +347,7 @@ test('smoke failures expose only exact stage enums and never response or excepti
   ];
   for(const [stage,change]of cases){
     const f=fixture(change);const error=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash('same')})}).catch(e=>e);
-    assert.match(d.formatVerificationFailure(error),new RegExp(`^ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=[a-z_]+\\n$`));assert.doesNotMatch(d.formatVerificationFailure(error),/secret|token|http|synthetic/);
+    assert.match(d.formatVerificationFailure(error),new RegExp(`^ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=[a-z0-9_]+\\n$`));assert.doesNotMatch(d.formatVerificationFailure(error),/secret|token|http|synthetic/);
   }
   const f=fixture();const error=await m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>{throw Object.assign(Error('secret'),{url:'secret',body:'secret'});}}).catch(e=>e);
   assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_parse reason=failed\n');

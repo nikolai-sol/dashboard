@@ -27,6 +27,18 @@ test('child diagnostics accept exactly one bounded allowlisted frame and never r
   ])assert.equal(m.formatVerificationFailure(m.diagnosticFromChild({stdout:Buffer.alloc(0),signal:null,...response})),'ABBOTT_VERIFICATION_REFUSED stage=unknown reason=unknown\n');
 });
 
+test('PDF origin/status class diagnostics survive only exact closed child frames',async()=>{
+  const m=await api();
+  for(const reason of ['control_4xx','control_5xx','candidate_4xx','candidate_5xx','control_other_status','candidate_other_status']){
+    const frame=`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=${reason}\n`;
+    assert.equal(m.formatVerificationFailure(m.markDiagnostic(Error(secret),'pdf_fetch',reason)),frame);
+    assert.equal(m.formatVerificationFailure(m.diagnosticFromChild({status:1,stdout:Buffer.alloc(0),stderr:Buffer.from(frame)})),frame);
+    for(const bad of [reason+'_synthetic_secret',reason+'\n'+secret,'candidate_500','control_401']){
+      assert.equal(m.formatVerificationFailure(m.markDiagnostic(Error(secret),'pdf_fetch',bad)),'ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=unknown\n');
+    }
+  }
+});
+
 test('real parent and visual CLIs emit only the closed failure frame on invalid invocation',async()=>{
   const {captureBoundedChild}=await import('./abbott-bounded-child.mjs');
   for(const file of ['scripts/verify-abbott-shadow.mjs','scripts/capture-abbott-runtime.mjs']){

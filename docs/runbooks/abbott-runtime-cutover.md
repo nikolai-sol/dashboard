@@ -337,6 +337,23 @@ whitespace-separated tokens before excluding metadata; stylesheet/preload/
 modulepreload tokens take precedence over accompanying icon tokens regardless of
 case or order. No query or off-origin exception is introduced by this parser.
 
+The approved parser retry stopped at `pdf_fetch reason=status`; no capture or
+Nginx work followed. The subsequent PDF diagnostic change is **STOP for review;
+no live retry**. PDF non-200 responses now use only `control_4xx`, `control_5xx`,
+`candidate_4xx`, `candidate_5xx`, `control_other_status`, or
+`candidate_other_status`. Control means literal loopback port 3001; candidate
+means 3004. No exact status number, URL, alias, audience, header or body is emitted.
+Existing `content_type`/`body_limit`/boundary codes and limits remain unchanged.
+The actual combined/focused PDF handlers both accept GET with query dates and no
+body. Smoke's method, fixed dates and authorization transport are unchanged.
+
+Source-only dependency review found a conditional browser prerequisite: the
+sealed launcher strips HOME/cache overrides and runs the no-home account;
+PUPPETEER_EXECUTABLE_PATH is allowed but optional, while Puppeteer otherwise uses
+its home-based cache. This is not proof of the live failure. Do not change the
+sealed environment, install a browser or read raw combined PDF logs as a workaround.
+Any later runtime inspection/remediation requires its own reviewed scope.
+
 This mode uses the same strict credential frame and owned-forward lifecycle.
 Before credential issuance, a separate bounded read-only SSH capsule repeats the
 source proof and validates the exact installed release
