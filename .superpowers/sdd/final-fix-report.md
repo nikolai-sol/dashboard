@@ -66,3 +66,29 @@ Skill action: receiving-code-review, strict test-driven-development and verifica
 Evidence: source commit, focused RED/GREEN, full suites, builds, dry-run attestation and owned standalone smoke above.
 
 Budget stop: none.
+
+## Final re-review follow-up
+
+Source commit: `35ceee51fda8ee991fc05119808cd7e6801f4010` (`fix(admin): close intent CSV and snapshot compatibility gaps`). This supersedes source `54b9f5bf` and attestation `a7e5395278048ff7c7de041b1cd7bfa444fdffb9`. The separate final attestation commit containing this update pins both profiles to `35ceee51fda8ee991fc05119808cd7e6801f4010`; its hash is reported in the handoff.
+
+All three re-review findings were reproduced before fixes: four focused tests failed (ragged CSV remained valid, v1 snapshot lookup returned no receipt, Google lacked account/resource predicates, and the configured-binding resolver was absent).
+
+Corrections:
+
+- Header validation now spans the maximum parsed row width. Every populated cell beyond the header becomes an unnamed-column row/column error. Regression fixtures cover ragged widths, skipped empty extra columns, quoted delimiters inside a key/extra cell, and valid quoted values with empty trailing cells.
+- The existing implementation uses plain INSERT plus `ER_DUP_ENTRY` handling, not INSERT IGNORE. If lookup by the new preview UID misses, it resolves the exact immutable snapshot unique key: site, dashboard, transport, source-identity hash and content SHA. The returned row additionally verifies all these fields and the original source identity. A v1 receipt remains unchanged and the new unreferenced artifact is discarded. Regression tests reject returned foreign site/dashboard, different source and different content identities.
+- Both sample sources now resolve only the profile's current configured binding ID in the exact client/site/dashboard scope. Google SQL additionally requires that binding's analytics account and resource, so a newer retired resource cannot win the latest-week selection. Missing/ambiguous bindings are unavailable, with no query or fallback. Tests prove current-resource selection and exclusion of retired/foreign registrations. The current MedRoche registry has no GSC binding, so its Google preview samples correctly remain unavailable until a binding is configured; Yandex remains independently available when canonical data exists.
+
+Final follow-up verification:
+
+- Focused parser/store/regressions/samples/UI: 69 tests, 67 passed, 0 failed, 2 existing Linux-only skips.
+- Admin route tests directly executed: 13/13 passed.
+- Full `npm test`: 1,058 Node tests, 1,046 passed, 0 failed, 12 skipped; Python 13/13 passed.
+- Full `npm run test:site-seo`: 198 TypeScript plus 27 build/isolation tests passed.
+- Both root and site-seo typechecks, focused ESLint and diff checks passed.
+- Root production build passed, including TypeScript and all 28 generated pages.
+- Exact-source/profile/registry build dry-run passed at `35ceee51fda8ee991fc05119808cd7e6801f4010`.
+
+The standalone runtime/template source did not change in this follow-up; the prior isolated build, health/login smoke and verified process/output cleanup remain applicable. No new server/browser was created, no production or source API action occurred, and the unrelated dirty Task 1 report and `.next-medroche` remain preserved. Existing real-MySQL/Linux/release verification gates above remain outstanding.
+
+Done: all three follow-up findings fixed. Accepted: pending parent/owner review. Reusable learning: documented above. Skill action: review/TDD/verification instructions applied, no skill edit. Evidence: source commit and fresh checks above. Budget stop: none.
