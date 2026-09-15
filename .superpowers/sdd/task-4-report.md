@@ -85,7 +85,7 @@ An independent Task 4 review identified three important defects and one minor co
 - RED: an import receipt `rule_count` mismatch still returned `ready`. GREEN: the canonical join now reads `imported.rule_count AS import_rule_count` and requires equality with both the sealed version count and persisted/validated rule rows.
 - RED: making `DashboardReadModel.targetIntent` required exposed all legacy fixture constructors at compile time. GREEN: every dashboard fixture now supplies an explicit target-intent state, the component no longer has optional guards, and site-seo typecheck passes.
 
-Focused review-fix verification passed 71/71 component/read-path tests plus site-seo typecheck. The replacement source and attestation commit hashes, and the final full-suite/build evidence, are recorded in the final handoff; they supersede the first source/attestation pair above.
+Focused review-fix verification passed 71/71 component/read-path tests plus site-seo typecheck. Replacement source commit `12c08d4c6589e3c8f391ea20d1f4e5f28e0ce269` supersedes the first source commit above; both MedRoche registry copies pin that exact hash in the following attestation commit. Fresh verification against the replacement pin passed 179 TypeScript tests plus 27 build/isolation tests (206/206), site-seo typecheck, the attestation dry-run, and an isolated Next production compile. The isolated output was removed without touching `.next-medroche`. The final handoff records the attestation commit hash because that commit cannot contain its own hash.
 
 ## Residuals and preserved state
 

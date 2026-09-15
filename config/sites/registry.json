@@ -13,7 +13,7 @@
       "logoAsset": null,
       "locale": "ru-RU",
       "businessTimezone": "Europe/Moscow",
-      "templateVersion": "3eae3a2b8b3002ffdb528781de030d6e2c8843f5",
+      "templateVersion": "12c08d4c6589e3c8f391ea20d1f4e5f28e0ce269",
       "sources": [
         {"sourceKey": "yandex_metrika", "mode": "automated", "bindingId": "binding-metrika-medroche", "importCadence": ["previous_iso_week"]},
         {"sourceKey": "google_search_console", "mode": "manual", "bindingId": "binding-gsc-medroche", "importCadence": ["previous_month", "previous_iso_week"]},
