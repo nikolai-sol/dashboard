@@ -1,6 +1,6 @@
-# Abbott Task 9 — acknowledged deploy transport checkpoint
+# Abbott Task 9 — deploy control-framing correction
 
-Status: DONE_WITH_CONCERNS; source-only deploy transport awaits independent review.
+Status: DONE_WITH_CONCERNS; source-only framing correction awaits re-review.
 Last verified production state is recovered f80607f/release6cd2 with matching
 active files, pointer and PM2 binding; candidate9aaed34 is quarantined. This
 checkpoint made no live request or mutation and does not freshly attest that
@@ -2349,3 +2349,52 @@ inspection rather than a cleanup claim or automatic retry. This supersedes the
 preceding source checkpoint's unchanged-Abbott-transport caveat, not its live-use
 prohibition. Debugging/TDD and verification-before-completion guided the
 implementation and fresh checks. STOP before push/live/deploy/Nginx.
+
+## Review correction — reject incomplete deploy control frames
+
+Fixed the Important loader framing gap with real local-process TDD. RED evidence:
+valid source/payload frames followed by RUN plus a one-byte trailing fragment
+returned COMMITTED; an incomplete ABORT at EOF returned RESTORED. The new held-
+cleanup fixture also showed malformed bytes could bypass the intended abort.
+These were local synthetic results, not production operations.
+
+The loader now checks exact possible control prefixes immediately. After RUN,
+any received control fragment starts the existing abort guard; impossible
+prefixes, duplicate controls and bytes after a completed ABORT are rejected.
+Terminal serialization cannot leave pending control bytes: incomplete state is
+rejected, zeroed and cleared first. EOF/error with a partial RUN/ABORT is refused.
+When malformed traffic interrupts started work, the loader waits for the
+transaction to settle and emits only REFUSED or the worker's verified
+REVIEW_REQUIRED; it cannot turn that traffic into COMMITTED or RESTORED. Unknown
+transaction/journal outcomes still produce no valid paired acknowledgement.
+
+Exact RUN without trailing bytes still commits. Clean EOF still follows the
+reviewed cancellation/restoration path, not a framing error. Complete ABORT,
+including deliberately split delivery completed before terminal cleanup, still
+restores. If only a partial command remains when work settles, it is refused;
+the terminal gate does not guess that a future fragment will complete it.
+
+Added57 real-loader cases: one-through-five-byte trailing suffixes, every partial
+ABORT/RUN prefix, duplicate RUN, whitespace/newline/NUL, bytes after ABORT,
+same-chunk and per-byte delivery, active-work EOF, and incomplete first control
+at EOF. Held compensation must be explicitly released by the fixture before any
+ACK can appear. Each local child is bounded, reaped and PID-absence checked.
+The earlier duplicate-command test now expects the requested fixed REFUSED
+result after settled compensation, never successful acknowledgement.
+
+Fresh gates: dedicated transport/session/evidence86/86; full authority suite
+512/512; app/contract67/67; production build/exact route gate pass. Both
+TypeScript checks and changed-module syntax/whitespace checks pass; lint exits0
+with0 errors and the same10 existing warnings. Post-build smoke/asset/issuer/
+visual/orchestrator95/95 and sealed artifact verification pass (2870 files,
+82 text files). Verification-before-completion uses these fresh checks, and
+TDD guided the framing/terminal fix.
+
+No live request, SSH, browser, credential read/issuance, push, deployment,
+DB/auth/fact/cron/neighbor action or Nginx change occurred. Both fixed private
+evidence directories are absent, all test commands exited, and no owned loader
+child remains. Last verified production state is still the earlier recovered
+f80607f/release6cd2 with candidate9aaed34 quarantined; no fresh host assertion is
+made. Latest published refs remain982dd1a; this builds on localc2b29d3. No new
+release, Nginx backup, live smoke or screenshot/diff evidence was produced.
+DONE_WITH_CONCERNS: STOP for re-review before push or any operational retry.

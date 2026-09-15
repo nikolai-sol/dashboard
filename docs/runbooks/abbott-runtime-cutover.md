@@ -272,6 +272,15 @@ only after both writes finish. ABORT, EOF and remote signals feed the transactio
 cancellation guard. The remote loader waits for activation or compensation to
 finish; unexpected transaction exceptions cannot certify restoration.
 
+Control prefixes are checked byte-exactly as they arrive. Any post-RUN fragment
+starts cancellation; an impossible prefix, duplicate command, trailing bytes or
+incomplete line at EOF/terminal completion is refused. Pending control bytes are
+rejected and cleared before any terminal ACK. Malformed traffic permits only
+REFUSED or the worker's verified REVIEW_REQUIRED after work settles, never
+COMMITTED/RESTORED. Exact RUN still completes normally; clean EOF and complete
+ABORT retain the reviewed cancellation path. This framing correction also awaits
+independent review before live use.
+
 Internal release metadata is limited to the exact bounded record schema. The
 record and terminal ACK must agree on capsule/payload digest and control ID;
 extra, duplicate, malformed or out-of-order frames fail. Public output contains
