@@ -115,6 +115,8 @@ export class TargetIntentServiceError extends Error {
 }
 
 type StoredImportRow = {
+  site_id?: string;
+  dashboard_id?: string | number;
   id: string | number;
   import_uid?: string;
   source_transport: "upload" | "google_sheet";
@@ -516,13 +518,15 @@ export function createGoogleSheetsSnapshotTransport(
   };
 }
 
-function importSelectSql(): string {
-  return `SELECT id, import_uid, source_transport, source_identity, source_identity_hash,
+function importSelectSql(snapshotIdentity = false): string {
+  return `SELECT id, site_id, dashboard_id, import_uid, source_transport, source_identity, source_identity_hash,
                  original_filename, accepted_worksheet, protected_artifact_ref, content_sha256,
                  validation_state, validation_result_json, rule_count, duplicate_count,
                  conflict_count, imported_by, created_at
             FROM site_seo_intent_imports
-           WHERE site_id = ? AND dashboard_id = ? AND import_uid = ?
+           WHERE site_id = ? AND dashboard_id = ? AND ${snapshotIdentity
+             ? "source_transport = ? AND source_identity_hash = ? AND content_sha256 = ?"
+             : "import_uid = ?"}
            LIMIT 1`;
 }
 
@@ -630,10 +634,23 @@ export async function previewTargetIntent(
     } catch (error) {
       if ((error as { code?: unknown }).code !== "ER_DUP_ENTRY") throw error;
     }
-    const persisted = firstRow<StoredImportRow>(await connection.execute(
+    let persisted = firstRow<StoredImportRow>(await connection.execute(
       importSelectSql(),
       [scope.siteId, scope.dashboardId, importUid],
     ));
+    if (!persisted) {
+      // Snapshot uniqueness predates the v2 parser contract. A matching v1 row
+      // remains immutable and must be recovered by that exact unique identity.
+      persisted = firstRow<StoredImportRow>(await connection.execute(
+        importSelectSql(true),
+        [scope.siteId, scope.dashboardId, input.transport, sourceIdentityHash, contentSha256],
+      ));
+      if (persisted && (persisted.site_id !== scope.siteId || Number(persisted.dashboard_id) !== scope.dashboardId
+        || persisted.source_transport !== input.transport || persisted.source_identity !== sourceIdentity
+        || persisted.source_identity_hash !== sourceIdentityHash || persisted.content_sha256 !== contentSha256)) {
+        throw new Error("Preview snapshot identity does not match");
+      }
+    }
     if (!persisted) throw new Error("Preview receipt was not persisted");
     artifactReferenced = persisted.protected_artifact_ref === artifact.protectedRef;
     commitAttempted = true;

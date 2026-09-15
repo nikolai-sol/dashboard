@@ -206,7 +206,8 @@ export function parseTargetIntentWorkbook(
     return emptyResult({ row: null, code: "empty_file", message: "Файл пуст" }, detectedFormat);
   }
 
-  const headers = table.cells[0].map((value) => normalizedText(value));
+  const width = table.cells.reduce((max, row) => Math.max(max, row.length), 0);
+  const headers = Array.from({ length: width }, (_, index) => normalizedText(table.cells[0][index]));
   const columns = new Map<"key" | "group" | "matchType", number>();
   const headerErrors: TargetIntentImportError[] = [];
   const unnamedColumns: number[] = [];

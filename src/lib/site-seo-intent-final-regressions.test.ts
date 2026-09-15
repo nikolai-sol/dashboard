@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { parseTargetIntentWorkbook } from "./site-seo-intent-import";
 import { normalizeIntentKey, buildTargetIntentView } from "../../apps/site-seo/src/lib/target-intent";
 import { readTargetIntentData } from "../../apps/site-seo/src/lib/db";
@@ -83,6 +84,48 @@ test("CSV preview exposes the encoding and delimiter actually used", () => {
     assert.equal(result.state, "valid");
     assert.equal(result.encoding, "UTF-8");
     assert.equal(result.delimiter, delimiter);
+  }
+});
+
+test("ragged CSV rejects every populated unnamed cell while quoted delimiters remain within one cell", () => {
+  for (const [csv, row, column] of [
+    ["Ключ,Тип совпадения\nрак,фраза,EXTRA\n", 2, "3"],
+    ['Ключ,Тип совпадения\n"рак, лёгкого",фраза,,"EXTRA,more"\n', 2, "4"],
+    ["Ключ,Тип совпадения\nрак,фраза\nлёгкое,точное,,,EXTRA\n", 3, "5"],
+  ] as const) {
+    const result = parseTargetIntentWorkbook(Buffer.from(csv), "intent.csv");
+    assert.equal(result.state, "invalid");
+    assert.ok(result.errors.some(e => e.row === row && e.column === column && e.code === "unnamed_column"));
+  }
+  const quoted = parseTargetIntentWorkbook(Buffer.from('Ключ,Тип совпадения\n"рак, лёгкого",фраза,,\n'), "intent.csv");
+  assert.equal(quoted.state, "valid");
+  assert.equal(quoted.rows[0].key, "рак, лёгкого");
+});
+
+test("v2 preview recovers an immutable v1 snapshot receipt by full scoped source identity", async () => {
+  const bytes = Buffer.from("Ключ,Тип совпадения\nрак,точное\n");
+  const hash = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
+  const existing = { site_id: scope.siteId, dashboard_id: scope.dashboardId, id: 77, import_uid: "v1-uid", source_transport: "upload", source_identity: "intent.csv", source_identity_hash: hash("intent.csv"), original_filename: "intent.csv", accepted_worksheet: null, protected_artifact_ref: "/protected/old-v1", content_sha256: hash(bytes), validation_state: "valid", validation_result_json: JSON.stringify(parseTargetIntentWorkbook(bytes, "intent.csv")), rule_count: 1, duplicate_count: 0, conflict_count: 0, imported_by: "old@example.test", created_at: "2026-09-01T10:00:00Z" };
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  let discarded = false;
+  const connection: TargetIntentSqlConnection = { async beginTransaction() {}, async commit() {}, async rollback() {}, release() {}, async execute(sql, params = []) {
+    calls.push({ sql, params });
+    if (/INSERT/.test(sql)) throw Object.assign(new Error("uq_intent_import_snapshot duplicate"), { code: "ER_DUP_ENTRY" });
+    if (/AND import_uid =/.test(sql)) return [[]];
+    return [[existing]];
+  } };
+  const run = () => previewTargetIntent({ transport: "upload", filename: "intent.csv", bytes, actor: "admin@example.test" }, { scope, database: { getConnection: async () => connection }, snapshots: { async save() { return { protectedRef: "/protected/new-v2", release: async () => {}, discard: async () => { discarded = true; } }; } } });
+  const result = await run();
+  assert.equal(result.previewId, "77");
+  assert.equal(result.importedBy, "old@example.test");
+  assert.equal(discarded, true);
+  const lookup = calls.find(c => /AND source_transport =/.test(c.sql))!;
+  assert.deepEqual(lookup.params, [scope.siteId, scope.dashboardId, "upload", hash("intent.csv"), hash(bytes)]);
+  assert.match(lookup.sql, /site_id = \? AND dashboard_id = \?/);
+  const original = { ...existing };
+  for (const mismatch of [{ site_id: "foreign" }, { dashboard_id: 999 }, { source_identity: "other.csv" }, { content_sha256: "different" }]) {
+    Object.assign(existing, original, mismatch);
+    await assert.rejects(run(), /snapshot identity does not match/);
   }
 });
 

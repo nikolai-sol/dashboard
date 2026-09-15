@@ -18,7 +18,7 @@ import {
   type TargetIntentStoreDependencies,
 } from "@/lib/site-seo-intent-store";
 import { MAX_TARGET_INTENT_UPLOAD_BYTES } from "@/lib/site-seo-intent-import";
-import { readTargetIntentObservedQueries } from "@/lib/site-seo-intent-observed";
+import { readTargetIntentObservedQueries, resolveTargetIntentObservedBindings } from "@/lib/site-seo-intent-observed";
 import siteRegistry from "../../../../../../../config/sites/registry.json";
 
 export const runtime = "nodejs";
@@ -318,7 +318,7 @@ function storeDependencies(scope: TargetIntentScope): TargetIntentStoreDependenc
     googleSheets: createGoogleSheetsSnapshotTransport(),
     observedQueries: (rows) => readTargetIntentObservedQueries({
       execute: (sql, params) => pool.execute(sql, params as never[]),
-    }, scope, rows, siteRegistry.flatMap(entry => entry.bindings)),
+    }, scope, rows, resolveTargetIntentObservedBindings(siteRegistry, scope)),
   };
 }
 

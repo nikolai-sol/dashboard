@@ -47,7 +47,7 @@ CSV accepts UTF-8 (including BOM), detects comma, semicolon, tab or pipe with th
 
 Rule normalization applies Unicode NFKC, lowercase, `ё → е`, punctuation/hyphen separation and repeated-whitespace collapse.
 
-The shared contract implements normalization for imports, runtime integrity and matching. Every run of non-letter/non-number characters becomes a token boundary, including zero-width format characters and combining marks that remain after NFKC. New previews use contract identity `target-intent-preview-v2`; older immutable evidence is retained, and noncanonical historical preview rows cannot publish.
+The shared contract implements normalization for imports, runtime integrity and matching. Every run of non-letter/non-number characters becomes a token boundary, including zero-width format characters and combining marks that remain after NFKC. New previews use contract identity `target-intent-preview-v2`; the existing snapshot unique key can resolve an identical v1 source to its original immutable receipt, after exact site/dashboard/transport/source/hash verification. Older evidence is retained, and noncanonical historical preview rows cannot publish.
 
 - `точное`: the normalized observed query equals the normalized key.
 - `фраза`: the normalized key occurs as a complete token sequence inside the observed query.
@@ -102,7 +102,7 @@ The feature reuses the established protected upload/Google Sheet preview-confirm
 
 Preview distinguishes source-rule examples from observed-query matches. Each source samples at most 100 positive-impression canonical queries, ordered by impressions, clicks and query, and shows at most eight matches using the shared classifier. Samples and their actual periods are stored in the immutable validation receipt; an idempotent retry returns the original sample.
 
-The admin form has no selected reporting period. Google examples use the latest published canonical ISO-week query import for the server-resolved client/site/dashboard and default all-country/all-device web-search filter. Yandex examples use the exact server-registered account/host and seven days ending at its latest canonical query fact date. Source periods are independent and explicitly rendered. These are illustrative samples, not weekly completeness checks, totals or inferred query/page relationships. A read failure is unavailable; zero sampled queries and zero matches within a nonempty sample are distinct. No source API, source credential or client-supplied site/account/period participates.
+The admin form has no selected reporting period. Google examples use the latest published canonical ISO-week query import for the server-resolved client/site/dashboard, current configured analytics-account/resource binding and default all-country/all-device web-search filter. Yandex examples use the exact server-registered account/host and seven days ending at its latest canonical query fact date. Both sources resolve the profile's current binding ID; missing or ambiguous bindings are unavailable and retired bindings are excluded. Source periods are independent and explicitly rendered. These are illustrative samples, not weekly completeness checks, totals or inferred query/page relationships. A read failure is unavailable; zero sampled queries and zero matches within a nonempty sample are distinct. No source API, source credential or client-supplied site/account/period participates.
 
 ### Dashboard review
 

@@ -4,6 +4,15 @@ import type { TargetIntentScope } from "./site-seo-intent-store";
 
 type Database = { execute(sql: string, params?: readonly unknown[]): Promise<unknown> };
 type Binding = TargetIntentScope & { sourceKey: string; analyticsAccountId: string; resourceId: string };
+type Registration = { profile: TargetIntentScope & { sources: readonly { sourceKey: string; bindingId: string; mode: string }[] }; bindings: readonly (Binding & { bindingId: string })[] };
+
+/** Match the runtime's configured binding ID as well as its full site scope. */
+export function resolveTargetIntentObservedBindings(registrations: readonly Registration[], scope: TargetIntentScope): readonly Binding[] {
+  return registrations.filter(entry => entry.profile.siteId === scope.siteId && entry.profile.clientId === scope.clientId
+    && entry.profile.dashboardId === scope.dashboardId).flatMap(entry => entry.bindings.filter(binding =>
+      binding.siteId === scope.siteId && binding.clientId === scope.clientId && binding.dashboardId === scope.dashboardId
+      && entry.profile.sources.some(source => source.mode !== "disabled" && source.sourceKey === binding.sourceKey && source.bindingId === binding.bindingId)));
+}
 type Row = { query_text?: unknown; impressions?: unknown; clicks?: unknown; period_from?: unknown; period_to?: unknown };
 // Same all-country/all-device web-search identity as the dashboard's default GSC view.
 const defaultFiltersHash = createHash("sha256").update('{"country":"all","device":"all","search_type":"web"}').digest("hex");
@@ -31,8 +40,10 @@ const unavailable = (source: "google" | "yandex"): TargetIntentObservedSample =>
 /** Read-only examples, not weekly report totals: latest published GSC week and
  * seven canonical days ending at the latest Webmaster fact date, independently. */
 export async function readTargetIntentObservedQueries(database: Database, scope: TargetIntentScope, rules: readonly TargetIntentRule[], bindings: readonly Binding[] = []): Promise<readonly TargetIntentObservedSample[]> {
-  let google: TargetIntentObservedSample;
-  try {
+  const googleBindings = bindings.filter(binding => binding.siteId === scope.siteId && binding.clientId === scope.clientId
+    && binding.dashboardId === scope.dashboardId && binding.sourceKey === "google_search_console");
+  let google = unavailable("google");
+  if (googleBindings.length === 1) try {
     const data = rows(await database.execute(`/* target-intent:observed-google */
       WITH chosen_import AS (
         SELECT i.id, i.period_from, i.period_to
@@ -41,6 +52,7 @@ export async function readTargetIntentObservedQueries(database: Database, scope:
          WHERE i.client_id = ? AND i.site_id = ? AND i.dashboard_id = ?
            AND i.source_key = 'google_search_console' AND i.status = 'published'
            AND i.period_kind = 'iso_week' AND i.filters_hash = ?
+           AND i.analytics_account_id = ? AND i.resource_id = ?
            AND c.coverage_state IN ('complete', 'limited', 'complete_empty')
          ORDER BY i.period_to DESC, c.publication_priority DESC, i.revision DESC, i.id DESC LIMIT 1
       )
@@ -48,7 +60,7 @@ export async function readTargetIntentObservedQueries(database: Database, scope:
         FROM chosen_import i JOIN canonical_fact_gsc_manual_period_dimensions d ON d.import_id = i.id
        WHERE d.dimension_name = 'query' AND d.impressions > 0
        ORDER BY d.impressions DESC, d.clicks DESC, d.dimension_value ASC LIMIT 100`,
-    [scope.clientId, scope.siteId, scope.dashboardId, defaultFiltersHash]));
+    [scope.clientId, scope.siteId, scope.dashboardId, defaultFiltersHash, googleBindings[0].analyticsAccountId, googleBindings[0].resourceId]));
     google = sample("google", data, rules);
   } catch { google = unavailable("google"); }
 
