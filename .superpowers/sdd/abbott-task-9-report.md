@@ -2063,3 +2063,39 @@ and old6cd2/f806 control pointer remain the unresolved interrupted state.
 BLOCKED at the closed stderr_unknown results. No further probe/retry, recovery,
 deploy, smoke, capture or Nginx action. Stop with sanitized evidence-only commit;
 do not publish this evidence commit without new direction.
+
+### Recovery/probe SSH client log-level checkpoint (source/tests only)
+
+Added exactly -o LogLevel=ERROR to the single fixed recovery/probe SSH option
+vector. This controls SSH client diagnostics, not remote stderr. Stdio remains
+three pipes, remote command bytes and framing remain unchanged, and every
+received stderr byte remains bounded/fatal with closed diagnostics. Nonzero/
+signal exits retain priority and cannot be accepted; cleanup-unverified remains
+highest. No stderr shell redirection, stream filter, generic warning acceptance,
+credential/deploy transport change or authority override was introduced.
+
+TDD exact-vector regression failed before the option existed and passed after
+the one-line production change. It checks recovery plus all three inert stages,
+the complete fixed SSH argv prefix, binary, cwd, constructed env and pipe-only
+stdio. Synthetic remote stderr on zero exit still refuses; synthetic connection
+and authentication errors with failing exit still return exit_nonzero for each
+stage. Recovery refuses all those cases without sending a frame. Secret-bearing
+chunks are zeroed and diagnostics contain no supplied values/raw error text.
+
+Fresh gates passed:47 focused recovery/probe/evidence/diagnostic tests;
+349 full authority/artifact/bootstrap/recovery tests;67 app/runtime tests;
+95 smoke/asset/capture/issuer/orchestrator/diagnostic regressions. Abbott build,
+both typechecks, exact12-route/one-prefix validator, artifact scan (2,870 files/
+82 text files), trusted artifact verification, changed-module syntax and
+whitespace checks pass. Lint:zero errors/ten existing warnings. The first extra
+suite overlapped the rebuild and failed one generated-HTML fixture read while
+the file was absent; after the completed build the full95 suite passed without
+test or source changes. Generated-asset tests must follow, not overlap, builds.
+
+All local test/build sessions exited; tests reaped and absence-checked their
+owned loader/shell children. Fixture resources were cleaned and the fixed
+private identity evidence directory remains absent. No live SSH/probe/recovery,
+push, credentials, browser capture, deployment or Nginx operation occurred.
+Historical unknown stderr is not newly classified, and no claim is made that
+the live failure is resolved. STOP for review before retry; interrupted Abbott
+activation remains unresolved and was not revalidated by this local checkpoint.

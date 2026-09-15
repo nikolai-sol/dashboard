@@ -353,7 +353,12 @@ approved stage. A stage result never authorizes recovery or the next stage.
 ```
 
 All stages reuse the exact fixed SSH options, clean env and private evidence/
-bounded cleanup implementation. The ssh stage runs only env-i /bin/true and
+bounded cleanup implementation. Recovery and its probes pin `-o LogLevel=ERROR`
+for SSH client diagnostics only; remote command stderr is still piped, bounded
+and fatal, and connection/authentication errors or nonzero exits still refuse.
+No shell stderr redirect or stream filter is introduced. This option is not
+applied to deployment, credential issuance or other SSH workflows.
+The ssh stage runs only env-i /bin/true and
 expects empty stdout; node runs the exact Node binary with a fixed direct -e
 sentinel; loader starts the current ESM loader, waits for exact READY, then
 sends EOF and verifies its exact terminal refusal. No stage sends a source
