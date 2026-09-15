@@ -1338,3 +1338,104 @@ This sanitized evidence/docs update is local/unpushed. BLOCKED at candidate PDF
 
 Evidence/docs validation: 49 diagnostic/capture/orchestrator tests passed, zero
 failures; whitespace check passed. No implementation change was made after smoke.
+
+### Candidate PDF browser prerequisite diagnosis and local fix — STOP for review
+
+Authorized narrow read-only host diagnosis repeated the full fixed proof first:
+same host/boot, four PM2 pid-file/kernel identities/UID/GID/cwds/releases, Abbott
+account/secret metadata, sole loopback3004 listener, direct health200 and exact
+Nginx hash. No restart, deploy, route, auth, DB/fact or source-data change occurred.
+
+The relevant names-only inventory found HOME present in the combined initial
+kernel process environment; no explicit browser/cache key was present there or
+in its authoritative combined env. Candidate initial kernel environment and
+rendered env had none of the browser executable/cache/HOME/temp/XDG keys checked.
+No other env keys or values were output; the fixed launcher clears inheritance.
+No raw PM2 environment dump was taken. A bounded UID982/GID984 metadata child
+confirmed `os.homedir()` resolves `/nonexistent`, that directory and its Puppeteer
+cache are absent, and `/tmp` is writable/executable. `/tmp` is root:root1777.
+The combined root cache directory exists, but root0700 ancestry excludes the
+dedicated account; neither its contents nor browser/user data were read/copied.
+
+All ten bounded standard browser paths were absent: google-chrome/stable and
+chromium/chromium-browser under the checked /usr/bin, /usr/local/bin, /usr/lib,
+/opt/google/chrome and /snap locations. Fixed package queries returned no
+installed chromium, chromium-browser or google-chrome-stable record. Candidate
+installed Puppeteer package is24.39.1. There was consequently no candidate binary
+against which to claim successful shared-library inspection. No browser launch,
+PDF retry, package installation or browser download was performed.
+
+This establishes the candidate's missing executable prerequisite: its PDF handler
+called Puppeteer without an executable override, while the cleared/no-home
+runtime had no default cache. It does not establish that installing a browser
+alone will satisfy all later PDF/render/visual gates. Per the follow-up direction,
+no system package install or combined/root cache reuse is proposed.
+
+Implemented a local app-scoped prerequisite module and separate fixed bootstrap
+entrypoint. Installed locked puppeteer-core24.39.1 derives supported Linux
+chrome-headless-shell146.0.7680.76; installed @puppeteer/browsers2.13.0 derives the
+official source and exact executable layout. There is no hardcoded invented
+upstream archive digest. The API supplies no checksum; first controlled install
+will capture the actual archive SHA-256 into the immutable stamp alongside exact
+package/build/platform/source and complete file hashes/sizes/modes.
+
+The fixed bootstrap repeats source/process/parser and entire active f80607f
+artifact proof before importing its installed package APIs or creating directories.
+It verifies exact service account and /var/lib ancestry. The official HTTPS
+download has no proxy/redirect/fallback, a120-second/256-MiB limit, and metadata ZIP
+validation before extraction (4,096 entries/768 MiB expanded, no links/escapes).
+Installed API extraction consumes the preseeded validated archive in a bounded
+60-second child with HTTP disabled and installDeps:false. Overall remote deadline
+is180seconds, fixed SSH wrapper210seconds; signals feed the owned child/download
+abort path. Unknown/child output is reduced to fixed bootstrap refusal.
+
+Private staging is atomically promoted only after full verification into
+`/var/lib/dashboard-abbott/browser-cache`. Root:dashboard-abbott directories0750,
+data/stamp0640, executable files0750, including under restrictive umask; no runtime
+writes. Existing installs must exactly verify, never auto-replaced. Cancellation,
+interrupted download/extraction or unexecutable staging cannot publish; owned
+staging is removed. A newly created empty parent may remain after failure. Before
+promotion a bounded empty-environment child drops all supplemental groups and
+checks service-UID execution permission, writable /tmp and ldd for missing libs.
+Missing libraries remain a blocker; no system dependency installation is enabled.
+
+The existing fixed deploy transport explicitly carries this reviewed source;
+only Abbott deploy/rollback uses its preflight before lock or release writes.
+Hash/mode/version/symlink/access drift refuses. Deployment never downloads a
+browser; it renders the verified path into the already-allowlisted
+PUPPETEER_EXECUTABLE_PATH in new app env without rewriting the secret input or
+sealed launcher. The focused handler selects the same package-derived immutable
+headless-shell path, pipe transport and minimal non-secret browser environment.
+Puppeteer's existing per-launch /tmp profiles and browser-close cleanup remain
+the writable runtime state; neither user home nor immutable browser cache is used
+as profile storage. Combined/Zaruku/MedRoche application sources are unchanged.
+
+TDD RED/GREEN covered missing prerequisite refusal before writes; package/source/
+build selection; fixed PDF launch options; interrupted download/extraction and
+abort before/after extraction; archive escapes/links/duplicates/size; version,
+file hash, extra-file, mode, parent-mode and executable-access drift; restrictive
+umask; idempotence; and bounded/redacted download errors. Installed API extraction
+was exercised only on a synthetic ZIP with HTTP methods disabled; no browser
+binary was downloaded/executed. Capsule syntax was compiled without execution.
+Actual-handler smoke fixtures still compare the pinned request/auth/render source
+after excluding only this explicitly tested launch block/import.
+
+Operational STOP: do not run the new bootstrap, push, deploy, retry PDF/smoke or
+capture, or edit Nginx until dedicated review. No first-install archive digest,
+live library success, new runtime release, screenshot dimensions/diff or full PDF
+parity is claimed. Existing f80607f remains live and PDF-blocked; route-only
+rollback target remains unchanged combined3001. The pre-fix isolated predecessor
+does not contain this PDF correction. A future app deployment also requires a
+reviewed successor manifest attestation for smoke instead of overriding its
+existing f80607f pin. These source changes and evidence are local/unpushed.
+
+Final local gates: build passed; 67 app/runtime tests and 283 authority/artifact/
+bootstrap tests passed; 157 focused operational tests (including the 14 new
+browser/bootstrap tests) and 108 auth/access/runtime tests passed. Root and
+Abbott typechecks, artifact verification (2,870 files/82 text files), exact-route
+validator, script syntax and whitespace checks passed. Lint: zero errors, ten
+existing warnings. Final independent local test-browser inventory was zero; all
+test/build subprocess sessions exited. This is implementation evidence only, not
+browser installation or live PDF acceptance.
+The refreshed 111 contract tests, contract wiring and public-asset security gates
+also passed before commit.

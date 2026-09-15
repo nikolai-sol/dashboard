@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 // Based on af1948c's immutable installer; transport binds this closure to the
 // clean, exact release ref. No executable is imported from an artifact.
-export function createRuntimeInstaller(authority, environmentKeys) {
+export function createRuntimeInstaller(authority, environmentKeys, browserPrerequisite = null) {
 const { scope, port, appName } = authority;
 if (!/^[a-z][a-z0-9-]{0,31}$/.test(scope) || appName !== `dashboard-${scope}` ||
     authority.appDir !== `/var/www/${appName}` || authority.lockDir !== `/var/www/.${appName}-deploy.lock` ||
@@ -352,6 +352,15 @@ async function verifyStagedArtifact(artifact, manifest, boot) {
 }
 
 const realPlatform = {
+  browser(account) {
+    if(scope!=='abbott'||!browserPrerequisite)fail('Abbott browser prerequisite missing');
+    return browserPrerequisite.verifyBrowserInstallation({contract:browserPrerequisite.contract,gid:account.gid,checkExecutable:executable=>{
+      try {
+        const script="const fs=require('node:fs');process.setgroups([]);process.setgid("+account.gid+");process.setuid("+account.uid+");fs.accessSync("+JSON.stringify(executable)+",fs.constants.R_OK|fs.constants.X_OK);";
+        execFileSync('/usr/bin/node',['-e',script],{cwd:'/',env:{},stdio:['ignore','pipe','pipe'],timeout:5000,maxBuffer:1024});return true;
+      }catch{return false;}
+    }}).executable;
+  },
   account() {
     const uid = Number(command('/usr/bin/id', ['-u', `dashboard-${scope}`]).trim());
     const groups = command('/usr/bin/id', ['-G', `dashboard-${scope}`]).trim().split(/\s+/).map(Number);
@@ -512,7 +521,7 @@ function publishPointer(record) {
   fs.renameSync(temporary, CURRENT);
 }
 
-function materialize(payload, id, old, platform, account) {
+function materialize(payload, id, old, platform, account, browserExecutable) {
   if (!payload || payload.scope !== `${scope}` || !SHA.test(payload.sourceSha) || !DIGEST.test(payload.manifestDigest) || hash(payload.manifest) !== payload.manifestDigest) fail('Invalid trusted payload source/scope/digest');
   const manifest = JSON.parse(payload.manifest);
   if (manifest.scope !== `${scope}` || manifest.sourceSha !== payload.sourceSha) fail('Payload source/scope binding failed');
@@ -531,6 +540,7 @@ function materialize(payload, id, old, platform, account) {
     createFile(`${stage}/${file.path}`, Buffer.from(file.data, 'base64'), file.mode);
   }
   const env = renderEnvironment(platform.secrets(control));
+  if(scope==='abbott')env.PUPPETEER_EXECUTABLE_PATH=browserExecutable;
   createFile(`${stage}/.env`, Object.entries(env).map(([key, value]) => `${key}='${value}'\n`).join(''), 0o640);
   platform.chown(`${stage}/.env`, DEPLOY_UID, account.gid);
   const record = { id, previousId: old?.id ?? null, scope: `${scope}`, sourceSha: payload.sourceSha, manifestDigest: payload.manifestDigest };
@@ -545,6 +555,7 @@ async function transact(request, platform = realPlatform, stagedGuard) {
   if (process.getuid() !== DEPLOY_UID) fail('Privileged deploy account required');
   const account = platform.account();
   if (!Number.isInteger(account.uid) || account.uid <= 0 || account.uid === DEPLOY_UID || !Number.isInteger(account.gid) || account.gid <= 0) fail('Dedicated runtime account and write separation required');
+  const browserExecutable=scope==='abbott'&&['deploy','rollback'].includes(request.action)?platform.browser(account):undefined;
   owned(BASE, true);
   const owner = randomUUID();
   try { fs.mkdirSync(LOCK, { mode: 0o700 }); } catch { fail('runtime deployment lock is already held or unsafe'); }
@@ -561,7 +572,7 @@ async function transact(request, platform = realPlatform, stagedGuard) {
     const beforeProcess=processProof(platform,account);
     if(!old&&beforeProcess)fail('Unowned process exists before deployment');
     let record, stage;
-    if (request.action === 'deploy') ({ record, stage } = materialize(request.payload, randomUUID().replaceAll('-', ''), old, platform, account));
+    if (request.action === 'deploy') ({ record, stage } = materialize(request.payload, randomUUID().replaceAll('-', ''), old, platform, account,browserExecutable));
     else {
       if (!old?.previousId) fail('No attested runtime predecessor');
       record = readRecord(old.previousId); stage = `${BACKUPS}/${record.id}`;

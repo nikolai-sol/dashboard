@@ -217,6 +217,7 @@ function fixture() {
   };
   const platform = {
     account: () => ({ uid: 1001, gid: 1001 }),
+    browser: () => '/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell',
     chown: () => {},
     secrets: () => Object.fromEntries(Object.entries(runtime).filter(([key]) => !['NODE_ENV','HOSTNAME','PORT','INTERNAL_BASE_URL'].includes(key))),
     verify: async artifact => {
@@ -275,6 +276,17 @@ function fixture() {
   }
   return { installer: context.installer, platform, events, map, payload, nextStartup: value => { nextStartup = value; }, failHealth: () => { healthFailure = true; }, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
 }
+
+test('Abbott browser prerequisite refuses before deployment writes; verified path is rendered without altering secret input',async()=>{
+  const f=fixture();try{
+    const browser=f.platform.browser;f.platform.browser=()=>{throw Error('browser unavailable');};
+    await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),/browser unavailable/);
+    assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);assert.deepEqual(f.events,[]);
+    f.platform.browser=browser;await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+    assert.ok(fs.readFileSync(f.map('/var/www/dashboard-abbott/.env'),'utf8').includes(`PUPPETEER_EXECUTABLE_PATH='${browser()}'`));
+    assert.equal(f.platform.secrets().PUPPETEER_EXECUTABLE_PATH,'/usr/bin/chromium');
+  }finally{f.cleanup();}
+});
 
 for (const mode of ['delayed', 'timeout', 'fail', 'exited']) test(`candidate ownership is established before ${mode} listener readiness`, async () => {
   const f = fixture();

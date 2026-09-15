@@ -201,7 +201,11 @@ async function actualPdfFixture(t) {
   // the fixed animation wait are stubbed; no socket or real browser is opened.
   for(const [ref,file]of [['8f389a28df1c4b741ec33b7538f0354b74f5a40e','src/app/api/dashboard/[id]/pdf/route.ts'],['f80607fbc8a693aa2c720b0976938e88732cdf1a','apps/abbott/src/lib/abbott-pdf-handler.ts']]){
     const pinned=execFileSync('/usr/bin/git',['--no-replace-objects','show',`${ref}:${file}`],{env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null'},stdio:['ignore','pipe','pipe'],maxBuffer:65536});
-    assert.equal(hash(fs.readFileSync(new URL('../'+file,import.meta.url))),hash(pinned));pinned.fill(0);
+    let current=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8');
+    // Candidate's only app change is the explicit isolated browser launch.
+    // Retain the pinned deployed request/auth/render contract comparison.
+    if(file.endsWith('abbott-pdf-handler.ts'))current=current.replace('import { PUPPETEER_REVISIONS } from "puppeteer-core/internal/revisions.js";\n','').replace(/        \/\/ Version is derived from the installed locked package, not ambient\n        \/\/ HOME\/cache or another dashboard's browser\. Deploy attests this tree\.\n        headless: "shell",\n        executablePath: `[^\n]+`,\n        pipe: true,\n        env: \{ PATH: "\/usr\/bin:\/bin", LANG: "C.UTF-8" \},/,'        headless: true,');
+    assert.equal(hash(current),hash(pinned));pinned.fill(0);
   }
   const saved=Object.fromEntries(['DASHBOARD_AUTH_SECRET','ABBOTT_DASHBOARD_EMBED_KEY','INTERNAL_BASE_URL','ABBOTT_INTERNAL_BASE_URL'].map(key=>[key,process.env[key]]));
   t.after(()=>{for(const [key,value]of Object.entries(saved)){if(value===undefined)delete process.env[key];else process.env[key]=value;}});

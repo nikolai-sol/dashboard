@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import puppeteer from "puppeteer";
+import { PUPPETEER_REVISIONS } from "puppeteer-core/internal/revisions.js";
 import { createViewerExportToken } from "../../../../src/lib/access-auth";
 import { normalizeAbbottIdentifier } from "@reportingdash/runtime-contract";
 import { authorizeAbbottRoute, isAbbottDashboardIdentity } from "./abbott-route-access";
@@ -93,7 +94,12 @@ export function createAbbottPdfHandler(overrides: Partial<{
 
       stage = "launch";
       browser = await launch({
-        headless: true,
+        // Version is derived from the installed locked package, not ambient
+        // HOME/cache or another dashboard's browser. Deploy attests this tree.
+        headless: "shell",
+        executablePath: `/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-${PUPPETEER_REVISIONS["chrome-headless-shell"]}/chrome-headless-shell-linux64/chrome-headless-shell`,
+        pipe: true,
+        env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" },
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",

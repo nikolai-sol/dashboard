@@ -140,6 +140,74 @@ chmod 0700 "$EVIDENCE_PARENT"
 
 ## 3. Record neighbors, then install without Nginx
 
+### Browser prerequisite correction — STOP for review, not executed
+
+Read-only diagnosis after `candidate_5xx` found no explicit browser/cache key in
+the candidate rendered env or initial process env. UID982 resolves HOME through
+the account database to absent `/nonexistent`; its default Puppeteer cache is
+therefore absent. `/tmp` is writable/executable by UID982. Ten standard system
+Chrome/Chromium paths and the three corresponding package records were absent.
+The combined process has HOME present and its root-only ancestry excludes use by
+the dedicated account; no root/user cache is copied or reused. No browser was
+launched and no shared-library state was claimed for an absent candidate binary.
+
+After dedicated review only, the proposed fixed local command is:
+
+```bash
+node scripts/bootstrap-abbott-browser.mjs
+```
+
+Do not invoke a remote installer, package CLI, alternate path or apt command
+manually. This command requires the exact clean worktree; it sends committed
+modules on fixed SSH stdin. On the fixed host it repeats source/process/parser
+proof, attests the entire active f80607f tree, verifies UID982/GID984/no-home
+identity, and compares installed package-derived browser authority before writes.
+It accepts no caller arguments or browser/Git/proxy/Node environment override.
+
+Pinned package `puppeteer-core`24.39.1 currently resolves Linux
+`chrome-headless-shell` build146.0.7680.76; installed `@puppeteer/browsers`2.13.0
+resolves its exact official HTTPS archive. No browser download was made in this
+checkpoint. The downloader rejects redirects/proxies/alternate origins, has a
+120-second/256-MiB bound, and the complete operation has a 180-second watchdog.
+ZIP names/types/count and expanded size (4,096 entries/768 MiB) are checked before
+installed API extraction. The extraction child has a 60-second deadline, bounded
+output and disabled HTTP; it consumes the preseeded local archive, with
+`installDeps:false`. No transient npx, system package install or browser launch.
+
+There is no upstream integrity checksum in this installed package API. The first
+controlled official HTTPS download's archive SHA-256 is recorded honestly as a
+first-install content digest, not an invented upstream checksum. Its immutable
+stamp also binds package versions, supported build/platform, exact source URL,
+executable discovery and the complete extracted file hashes/sizes/modes.
+
+The fixed `/var/lib/dashboard-abbott/browser-cache` is atomically promoted from
+private sibling staging. Parent/cache/directories are root:dashboard-abbott0750;
+regular data/stamp files0640 and executable files0750. Runtime cannot write this
+tree. Existing installs must verify exactly; mismatched version/hash/mode/links
+refuse rather than replacing them. Cancellation/failure removes only owned
+staging; a newly created empty parent may remain. There is no automatic cleanup
+of an existing installed browser. Before publication, an empty-environment
+UID982/GID984 child checks executable access, writable `/tmp`, and bounded `ldd`
+output for missing libraries. Missing libraries are a new blocker, not permission
+to install system dependencies.
+
+Fixed `deploy:abbott` never downloads a browser. Its new Abbott-only prerequisite
+verifies immutable hashes/modes and service-UID executable access before deploy/
+rollback writes. Only then is the existing `PUPPETEER_EXECUTABLE_PATH` rendered
+into the new app env. Root secret input and the sealed launcher allowlist remain
+unchanged. Other runtime scopes do not use this gate. Focused PDF explicitly uses
+the package-derived headless-shell path, debugger pipes, and a minimal child env
+without credentials. Puppeteer's existing unique `/tmp` profile allocation and
+browser-close cleanup remain in use; the read-only cache is not a profile/home.
+
+Release and rollback verification reuse this same immutable browser; they never
+reinstall or delete it. A package/build change requires a separately reviewed
+prerequisite successor, not an override. The pre-fix f80607f application does not
+contain this PDF selection correction; route-only rollback to combined3001 is
+still the known-good rollback, and no full PDF acceptance is claimed for f80607f.
+Before any future smoke, the deployed manifest attestation must be reviewed for
+the new app release rather than bypassing its existing f80607f pin.
+
 Record only process names and PIDs; never use `pm2 jlist` because it includes process environments.
 
 ```bash

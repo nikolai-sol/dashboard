@@ -55,6 +55,13 @@ Both authorized refs are `b9c8965`; the shadow remains `f80607f`
 because later changes affect only tooling/docs. Nginx is unchanged; isolation
 cutover is not complete. See the cutover runbook for authority.
 
+The candidate PDF prerequisite diagnosis confirmed missing browser configuration
+and an absent no-home cache, with no system browser installation available. A
+local reviewed-checkpoint candidate now provisions an app-scoped immutable
+Puppeteer headless-shell cache and fails deployment before writes if unverified.
+It is pending review, not installed/deployed or live-tested. No root/user browser
+cache is copied or shared with Abbott.
+
 ### Abbott canonical/private release boundary
 
 - The Abbott canonical/private operator procedure is

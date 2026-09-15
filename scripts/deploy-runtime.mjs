@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs';
 import { assertRuntimeArtifact, verifyRuntimeArtifactBoot } from './runtime-artifact-policy.mjs';
 import { createRuntimeInstaller } from './runtime-release-remote.mjs';
+import { deriveBrowserContract } from './abbott-browser-prerequisite.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -149,11 +150,14 @@ function prepareTransport(authority) {
   // Capture the reviewed worker and profile once, then recheck the clean source
   // before dispatch. Later filesystem edits cannot replace the transported code.
   const worker = regular(path.join(ROOT, 'scripts/runtime-release-remote.mjs')).toString();
+  const browserSource=authority.scope==='abbott'?regular(path.join(ROOT,'scripts/abbott-browser-prerequisite.mjs')):null;
+  const browserContract=browserSource?deriveBrowserContract():null;
   const environmentKeys = environmentFor(authority);
   return function transfer(request) {
   const input = Buffer.from(JSON.stringify(request));
   if (input.length > 536870912) fail('Runtime payload too large');
-  const code = `${worker}\nawait createRuntimeInstaller(${JSON.stringify(authority)}, ${JSON.stringify(environmentKeys)}).remoteMain(${JSON.stringify(hash(input))});`;
+  const browserSetup=browserSource?`const abbottBrowser={...await import(${JSON.stringify('data:text/javascript;base64,'+browserSource.toString('base64'))}),contract:${JSON.stringify(browserContract)}};`:'const abbottBrowser=null;';
+  const code = `${worker}\n${browserSetup}\nawait createRuntimeInstaller(${JSON.stringify(authority)}, ${JSON.stringify(environmentKeys)},abbottBrowser).remoteMain(${JSON.stringify(hash(input))});`;
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
   const command = `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`;
   const result = spawnSync('/usr/bin/ssh', ['-C', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', command], { input, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', maxBuffer: 1048576, timeout: 300000 });

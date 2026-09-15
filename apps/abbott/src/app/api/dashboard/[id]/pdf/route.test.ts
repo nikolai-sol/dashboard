@@ -62,6 +62,11 @@ test("PDF renders isolated page with existing dimensions and headers, then close
     assert.equal(response.headers.get("cache-control"),"private, no-store");
     assert.match(response.headers.get("content-disposition")!,new RegExp(`dashboard-${id}-\\d{4}-\\d{2}-\\d{2}\\.pdf`));
     assert.equal(await response.text(),"%PDF");
+    const launchOptions=(fixture.calls.find(([name])=>name==="launch")![1] as Record<string,unknown>[])[0];
+    assert.equal(launchOptions.headless,"shell");
+    assert.equal(launchOptions.executablePath,"/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell");
+    assert.equal(launchOptions.pipe,true);
+    assert.deepEqual(launchOptions.env,{PATH:"/usr/bin:/bin",LANG:"C.UTF-8"});
     const goto=fixture.calls.find(([name])=>name==="goto")![1] as [string,unknown];
     const url=new URL(goto[0]);
     assert.equal(url.origin,"http://127.0.0.1:3004");

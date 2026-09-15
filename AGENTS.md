@@ -171,6 +171,10 @@ then memory must be cleaned, not only appended to.
   unchanged combined runtime; no Nginx backup or route switch has occurred.
 - Details and remaining gates: `docs/runbooks/abbott-runtime-cutover.md` and
   `.superpowers/sdd/abbott-task-9-report.md`.
+- Read-only PDF diagnosis confirms the candidate has no browser executable/cache
+  setting and no usable home cache; ten standard system paths and browser package
+  inventory are absent. Local app-scoped headless-shell bootstrap/deploy/PDF fix
+  is pending review. No browser download/install, PDF retry or redeploy occurred.
 
 ### Dashboard app
 
