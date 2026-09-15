@@ -1,10 +1,11 @@
-# Abbott Task 9 — interrupted-activation recovery checkpoint
+# Abbott Task 9 — fresh PM2 activation checkpoint B
 
-Status: DONE_WITH_CONCERNS after verified predecessor recovery. Active files,
-control pointer and PM2 binding now agree on f80607f/release6cd2. Candidate9aaed34
-is quarantined and preserved. Public routing remains unchanged; deployment repair,
-live parity, six-image comparison and cutover are not complete. Earlier sections
-are chronological history, superseded by the latest execution section.
+Status: DONE_WITH_CONCERNS; source-only checkpoint B awaits independent review.
+Last verified production state is recovered f80607f/release6cd2 with matching
+active files, pointer and PM2 binding; candidate9aaed34 is quarantined. This
+checkpoint made no live request or mutation and does not freshly attest that
+state. Deployment repair execution, live parity, six-image comparison and
+cutover are not complete. Earlier sections are chronological history.
 
 ## Scope and authorization
 
@@ -2177,3 +2178,78 @@ Task9 release repair/parity/capture/cutover remain incomplete. No deployment,
 smoke, capture, fact/DB/auth mutation, neighbor process action or Nginx action
 followed recovery. Stop for review/direction. This sanitized evidence-only commit
 is local and is not published without new authorization.
+
+## Checkpoint B — fresh Abbott PM2 registration, source/TDD only
+
+Implemented the parent-approved Abbott-only activation repair. The fixture now
+models PM2 correctly: stop retains the old registration/env until an explicit
+delete. The retained-env regression failed against the prior activation path,
+then passed with exact predecessor stop/delete and a fresh fixed-ecosystem
+start. Non-Abbott activation and the dedicated historical recovery API remain
+unchanged. No generic deployment framework or alternate authority was added.
+
+Before activation, the worker proves the exact predecessor registration,
+PID/start/UID/GID, launcher/cwd, release/source, sole loopback listener and health,
+plus sealed active/candidate trees, protected records, env metadata/digests,
+directory identities, original pointer bytes and absence of the backup slot.
+It re-proves the registration immediately before stop and delete, verifies the
+old kernel PID has exited, and starts only after registry/listener absence.
+Fresh candidate binding, stable live identity, online status, full tree/env,
+listener and health must all pass before pointer publication.
+
+Failure compensation stops/deletes only a provably owned candidate, restores
+the exact old tree/env/pointer bytes and starts the predecessor fresh. Its old
+binding/listener/health must then pass. Failed owned predecessor startups are
+stopped; uncertain replacement identities are never touched. Unresolved drift
+preserves both trees where available plus root-only lock/journal for review;
+the worker does not claim an unproven replacement was stopped. Atomic journal
+states distinguish committed, restored and review_required. A fully restored
+failure clears the lock but retains its audit journal, as does successful
+activation. Journals contain metadata only, never env values.
+
+Additional observed RED/GREEN regressions cover online status, remote signal
+guard wiring, pointer drift with owned-candidate shutdown, last-boundary identity
+drift, exact original pointer-byte restoration, unsafe predecessor env mode and
+candidate registration disappearance after final health. Synthetic fault cases
+cover stop/delete/start errors before and after side effects, both atomic tree
+moves before/after failure, PID/start/UID/GID/release drift, partial inactive
+registrations, predecessor restart failure, and cancellation at prepared, stop,
+delete, both renames, start, candidate_started and pointer publication. The real
+command adapter test confirms exact fixed PM2 start/delete argv and no retained
+env merge. No test performs live SSH, PM2 or production filesystem actions.
+
+Fresh final local gates:
+
+| Gate | Result |
+| --- | --- |
+| Abbott production build and sealed route gate | Pass; 12 exact routes, one asset prefix |
+| Abbott app/contract tests | 67/67 pass; repeated locally after build |
+| Full authority/bootstrap/browser/recovery/deploy/artifact suite | 388/388 pass |
+| Smoke/asset/issuer/visual/orchestrator regression suite | 95/95 pass, after build |
+| Sealed artifact verification | Pass; 2870 files, 82 text files |
+| Root and Abbott TypeScript checks | Pass |
+| ESLint | Exit 0; 0 errors, 10 existing warnings |
+| Changed-module syntax and whitespace checks | Pass |
+
+Verification-before-completion required fresh gates after the final stale-proof
+fix; earlier intermediate runs are not substituted for this evidence. The
+debugging, TDD and executing-plans skills guided the isolated fixture and phased
+compensation implementation. The runbook now explains changed PM2 IDs, exact
+authority, audit/lock behavior and the mandatory pre-execution review stop.
+
+All local test command sessions exited. No owned browser/SSH resources were
+created, and the fixed private recovery-evidence directory is absent. No
+credentials were minted/read, no production proof was rerun, and no push,
+deployment, browser download, parity/capture, DB/auth/fact/cron change, neighbor
+process action or Nginx operation occurred. Latest published refs remain
+982dd1a; fc0bcb6 remains the preceding local recovery-evidence commit.
+
+Concerns: this source change is not authorized for live execution until reviewed.
+The deploy SSH transport/options are deliberately unchanged; the recovery-only
+transport fixes do not prove a future deploy transport invocation. Signal guards
+yield between activation phases and existing OS commands remain bounded, but
+abrupt unrecoverable worker death requires protected journal/lock inspection,
+not an automatic-success assumption. Last verified production rollback target
+remains f80607f/release6cd2, with candidate9aaed34 preserved; no new release,
+Nginx backup, screenshot dimensions/diff or post-deploy smoke result exists in
+this source-only checkpoint. STOP for checkpoint B review before any live use.

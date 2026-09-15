@@ -385,6 +385,24 @@ const realPlatform = {
     // launcher clears inherited metadata before loading the application env.
     command('pm2', ['startOrReload', `${control}/deploy/${scope}/ecosystem.config.cjs`, '--only', appName, '--update-env'], record);
   },
+  async startFresh(control) {
+    if(scope!=='abbott'||realPlatform.registration()!==null)fail('Fresh Abbott registration requires absence');
+    const record=readRecord(path.basename(control));
+    if(control!==`${CONTROL}/${record.id}`)fail('Invalid PM2 release control');
+    const launcher=`${BASE}/.dashboard-${scope}-launcher.cjs`,source=`${control}/deploy/${scope}/start.cjs`;
+    if(fs.existsSync(launcher)){owned(launcher);if(!stableRead(launcher).equals(stableRead(source)))fail('Launcher transition requires review');}
+    else createFile(launcher,stableRead(source),0o644);
+    if(realPlatform.registration()!==null)fail('Fresh Abbott registration requires absence');
+    command('pm2',['start',`${control}/deploy/${scope}/ecosystem.config.cjs`,'--only',appName],record);
+  },
+  async delete(pmId) {
+    if(scope!=='abbott'||!Number.isSafeInteger(pmId)||pmId<0)fail('Owned Abbott registration required');
+    command('pm2',['delete',String(pmId)]);
+  },
+  exited(proof) {
+    if(!proof||!Number.isSafeInteger(proof.pid)||proof.pid<=0)fail('Owned process proof required');
+    if(fs.lstatSync(`/proc/${proof.pid}`,{throwIfNoEntry:false}))fail('Owned process exit not verified');
+  },
   registration(pmId) {
     const matches = JSON.parse(command('pm2', ['jlist'])).filter(row => row.pm_id === pmId || row.name === appName);
     if (!matches.length) return null;
@@ -548,6 +566,122 @@ function materialize(payload, id, old, platform, account, browserExecutable) {
   return { record, stage };
 }
 
+// Abbott changes registration rather than asking PM2 to merge retained env.
+// Every destructive command is addressed by a freshly re-proven registration.
+async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,preserveLock}) {
+  const oldBackup=old?`${BACKUPS}/${old.id}`:null;
+  const journalPath=`${CONTROL}/activation-${owner}.json`;
+  const dir=p=>{owned(p,true);const s=fs.lstatSync(p);return{dev:String(s.dev),ino:String(s.ino)};};
+  const absent=p=>{if(fs.lstatSync(p,{throwIfNoEntry:false}))fail('Activation path collision');};
+  const sameDir=(p,d)=>{if(!isDeepStrictEqual(dir(p),d))fail('Activation directory identity changed');};
+  const candidateDirectory=dir(stage),oldDirectory=old?dir(APP):null;
+  const originalPointer=old?stableRead(CURRENT,true):null,oldEnv=old?hash(stableRead(`${APP}/.env`)):null;
+  let mutated=false,oldMoved=false,candidateMoved=false,startAttempted=false,ownedRegistration=null,ownedProcess=null,pointerPublished=false;
+  const lockProof=()=>{owned(LOCK,true);const s=fs.lstatSync(LOCK);if(s.gid!==0||(s.mode&0o7777)!==0o700||stableRead(`${LOCK}/owner`,true).toString()!==owner||fs.readdirSync(LOCK).join()!=='owner')fail('Activation lock drift');};
+  const pointerProof=()=>{
+    if(pointerPublished){if(!stableRead(CURRENT,true).equals(Buffer.from(JSON.stringify(record))))fail('Activation pointer drift');}
+    else if(originalPointer){if(!stableRead(CURRENT,true).equals(originalPointer))fail('Activation pointer drift');}
+    else absent(CURRENT);
+  };
+  const tree=(p,r,d,digest)=>{
+    sameDir(p,d);if(!isDeepStrictEqual(readRecord(r.id),r))fail('Activation record drift');attestTree(p,r);
+    const s=fs.lstatSync(`${p}/.env`);if(!s.isFile()||s.nlink!==1||s.uid!==0||s.gid!==account.gid||(s.mode&0o7777)!==0o640||hash(stableRead(`${p}/.env`))!==digest)fail('Activation environment drift');
+  };
+  const journal=state=>{
+    lockProof();const next=journalPath+'.next';absent(next);
+    if(fs.existsSync(journalPath)){owned(journalPath);const s=fs.lstatSync(journalPath);if(s.gid!==0||(s.mode&0o7777)!==0o600)fail('Activation journal drift');const prior=JSON.parse(stableRead(journalPath,true));if(prior.owner!==owner)fail('Activation journal drift');}
+    durableFile(next,{version:1,owner,state,predecessor:old, candidate:record,stage,oldDirectory,candidateDirectory});fs.renameSync(next,journalPath);
+  };
+  const checkpoint=async()=>{await new Promise(resolve=>setTimeout(resolve,0));guard();lockProof();pointerProof();};
+  const noRegistration=async()=>{if(platform.registration()!==null)fail('Abbott registration remains');await platform.assertNoListener();};
+  const remove=async(registration,proof)=>{
+    // Pointer drift forbids layout compensation, but cannot keep an otherwise
+    // exactly owned candidate serving. Process identity remains mandatory.
+    lockProof();
+    await stopRegistration(registration,proof,platform,account,lockProof);
+    if(proof)platform.exited(proof);
+    const stopped=platform.registration(registration.pmId);
+    if(stopped!==null){
+      if(!isDeepStrictEqual(stopped.registration,registration)||stopped.pid!==0||stopped.status!=='stopped')fail('Abbott deletion ownership changed');
+      lockProof();
+      if(!isDeepStrictEqual(platform.registration(registration.pmId),stopped))fail('Abbott deletion ownership changed');
+      await platform.delete(registration.pmId);
+    }
+    await noRegistration();if(proof)platform.exited(proof);
+  };
+  const capture=(requireOnline=false)=>{
+    const candidate=platform.registration();if(candidate===null){if(requireOnline)fail('Candidate registration disappeared');return;}
+    validateRuntimeRegistration(candidate.registration,account);
+    if(candidate.registration.releaseId!==record.id||candidate.registration.sourceSha!==record.sourceSha||ownedRegistration&&!isDeepStrictEqual(candidate.registration,ownedRegistration))fail('New deployment registration was not established');
+    ownedRegistration=candidate.registration;
+    if(Number.isSafeInteger(candidate.pid)&&candidate.pid>0){
+      const proof=processProof(platform,account);
+      if(!proof||proof.pid!==candidate.pid||!isDeepStrictEqual(proof.registration,ownedRegistration)||beforeProcess&&proof.pid===beforeProcess.pid||ownedProcess&&!isDeepStrictEqual(proof,ownedProcess))fail('New deployment process was not established');
+      ownedProcess=proof;
+      if(requireOnline&&candidate.status!=='online')fail('New deployment process is not online');
+    }else if(requireOnline||candidate.pid!==0||!['errored','waiting restart','launching','stopping','stopped'].includes(candidate.status))fail('New deployment inactive identity mismatch');
+  };
+  const before=async()=>{
+    lockProof();pointerProof();tree(stage,record,candidateDirectory,envDigest);
+    if(old){
+      tree(APP,old,oldDirectory,oldEnv);absent(oldBackup);
+      if(!beforeProcess||platform.registration(beforeProcess.pmId)?.status!=='online'||beforeProcess.sourceSha!==old.sourceSha||beforeProcess.registration.releaseId!==old.id||!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Predecessor process identity mismatch');
+      await platform.health(beforeProcess);
+      if(!isDeepStrictEqual(processProof(platform,account),beforeProcess))fail('Predecessor process identity changed');
+    }else{absent(APP);await noRegistration();}
+  };
+  await before();await checkpoint();journal('prepared');
+  try{
+    await checkpoint();await before();mutated=true;
+    if(old)await remove(beforeProcess.registration,beforeProcess);else await noRegistration();
+    journal('predecessor_removed');await checkpoint();
+    await noRegistration();
+    if(old){tree(APP,old,oldDirectory,oldEnv);absent(oldBackup);if(platform.registration()!==null)fail('Abbott registration reappeared');fs.renameSync(APP,oldBackup);oldMoved=true;}
+    tree(stage,record,candidateDirectory,envDigest);absent(APP);if(platform.registration()!==null)fail('Abbott registration reappeared');fs.renameSync(stage,APP);candidateMoved=true;
+    journal('candidate_active');await checkpoint();tree(APP,record,candidateDirectory,envDigest);await noRegistration();
+    startAttempted=true;let startFailed=false;try{await platform.startFresh(`${CONTROL}/${record.id}`);}catch{startFailed=true;}
+    capture(true);if(startFailed||!ownedProcess)fail('New deployment process was not established');
+    journal('candidate_started');await checkpoint();await platform.health(ownedProcess);await checkpoint();
+    capture(true);tree(APP,record,candidateDirectory,envDigest);
+    if(!isDeepStrictEqual(processProof(platform,account),ownedProcess))fail('Candidate readiness identity changed');
+    if(old)tree(oldBackup,old,oldDirectory,oldEnv);
+    await checkpoint();await platform.health(ownedProcess);capture(true);pointerProof();
+    publishPointer(record);pointerPublished=true;
+    if(request.binding)durableFile(`${CONTROL}/ownership-${request.binding.runId}.json`,{version:1,binding:request.binding,transaction:owner,record,directory:directoryIdentity(),process:ownedProcess});
+    await checkpoint();capture(true);tree(APP,record,candidateDirectory,envDigest);journal('committed');return record;
+  }catch{
+    if(!mutated){journal('refused');fail('Abbott activation refused before process mutation');}
+    try{
+      // Cancellation cannot disable identity checks or the bounded compensation.
+      lockProof();
+      if(startAttempted){if(!ownedRegistration)capture();if(ownedRegistration)await remove(ownedRegistration,ownedProcess);else await noRegistration();}
+      else if(old)await remove(beforeProcess.registration,beforeProcess);else await noRegistration();
+      pointerProof();
+      if(candidateMoved){tree(APP,record,candidateDirectory,envDigest);absent(stage);fs.renameSync(APP,stage);candidateMoved=false;}
+      if(oldMoved){tree(oldBackup,old,oldDirectory,oldEnv);absent(APP);fs.renameSync(oldBackup,APP);oldMoved=false;}
+      if(old){
+        tree(APP,old,oldDirectory,oldEnv);
+        if(pointerPublished){const next=`${CONTROL}/current-${randomUUID()}.json`;createFile(next,originalPointer);fs.renameSync(next,CURRENT);pointerPublished=false;}
+        pointerProof();await noRegistration();
+        let failed=false;try{await platform.startFresh(`${CONTROL}/${old.id}`);}catch{failed=true;}
+        const restored=platform.registration();
+        if(!restored||restored.registration.releaseId!==old.id||restored.registration.sourceSha!==old.sourceSha)fail('Predecessor restart ownership requires review');
+        const live=Number.isSafeInteger(restored.pid)&&restored.pid>0?processProof(platform,account):null;
+        try{
+          if(failed||!live||restored.status!=='online'||live.registration.releaseId!==old.id||live.sourceSha!==old.sourceSha)fail('Predecessor restart failed');
+          await platform.health(live);tree(APP,old,oldDirectory,oldEnv);pointerProof();
+          if(!isDeepStrictEqual(processProof(platform,account),live)||!isDeepStrictEqual(current(),old))fail('Predecessor restart identity changed');
+        }catch{await remove(restored.registration,live);throw Error();}
+      }else{absent(APP);if(pointerPublished){owned(CURRENT);fs.unlinkSync(CURRENT);pointerPublished=false;}await noRegistration();}
+      journal('restored');fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
+    }catch(error){
+      if(error.message==='runtime activation failed; attested predecessor restored'||error.message==='runtime activation failed; service stopped')throw error;
+      preserveLock();try{journal('review_required');}catch{}
+      fail('runtime activation and predecessor restoration failed; ownership requires review');
+    }
+  }finally{originalPointer?.fill(0);}
+}
+
 async function transact(request, platform = realPlatform, stagedGuard) {
   // The worker is supplied by the exact clean release source, never by remote disk.
   const guard = stagedGuard ?? (() => {});
@@ -558,6 +692,7 @@ async function transact(request, platform = realPlatform, stagedGuard) {
   const browserExecutable=scope==='abbott'&&['deploy','rollback'].includes(request.action)?platform.browser(account):undefined;
   owned(BASE, true);
   const owner = randomUUID();
+  let preserveLock=false;
   try { fs.mkdirSync(LOCK, { mode: 0o700 }); } catch { fail('runtime deployment lock is already held or unsafe'); }
   createFile(`${LOCK}/owner`, owner);
   try {
@@ -601,6 +736,7 @@ async function transact(request, platform = realPlatform, stagedGuard) {
     if (old) attestTree(APP, old);
     const oldBackup = old ? `${BACKUPS}/${old.id}` : null;
     if (oldBackup && fs.lstatSync(oldBackup, { throwIfNoEntry: false })) fail('Predecessor backup collision');
+    if(scope==='abbott')return await activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,preserveLock:()=>{preserveLock=true;}});
     let oldMoved = false, candidateMoved = false, startAttempted = false, ownedRegistration = null, ownedProcess = null;
     try {
       if (old) { fs.renameSync(APP, oldBackup); oldMoved = true; }
@@ -678,23 +814,28 @@ async function transact(request, platform = realPlatform, stagedGuard) {
   } finally {
     owned(LOCK, true);
     if (stableRead(`${LOCK}/owner`, true).toString() !== owner || fs.readdirSync(LOCK).join() !== 'owner') fail('runtime lock ownership changed; preserved for recovery');
-    fs.unlinkSync(`${LOCK}/owner`); fs.rmdirSync(LOCK);
+    if(!preserveLock){fs.unlinkSync(`${LOCK}/owner`); fs.rmdirSync(LOCK);}
   }
 }
 
 async function remoteMain(expectedDigest) {
+  let cancelled=false;
+  const signals=scope==='abbott'?['SIGINT','SIGTERM','SIGHUP']:[];
+  const stop=()=>{cancelled=true;};
+  const guard=()=>{if(cancelled)fail('Abbott activation cancelled');};
+  for(const signal of signals)process.on(signal,stop);
   try {
     if (!DIGEST.test(expectedDigest)) fail('Invalid transport authority');
     const bytes = fs.readFileSync(0);
     if (bytes.length > 536870912 || hash(bytes) !== expectedDigest) fail('Transport authority mismatch');
     const request = JSON.parse(bytes);
     // Inspection takes the same scope lock; no active metadata is read here.
-    const record = await transact(request);
+    const record = await transact(request, realPlatform, guard);
     process.stdout.write(JSON.stringify(record) + '\n');
   } catch (error) {
-    process.stderr.write(`Refusing runtime operation: ${error.message}\n`);
+    process.stderr.write(scope==='abbott'?'ABBOTT_ACTIVATION_REFUSED\n':`Refusing runtime operation: ${error.message}\n`);
     process.exitCode = 1;
-  }
+  }finally{for(const signal of signals)process.removeListener(signal,stop);}
 }
 
 

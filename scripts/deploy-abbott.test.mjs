@@ -192,7 +192,7 @@ function fixture() {
   for (const method of ['closeSync','fsyncSync']) io[method] = (...args) => fs[method](...args);
   for (const method of ['lstatSync','statSync','fstatSync']) io[method] = (filename, ...args) => {
     const stat = fs[method](typeof filename === 'number' ? filename : map(filename), ...args);
-    if (stat) { stat.uid = typeof stat.uid === 'bigint' ? 0n : 0; stat.gid = typeof stat.gid === 'bigint' ? 0n : 0; }
+    if (stat) { stat.uid = typeof stat.uid === 'bigint' ? 0n : 0; const gid=typeof filename==='string'&&filename.endsWith('.env')?1001:0;stat.gid = typeof stat.gid === 'bigint' ? BigInt(gid) : gid; }
     return stat;
   };
   io.realpathSync = filename => '/' + path.relative(directory, fs.realpathSync(map(filename)));
@@ -204,8 +204,8 @@ function fixture() {
   vm.createContext(context);
   const source = read('scripts/runtime-release-remote.mjs').replace(/^import .*;\n/gm, '').replace('export function createRuntimeInstaller', 'function createRuntimeInstaller');
   vm.runInContext(source + '\nthis.installer = createRuntimeInstaller(authority, environmentKeys);', context);
-  let processRow = null, serial = 10, healthFailure = false;
-  let nextStartup = 'ready', startup = 'ready', listening = true;
+  let processRow = null, serial = 10, healthFailure = false,lastDeletedRegistration=null;
+  let nextStartup = 'ready', startup = 'ready', listening = false;
   const events = [];
   const processText = filename => {
     if (filename.endsWith('/status')) return 'Uid:\t1001\t1001\t1001\t1001\nGid:\t1001\t1001\t1001\t1001\n';
@@ -231,10 +231,16 @@ function fixture() {
       const previousRegistration = processRow?.pm2_env;
       processRow = { name: 'dashboard-abbott', pid: ++serial, pm_id: serial, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'], uid: 'dashboard-abbott', gid: 'dashboard-abbott', RUNTIME_RELEASE_ID: path.basename(control), RUNTIME_RELEASE_SOURCE_SHA: fs.readFileSync(map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), status: 'online' } };
       startup = nextStartup; nextStartup = 'ready'; listening = startup === 'ready';
-      if (startup === 'retained:predecessor') {
+      if(startup==='retained:predecessor'&&!previousRegistration){startup='ready';listening=true;}
+      if (startup === 'retained:predecessor' && previousRegistration) {
         processRow.pm2_env.RUNTIME_RELEASE_ID = previousRegistration.RUNTIME_RELEASE_ID;
         processRow.pm2_env.RUNTIME_RELEASE_SOURCE_SHA = previousRegistration.RUNTIME_RELEASE_SOURCE_SHA;
         listening = true;
+      }
+      if(startup==='forged:predecessor'){
+        processRow.pm2_env.RUNTIME_RELEASE_ID=lastDeletedRegistration.RUNTIME_RELEASE_ID;
+        processRow.pm2_env.RUNTIME_RELEASE_SOURCE_SHA=lastDeletedRegistration.RUNTIME_RELEASE_SOURCE_SHA;
+        listening=true;
       }
       if (startup.startsWith('early:')) {
         processRow.pid = 0;
@@ -245,10 +251,18 @@ function fixture() {
     },
     async stop(pmId) {
       assert.equal(pmId, processRow.pm_id); events.push(['stop', pmId]);
-      if (processRow.pid === 0) processRow.pm2_env.status = 'stopped';
-      else processRow = null;
+      processRow.pid = 0; processRow.pm2_env.status = 'stopped';
       listening = false;
     },
+    async delete(pmId) {
+      assert.equal(pmId,processRow.pm_id);assert.equal(processRow.pid,0);assert.equal(processRow.pm2_env.status,'stopped');
+      events.push(['delete',pmId]);lastDeletedRegistration=processRow.pm2_env;processRow=null;
+    },
+    async startFresh(control) {
+      assert.equal(processRow,null,'fresh activation must delete the prior PM2 registration');
+      events.push(['fresh',control]);await platform.start(control);
+    },
+    exited(proof) { assert.ok(!processRow||processRow.pid!==proof.pid,'owned process must be gone'); },
     async health() {
       if (healthFailure) { healthFailure = false; throw new Error('fixture failed health'); }
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -280,8 +294,191 @@ function fixture() {
     const manifest = JSON.stringify({ version: 1, scope: 'abbott', sourceSha, files: entries });
     return { scope: 'abbott', sourceSha, manifest, manifestDigest: createHash('sha256').update(manifest).digest('hex'), control: [], files: entries.map(entry => ({ path: entry.path, mode: entry.mode, data: Buffer.from(values[entry.path]).toString('base64') })) };
   }
-  return { installer: context.installer, platform, events, map, payload, nextStartup: value => { nextStartup = value; }, failHealth: () => { healthFailure = true; }, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
+  return { installer: context.installer, platform, events, map, io, context, payload, exitProcess:()=>{processRow=null;listening=false;}, mutateRow: fn=>fn(processRow), nextStartup: value => { nextStartup = value; }, failHealth: () => { healthFailure = true; }, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
 }
+
+test('fresh Abbott activation deletes the proven predecessor and cannot retain its PM2 env',async()=>{
+  const f=fixture();try{
+    const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+    const before=f.platform.snapshot();f.nextStartup('retained:predecessor');
+    const candidate=await f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform);
+    const stopped=f.events.findIndex(e=>e[0]==='stop'&&e[1]===before.pmId),deleted=f.events.findIndex(e=>e[0]==='delete'&&e[1]===before.pmId),started=f.events.findIndex(e=>e[0]==='fresh'&&e[1].endsWith(candidate.id));
+    assert.ok(stopped>=0&&deleted>stopped&&started>deleted);
+    assert.equal(f.platform.snapshot().registration.releaseId,candidate.id);
+    assert.equal(f.installer.inspectActiveRuntime().id,candidate.id);
+    assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${old.id}/.release-source-sha`),'utf8').trim(),old.sourceSha);
+  }finally{f.cleanup();}
+});
+
+for(const method of['stop','delete','startFresh'])for(const when of['before','after'])test(`fresh activation compensates ${method} failure ${when} side effect`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+  const original=f.platform[method];let failed=false;
+  f.platform[method]=async(...args)=>{if(failed)return original(...args);failed=true;if(when==='after')await original(...args);throw Error('private failure');};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/attested predecessor restored/);
+  assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(f.platform.snapshot().registration.releaseId,old.id);
+  assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+  const journal=fs.readdirSync(f.map('/var/www/.dashboard-abbott-control')).filter(n=>n.startsWith('activation-')).map(n=>JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/'+n)))).find(j=>j.predecessor?.id===old.id);
+  assert.equal(journal.state,'restored');assert.equal(journal.candidate.sourceSha,'b'.repeat(40));
+ }finally{f.cleanup();}
+});
+
+for(const field of['pid','startTime','uid','gid','sourceSha','releaseId'])test(`predecessor ${field} drift refuses before stop/delete or active rename`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),snapshot=f.platform.snapshot,verify=f.platform.verify;
+  let changed=false;f.platform.verify=async(...args)=>{await verify(...args);changed=true;};
+  f.platform.snapshot=()=>{const p=snapshot();if(changed){if(field==='releaseId')p.registration.releaseId='d'.repeat(32);else p[field]=['pid','uid','gid'].includes(field)?9999:'d'.repeat(field==='sourceSha'?40:5);}return p;};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform));
+  assert.equal(f.events.filter(e=>['stop','delete'].includes(e[0])).length,0);
+  assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(fs.existsSync(f.map('/var/www/dashboard-abbott-backups/'+old.id)),false);
+ }finally{f.cleanup();}
+});
+
+test('candidate cannot publish pointer until complete health and stable binding verification',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),health=f.platform.health;
+  let candidateChecks=0;f.platform.health=async proof=>{if(proof.sourceSha!==old.sourceSha){candidateChecks++;assert.equal(JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json'))).id,old.id);}await health(proof);};
+  await f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform);assert.equal(candidateChecks,2);
+ }finally{f.cleanup();}
+});
+
+for(const when of['before','after'])test(`failed fresh predecessor restart ${when} spawn leaves owned Abbott stopped and lock/journal`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),start=f.platform.startFresh;f.nextStartup('fail');let starts=0;
+  f.platform.startFresh=async control=>{if(++starts===2){if(when==='after')await start(control);throw Error('private rollback failure');}return start(control);};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
+  assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+  const journals=fs.readdirSync(f.map('/var/www/.dashboard-abbott-control')).filter(n=>n.startsWith('activation-')).map(n=>JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/'+n))));assert.ok(journals.some(j=>j.state==='review_required'));
+ }finally{f.cleanup();}
+});
+
+test('online status is required for predecessor and candidate even with a healthy listener',async()=>{
+ for(const side of['predecessor','candidate']){const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+  if(side==='predecessor')f.mutateRow(r=>{r.pm2_env.status='launching';});
+  else{const start=f.platform.startFresh;f.platform.startFresh=async control=>{await start(control);if(!control.endsWith(old.id))f.mutateRow(r=>{r.pm2_env.status='launching';});};}
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform));
+  assert.equal(f.installer.inspectActiveRuntime().id,old.id);
+  if(side==='predecessor')assert.equal(f.events.filter(e=>e[0]==='stop').length,0);
+ }finally{f.cleanup();}}
+});
+
+for(const phase of['prepared','stop','delete','old_rename','candidate_rename','start','candidate_started','publish'])test(`cancellation at ${phase} restores predecessor without promoting candidate`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let aborted=false,hit=false;
+  for(const [name,event]of[['stop','stop'],['delete','delete'],['startFresh','start']]){const original=f.platform[name];f.platform[name]=async(...args)=>{const r=await original(...args);if(phase===event&&!hit){hit=true;aborted=true;}return r;};}
+  const rename=f.io.renameSync;f.io.renameSync=(from,to)=>{rename(from,to);if(!hit&&((phase==='old_rename'&&from==='/var/www/dashboard-abbott')||(phase==='candidate_rename'&&to==='/var/www/dashboard-abbott')||(phase==='publish'&&to==='/var/www/.dashboard-abbott-control/current.json'))){hit=true;aborted=true;}};
+  const guard=()=>{if(['prepared','candidate_started'].includes(phase)&&!hit){for(const n of fs.readdirSync(f.map('/var/www/.dashboard-abbott-control')).filter(n=>n.startsWith('activation-')&&!n.endsWith('.next'))){const j=JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/'+n)));if(j.predecessor?.id===old.id&&j.state===phase){hit=true;aborted=true;}}}if(aborted)throw Error('private cancellation');};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform,guard));
+  assert.equal(hit,true);assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(f.platform.snapshot().registration.releaseId,old.id);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+ }finally{f.cleanup();}
+});
+
+test('remote Abbott signal lifecycle installs before dispatch and retains handlers until compensation returns',()=>{
+ const source=read('scripts/runtime-release-remote.mjs'),main=source.slice(source.indexOf('async function remoteMain'));
+ assert.match(main,/SIGINT.*SIGTERM.*SIGHUP/);
+ assert.ok(main.indexOf('process.on(')<main.indexOf('await transact('));
+ assert.match(main,/await transact\(request, realPlatform, guard\)/);
+ assert.ok(main.indexOf('removeListener')>main.indexOf('await transact('));
+});
+
+test('pointer drift after candidate health stops only the proven candidate and preserves review state',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),health=f.platform.health;
+  f.platform.health=async proof=>{await health(proof);if(proof.sourceSha!==old.sourceSha)fs.writeFileSync(f.map('/var/www/.dashboard-abbott-control/current.json'),JSON.stringify({...old,id:'d'.repeat(32)}));};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
+  assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+  assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${old.id}/.release-source-sha`),'utf8').trim(),old.sourceSha);
+ }finally{f.cleanup();}
+});
+
+test('registration replacement after stop is never deleted and leaves exact old tree for review',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),registration=f.platform.registration;
+  let stoppedReads=0;f.platform.registration=(...args)=>{const row=registration(...args);if(row?.status==='stopped'&&++stoppedReads===3)f.mutateRow(r=>{r.pm_id+=100;});return registration(...args);};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
+  assert.equal(f.events.filter(e=>e[0]==='delete').length,0);assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+ }finally{f.cleanup();}
+});
+
+test('real fresh adapter uses only fixed PM2 start/delete and never merges retained environment',async()=>{
+ const f=fixture();try{
+  const record=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),control='/var/www/.dashboard-abbott-control/'+record.id;
+  fs.mkdirSync(f.map(control+'/deploy/abbott'),{recursive:true});fs.writeFileSync(f.map(control+'/deploy/abbott/start.cjs'),read('deploy/abbott/start.cjs'));
+  const calls=[];f.context.execFileSync=(bin,args,options)=>{calls.push({bin,args:Array.from(args),env:options.env});if(bin==='pm2'&&args[0]==='jlist')return '[]';if(bin==='pm2'&&['start','delete'].includes(args[0]))return '';throw Error('unexpected fixture command');};
+  const p=f.installer.interruptedRecoveryTools().platform;await p.startFresh(control);await p.delete(17);
+  const actions=calls.filter(c=>c.args[0]!=='jlist');assert.deepEqual(actions.map(c=>c.args),[['start',control+'/deploy/abbott/ecosystem.config.cjs','--only','dashboard-abbott'],['delete','17']]);
+  assert.equal(actions[0].env.RUNTIME_RELEASE_ID,record.id);assert.equal(actions[0].env.RUNTIME_RELEASE_SOURCE_SHA,record.sourceSha);
+  assert.ok(actions.every(c=>c.bin==='pm2'));assert.doesNotMatch(JSON.stringify(actions),/startOrReload|--update-env|dashboard-next|dashboard-zaruku|dashboard-medroche/);
+  const count=calls.length;await assert.rejects(p.delete('all'));await assert.rejects(p.startFresh('/var/www/other'));assert.equal(calls.filter(c=>c.args[0]!=='jlist').length,2);assert.ok(calls.length>=count);
+ }finally{f.cleanup();}
+});
+
+for(const move of['predecessor','candidate'])for(const when of['before','after'])test(`atomic ${move} rename failure ${when} preserves trees and either restores or stops Abbott`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),rename=f.io.renameSync;let hit=false;
+  f.io.renameSync=(from,to)=>{const match=move==='predecessor'?from==='/var/www/dashboard-abbott':to==='/var/www/dashboard-abbott';if(!hit&&match){hit=true;if(when==='after')rename(from,to);throw Error('private rename failure');}rename(from,to);};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform));assert.equal(hit,true);
+  const locked=fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock'));
+  if(locked)assert.equal(f.platform.registration(),null);else{assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(f.platform.snapshot().registration.releaseId,old.id);}
+  const locations=['/var/www/dashboard-abbott',...fs.readdirSync(f.map('/var/www/dashboard-abbott-backups')).map(n=>'/var/www/dashboard-abbott-backups/'+n),...fs.readdirSync(f.map('/var/www/dashboard-abbott-releases')).map(n=>'/var/www/dashboard-abbott-releases/'+n)].filter(p=>fs.existsSync(f.map(p)));
+  assert.deepEqual(locations.map(p=>fs.readFileSync(f.map(p+'/.release-source-sha'),'utf8').trim()).sort(),['a'.repeat(40),'b'.repeat(40)]);
+ }finally{f.cleanup();}
+});
+
+test('candidate PID reuse after health never authorizes stopping a replacement',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),health=f.platform.health,snapshot=f.platform.snapshot;let replaced=false;
+  f.platform.health=async proof=>{await health(proof);if(proof.sourceSha!==old.sourceSha)replaced=true;};
+  f.platform.snapshot=()=>{const proof=snapshot();if(replaced)proof.startTime='99999';return proof;};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
+  assert.equal(f.events.filter(e=>e[0]==='stop').length,1);assert.equal(f.events.filter(e=>e[0]==='delete').length,1);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+ }finally{f.cleanup();}
+});
+
+test('last pre-publication identity drift cannot promote the candidate pointer',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);let checks=0,hit=false;
+  const guard=()=>{for(const n of fs.readdirSync(f.map('/var/www/.dashboard-abbott-control')).filter(n=>n.startsWith('activation-')&&!n.endsWith('.next'))){const j=JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/'+n)));if(j.predecessor?.id===old.id&&j.state==='candidate_started'&&++checks===3){hit=true;f.mutateRow(r=>{r.pm_id+=100;});}}};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform,guard),/ownership requires review/);
+  assert.equal(hit,true);assert.equal(JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json'))).id,old.id);
+ }finally{f.cleanup();}
+});
+
+test('post-publication rollback restores the exact original pointer bytes',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),pointer=f.map('/var/www/.dashboard-abbott-control/current.json'),bytes=Buffer.from(JSON.stringify(old,null,2)+'\n');fs.writeFileSync(pointer,bytes);
+  let published=false;const rename=f.io.renameSync;f.io.renameSync=(from,to)=>{rename(from,to);if(to==='/var/www/.dashboard-abbott-control/current.json')published=true;};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform,()=>{if(published)throw Error('private cancellation');}),/attested predecessor restored/);
+  assert.ok(fs.readFileSync(pointer).equals(bytes));assert.equal(f.platform.snapshot().registration.releaseId,old.id);
+ }finally{f.cleanup();}
+});
+
+test('unsafe predecessor env metadata refuses before process mutation',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);fs.chmodSync(f.map('/var/www/dashboard-abbott/.env'),0o600);
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform));
+  assert.equal(f.events.filter(e=>e[0]==='stop'||e[0]==='delete').length,0);
+ }finally{f.cleanup();}
+});
+
+test('candidate env drift after health stops its owned process and preserves sealed predecessor',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),health=f.platform.health;
+  f.platform.health=async proof=>{await health(proof);if(proof.sourceSha!==old.sourceSha)fs.appendFileSync(f.map('/var/www/dashboard-abbott/.env'),"UNAPPROVED='private'\n");};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/ownership requires review/);
+  assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${old.id}/.release-source-sha`),'utf8').trim(),old.sourceSha);
+ }finally{f.cleanup();}
+});
+
+test('candidate disappearance after final health cannot reuse a stale captured proof',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),health=f.platform.health;let checks=0;
+  f.platform.health=async proof=>{await health(proof);if(proof.sourceSha!==old.sourceSha&&++checks===2)f.exitProcess();};
+  await assert.rejects(f.installer.transact({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},f.platform),/attested predecessor restored/);
+  assert.equal(f.installer.inspectActiveRuntime().id,old.id);assert.equal(f.platform.snapshot().registration.releaseId,old.id);
+ }finally{f.cleanup();}
+});
 
 test('Abbott browser prerequisite refuses before deployment writes; verified path is rendered without altering secret input',async()=>{
   const f=fixture();try{
@@ -303,11 +500,11 @@ for (const mode of ['delayed', 'timeout', 'fail', 'exited']) test(`candidate own
     const operation = f.installer.transact({ action: 'deploy', expectedActiveSha: second.sourceSha, payload: f.payload('c'.repeat(40)) }, f.platform);
     if (mode === 'delayed') {
       assert.equal((await operation).sourceSha, 'c'.repeat(40));
-      assert.equal(f.events.filter(event => event[0] === 'readiness' && event[1] === 13).length, 2);
+      assert.equal(f.events.filter(event => event[0] === 'readiness' && event[1] === 13).length, 3);
     } else {
       await assert.rejects(operation, /attested predecessor restored/);
       if (mode !== 'exited') assert.ok(f.events.some(event => event[0] === 'stop' && event[1] === 13), 'only proven candidate must be stopped before restoring predecessor');
-      assert.equal(f.events.filter(event => event[0] === 'stop').length, mode === 'exited' ? 0 : 1);
+      assert.equal(f.events.filter(event => event[0] === 'stop').length, mode === 'exited' ? 2 : 3);
     }
     const active = f.installer.inspectActiveRuntime();
     assert.equal(active.sourceSha, (mode === 'delayed' ? 'c' : 'b').repeat(40));
@@ -319,24 +516,24 @@ for (const mode of ['delayed', 'timeout', 'fail', 'exited']) test(`candidate own
   } finally { f.cleanup(); }
 });
 
-test('live replacement PID retaining predecessor binding requires recovery review, not pointer promotion or automatic stop', async () => {
+test('forged predecessor binding after fresh start requires review, not candidate promotion or unowned stop', async () => {
   const f = fixture();
   try {
     const old = await f.installer.transact({ action: 'deploy', expectedActiveSha: null, payload: f.payload('a'.repeat(40)) }, f.platform);
-    f.nextStartup('retained:predecessor');
+    f.nextStartup('forged:predecessor');
     await assert.rejects(f.installer.transact({ action: 'deploy', expectedActiveSha: old.sourceSha, payload: f.payload('b'.repeat(40)) }, f.platform), /ownership requires review/);
     assert.equal(f.events.filter(event => event[0] === 'start').length, 2);
-    assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
+    assert.equal(f.events.filter(event => event[0] === 'stop').length, 1);
     assert.equal(f.platform.registration().registration.releaseId, old.id);
     assert.equal(f.platform.registration().pid, 12);
     assert.equal(JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json'))).id, old.id);
     assert.equal(fs.readFileSync(f.map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), 'b'.repeat(40));
     assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${old.id}/.release-source-sha`), 'utf8').trim(), old.sourceSha);
     assert.throws(() => f.installer.inspectActiveRuntime(), /external authority/);
-    assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')), false);
-    await assert.rejects(f.installer.transact({ action: 'rollback', expectedActiveSha: old.sourceSha }, f.platform), /external authority/);
+    assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')), true);
+    await assert.rejects(f.installer.transact({ action: 'rollback', expectedActiveSha: old.sourceSha }, f.platform), /lock/);
     assert.equal(f.events.filter(event => event[0] === 'start').length, 2);
-    assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
+    assert.equal(f.events.filter(event => event[0] === 'stop').length, 1);
   } finally { f.cleanup(); }
 });
 
@@ -349,7 +546,7 @@ for (const mode of ['early:errored', 'early:waiting restart', 'early:error match
     const operation = f.installer.transact({ action: 'deploy', expectedActiveSha: second.sourceSha, payload: f.payload('c'.repeat(40)) }, f.platform);
     if (mode === 'early:error mismatch') {
       await assert.rejects(operation, /ownership requires review/);
-      assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
+      assert.equal(f.events.filter(event => event[0] === 'stop').length, 2);
       assert.equal(f.events.filter(event => event[0] === 'start').length, 3);
       assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${second.id}/.release-source-sha`), 'utf8').trim(), second.sourceSha, 'sealed predecessor remains recoverable');
       assert.equal(JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json'), 'utf8')).id, second.id);
@@ -374,7 +571,7 @@ for (const mode of ['errored', 'waiting restart', 'launching', ...['id','name','
     const operation = f.installer.transact({ action: 'deploy', expectedActiveSha: second.sourceSha, payload: f.payload('c'.repeat(40)) }, f.platform);
     if (mode.startsWith('mismatched retained')) {
       await assert.rejects(operation, /ownership requires review/);
-      assert.equal(f.events.filter(event => event[0] === 'stop').length, 0);
+      assert.equal(f.events.filter(event => event[0] === 'stop').length, 2);
       assert.equal(f.events.filter(event => event[0] === 'start').length, 3, 'mismatched registration must not be replaced');
       return;
     }
@@ -402,7 +599,7 @@ test('immutable install, lock exclusion, rollback and failed-health recovery aff
     fs.rmdirSync(f.map('/var/www/.dashboard-abbott-deploy.lock'));
     const second = await f.installer.transact({ action: 'deploy', expectedActiveSha: first.sourceSha, payload: f.payload('b'.repeat(40)) }, f.platform);
     assert.equal(second.previousId, first.id);
-    f.failHealth();
+    f.nextStartup('fail');
     await assert.rejects(f.installer.transact({ action: 'rollback', expectedActiveSha: second.sourceSha }, f.platform), /predecessor restored/);
     assert.equal(f.installer.inspectActiveRuntime().sourceSha, second.sourceSha);
     const restored = await f.installer.transact({ action: 'rollback', expectedActiveSha: second.sourceSha }, f.platform);

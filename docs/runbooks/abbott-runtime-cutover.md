@@ -208,7 +208,55 @@ still the known-good rollback, and no full PDF acceptance is claimed for f80607f
 Before any future smoke, the deployed manifest attestation must be reviewed for
 the new app release rather than bypassing its existing f80607f pin.
 
-Record only process names and PIDs; never use `pm2 jlist` because it includes process environments.
+### Fresh Abbott registration activation — checkpoint B review required
+
+Do not run the changed deploy path until this checkpoint has been reviewed and
+its exact commit approved for execution. The fixed `npm run deploy:abbott`
+entrypoint remains the only deploy authority; no manual PM2 delete/start command
+is authorized. Non-Abbott activation and the dedicated historical interrupted-
+recovery entrypoint are unchanged.
+
+The Abbott transaction now verifies the current pointer, sealed active tree,
+exact env digest/inode, predecessor ID/PID/start/UID/GID/release binding, health
+and loopback listener before disturbing the active runtime. Candidate artifact,
+env, protected record and backup-slot absence are checked too. Once the candidate
+is ready, the same predecessor registration is immediately re-proven, stopped,
+its kernel exit/listener absence verified, and only that exact stopped PM2 ID
+deleted. The candidate is then atomically moved into the active path and starts
+as a fresh registration from its fixed protected ecosystem; no startOrReload or
+retained-environment merge is used in this Abbott path.
+
+The new registration must match candidate release/source, dedicated UID/GID,
+launcher/cwd, stable PID/start and sole127.0.0.1:3004 listener. Full artifact/env
+and health/identity checks must pass before pointer promotion. PM2 IDs may change
+when registrations are recreated; an old numeric ID must never be reused as
+operator authority. No neighboring registration/name/port is targeted.
+
+Failures and SIGINT/SIGTERM/SIGHUP enter bounded identity-checked compensation.
+Only the proven candidate registration can be stopped/deleted. Exact predecessor
+tree/env/inode and original pointer bytes are restored, then the predecessor is
+started fresh and its old binding, health and listener re-attested. Failed
+predecessor startup is stopped only when ownership can be proven. An unverified
+replacement PID/registration is never touched or described as stopped.
+
+Each transaction retains a root-only audit file under the fixed control root:
+`activation-<transaction UUID>.json`, root:root0600, atomically updated through
+an exclusive `.next` sibling. It contains only transaction/release/inode/path
+metadata and closed states, never env values. Successful activation records
+committed; verified compensation records restored. Both clear the owned lock.
+Unresolved process/tree/pointer/compensation drift preserves the root-only lock
+and journal (review_required when writable), plus the attested trees, for manual
+review. Never remove them or retry by overriding the gate. A stopped Abbott
+runtime is safer than serving a known mismatch; unrelated replacements remain
+untouched when identity cannot be established.
+
+This source checkpoint does not change deploy SSH transport/options, perform a
+live deploy, repair Nginx, or approve PDF/data/visual parity. Its signal checks
+yield between phases; individual existing OS commands remain bounded. An abrupt
+unrecoverable process death cannot promise automatic compensation and requires
+inspection of the protected journal/lock rather than an inferred success.
+
+Record only process names and PIDs; never dump `pm2 jlist` because it includes process environments. The reviewed worker may inspect it in memory and must never relay its contents.
 
 ```bash
 ssh beget 'set -eu; for app in dashboard-next dashboard-zaruku dashboard-medroche; do printf "%s " "$app"; pm2 pid "$app"; done' \
