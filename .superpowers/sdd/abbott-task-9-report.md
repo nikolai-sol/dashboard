@@ -1,9 +1,39 @@
-# Abbott Task 9 — selected include lexical provenance correction
+# Abbott Task 9 — read-only selected_include_other result
 
-Current status: DONE_WITH_CONCERNS. Source-only lexical provenance correction
-prevents escaped or ambiguous include arguments from receiving a known category.
-No include is loaded or newly accepted; no live call/push occurred. STOP for
-independent re-review. The actual production include path is still unknown.
+Current status: BLOCKED. The one approved read-only caller at clean32a737f
+returned selected_include_other with exit0 and verified owned cleanup. The
+actual include path/form remains unknown. No retry/push/deploy or Nginx change.
+
+## Approved single read-only classification at32a737f
+
+Verified exact clean HEAD
+`32a737f16b57e0cac1c7c30ed124555d8a29e0cc`. Exactly one reviewed command ran:
+
+```sh
+/usr/bin/env -i /opt/homebrew/Cellar/node/25.6.1_1/bin/node scripts/read-abbott-nginx.mjs
+```
+
+Exit0, exact closed line:
+
+`ABBOTT_NGINX_FIRST_REJECTION code=selected_include_other`
+
+This is successful first-rejection analysis, not a reader or parser failure.
+It means the selected include did not qualify for one of the four exact known
+literal categories. It does not distinguish an unknown path from another
+argument/block/lexical form and reveals no values, paths or contents. No include
+was traversed or loaded; the deployment include refusal remains unchanged.
+
+The accepted result requires fixed local/source authority, stable nofollow
+remote config reads, owned SSH PID/start capture, verified exit and successful
+private identity-evidence cleanup. The caller exited. Local-only checks verified
+both fixed deploy/recovery evidence directories absent and no local3001/3004
+listeners. No forward/browser/credential session or remote temp artifact was
+created. Remote current-runtime, neighbor and Nginx hash comparisons were not
+run; this classification is not a full deployment/perimeter attestation.
+
+No push, deploy, retry, smoke, capture, PDF, recovery, DB/auth/fact/collector/cron,
+neighbor action or Nginx edit/reload occurred. No pins or acceptance changed.
+STOP for direction; no automatic follow-up probe.
 
 ## Include lexical exactness follow-up — source-only
 
