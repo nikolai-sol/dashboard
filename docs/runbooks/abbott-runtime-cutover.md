@@ -451,8 +451,7 @@ Old frames without diagnostics are rejected. Status pairs are fixed:
 COMMITTED=`complete/none`, RESTORED=`compensation/restored`, and
 REVIEW_REQUIRED=`compensation/review_required`. REFUSED requires `failed` with
 one of `preflight_current`, `preflight_browser`, `preflight_nginx`,
-`preflight_neighbor_combined`, `preflight_neighbor_zaruku`,
-`preflight_neighbor_medroche`, `lock`, `prepare`, `activation_precheck`,
+`lock`, `prepare`, `activation_precheck`,
 `activation_stop`, `activation_start`, `candidate_health`, `pointer`,
 `compensation` or `unknown`; REFUSED can never mean `complete/none`.
 The private phase is set immediately before an existing boundary, never inferred
@@ -461,6 +460,17 @@ calling phase; failed subchecks retain their specific closed phase. A verified
 compensation outcome takes precedence over the original failed activation phase.
 No acceptance gate, host authority or deployment behavior is relaxed. This is
 Phase1 instrumentation only, pending review before any live diagnostic retry.
+
+For `preflight_neighbor_combined`, `preflight_neighbor_zaruku` and
+`preflight_neighbor_medroche`, REFUSED instead requires exactly one of
+`pid_absent`, `start_mismatch`, `uid_gid`, `cwd`, `release_record`, `executable`,
+`cmdline`, `listener`, `proc_metadata` or `unknown`. The fixed proof sets that
+private subreason at the existing read/semantic boundary; no values, process
+arguments, source contents or raw errors are emitted. Only ENOENT while reading
+the exact process directory is `pid_absent`; permissions and missing proc child
+files do not imply PID absence. Full filesystem/identity/listener acceptance is
+unchanged. These reasons are valid only with REFUSED plus a neighbor phase;
+verified compensation still uses its canonical compensation pair.
 
 A local cooperative-abort timeout does not override a later exact, verified
 terminal ACK. Once framing/digest/status pairing and SSH exit are valid, the

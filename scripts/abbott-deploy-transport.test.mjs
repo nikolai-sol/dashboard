@@ -5,13 +5,21 @@ const payload=()=>Buffer.from('{"action":"inspect"}');
 const record={id:'a'.repeat(32),previousId:null,scope:'abbott',sourceSha:'b'.repeat(40),manifestDigest:'c'.repeat(64)};
 test('remote status diagnostic pairs are mandatory, hash-bound and never complete for REFUSED',async()=>{
  const m=await api(),d='d'.repeat(64),phases=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'];
- for(const stage of phases){const diagnostic={stage,reason:'failed'},wire=m.encodeAbbottDeployResult('REFUSED',null,d,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,d),{status:'REFUSED',record:null,diagnostic});assert.match(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),new RegExp(`stage=${stage} reason=failed`));}
+ for(const stage of phases){const diagnostic={stage,reason:stage.startsWith('preflight_neighbor_')?'unknown':'failed'},wire=m.encodeAbbottDeployResult('REFUSED',null,d,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,d),{status:'REFUSED',record:null,diagnostic});assert.match(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),new RegExp(`stage=${stage} reason=${diagnostic.reason}`));}
  for(const [status,diagnostic]of [['COMMITTED',{stage:'complete',reason:'none'}],['RESTORED',{stage:'compensation',reason:'restored'}],['REVIEW_REQUIRED',{stage:'compensation',reason:'review_required'}]]){const wire=m.encodeAbbottDeployResult(status,null,d,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,d),{status,record:null,diagnostic});}
  for(const diagnostic of [undefined,{stage:'complete',reason:'none'},{stage:'private-token',reason:'failed'},{stage:'lock',reason:'private-token'},{stage:'lock',reason:'failed',secret:'private-token'}])assert.throws(()=>m.encodeAbbottDeployResult('REFUSED',null,d,diagnostic));
  const good=m.encodeAbbottDeployResult('REFUSED',null,d,{stage:'lock',reason:'failed'});
  assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic:{stage:'complete',reason:'none'}}),'ABBOTT_DEPLOY_REFUSED stage=unknown reason=failed\n');
  for(const status of ['COMMITTED','RESTORED','REVIEW_REQUIRED'])assert.throws(()=>m.encodeAbbottDeployResult(status,null,d,{stage:'prepare',reason:'failed'}));
  for(const bad of [good.replace('lock','prepare'),good.replace('"reason":"failed"','"reason":"failed","reason":"failed"'),good.replace('"record":null','"record":null,"secret":"private-token"'),`ABBOTT_DEPLOY_RESULT ${d} null\nABBOTT_DEPLOY_ACK REFUSED ${d} none\n`])assert.equal(m.parseAbbottDeployResult(bad,d),null);
+});
+test('neighbor subreasons are exact status-paired closed wire values',async()=>{
+ const m=await api(),digest='d'.repeat(64);
+ for(const stage of ['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'])for(const reason of ['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']){
+  const diagnostic={stage,reason},wire=m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,digest),{status:'REFUSED',record:null,diagnostic});assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),`ABBOTT_DEPLOY_REFUSED stage=${stage} reason=${reason}\n`);
+  assert.equal(m.parseAbbottDeployResult(wire.replace(`"reason":"${reason}"`,'"reason":"private-token"'),digest),null);
+  assert.throws(()=>m.encodeAbbottDeployResult('COMMITTED',record,digest,diagnostic));assert.throws(()=>m.encodeAbbottDeployResult('REFUSED',null,digest,{stage:'prepare',reason}));
+ }
 });
 function fixture(){const child=new EventEmitter();Object.assign(child,{pid:90001,exitCode:null,signalCode:null,stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough()});let identity='Tue Sep 15 10:00:00 2026';const calls=[],timers=[],cleared=[],sent=[],evidence=[];child.stdin.on('data',b=>sent.push(Buffer.from(b).toString()));
  const platform={spawn(...args){calls.push(args);return child;},identity:()=>identity,kill(pid,sig){calls.push([pid,sig]);if(sig==='SIGKILL')close(null,sig);},setTimeout(fn,ms){timers.push({fn,ms});return fn;},clearTimeout(fn){cleared.push(fn);}};

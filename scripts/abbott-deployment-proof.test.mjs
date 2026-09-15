@@ -40,6 +40,27 @@ test('fixed preflight uses only filesystem/kernel reads and checks exact existin
  const m=await api();assert.equal(typeof m.createAbbottDeploymentProof,'function');const f=fixture(),p=m.createAbbottDeploymentProof(f.options);try{p.preflight();p.perimeter();}catch{assert.fail(JSON.stringify(f.opened.slice(-5)));}assert.deepEqual(f.calls,['active','browser']);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(x=>x===0)));
 });
 
+for(const index of [0,1,2])for(const reason of ['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata'])test(`neighbor${index} closed subreason ${reason}`,async()=>{
+ const m=await api(),f=fixture(),[pid,start]=f.processes[index],p='/proc/'+pid,seen=[];f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
+ if(reason==='pid_absent'){const stat=f.options.io.lstatSync;f.options.io.lstatSync=(file,...a)=>{if(file===p)throw Object.assign(Error('private-token'),{code:'ENOENT'});return stat(file,...a);};}
+ if(reason==='start_mismatch')f.files.set(p+'/stat',f.files.get(p+'/stat').replace(start,'999999'));
+ if(reason==='uid_gid')f.files.set(p+'/status','Uid:\t9\t9\t9\t9\nGid:\t9\t9\t9\t9\n');
+ if(reason==='cwd')f.links.set(p+'/cwd','/private-token');
+ if(reason==='release_record'){if(index===2)f.links.set('/var/www/dashboard-medroche','/private-token');else f.files.set(index===0?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha','private-token');}
+ if(reason==='executable')f.links.set(p+'/exe','/private-token');
+ if(reason==='cmdline')f.files.set(p+'/cmdline','private-token\0');
+ if(reason==='listener')f.links.set(p+'/fd/10','socket:[999999]');
+ if(reason==='proc_metadata')f.metadata.set(p+'/stat',{nlink:2});
+ assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'][index],reason});assert.doesNotMatch(JSON.stringify(seen),/private-token|999999/);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+});
+test('neighbor PID absence is not guessed from permissions or missing proc child files',async()=>{
+ const m=await api();for(const mode of ['permission','child_missing','pid_owner']){const f=fixture(),seen=[],stat=f.options.io.lstatSync;f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
+  f.options.io.lstatSync=(file,...args)=>{if(mode==='permission'&&file==='/proc/3722244'||mode==='child_missing'&&file==='/proc/3722244/stat')throw Object.assign(Error('private-token'),{code:mode==='permission'?'EACCES':'ENOENT'});return stat(file,...args);};
+  if(mode==='pid_owner')f.metadata.set('/proc/3722244',{uid:99});
+  assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(seen.at(-1),{stage:'preflight_neighbor_combined',reason:mode==='pid_owner'?'uid_gid':'proc_metadata'});assert.doesNotMatch(JSON.stringify(seen),/private-token/);
+ }
+});
+
 test('Linux four-digit ports3001-3004 detect IPv6 listeners and reject malformed widths or case',async()=>{
  const m=await api();
  for(const index of [0,1,2,3])for(const mode of ['ipv6','short','long','lower','malformed_extra']){

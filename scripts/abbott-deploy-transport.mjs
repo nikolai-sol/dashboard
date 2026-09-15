@@ -7,7 +7,8 @@ function validRemoteDiagnostic(status,d){
  if(!d||Object.keys(d).sort().join(',')!=='reason,stage')return false;
  if(status==='COMMITTED')return d.stage==='complete'&&d.reason==='none';
  if(status==='RESTORED'||status==='REVIEW_REQUIRED')return d.stage==='compensation'&&d.reason===(status==='RESTORED'?'restored':'review_required');
- return status==='REFUSED'&&d.reason==='failed'&&['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(d.stage);
+ if(status==='REFUSED'&&['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'].includes(d.stage))return ['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown'].includes(d.reason);
+ return status==='REFUSED'&&d.reason==='failed'&&['preflight_current','preflight_browser','preflight_nginx','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(d.stage);
 }
 export function encodeAbbottDeployResult(status,record,digest,diagnostic){
  if(!validRemoteDiagnostic(status,diagnostic)||!validRecord(record)||status!=='COMMITTED'&&record!==null||!/^[a-f0-9]{64}$/.test(digest))throw Error('ABBOTT_DEPLOY_REFUSED');
@@ -20,7 +21,7 @@ export function parseAbbottDeployResult(text,digest){
  try{const envelope=JSON.parse(m[2]);if(Object.keys(envelope).sort().join(',')!=='diagnostic,record'||encodeAbbottDeployResult(m[3],envelope.record,digest,envelope.diagnostic)!==text)return null;return{status:m[3],record:envelope.record,diagnostic:envelope.diagnostic};}catch{return null;}
 }
 export const DEPLOY_STAGES=Object.freeze(['local_spawn','identity_proof','source_write','run_write','remote_startup','ack_framing','timeout','ssh_close','local_evidence','complete','unknown','preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation']);
-export const DEPLOY_REASONS=Object.freeze(['failed','unavailable','unverified','malformed','missing','oversized','stderr','deadline','nonzero','signal','none','unknown','restored','review_required']);
+export const DEPLOY_REASONS=Object.freeze(['failed','unavailable','unverified','malformed','missing','oversized','stderr','deadline','nonzero','signal','none','unknown','restored','review_required','pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata']);
 export function safeDeployDiagnostic(value){return DEPLOY_STAGES.includes(value?.stage)&&DEPLOY_REASONS.includes(value?.reason)?{stage:value.stage,reason:value.reason}:{stage:'unknown',reason:'unknown'};}
 export function formatAbbottDeployResult(value){let status=['COMMITTED','RESTORED','REFUSED','REVIEW_REQUIRED','UNACKNOWLEDGED'].includes(value?.status)?value.status:'UNACKNOWLEDGED';let diagnostic=safeDeployDiagnostic(value?.diagnostic);if(status!=='UNACKNOWLEDGED'&&!validRemoteDiagnostic(status,value?.diagnostic)){if(status==='REFUSED')diagnostic={stage:'unknown',reason:'failed'};else{status='UNACKNOWLEDGED';diagnostic={stage:'unknown',reason:'unknown'};}}return`ABBOTT_DEPLOY_${status} stage=${diagnostic.stage} reason=${diagnostic.reason}\n`;}
 export const ABBOTT_DEPLOY_LOADER=`import{createHash}from'node:crypto';const hash=${hash};\n${validRecord}\n${validRemoteDiagnostic}\n${encodeAbbottDeployResult}\n`+String.raw`

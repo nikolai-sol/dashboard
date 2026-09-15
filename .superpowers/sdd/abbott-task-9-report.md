@@ -1,4 +1,12 @@
-# Abbott Task 9 — combined-neighbor preflight refusal
+# Abbott Task 9 — closed neighbor preflight subreasons
+
+Current status: DONE_WITH_CONCERNS, source-only Phase1 checkpoint pending review.
+The fixed neighbor proof now carries a precise closed subreason through the
+worker and strict status-paired result/ACK. No host acceptance check changed and no
+live probe or retry ran. This does not establish the underlying failed field on
+production. Fresh evidence is appended below.
+
+## Previous operational checkpoint — combined-neighbor preflight refusal
 
 Current status: BLOCKED. Approvedd58404d was published to both authorized refs;
 one acknowledged deployment returned
@@ -3934,3 +3942,49 @@ preflight. Public route-only rollback remains3001; no switch was attempted.
 This is sanitized operational evidence only, with no new full local gate claim;
 the approved source checkpoint's fresh gates are recorded immediately above.
 BLOCKED: STOP for review/direction with the closed combined-neighbor refusal.
+
+## Phase1 — closed neighbor proof subreasons
+
+The approved operational refusal narrowed the failing phase to the combined
+neighbor but not its individual proof boundary. Source-only RED tests reproduced
+missing proof subreasons, their loss in the worker, and rejection of the proposed
+closed values by the strict transport schema. No new production read was used
+to infer which field actually failed.
+
+All three fixed neighbor phases now accept only these REFUSED subreasons:
+pid_absent, start_mismatch, uid_gid, cwd, release_record, executable, cmdline,
+listener, proc_metadata, unknown. The proof assigns its private reason before
+the existing metadata/read/semantic boundary; the worker copies only an exact
+allowlisted reason, with unknown fallback. The canonical result/ACK repeats and
+validates that same pair. Neighbor reasons cannot appear with another phase or
+COMMITTED/RESTORED/REVIEW_REQUIRED. Verified compensation retains its canonical
+compensation pair, including the previously reviewed timeout-precedence rule.
+
+PID absence is classified only from ENOENT on the exact process directory;
+permission errors or missing proc child files are proc_metadata, not guessed
+PID absence. UID/GID mismatches retain their specific class. No exception text,
+process values, command lines, paths, source record contents or other arbitrary
+strings enter the diagnostic. Existing bounds, nofollow/stability/mode checks,
+identity/start/source/listener checks and mutation order are unchanged. The
+filesystem wrapper adds no reads or commands: it preserves the same lstat
+operations and only classifies the fixed directory-absence condition.
+
+Tests cover all nine concrete subreasons for combined/Zaruku/MedRoche, plus
+permission-vs-absence, missing child files, ownership drift, unknown/secret
+fallback, worker propagation, exact status-pair framing and redaction. Focused
+deployment tests pass270/270. Full ordered authority suite586/586, app/runtime
+contract68/68, Abbott production build and exact routes pass. Abbott contract
+111/111, wiring and public-assets security pass. Combined production build,
+root/focused TypeScript, source syntax and whitespace pass; lint has0 errors and
+the same10 existing warnings. Final post-build verification passes206/206.
+All owned local fixture commands exited; exact deploy/recovery private evidence
+directories and local3001/3004 listeners are absent after cleanup.
+
+No push, production SSH/probe/deploy/recovery, credentials, PDF request,
+smoke/capture, real browser, DB/auth/fact/collector/cron, neighbor or Nginx action
+ran in this source checkpoint. Published refs remain the previously verified
+d58404d. The underlying combined-neighbor field failure remains undiagnosed;
+historical active6f09982/8c79, predecessor f80607f/6cd2 and public3001 remain
+historical operational evidence rather than a fresh successful attestation.
+Systematic debugging and TDD supplied diagnostic coverage, not an operational
+fix. DONE_WITH_CONCERNS: STOP for review before publication or any live retry.

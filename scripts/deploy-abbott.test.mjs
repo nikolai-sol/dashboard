@@ -450,6 +450,13 @@ test('acknowledged refusals carry the private boundary, never exception text or 
   assert.equal(r.status,'REFUSED');assert.deepEqual(JSON.parse(JSON.stringify(r.diagnostic)),{stage:{pre_abort:'unknown',current:'preflight_current',browser:'preflight_browser',lock:'lock',prepare:'prepare',activation_precheck:'activation_precheck'}[mode],reason:'failed'});assert.doesNotMatch(JSON.stringify(r),/private-token/);
  }finally{f.cleanup();}}
 });
+test('acknowledged worker preserves only exact neighbor subreasons from private proof markers',async()=>{
+ for(const stage of ['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'])for(const reason of ['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown','private-token']){const f=fixture();try{
+  f.platform.deploymentPreflight=note=>{note(stage,reason);throw Object.assign(Error('private-token'),{reason:'private-token'});};
+  const r=await f.installer.transactAcknowledged({action:'inspect'},new AbortController().signal,f.platform);
+  assert.deepEqual(JSON.parse(JSON.stringify(r)),{status:'REFUSED',record:null,diagnostic:{stage,reason:reason==='private-token'?'unknown':reason}});assert.doesNotMatch(JSON.stringify(r),/private-token/);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+ }finally{f.cleanup();}}
+});
 test('acknowledged worker returns only completed, restored or protected-review outcomes',async()=>{
  for(const mode of['success','pre_abort','compensated','rollback_failure','spoofed_error']){const f=fixture();try{
   assert.equal(typeof f.installer.transactAcknowledged,'function');const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),abort=new AbortController();
