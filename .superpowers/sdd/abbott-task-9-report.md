@@ -1,12 +1,14 @@
-# Abbott Task 9 — acknowledged shadow deployment and attestation pin
+# Abbott Task 9 — shadow smoke refused at asset attestation
 
-Status: DONE_WITH_CONCERNS; successful approved shadow deployment, followed by
-a narrow local attestation-pin checkpoint awaiting review. Freshly verified
-production is6f09982/release8c79 with matching active files, current pointer,
-control, manifest and fresh Abbott PM2 binding. Predecessorf80607f/release6cd2
-is sealed in backups; interrupted9aaed34 remains quarantined. No live smoke,
-capture or Nginx operation followed deployment. Live parity, six-image comparison
-and cutover remain incomplete. Earlier sections are chronological history.
+Status: BLOCKED. Approved pin53f01c9 was published; the single authorized smoke
+stopped at `ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`,
+before credential issuance. No retry, source fix, capture or Nginx action followed.
+Fresh independent checks still attest production6f09982/release8c79 with matching
+active files, current pointer, control, manifest and fresh Abbott PM2 binding.
+Predecessorf80607f/release6cd2 is sealed in backups; interrupted9aaed34 remains
+quarantined. Neighbors/Nginx are unchanged and local cleanup is verified. Live
+parity, six-image comparison and cutover remain incomplete. Earlier sections are
+chronological history.
 
 ## Scope and authorization
 
@@ -2503,3 +2505,62 @@ The pin commit is local only, not pushed or deployed. No live smoke, credential
 issuance, capture, PDF request or Nginx action is authorized by this checkpoint.
 No six-image dimensions/diff or post-cutover smoke result is claimed. STOP for
 focused pin review before its publication and any live parity retry.
+
+## Approved pin publication and single smoke — 2026-09-15
+
+Pin checkpoint53f01c9 received independent approval. The clean exact HEAD
+`53f01c92ac5b23696aab0411379e6a8e3d3402a1` was ordinarily fast-forward pushed to
+only `refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`;
+both literal remote refs were independently reread and matched exactly. No
+redeployment was performed because the checkpoint changed pins/tests/report only.
+The deployed source remains6f09982, release8c79 and manifesta5b56e3 as recorded
+above. The exact independent full post-deploy proof passed immediately before
+the verification attempt.
+
+Executed exactly one `smoke` invocation of the reviewed local orchestrator under
+a clean environment with the verified installed Node executable. The fixed
+period remains2026-09-01..2026-09-13 and the exact deployed manifest pin applies.
+Child stdout/stderr were retained only in bounded memory; the wrapper emitted
+only the allowlisted diagnostic and no-PID cleanup result:
+
+`ABBOTT_VERIFICATION_REFUSED stage=asset_attestation reason=failed`
+
+`ABBOTT_VERIFICATION_OWNED_CLEANUP_VERIFIED`
+
+No more specific cause is established by this closed code. In the reviewed
+sequence asset attestation precedes issuer execution, so no real manager/embed
+credential frame was minted or consumed and no credentialed smoke requests or
+PDF/Excel/browser capture were reached. No raw remote stdout/stderr, secret,
+response, token URL, environment value or private row was exposed. The approved
+failure instruction was followed: no retry, diagnostic/source fix, visual
+capture, Nginx implementation or production Nginx action.
+
+The owned orchestrator PID/start, forward PID/start from its exact lifecycle
+records, and observed descendant identities stayed in memory. Exit was verified
+for all captured PIDs; the final forward record also attested exit. Local3001/
+3004 listeners are absent. The fixed private evidence directories are absent;
+there is no smoke report or partial candidate directory. All observation and
+independent SSH sessions exited. The Playwright skill's ownership/cleanup rules
+were retained, but the conditional browser phase was never entered, so there is
+no new browser session, screenshot dimension/diff or visual approval.
+
+After refusal, the independent full read-only proof again returned
+`ABBOTT_POST_DEPLOY_VERIFIED` for exact release
+`8c79caf495f147ad91b2174b9bc5f65c`, source
+`6f09982fb1e8068f02340ddfcb5c945fb02ebfd5`, manifest
+`a5b56e3b72f8f062bc90d38b94e2b96c0e41e260d2c0aac883182e58104077a2`
+and predecessor`6cd2f12e245a47dcbd5f6ce928c4ed83`. It reattested full active and
+rollback/quarantine trees, current/control/ownership receipt, exact fresh Abbott
+registration/PID/start/UID982/GID984, soleloopback3004/health, browser package/
+archive/executable/env metadata, committed/restored root-only audits and absent
+lock/staging. This independent proof does not substitute for the failed smoke
+asset-attestation gate.
+
+Neighbor IDs/PIDs/start/cwd/release pointers remain exactly as in the preceding
+table, and Nginx remains unchanged at SHA256
+`1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c`.
+Public routing still uses3001. No backup/reload/cutover, deployment, neighbor
+process/write/release, DB/auth/fact migration/write, secret rotation or cron change
+occurred in this turn. Rollback target remains the retainedf80607f/release6cd2.
+This checkpoint changes only sanitized report evidence; no source was altered.
+BLOCKED pending further reviewed direction, not an automatic retry.
