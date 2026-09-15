@@ -74,6 +74,69 @@ test("GET requires a valid administrator cookie and returns private server-scope
   });
 });
 
+test("capability GET resolves protected dashboard scope without reading catalogue state", async () => {
+  let reads = 0;
+  const handlers = createTargetIntentAdminRouteHandlers(baseDependencies({
+    readState: async () => {
+      reads += 1;
+      return { activeVersionId: null, history: [], previews: [] };
+    },
+  }));
+
+  const response = await handlers.GET(
+    request("/api/admin/dashboards/41/target-intent?view=capability"),
+    context,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { supported: true });
+  assert.equal(reads, 0);
+});
+
+test("management GET omits historical preview rows while direct preview keeps current rows", async () => {
+  const historicalRows = Array.from({ length: 10_000 }, (_, index) => ({
+    sourceRowOrdinal: index + 2,
+    key: `rule-${index}`,
+  }));
+  const previewReceipt = {
+    previewId: "7",
+    state: "valid",
+    sourceTransport: "upload",
+    sourceIdentity: "intent.csv",
+    ruleCount: historicalRows.length,
+    duplicateCount: 0,
+    conflictCount: 0,
+    rows: historicalRows,
+    errors: [],
+  };
+  const handlers = createTargetIntentAdminRouteHandlers(baseDependencies({
+    readState: async () => ({
+      activeVersionId: null,
+      history: [],
+      previews: [previewReceipt],
+    }),
+    preview: async () => previewReceipt,
+  }));
+
+  const stateResponse = await handlers.GET(
+    request("/api/admin/dashboards/41/target-intent"),
+    context,
+  );
+  const state = await stateResponse.json() as { previews: Array<Record<string, unknown>> };
+  assert.equal(state.previews[0].ruleCount, 10_000);
+  assert.equal("rows" in state.previews[0], false);
+
+  const previewResponse = await handlers.preview(
+    request("/api/admin/dashboards/41/target-intent/preview", "POST", {
+      transport: "upload",
+      filename: "intent.csv",
+      content_base64: Buffer.from("Ключ,Тип совпадения\nHER2,точное\n").toString("base64"),
+    }),
+    context,
+  );
+  const currentPreview = await previewResponse.json() as { rows: unknown[] };
+  assert.equal(currentPreview.rows.length, 10_000);
+});
+
 test("every handler rejects a non-positive or non-integer dashboard id before scope resolution", async () => {
   let resolutions = 0;
   const handlers = createTargetIntentAdminRouteHandlers(baseDependencies({

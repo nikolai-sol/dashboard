@@ -38,6 +38,7 @@ export type DashboardTargetIntentState = {
 };
 
 export type DashboardTargetIntentAction =
+  | { type: "scope-changed" }
   | { type: "load-started" }
   | { type: "load-succeeded"; canonical: DashboardTargetIntentAdminState; notice?: string }
   | { type: "preview-started" }
@@ -68,6 +69,8 @@ export function reduceDashboardTargetIntentState(
   action: DashboardTargetIntentAction,
 ): DashboardTargetIntentState {
   switch (action.type) {
+    case "scope-changed":
+      return createDashboardTargetIntentState();
     case "load-started":
       return { ...state, loading: true, error: null, notice: null };
     case "load-succeeded":
@@ -216,7 +219,7 @@ export function DashboardTargetIntentNavigation({ dashboardId }: { dashboardId: 
 
     async function loadCapability() {
       try {
-        const response = await fetch(`/api/admin/dashboards/${dashboardId}/target-intent`, {
+        const response = await fetch(`/api/admin/dashboards/${dashboardId}/target-intent?view=capability`, {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -604,6 +607,7 @@ export function DashboardTargetIntentView({
             <button
               type="button"
               onClick={onCancelRestore}
+              disabled={busy}
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700"
             >
               Отмена
@@ -729,6 +733,47 @@ export function DashboardTargetIntentView({
 }
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
+
+export type TargetIntentRequestScope = {
+  dashboardId: string;
+  generation: number;
+  signal: AbortSignal;
+};
+
+export function createTargetIntentRequestCoordinator() {
+  let generation = 0;
+  let current: (TargetIntentRequestScope & { controller: AbortController }) | null = null;
+
+  function isCurrent(scope: TargetIntentRequestScope) {
+    return current?.generation === scope.generation &&
+      current.dashboardId === scope.dashboardId &&
+      current.signal === scope.signal &&
+      !scope.signal.aborted;
+  }
+
+  return {
+    activate(dashboardId: string): TargetIntentRequestScope {
+      current?.controller.abort();
+      const controller = new AbortController();
+      current = {
+        dashboardId,
+        generation: ++generation,
+        signal: controller.signal,
+        controller,
+      };
+      return current;
+    },
+    current(dashboardId: string): TargetIntentRequestScope | null {
+      return current?.dashboardId === dashboardId && !current.signal.aborted ? current : null;
+    },
+    isCurrent,
+    cancel(scope: TargetIntentRequestScope) {
+      if (!isCurrent(scope)) return;
+      current?.controller.abort();
+      current = null;
+    },
+  };
+}
 
 export type TargetIntentPendingOperation = {
   kind: "publish" | "restore";
@@ -893,44 +938,50 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
   const [googleSheetsUrl, setGoogleSheetsUrl] = useState("");
   const [label, setLabel] = useState("Целевой интент");
   const [confirmation, setConfirmation] = useState("");
-  const mounted = useRef(true);
+  const requestCoordinator = useRef<ReturnType<typeof createTargetIntentRequestCoordinator> | null>(null);
+  if (requestCoordinator.current === null) {
+    requestCoordinator.current = createTargetIntentRequestCoordinator();
+  }
   const pendingOperation = useRef<TargetIntentPendingOperation | null>(null);
 
-  async function loadCanonicalState(notice?: string, signal?: AbortSignal) {
+  async function loadCanonicalState(scope: TargetIntentRequestScope, notice?: string) {
+    const coordinator = requestCoordinator.current!;
     const payload = await requestTargetIntentJson(
       fetch,
-      `/api/admin/dashboards/${dashboardId}/target-intent`,
-      { cache: "no-store", signal },
+      `/api/admin/dashboards/${scope.dashboardId}/target-intent`,
+      { cache: "no-store", signal: scope.signal },
       "Не удалось загрузить состояние целевого интента",
     );
     const canonical = assertAdminState(payload);
-    if (!mounted.current || signal?.aborted) return;
+    if (!coordinator.isCurrent(scope)) return;
     const active = canonical.history.find((item) => item.active);
     if (active) setLabel(active.label);
     dispatch({ type: "load-succeeded", canonical, notice });
   }
 
   useEffect(() => {
-    mounted.current = true;
-    const controller = new AbortController();
-    dispatch({ type: "load-started" });
-    void loadCanonicalState(undefined, controller.signal).catch((error) => {
-      if (!controller.signal.aborted && mounted.current) {
+    const coordinator = requestCoordinator.current!;
+    const scope = coordinator.activate(dashboardId);
+    pendingOperation.current = null;
+    setSourceMode("upload");
+    setSelectedFile(null);
+    setGoogleSheetsUrl("");
+    setLabel("Целевой интент");
+    setConfirmation("");
+    dispatch({ type: "scope-changed" });
+    void loadCanonicalState(scope).catch((error) => {
+      if (coordinator.isCurrent(scope)) {
         dispatch({
           type: "operation-failed",
           error: error instanceof Error ? error.message : "Не удалось загрузить состояние целевого интента",
         });
       }
     });
-    return () => {
-      mounted.current = false;
-      controller.abort();
-    };
-    // loadCanonicalState intentionally belongs to this dashboard-id effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => coordinator.cancel(scope);
   }, [dashboardId]);
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
+    if (state.phase === "publishing") return;
     pendingOperation.current = null;
     setConfirmation("");
     setSelectedFile(event.target.files?.[0] ?? null);
@@ -938,6 +989,9 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
   }
 
   async function validateSource() {
+    const coordinator = requestCoordinator.current!;
+    const scope = coordinator.current(dashboardId);
+    if (!scope) return;
     dispatch({ type: "preview-started" });
     setConfirmation("");
     try {
@@ -945,25 +999,26 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
       if (sourceMode === "upload") {
         if (!selectedFile) throw new Error("Выберите Excel- или CSV-файл");
         const contentBase64 = await fileToBoundedBase64(selectedFile);
-        request = buildTargetIntentPreviewRequest(dashboardId, {
+        if (!coordinator.isCurrent(scope)) return;
+        request = buildTargetIntentPreviewRequest(scope.dashboardId, {
           transport: "upload",
           filename: selectedFile.name,
           contentBase64,
         });
       } else {
         if (!googleSheetsUrl.trim()) throw new Error("Укажите ссылку Google Sheets");
-        request = buildTargetIntentPreviewRequest(dashboardId, {
+        request = buildTargetIntentPreviewRequest(scope.dashboardId, {
           transport: "google_sheet",
           sourceUrl: googleSheetsUrl.trim(),
         });
       }
       const payload = await requestTargetIntentJson(
-        fetch, request.url, request.init,
+        fetch, request.url, { ...request.init, signal: scope.signal },
         "Не удалось проверить источник",
       );
-      if (mounted.current) dispatch({ type: "preview-succeeded", preview: assertPreview(payload) });
+      if (coordinator.isCurrent(scope)) dispatch({ type: "preview-succeeded", preview: assertPreview(payload) });
     } catch (error) {
-      if (mounted.current) {
+      if (coordinator.isCurrent(scope)) {
         dispatch({
           type: "operation-failed",
           error: error instanceof Error ? error.message : "Не удалось проверить источник",
@@ -974,6 +1029,9 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
 
   async function publishPreview() {
     if (!state.preview) return;
+    const coordinator = requestCoordinator.current!;
+    const scope = coordinator.current(dashboardId);
+    if (!scope) return;
     const operation = retainTargetIntentOperation(
       pendingOperation.current,
       "publish",
@@ -982,7 +1040,7 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
     );
     pendingOperation.current = operation;
     dispatch({ type: "publish-started", kind: "publish" });
-    const request = buildTargetIntentMutationRequest(dashboardId, {
+    const request = buildTargetIntentMutationRequest(scope.dashboardId, {
       kind: "publish",
       previewId: state.preview.previewId,
       label: label.trim(),
@@ -990,11 +1048,11 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
     });
     try {
       await requestTargetIntentJson(
-        fetch, request.url, request.init,
+        fetch, request.url, { ...request.init, signal: scope.signal },
         "Не удалось опубликовать каталог",
       );
     } catch (error) {
-      if (mounted.current) {
+      if (coordinator.isCurrent(scope)) {
         const unknown = error instanceof TargetIntentRequestError && error.outcome === "unknown";
         dispatch({
           type: "operation-failed",
@@ -1007,12 +1065,13 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
       return;
     }
 
+    if (!coordinator.isCurrent(scope)) return;
     pendingOperation.current = null;
     setConfirmation("");
     try {
-      await loadCanonicalState("Новая версия опубликована. Предыдущая версия сохранена в истории.");
+      await loadCanonicalState(scope, "Новая версия опубликована. Предыдущая версия сохранена в истории.");
     } catch {
-      if (mounted.current) {
+      if (coordinator.isCurrent(scope)) {
         dispatch({
           type: "refresh-failed-after-success",
           message: "Новая версия опубликована. Предыдущая версия сохранена в истории.",
@@ -1024,6 +1083,9 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
   async function restorePublication() {
     const publication = state.restorePublication;
     if (!publication) return;
+    const coordinator = requestCoordinator.current!;
+    const scope = coordinator.current(dashboardId);
+    if (!scope) return;
     const operation = retainTargetIntentOperation(
       pendingOperation.current,
       "restore",
@@ -1032,18 +1094,18 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
     );
     pendingOperation.current = operation;
     dispatch({ type: "publish-started", kind: "restore" });
-    const request = buildTargetIntentMutationRequest(dashboardId, {
+    const request = buildTargetIntentMutationRequest(scope.dashboardId, {
       kind: "restore",
       publicationId: publication.publicationId,
       operationId: operation.id,
     });
     try {
       await requestTargetIntentJson(
-        fetch, request.url, request.init,
+        fetch, request.url, { ...request.init, signal: scope.signal },
         "Не удалось восстановить каталог",
       );
     } catch (error) {
-      if (mounted.current) {
+      if (coordinator.isCurrent(scope)) {
         const unknown = error instanceof TargetIntentRequestError && error.outcome === "unknown";
         dispatch({
           type: "operation-failed",
@@ -1056,12 +1118,13 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
       return;
     }
 
+    if (!coordinator.isCurrent(scope)) return;
     pendingOperation.current = null;
     setConfirmation("");
     try {
-      await loadCanonicalState("Исторический снимок опубликован как новая версия.");
+      await loadCanonicalState(scope, "Исторический снимок опубликован как новая версия.");
     } catch {
-      if (mounted.current) {
+      if (coordinator.isCurrent(scope)) {
         dispatch({
           type: "refresh-failed-after-success",
           message: "Исторический снимок опубликован как новая версия.",
@@ -1080,19 +1143,24 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
       label={label}
       confirmation={confirmation}
       onSourceModeChange={(mode) => {
+        if (state.phase === "publishing") return;
         pendingOperation.current = null;
         setSourceMode(mode);
+        setSelectedFile(null);
+        setGoogleSheetsUrl("");
         setConfirmation("");
         dispatch({ type: "reset-source" });
       }}
       onFileChange={onFileChange}
       onGoogleSheetsUrlChange={(value) => {
+        if (state.phase === "publishing") return;
         pendingOperation.current = null;
         setConfirmation("");
         setGoogleSheetsUrl(value);
         dispatch({ type: "source-edited" });
       }}
       onLabelChange={(value) => {
+        if (state.phase === "publishing") return;
         pendingOperation.current = null;
         setConfirmation("");
         setLabel(value);
@@ -1101,6 +1169,7 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
       onValidate={() => void validateSource()}
       onPublish={() => void publishPreview()}
       onRequestRestore={(publication) => {
+        if (state.phase === "publishing") return;
         if (
           pendingOperation.current?.kind !== "restore" ||
           pendingOperation.current.targetKey !== `publication:${publication.publicationId}`
@@ -1111,6 +1180,7 @@ export default function DashboardTargetIntentScreen({ dashboardId }: { dashboard
         dispatch({ type: "restore-requested", publication });
       }}
       onCancelRestore={() => {
+        if (state.phase === "publishing") return;
         pendingOperation.current = null;
         setConfirmation("");
         dispatch({ type: "restore-cancelled" });

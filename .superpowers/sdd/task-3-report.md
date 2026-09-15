@@ -116,3 +116,52 @@ An independent code review found no remaining Critical or Important issues after
 ## Commit
 
 Requested commit message: `feat(admin): add target intent management screen`.
+
+## Root Review Follow-up
+
+### Delivered
+
+- Disabled restore cancellation during publication and added handler-level guards so synthetic or stale callbacks cannot clear the restore target or its stable operation ID while a mutation is running.
+- Replaced the shared `mounted` boolean with a dashboard-scoped request coordinator. Changing `dashboardId` aborts the old scope, starts a new generation, and prevents late load, preview, publish, restore, and post-mutation refresh results from dispatching into the new dashboard.
+- Cleared the previous dashboard's canonical and preview state immediately when the request scope changes, preventing old dashboard metadata from appearing under the new dashboard ID while its state loads.
+- Added the authenticated, server-scoped `?view=capability` projection. The dashboard edit navigation now downloads only `{ supported: true }` and does not read the catalogue, history, previews, or rule rows.
+- Trimmed `rows` from historical preview summaries returned by the management GET. The direct preview response retains current preview rows required by the management screen.
+- Cleared both the selected `File` and inactive Google Sheets URL whenever source mode changes, releasing invisible cached source state.
+
+### Focused RED Evidence
+
+```sh
+node --import tsx --test src/components/admin/DashboardTargetIntentScreen.test.tsx
+```
+
+Result before implementation: 12 passed, 4 failed. The new failures proved that:
+
+- navigation still fetched the full management resource;
+- restore cancellation remained enabled during publication;
+- no dashboard-scoped request coordinator existed;
+- source-mode changes retained the inactive source.
+
+An additional scope-reset regression then failed 16 passed, 1 failed because the old dashboard's canonical state survived the new dashboard's loading transition.
+
+```sh
+node --import tsx './src/app/api/admin/dashboards/[id]/target-intent/route.test.ts'
+```
+
+Result before implementation: 10 passed, 2 failed. Capability GET returned the full state and called `readState`; management GET still returned all 10,000 historical preview rows.
+
+### GREEN Evidence
+
+- Task 3 UI tests: 17 passed, 0 failed.
+- Task 2 target-intent route tests: 12 passed, 0 failed.
+- Existing admin/auth regressions: 58 passed, 0 failed.
+- `npx tsc --noEmit --allowImportingTsExtensions`: exit 0.
+- focused ESLint over the Task 3 and adjacent API files: exit 0 with no warnings.
+- `git diff --check`: exit 0.
+
+### Follow-up Self-Review
+
+- The request coordinator compares dashboard ID, monotonically increasing generation, and signal identity. Activating a new dashboard aborts the old signal before any old completion can be accepted.
+- Every asynchronous management operation captures one scope and uses its abort signal for fetches; file reads are checked for staleness immediately after completion.
+- Capability detection still passes through the same administrator authentication and server-side dashboard/site scope resolution as the management endpoint.
+- The management projection removes only historical `rows`; validation errors, counters, source evidence, actor, and timestamp remain available for the audit table.
+- No deployment, migration, external source call, scheduler change, secret change, or production action occurred.

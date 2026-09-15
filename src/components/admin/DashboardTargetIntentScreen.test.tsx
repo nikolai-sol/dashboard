@@ -89,7 +89,6 @@ const activeState: DashboardTargetIntentAdminState = {
       ruleCount: 0,
       duplicateCount: 0,
       conflictCount: 0,
-      rows: [],
       errors: [
         {
           row: null,
@@ -201,7 +200,7 @@ test("dashboard edit navigation exposes target intent only for SEO dashboards", 
     componentSource.indexOf("export function DashboardTargetIntentNavigation"),
     componentSource.indexOf("type DashboardTargetIntentViewProps"),
   );
-  assert.match(navigationSource, /\/target-intent/);
+  assert.match(navigationSource, /\/target-intent\?view=capability/);
   assert.doesNotMatch(navigationSource, /`\/api\/admin\/dashboards\/\$\{dashboardId\}`/);
 });
 
@@ -272,6 +271,76 @@ test("validation and publication lock source controls against overlapping operat
   assert.match(html, /<input[^>]*placeholder="Целевой интент"[^>]*disabled=""/);
   assert.match(html, /<input[^>]*type="radio"[^>]*disabled=""/);
   assert.match(html, /<input[^>]*type="file"[^>]*disabled=""/);
+
+  const restoring = {
+    ...publishing,
+    restorePublication: activeState.history[1],
+  };
+  const restoringHtml = viewHtml({ state: restoring, preview: validPreview });
+  const cancelButton = restoringHtml.match(/<button[^>]*>Отмена<\/button>/)?.[0] ?? "";
+  assert.match(cancelButton, /disabled=""/);
+});
+
+test("dashboard request scope aborts and ignores a late response after dashboardId changes", async () => {
+  const component = await import("./DashboardTargetIntentScreen");
+  const factory = (component as unknown as {
+    createTargetIntentRequestCoordinator?: () => {
+      activate(dashboardId: string): { dashboardId: string; signal: AbortSignal };
+      isCurrent(scope: { dashboardId: string; signal: AbortSignal }): boolean;
+    };
+  }).createTargetIntentRequestCoordinator;
+  assert.equal(typeof factory, "function");
+  const coordinator = factory!();
+  const oldScope = coordinator.activate("41");
+  const dispatched: string[] = [];
+  let resolveOld!: (value: string) => void;
+  const oldResponse = new Promise<string>((resolve) => { resolveOld = resolve; });
+  const oldCompletion = oldResponse.then((value) => {
+    if (coordinator.isCurrent(oldScope)) dispatched.push(value);
+  });
+
+  const currentScope = coordinator.activate("42");
+  assert.equal(oldScope.signal.aborted, true);
+  resolveOld("dashboard-41");
+  await oldCompletion;
+
+  assert.deepEqual(dispatched, []);
+  assert.equal(coordinator.isCurrent(oldScope), false);
+  assert.equal(coordinator.isCurrent(currentScope), true);
+
+  const source = readFileSync(
+    path.resolve("src/components/admin/DashboardTargetIntentScreen.tsx"),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /mounted\.current/);
+  assert.match(source, /coordinator\.isCurrent/);
+  assert.match(source, /signal:\s*scope\.signal/);
+});
+
+test("dashboard scope changes clear the previous dashboard state before loading", () => {
+  const loaded = reduceDashboardTargetIntentState(createDashboardTargetIntentState(), {
+    type: "load-succeeded",
+    canonical: activeState,
+  });
+  const changed = reduceDashboardTargetIntentState(loaded, {
+    type: "scope-changed",
+  } as Parameters<typeof reduceDashboardTargetIntentState>[1]);
+  assert.equal(changed.canonical, null);
+  assert.equal(changed.preview, null);
+  assert.equal(changed.loading, true);
+});
+
+test("switching source modes releases both inactive source values", () => {
+  const source = readFileSync(
+    path.resolve("src/components/admin/DashboardTargetIntentScreen.tsx"),
+    "utf8",
+  );
+  const handler = source.slice(
+    source.indexOf("onSourceModeChange={(mode) =>"),
+    source.indexOf("onFileChange={onFileChange}"),
+  );
+  assert.match(handler, /setSelectedFile\(null\)/);
+  assert.match(handler, /setGoogleSheetsUrl\(""\)/);
 });
 
 test("active history offers restore as a new version with typed confirmation", () => {

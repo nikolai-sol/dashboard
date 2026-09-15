@@ -77,6 +77,21 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function projectAdminState(value: unknown): unknown {
+  const state = record(value);
+  if (!state || !Array.isArray(state.previews)) return value;
+  return {
+    ...state,
+    previews: state.previews.map((value) => {
+      const preview = record(value);
+      if (!preview) return value;
+      const summary = { ...preview };
+      delete summary.rows;
+      return summary;
+    }),
+  };
+}
+
 function exactFields(body: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(body).every((key) => allowed.includes(key));
 }
@@ -181,7 +196,12 @@ export function createTargetIntentAdminRouteHandlers(deps: TargetIntentRouteDepe
     "target_intent_get_failed",
     request,
     context,
-    async ({ scope }) => json(await deps.readState(scope), 200),
+    async ({ scope }) => {
+      if (new URL(request.url).searchParams.get("view") === "capability") {
+        return json({ supported: true }, 200);
+      }
+      return json(projectAdminState(await deps.readState(scope)), 200);
+    },
   );
 
   const preview = (request: Request, context: RouteContext) => execute(

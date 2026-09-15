@@ -290,6 +290,8 @@ export type DashboardTargetIntentPreview = {
   createdAt: string;
 };
 
+export type DashboardTargetIntentPreviewSummary = Omit<DashboardTargetIntentPreview, "rows">;
+
 export type DashboardTargetIntentHistoryEntry = {
   publicationId: string;
   versionId: string;
@@ -311,7 +313,7 @@ export type DashboardTargetIntentHistoryEntry = {
 export type DashboardTargetIntentAdminState = {
   activeVersionId: string | null;
   history: DashboardTargetIntentHistoryEntry[];
-  previews: DashboardTargetIntentPreview[];
+  previews: DashboardTargetIntentPreviewSummary[];
 };
 
 export type SourceCollectionMode =
