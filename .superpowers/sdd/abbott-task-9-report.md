@@ -1,4 +1,13 @@
-# Abbott Task 9 — preflight port and activation-boundary corrections
+# Abbott Task 9 — acknowledged deployment refused
+
+Current status: BLOCKED. Approved1ed80bd was published and the single authorized
+clean-environment deployment returned `ABBOTT_DEPLOY_REFUSED stage=complete reason=none`.
+The acknowledged transport verified its owned SSH exit and removed private
+identity evidence. No retry, pin update, smoke, capture or Nginx action followed.
+No successful fresh production attestation is claimed. Details are appended below;
+the preceding source-only checkpoint and earlier operational results are historical.
+
+## Previous source checkpoint — preflight port and activation-boundary corrections
 
 Status: DONE_WITH_CONCERNS, pending re-review before deployment. Two Important
 preflight/activation findings are corrected with source-only TDD: real Linux
@@ -3729,3 +3738,40 @@ DONE_WITH_CONCERNS: source corrections verified; STOP for re-review before any
 push or live use. TDD and technical review verification supplied the reproduced
 failure evidence; completion verification does not claim that the blocked live
 PDF, visual parity or cutover work has been completed.
+
+## Approved operational attempt at1ed80bd — acknowledged refusal
+
+The worktree was clean at exact approved commit
+`1ed80bdcb98e802b011cc5a09c634c24c069e608`. Ordinary, non-force pushes updated only
+`refs/heads/codex/abbott-runtime-isolation` and `refs/heads/release/abbott`;
+the isolated literal remote-ref lookup verified both at that exact SHA.
+
+Exactly one deployment invocation ran from the active isolated worktree:
+`/usr/bin/env -i PATH=/opt/homebrew/Cellar/node/25.6.1_1/bin:/usr/bin:/bin /opt/homebrew/Cellar/node/25.6.1_1/bin/npm run deploy:abbott`.
+The fixed package script dispatched the reviewed Abbott wrapper and acknowledged
+transport. Exit status was1 with the sole closed result:
+
+`ABBOTT_DEPLOY_REFUSED stage=complete reason=none`
+
+No retry or alternative host verifier was used. The closed result does not
+identify the underlying refused host condition. No successful fresh preflight,
+deployment, candidate identity, neighbor/Nginx hash, browser or rollback
+attestation is inferred from it. The CLI starts with the reviewed inspect
+transaction before build/deploy; its refusal blocks continuation. No new release
+record was returned, and no attester, smoke or deployment-checkpoint pin changed.
+The historical6f09982/8c79 active and f80607f/6cd2 predecessor records remain
+historical evidence, not a new observation in this attempt.
+
+The accepted REFUSED result requires the reviewed session's remote acknowledgement,
+captured SSH PID/start ownership, observed exit and verified PID absence. Its
+private identity evidence was consumed and removed; source/payload buffers were
+zeroed in the session finally path. A separate local-only check verified absence
+of the exact deploy/recovery private evidence directories and no local listeners
+on3001 or3004. The owned local command session exited. No browser, forward,
+credential issuer, PDF request, smoke/capture, recovery or Nginx operation ran.
+
+This turn performed no source change or new full build/test claim. The approved
+1ed80bd source checkpoint's gates are recorded immediately above. Verification
+before completion restricted the outcome to the observed refusal and cleanup,
+not successful operational completion. The public route-only rollback target
+remains port3001; no route switch was attempted. STOP for review/direction.
