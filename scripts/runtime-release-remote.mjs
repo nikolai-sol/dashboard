@@ -568,7 +568,7 @@ function materialize(payload, id, old, platform, account, browserExecutable) {
 
 // Abbott changes registration rather than asking PM2 to merge retained env.
 // Every destructive command is addressed by a freshly re-proven registration.
-async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,preserveLock}) {
+async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,preserveLock,terminal}) {
   const oldBackup=old?`${BACKUPS}/${old.id}`:null;
   const journalPath=`${CONTROL}/activation-${owner}.json`;
   const dir=p=>{owned(p,true);const s=fs.lstatSync(p);return{dev:String(s.dev),ino:String(s.ino)};};
@@ -632,7 +632,7 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
   };
   await before();await checkpoint();journal('prepared');
   try{
-    await checkpoint();await before();mutated=true;
+    await checkpoint();await before();mutated=true;if(terminal)terminal.status='UNACKNOWLEDGED';
     if(old)await remove(beforeProcess.registration,beforeProcess);else await noRegistration();
     journal('predecessor_removed');await checkpoint();
     await noRegistration();
@@ -673,16 +673,16 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
           if(!isDeepStrictEqual(processProof(platform,account),live)||!isDeepStrictEqual(current(),old))fail('Predecessor restart identity changed');
         }catch{await remove(restored.registration,live);throw Error();}
       }else{absent(APP);if(pointerPublished){owned(CURRENT);fs.unlinkSync(CURRENT);pointerPublished=false;}await noRegistration();}
-      journal('restored');fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
+      journal('restored');if(terminal)terminal.status='RESTORED';fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
     }catch(error){
       if(error.message==='runtime activation failed; attested predecessor restored'||error.message==='runtime activation failed; service stopped')throw error;
-      preserveLock();try{journal('review_required');}catch{}
+      preserveLock();try{journal('review_required');if(terminal)terminal.status='REVIEW_REQUIRED';}catch{}
       fail('runtime activation and predecessor restoration failed; ownership requires review');
     }
   }finally{originalPointer?.fill(0);}
 }
 
-async function transact(request, platform = realPlatform, stagedGuard) {
+async function transact(request, platform = realPlatform, stagedGuard, terminal) {
   // The worker is supplied by the exact clean release source, never by remote disk.
   const guard = stagedGuard ?? (() => {});
   guard();
@@ -736,7 +736,7 @@ async function transact(request, platform = realPlatform, stagedGuard) {
     if (old) attestTree(APP, old);
     const oldBackup = old ? `${BACKUPS}/${old.id}` : null;
     if (oldBackup && fs.lstatSync(oldBackup, { throwIfNoEntry: false })) fail('Predecessor backup collision');
-    if(scope==='abbott')return await activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,preserveLock:()=>{preserveLock=true;}});
+    if(scope==='abbott')return await activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,terminal,preserveLock:()=>{preserveLock=true;}});
     let oldMoved = false, candidateMoved = false, startAttempted = false, ownedRegistration = null, ownedProcess = null;
     try {
       if (old) { fs.renameSync(APP, oldBackup); oldMoved = true; }
@@ -812,10 +812,21 @@ async function transact(request, platform = realPlatform, stagedGuard) {
       fail(old ? 'runtime activation failed; attested predecessor restored' : 'runtime activation failed; service stopped');
     }
   } finally {
+    try{
     owned(LOCK, true);
     if (stableRead(`${LOCK}/owner`, true).toString() !== owner || fs.readdirSync(LOCK).join() !== 'owner') fail('runtime lock ownership changed; preserved for recovery');
     if(!preserveLock){fs.unlinkSync(`${LOCK}/owner`); fs.rmdirSync(LOCK);}
+    }catch(error){if(terminal)terminal.status='UNACKNOWLEDGED';throw error;}
   }
+}
+
+async function transactAcknowledged(request,signal,platform=realPlatform){
+  if(scope!=='abbott'||!['inspect','deploy','rollback'].includes(request?.action))return{status:'REFUSED',record:null};
+  // Only the transaction's own state transitions can certify compensation.
+  // An exception message from a command or injected platform is never authority.
+  const terminal={status:'REFUSED'},guard=()=>{if(signal?.aborted)fail('Abbott activation cancelled');};
+  try{return{status:'COMMITTED',record:await transact(request,platform,guard,terminal)};}
+  catch{return{status:terminal.status,record:null};}
 }
 
 async function remoteMain(expectedDigest) {
@@ -844,5 +855,5 @@ return { safeRelative, readPinned, renderEnvironment, parseRuntimeSecrets, seria
   // Fixed interrupted-activation recovery uses the same attesters/PM2 adapter.
   // This does not add a normal deploy action or relax current() consistency.
   interruptedRecoveryTools: () => ({ readRecord, attestTree, platform: realPlatform }),
-  transact, remoteMain, ENV_KEYS, HOST_DIRECTORY_MODES };
+  transact, transactAcknowledged, remoteMain, ENV_KEYS, HOST_DIRECTORY_MODES };
 }

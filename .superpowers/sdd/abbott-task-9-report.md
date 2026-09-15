@@ -1,6 +1,6 @@
-# Abbott Task 9 — fresh PM2 activation checkpoint B
+# Abbott Task 9 — acknowledged deploy transport checkpoint
 
-Status: DONE_WITH_CONCERNS; source-only checkpoint B awaits independent review.
+Status: DONE_WITH_CONCERNS; source-only deploy transport awaits independent review.
 Last verified production state is recovered f80607f/release6cd2 with matching
 active files, pointer and PM2 binding; candidate9aaed34 is quarantined. This
 checkpoint made no live request or mutation and does not freshly attest that
@@ -2253,3 +2253,99 @@ not an automatic-success assumption. Last verified production rollback target
 remains f80607f/release6cd2, with candidate9aaed34 preserved; no new release,
 Nginx backup, screenshot dimensions/diff or post-deploy smoke result exists in
 this source-only checkpoint. STOP for checkpoint B review before any live use.
+
+## Checkpoint B follow-up — acknowledged Abbott deploy transport
+
+Source inspection confirmed the remaining transport gap: the prior Abbott
+driver used blocking SSH, consumed EOF as the whole payload, and could time out
+without waiting for activation compensation. The parent approved a dedicated
+Abbott-only framed transport, with exact-schema internal metadata paired to
+capsule/payload digest and control ID. This follow-up implements that design;
+non-Abbott transfer options/behavior and the dedicated recovery transport remain
+unchanged. No generic transport framework or caller-selectable target was added.
+
+The fixed deploy/rollback driver now awaits the Abbott transport for inspection
+and mutation. SSH uses the reviewed fixed host/user/key/known-hosts and closed
+options, no proxy/agent/reuse, and only constructed PATH; remote Node uses an
+empty environment. Source (maximum1MiB) and sealed artifact request
+(maximum512MiB) travel in separate hash/length-checked stdin frames after exact
+READY and owned PID/start proof. RUN follows completed writes once; ABORT/EOF
+feed the same transaction guard used by remote signals. Runtime secrets remain
+host-side under the unchanged input/rendered-env contract.
+
+The worker's acknowledgement adapter uses its own internal state transitions,
+never exception text, to distinguish completed, restored, refused and protected
+review states. Its result follows transaction lock cleanup. REVIEW_REQUIRED
+requires successful publication of the owned review journal; inability to
+verify/write journal or lock cleanup remains UNACKNOWLEDGED. It does not claim
+an unowned replacement process was stopped. An unexpected exception after
+entering the transaction produces no valid paired acknowledgement.
+
+The response permits only one canonical record with five existing fields and
+one terminal ACK, agreeing on exact source/payload digest and control ID. Hex
+lengths, scalar types, null predecessor, scope and key set are bounded. Extra
+keys, duplicate JSON fields, coerced arrays, duplicate/out-of-order frames,
+wrong digest/control ID and unexpected output cannot pass. All records remain
+internal; CLI output is one closed status/stage/reason line. Child stderr is
+always fatal, zeroed and never relayed. No token, URL, arbitrary path, raw body,
+header, process environment or child error text appears in public diagnostics.
+
+Post-spawn drains, exit observation, identity evidence and cleanup deadlines
+precede PID proof/dispatch. The parent requests ABORT/EOF at240s and waits for
+compensation before exact PID/start-checked TERM at540s and possible KILL at600s;
+the observation budget is605s. Lost ACK, SSH failure or unverified PID exit can
+never report success. Unverifiable/reused PIDs are not killed; live close/drain
+observation remains and no cleanup success is inferred. Local private evidence
+uses a fixed ignored invoking-user0700 directory and atomic0600 identity-only
+file; a no-PID summary is copied before owned evidence removal. Any evidence
+failure prevents success. Session-finally zeroes source/payload buffers, and
+transport zeroes response/header buffers. Parent signal handlers span transport
+and evidence cleanup.
+
+TDD evidence: the initial18 tests failed for the missing protocol/driver path,
+then passed. Additional observed RED/GREEN cases caught early result acceptance
+before RUN, scalar coercion in record fields, forged metadata at the evidence
+wrapper, non-closed CLI refusal, acknowledgement despite an unverifiable review
+journal, and duplicate RUN acknowledgement. Tests use fake SSH and local Node
+loader children only; the exact remote shell tokenization and actual captured
+worker/browser capsule syntax are checked locally without SSH or mutation.
+
+The interruption matrix adds36 worker cases: signal/EOF/connection-loss abort
+semantics before and after stop, delete, both active-tree renames, fresh start
+and pointer publication. The actual local loader separately proves signal,
+stdin EOF and ABORT reach the guard and await terminal completion. These are
+composed loader/worker proofs, not production-network experiments. Existing
+activation tests retain coverage for partial registrations, PID reuse, failed
+predecessor restart and protected locks. Transport tests cover initial proof
+failure/shared setup errors, missing/forged/oversized/late output, write errors,
+upload cancellation, missing ACK, hung SSH, PID reuse and bounded observation.
+
+Fresh final gates:
+
+| Gate | Result |
+| --- | --- |
+| Abbott production build and exact route gate | Pass |
+| App/contract tests | 67/67 pass |
+| Full authority/bootstrap/browser/recovery/deploy/artifact suite | 455/455 pass |
+| New dedicated transport/evidence/session tests (included above) | 29/29 pass |
+| Post-build smoke/asset/issuer/visual/orchestrator tests | 95/95 pass |
+| Sealed artifact verification | Pass; 2870 files, 82 text files |
+| Both TypeScript checks, changed-module syntax, whitespace | Pass |
+| ESLint | Exit0; 0 errors, 10 existing warnings |
+
+All local loader/test commands exited; loader tests verify their owned child
+PIDs absent. Both fixed private evidence directories are absent. No browser or
+SSH process was launched, no credentials were read/minted, and no production
+request, push, deploy, smoke/capture, DB/auth/fact/cron/neighbor or Nginx action
+occurred. Last published refs still982dd1a; preceding local checkpoint is21495e9.
+Last verified live rollback target remains f80607f/release6cd2 and candidate9aaed34
+remains last-known quarantined; this source checkpoint does not freshly attest
+those facts. No new Nginx backup or visual dimensions/diff evidence exists.
+
+DONE_WITH_CONCERNS: transport and activation require independent review before
+any operational retry. Bounded cancellation is cooperative; catastrophic worker
+death or an unverifiable child still requires read-only ownership/journal
+inspection rather than a cleanup claim or automatic retry. This supersedes the
+preceding source checkpoint's unchanged-Abbott-transport caveat, not its live-use
+prohibition. Debugging/TDD and verification-before-completion guided the
+implementation and fresh checks. STOP before push/live/deploy/Nginx.

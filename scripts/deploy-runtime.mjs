@@ -9,11 +9,14 @@ import { RUNTIME_MANIFESTS } from '../packages/runtime-contract/src/manifest.mjs
 import { assertRuntimeArtifact, verifyRuntimeArtifactBoot } from './runtime-artifact-policy.mjs';
 import { createRuntimeInstaller } from './runtime-release-remote.mjs';
 import { deriveBrowserContract } from './abbott-browser-prerequisite.mjs';
+import { runAbbottDeployWithEvidence } from './abbott-deploy-session.mjs';
+import { formatAbbottDeployResult } from './abbott-deploy-transport.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = message => { throw new Error(message); };
 const SOURCE = /^[a-f0-9]{40}$/;
+let abbottFailure;
 export const FORBIDDEN_ENV = Object.freeze([
   'RUNTIME_SCOPE', 'APP_NAME', 'APP_PORT', 'APP_DIR', 'RELEASE_BRANCH', 'DEPLOY_LOCK_DIR',
   'RELEASES_DIR', 'BACKUPS_DIR', 'RELEASE_ID', 'KEEP_BACKUPS', 'VPS', 'PUBLIC_APP_HOST', 'TARGET_BACKUP',
@@ -146,6 +149,12 @@ export function preparePayload(authority, sourceSha) {
   return { scope, sourceSha, manifest, manifestDigest: digest, control: [...control.values()], files };
 }
 
+export function buildAbbottDeployCapsule(worker,browserSource,browserContract,authority,environmentKeys){
+  if(!isDeepStrictEqual(authority,RUNTIME_MANIFESTS.abbott)||!Buffer.isBuffer(worker)||worker.length>262144||!Buffer.isBuffer(browserSource)||browserSource.length>262144)fail('Invalid Abbott capsule');
+  const source=Buffer.from(`${worker}\nconst abbottBrowser={...await import(${JSON.stringify('data:text/javascript;base64,'+browserSource.toString('base64'))}),contract:${JSON.stringify(browserContract)}};\nexport async function run(signal,request){return createRuntimeInstaller(${JSON.stringify(authority)},${JSON.stringify(environmentKeys)},abbottBrowser).transactAcknowledged(request,signal);}`);
+  if(source.length>1048576){source.fill(0);fail('Invalid Abbott capsule');}return source;
+}
+
 function prepareTransport(authority) {
   // Capture the reviewed worker and profile once, then recheck the clean source
   // before dispatch. Later filesystem edits cannot replace the transported code.
@@ -153,10 +162,16 @@ function prepareTransport(authority) {
   const browserSource=authority.scope==='abbott'?regular(path.join(ROOT,'scripts/abbott-browser-prerequisite.mjs')):null;
   const browserContract=browserSource?deriveBrowserContract():null;
   const environmentKeys = environmentFor(authority);
-  return function transfer(request) {
+  return async function transfer(request) {
   const input = Buffer.from(JSON.stringify(request));
   if (input.length > 536870912) fail('Runtime payload too large');
   const browserSetup=browserSource?`const abbottBrowser={...await import(${JSON.stringify('data:text/javascript;base64,'+browserSource.toString('base64'))}),contract:${JSON.stringify(browserContract)}};`:'const abbottBrowser=null;';
+  if(authority.scope==='abbott'){
+    const source=buildAbbottDeployCapsule(Buffer.from(worker),browserSource,browserContract,authority,environmentKeys);
+    const abort=new AbortController(),stop=()=>abort.abort();for(const s of['SIGINT','SIGTERM','SIGHUP'])process.on(s,stop);
+    try{const result=await runAbbottDeployWithEvidence(source,input,{signal:abort.signal});if(result.status!=='COMMITTED'){abbottFailure=result;fail('Runtime remote transaction refused');}return result.record;}
+    finally{source.fill(0);input.fill(0);for(const s of['SIGINT','SIGTERM','SIGHUP'])process.removeListener(s,stop);}
+  }
   const code = `${worker}\n${browserSetup}\nawait createRuntimeInstaller(${JSON.stringify(authority)}, ${JSON.stringify(environmentKeys)},abbottBrowser).remoteMain(${JSON.stringify(hash(input))});`;
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
   const command = `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`;
@@ -182,16 +197,16 @@ async function main() {
   const candidate = verifySource(authority, repository, undefined, approved);
   const transfer = prepareTransport(authority);
   verifySource(authority, repository, undefined, approved);
-  const active = transfer({ action: 'inspect' });
+  const active = await transfer({ action: 'inspect' });
   verifySource(authority, repository, active?.sourceSha, approved);
   if (action === 'rollback') {
     // Only the sealed active record chooses its predecessor; callers cannot.
     if (approvedSource(repository) !== candidate) fail('Runtime release authority changed before rollback');
     verifySource(authority, repository, active?.sourceSha, candidate);
     validateAuthority(process.argv[2]);
-    const result = transfer({ action, expectedActiveSha: active?.sourceSha ?? null });
+    const result = await transfer({ action, expectedActiveSha: active?.sourceSha ?? null });
     if (result.scope !== authority.scope || !SOURCE.test(result.sourceSha)) fail('Runtime rollback attestation mismatch');
-    console.log(`Runtime rollback attested: ${result.sourceSha}`);
+    console.log(authority.scope==='abbott'?'ABBOTT_DEPLOY_COMMITTED stage=complete reason=none':`Runtime rollback attested: ${result.sourceSha}`);
     return;
   }
   build(authority);
@@ -199,14 +214,14 @@ async function main() {
   const manifest = path.join(ROOT, `apps/${authority.scope}/.next-${authority.scope}/trusted-runtime-manifest.json`);
   await verifyRuntimeArtifactBoot(artifact, authority.scope, { trustedManifestPath: manifest });
   const payload = preparePayload(authority, candidate);
-  const latest = transfer({ action: 'inspect' });
+  const latest = await transfer({ action: 'inspect' });
   if (approvedSource(repository) !== candidate || verifySource(authority, repository, latest?.sourceSha, candidate) !== candidate) fail('Runtime release authority changed during build');
   validateAuthority(process.argv[2]);
-  const result = transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload, binding: { sourceSha: candidate, runId: randomUUID() } });
+  const result = await transfer({ action, expectedActiveSha: latest?.sourceSha ?? null, payload, binding: { sourceSha: candidate, runId: randomUUID() } });
   if (result.scope !== authority.scope || result.sourceSha !== candidate || result.manifestDigest !== payload.manifestDigest) fail('Runtime activation attestation mismatch');
-  console.log(`Runtime release attested: ${candidate}`);
+  console.log(authority.scope==='abbott'?'ABBOTT_DEPLOY_COMMITTED stage=complete reason=none':`Runtime release attested: ${candidate}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main().catch(() => { process.stderr.write('Refusing fixed runtime operation\n'); process.exitCode = 1; });
+  main().catch(() => { process.stderr.write(path.resolve(process.argv[2]??'')===path.join(ROOT,'deploy/abbott/release.json')?formatAbbottDeployResult(abbottFailure??{status:'REFUSED'}):'Refusing fixed runtime operation\n'); process.exitCode = 1; });
 }

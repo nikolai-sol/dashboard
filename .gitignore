@@ -45,6 +45,7 @@
 # misc
 .DS_Store
 *.pem
+/.superpowers/sdd/.abbott-deploy-evidence/
 
 # debug
 npm-debug.log*

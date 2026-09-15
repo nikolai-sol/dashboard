@@ -250,11 +250,55 @@ review. Never remove them or retry by overriding the gate. A stopped Abbott
 runtime is safer than serving a known mismatch; unrelated replacements remain
 untouched when identity cannot be established.
 
-This source checkpoint does not change deploy SSH transport/options, perform a
-live deploy, repair Nginx, or approve PDF/data/visual parity. Its signal checks
-yield between phases; individual existing OS commands remain bounded. An abrupt
-unrecoverable process death cannot promise automatic compensation and requires
-inspection of the protected journal/lock rather than an inferred success.
+### Acknowledged Abbott deploy transport — additional review required
+
+The source-only transport follow-up replaces Abbott's blocking SSH invocation
+only. Do not execute until its exact commit is independently approved. Continue
+to use only `npm run deploy:abbott` or the separately authorized fixed rollback
+wrapper; never invoke the remote loader, redirect its output or send a capsule
+manually. Non-Abbott SSH transport remains unchanged.
+
+The fixed SSH target is root on beget, with the pinned IP/key/known-hosts, strict
+host-key checking, no agent, proxy, forwarding or connection reuse, and client
+LogLevel=ERROR. SSH gets only its constructed PATH; remote Node runs under
+`env -i`. The local parent owns stdin/stdout/stderr pipes. No source, payload,
+credential or runtime environment is put in SSH argv. Secrets stay on the host
+under the unchanged input/renderer contract.
+
+Exact READY and captured SSH PID/start proof precede transmission. Source and
+payload have separate length/hash frames (1 MiB and 512 MiB maximum). The payload
+is the already-sealed artifact request, not environment data. RUN is sent once,
+only after both writes finish. ABORT, EOF and remote signals feed the transaction
+cancellation guard. The remote loader waits for activation or compensation to
+finish; unexpected transaction exceptions cannot certify restoration.
+
+Internal release metadata is limited to the exact bounded record schema. The
+record and terminal ACK must agree on capsule/payload digest and control ID;
+extra, duplicate, malformed or out-of-order frames fail. Public output contains
+only closed status/stage/reason, never record values or child streams. COMMITTED
+requires transaction completion plus verified SSH exit; RESTORED requires the
+worker's own verified compensation state. REVIEW_REQUIRED certifies the owned
+review journal was written, not that an unowned replacement was stopped. Failed
+journal/lock proof or lost acknowledgement is UNACKNOWLEDGED, never cleanup
+success. Stop and inspect read-only; do not automatically retry or deploy.
+
+Immediately after spawn, drains, exit handlers and deadlines remain installed
+through PID proof, upload, RUN and compensation. At 240 seconds the parent sends
+ABORT (or EOF before RUN), then allows 300 seconds for remote compensation before
+an exact PID/start-checked TERM. At 600 seconds it may send identity-checked KILL;
+the final observation budget ends at 605 seconds. No kill targets an unverifiable
+or reused PID. A live unverified child keeps its close/drain observation and must
+not be described as cleaned up. Remote cancellation is cooperative between
+bounded phases; abrupt worker death still requires lock/journal review.
+
+Transient local identity evidence uses only the fixed ignored directory
+`.superpowers/sdd/.abbott-deploy-evidence`, invoking-user-owned0700, with atomic
+0600 metadata-only writes and no links. It records PID/start/exit flags and closed
+stage codes, then copies a no-PID summary and removes the owned evidence. An
+evidence failure prevents success. Source/payload/output buffers are zeroed on
+all terminal paths. Parent signal handlers remain through transport and evidence
+cleanup. No live deploy, Nginx action or PDF/data/visual approval is part of this
+source checkpoint.
 
 Record only process names and PIDs; never dump `pm2 jlist` because it includes process environments. The reviewed worker may inspect it in memory and must never relay its contents.
 
