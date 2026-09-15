@@ -54,6 +54,30 @@ directive refuses: included files are outside this fixed single-file snapshot,
 even if the existing include would otherwise be valid Nginx configuration.
 Extending that scope would require separate review. No config is edited.
 
+Nginx context/routing re-review correction: this conf.d file must contain only
+top-level `server {}` blocks. A server nested in location/if/upstream/http or any
+other block cannot supply target-host/TLS authority and refuses; listen and
+server_name must be direct server directives. The selected dashboards TLS server
+is unique across normalized same-host declarations: every other target-host
+block must explicitly listen only on non-SSL port80. Implicit listeners, another
+443 block without `ssl`, padded/alternate ports or case variants cannot escape
+the selected-server policy through shared socket TLS behavior. The selected server
+accepts only direct literal locations (plain or exact `=`), with no nested
+locations, regex patterns, variables, `~`, `~*` or `^~` modifiers. Its proxy_pass
+must be a literal `http://127.0.0.1:3001`,3002 or3003 target, optionally with a
+literal path. Named, variable, alternate-protocol or otherwise opaque targets
+refuse. Only status-only return is supported there; redirects, set/map/rewrite/
+if, try_files/error_page, other pass modules and unknown routing directives or
+blocks refuse. Known passive SSL/header/log/timeout/buffering directives remain
+supported; literal-name non-routing header variables are data, not destination
+authority. Location/Refresh or dynamically named response headers refuse. The separate
+HTTP redirect may retain its existing host/request variables. Parsed literal
+Abbott aliases/asset prefixes and3004 targets, including padded3004 ports and
+escaped/case variants, remain prohibited. This is a deliberately restricted
+preflight contract, not a complete Nginx interpreter: unsupported otherwise-valid
+configuration requires review and must not be bypassed. No live retry is
+authorized until this correction is reviewed.
+
 Neighbor/Nginx proof repeats immediately before predecessor PM2 stop, after
 candidate health immediately before pointer promotion, and at compensation
 completion. The first activation gate re-proves predecessor presence/identity

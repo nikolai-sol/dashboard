@@ -237,3 +237,64 @@ test('Linux zero-size proc files and shared namespace TCP tables preserve select
 test('snapshot rejects invalid UTF-8 instead of normalizing distinct config bytes',async()=>{
  const m=await api(),f=fixture();f.files.set(NGINX,Buffer.concat([Buffer.from(NGINX_TEXT+'# '),Buffer.from([0xff]),Buffer.from('\n')]));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
 });
+
+const TLS_BODY='location / { proxy_pass http://127.0.0.1:3001; }';
+const TLS_SERVER='server { listen 443 ssl; server_name dashboards.adreports.ru; '+TLS_BODY+' }';
+const invalidNginxContext={
+ nested_location:'server { listen 80; server_name other.example; location / { '+TLS_SERVER+' } }',
+ nested_if:'server { listen 80; server_name other.example; if ($host) { '+TLS_SERVER+' } }',
+ nested_upstream:'upstream hidden { '+TLS_SERVER+' }',
+ nested_http:'http { '+TLS_SERVER+' }',
+ nested_other_server:NGINX_TEXT.replace(TLS_BODY,TLS_BODY+' server { listen 80; server_name other.example; }'),
+ root_server_directive:NGINX_TEXT+'server;',
+ root_location:NGINX_TEXT+'location /other { return 404; }',
+ misplaced_listen:NGINX_TEXT.replace(TLS_BODY,'location / { listen 8080; proxy_pass http://127.0.0.1:3001; }'),
+ misplaced_name:NGINX_TEXT.replace(TLS_BODY,'location / { server_name other.example; proxy_pass http://127.0.0.1:3001; }'),
+ nested_locations:NGINX_TEXT.replace(TLS_BODY,'location /other { location /inner { return 404; } }'),
+};
+for(const[label,config]of Object.entries(invalidNginxContext))test('Nginx context refuses '+label,async()=>{
+ const m=await api(),f=fixture(),seen=[];f.files.set(NGINX,config);f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
+ assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(f.calls,[]);assert.equal(seen.at(-1).stage,'preflight_nginx');assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+});
+const opaqueRouting={
+ proxy_variable:'location / { proxy_pass http://127.0.0.1:$port; }',
+ proxy_braced_variable:'location / { proxy_pass "http://127.0.0.1:${port}"; }',
+ proxy_named_variable:'location / { proxy_pass $destination; }',
+ set_port:'set $port 3004; location / { proxy_pass http://127.0.0.1:$port; }',
+ split_target:'set $prefix "http://127.0.0.1:30"; set $suffix 04; location / { proxy_pass "$prefix$suffix"; }',
+ map_target:'map $host $target { default "http://127.0.0.1:$port"; } '+TLS_BODY,
+ rewrite:'rewrite ^/(.*)$ /$1 last; '+TLS_BODY,
+ if_routing:'if ($host) { return 302 $destination; } '+TLS_BODY,
+ regex_character_class:'location ~ ^/[dD]ashboard/1[8]$ { proxy_pass http://127.0.0.1:3001; }',
+ regex_case_insensitive:'location ~* "^/dash[b]?oard/1(?:8)$" { proxy_pass http://127.0.0.1:3001; }',
+ regex_escape:String.raw`location ~ "^/\x64ashboar\x64/\x31\x38$" { proxy_pass http://127.0.0.1:3001; }`,
+ regex_quoted:'location "~*" "^/.*$" { proxy_pass http://127.0.0.1:3001; }',
+ prefix_modifier:'location ^~ / { proxy_pass http://127.0.0.1:3001; }',
+ pattern_without_modifier:'location /[dD]ashboard/1[8] { proxy_pass http://127.0.0.1:3001; }',
+ variable_location:'location /$path { proxy_pass http://127.0.0.1:3001; }',
+ try_files:'location / { try_files $uri /$target; }',
+ error_page:'error_page 404 = $destination; '+TLS_BODY,
+ return_variable:'location / { return 302 $destination; }',
+ return_encoded_alias:'location / { return 302 /dashboard/%31%38; }',
+ named_upstream:'location / { proxy_pass http://unattested_upstream; }',
+ module_routing:'location / { js_content hidden_route; }',
+ fastcgi_variable:'location / { fastcgi_pass $destination; }',
+ grpc_variable:'location / { grpc_pass grpc://127.0.0.1:$port; }',
+ opaque_block:'opaque_module { destination $port; } '+TLS_BODY,
+};
+for(const[label,body]of Object.entries(opaqueRouting))test('Nginx selected routing refuses '+label,async()=>{
+ const m=await api(),f=fixture(),seen=[];f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,body));f.options.notePhase=(stage,reason)=>seen.push({stage,reason});
+ assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.deepEqual(f.calls,[]);assert.equal(seen.at(-1).stage,'preflight_nginx');assert.equal(f.fds.size,0);
+});
+test('Nginx literal aliases, escaped words and padded target port cannot hide Abbott',async()=>{
+ const m=await api();for(const body of ['location = /dashboard/18 { return 404; }','location = /DASHBOARD/18 { return 404; }','location = /dashboard/Abbott { return 404; }','location /_NEXT-ABBOTT { return 404; }',String.raw`location = "/dashboa\rd/18" { return 404; }`,'location / { proxy_pass http://127.0.0.1:03004; }']){const f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,body));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});}
+});
+test('Nginx direct literal locations and header data preserve accepted composite fixture',async()=>{
+ const m=await api();for(const config of [NGINX_TEXT,NGINX_TEXT.replace(TLS_BODY,'# server { listen 443 ssl; server_name hidden.example; }\nlocation = /health { return 404; }\nlocation / { proxy_set_header Host $host; add_header X-Example "set $not_routing }"; proxy_pass "http://127.0.0.1:3001"; }')]){const f=fixture();f.files.set(NGINX,config);assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());}
+});
+for(const[label,listen,host]of [['shared_tls','443','dashboards.adreports.ru'],['shared_tls_ipv6','[::]:443','dashboards.adreports.ru'],['padded_port','00443','dashboards.adreports.ru'],['case_alias','443','DASHBOARDS.ADREPORTS.RU'],['implicit_listener','','dashboards.adreports.ru'],['other_port','8080','dashboards.adreports.ru']])test('Nginx all target-host blocks are bounded: '+label,async()=>{
+ const m=await api(),f=fixture();f.files.set(NGINX,`server { ${listen?'listen '+listen+';':''} server_name ${host}; location / { proxy_pass http://127.0.0.1:$arg_port; } }\n`+NGINX_TEXT);assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+});
+for(const[label,header]of [['location','Location'],['refresh','Refresh'],['dynamic','$header']])test('Nginx response-routing headers are not passive: '+label,async()=>{
+ const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace(TLS_BODY,`location / { add_header ${header} $target; return 302; }`));assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+});

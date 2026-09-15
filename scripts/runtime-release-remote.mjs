@@ -90,12 +90,35 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     for(const token of tokens){if(token.syntax==='{'||token.syntax===';'){if(!directive.length||!directive[0])fail();const node={name:directive[0],args:directive.slice(1),block:token.syntax==='{',children:[]};stack.at(-1).push(node);directive=[];if(node.block){stack.push(node.children);if(stack.length>32)fail();}}
       else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else directive.push(token.word);
     }if(stack.length!==1||directive.length)fail();
-    let tls=0;const visit=list=>{for(const n of list){const args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))fail();
+    // conf.d is already in the HTTP context. A nested server cannot supply TLS authority.
+    if(nodes.some(n=>n.name!=='server'||!n.block||n.args.length))fail();
+    const hostBlocks=nodes.filter(n=>n.children.some(x=>x.name==='server_name'&&!x.block&&x.args.some(v=>v.toLowerCase().replace(/\.$/,'')==='dashboards.adreports.ru')));
+    const targets=hostBlocks.filter(n=>n.children.some(x=>x.name==='listen'&&!x.block&&x.args.includes('ssl')&&x.args.some(v=>/^(?:443|\[::\]:443|[0-9.]+:443)$/.test(v))));
+    if(targets.length!==1)fail();
+    // SSL belongs to a listening socket, not just an explicit vhost ssl token.
+    // Every other same-host block must be explicitly confined to non-SSL port80.
+    for(const n of hostBlocks.filter(n=>n!==targets[0])){const listens=n.children.filter(x=>x.name==='listen');if(!listens.length||listens.some(x=>x.block||x.args.includes('ssl')||! /^(?:80|\[::\]:80|[0-9.]+:80)$/.test(x.args[0])))fail();}
+    const passive=new Set(['listen','server_name','ssl_certificate','ssl_certificate_key','ssl_protocols','ssl_ciphers','ssl_prefer_server_ciphers','ssl_session_cache','ssl_session_timeout','ssl_session_tickets','ssl_dhparam','ssl_stapling','ssl_stapling_verify','ssl_trusted_certificate','resolver','resolver_timeout','access_log','error_log','client_max_body_size','client_body_timeout','send_timeout','keepalive_timeout','proxy_http_version','proxy_set_header','proxy_read_timeout','proxy_connect_timeout','proxy_send_timeout','proxy_buffering','proxy_request_buffering','proxy_cache_bypass','proxy_no_cache','proxy_buffers','proxy_buffer_size','proxy_busy_buffers_size','add_header','expires','etag','gzip','gzip_types']);
+    const visit=(list,context='root',selected=false)=>{for(const n of list){const args=n.args.join(' ');if(/abbott/i.test(n.name+' '+args)||/(?:^|:)0*3004(?:$|\D)/.test(args)||n.name==='location'&&/dashboard.*\b18\b/i.test(args))fail();
       // Includes are outside this single-file snapshot: never silently authorize them.
-      if(n.name==='include'||['listen','server_name'].includes(n.name)&&n.block||n.name==='location'&&(!n.block||!n.args.length)||n.name==='server'&&n.block&&n.args.length)fail();
-      if(n.name==='server'&&n.block&&n.children.some(x=>x.name==='server_name'&&x.args.includes('dashboards.adreports.ru'))&&n.children.some(x=>x.name==='listen'&&x.args.includes('ssl')&&x.args.some(v=>/^(?:443|\[::\]:443|[0-9.]+:443)$/.test(v))))tls++;
-      visit(n.children);
-    }};visit(nodes);if(tls!==1)fail();
+      if(n.name==='include'||n.name==='server'&&(context!=='root'||!n.block||n.args.length)||['listen','server_name'].includes(n.name)&&(context!=='server'||n.block)||n.name==='location'&&(context!=='server'||!n.block||!n.args.length))fail();
+      const active=selected||n===targets[0];
+      if(n.block&&n.name!=='server'&&n.name!=='location'&&!(n.name==='if'&&!active&&['server','location'].includes(context)&&n.args.length))fail();
+      if(active&&n.name!=='server'){
+        if(n.name==='location'){
+          const literal=n.args.length===1?n.args[0]:n.args.length===2&&n.args[0]==='='?n.args[1]:null;
+          if(!literal||!/^\/[A-Za-z0-9_./-]*$/.test(literal))fail();
+        }else if(n.name==='proxy_pass'){
+          // Only the three literal, independently protected loopback runtimes.
+          if(n.args.length!==1||!/^http:\/\/127\.0\.0\.1:300[123](?:\/[A-Za-z0-9_./~-]*)?$/.test(n.args[0]))fail();
+        }else if(n.name==='return'){
+          if(n.args.length!==1||! /^[1-5][0-9]{2}$/.test(n.args[0]))fail();
+        }else if(n.name==='add_header'){
+          if(![2,3].includes(n.args.length)||n.args.length===3&&n.args[2]!=='always'||! /^[A-Za-z0-9-]+$/.test(n.args[0])||['location','refresh'].includes(n.args[0].toLowerCase()))fail();
+        }else if(!passive.has(n.name))fail();
+      }
+      visit(n.children,n.name,active);
+    }};visit(nodes);
   }
   function listenerTable(){
     const result=[];for(const table of ['tcp','tcp6']){

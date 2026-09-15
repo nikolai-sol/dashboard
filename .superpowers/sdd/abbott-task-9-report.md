@@ -1,4 +1,12 @@
-# Abbott Task 9 — transaction perimeter source checkpoint
+# Abbott Task 9 — Nginx context and opaque-routing source checkpoint
+
+Current status: DONE_WITH_CONCERNS. Nginx preflight context/routing correction is source-only and
+pending re-review. Nested server blocks cannot establish TLS authority. Selected
+target routing now uses a documented literal-only subset; opaque routing refuses.
+Abbott/current pins, transaction snapshot semantics and activation are unchanged.
+No push, live command or Nginx mutation has run. Details are appended below.
+
+## Previous source checkpoint — transaction perimeter snapshot
 
 Current status: DONE_WITH_CONCERNS, source-only architecture correction pending critical review.
 Abbott release pins remain fixed; normal deployment now captures one semantically
@@ -4121,3 +4129,60 @@ collector/cron, neighbor or Nginx action ran. Published refs remain last verifie
 evidence, not a fresh host attestation. Public route rollback target remains3001.
 TDD, the approved plan and verification-before-completion guided this checkpoint.
 DONE_WITH_CONCERNS: STOP for critical review before publication or any live use.
+
+## Nginx context and opaque-routing correction — source-only re-review
+
+Parent review found two Important gaps in653fc68: nested server blocks could
+count as TLS authority, and variable/regex routing in the selected TLS server
+could conceal Abbott/3004 destinations. Full preflight regressions produced32
+false-pass RED failures while the accepted composite HTTP/TLS fixture passed.
+The fix is confined to nginxSanity and its tests/runbook; no neighbor discovery,
+Abbott identity, snapshot lifecycle, activation or non-Abbott deploy path changed.
+
+The bounded conf.d contract now accepts only top-level server blocks. Nested
+server blocks inside location/if/upstream/http/other contexts refuse. Listen and
+server_name must be direct server directives, and selected locations cannot nest.
+The selected dashboards TLS server accepts plain or exact literal locations,
+literal HTTP127.0.0.1 upstreams on independently protected ports3001/3002/3003,
+status-only return and known passive configuration directives. Regex/^~ modifiers,
+regex patterns/escapes, variables in destinations/locations, named upstreams,
+set/map/rewrite/if, try_files/error_page, alternate pass modules, unknown routing
+modules/blocks and redirects refuse. Existing HTTP redirect variables and
+non-routing header data remain accepted. Parsed case/escape variants of literal
+Abbott aliases/assets and padded3004 ports cannot bypass the checks.
+
+Independent read-only review then reproduced an additional shared-socket case:
+a same-host443 block without its own ssl token could escape the selected-server
+policy. Six additional RED regressions covered plain/IPv6/padded/implicit/other
+listeners and case variants. Target-host declarations are now normalized and
+every unselected matching block must be explicitly non-SSL port80-only. Further
+RED regressions rejected encoded redirects and Location/Refresh/dynamically
+named response headers; passive header variables remain data only. Full proof
+tests pass100/100; independent Nginx-focused re-review passed54/54 with no remaining
+Critical or Important finding in that pass.
+
+This is a restricted, fail-closed preflight subset, not a complete Nginx grammar.
+Valid configurations using includes, upstream/map blocks or unsupported routing
+features will refuse and need separate review; no fallback bypass was added.
+All output remains the existing closed diagnostic, never config values, URLs,
+tokens, raw errors or process metadata. Review reception and TDD established the
+reproductions before implementation; verification-before-completion governs the
+final gate/commit checkpoint. No live state is newly attested by this source work.
+
+Fresh final ordered gates: Abbott production build plus authority650/650,
+focused proof/deploy/transport/session334/334, app/runtime68/68, post-build
+verification206/206, Abbott contract111/111. Exact routes, deploy-source and
+release-runtime shell suites, contract wiring and public-assets security passed.
+Combined production build, root and focused typechecks, syntax/whitespace passed;
+lint has0 errors and the same10 existing warnings. All owned fixture commands
+exited. Local deploy/recovery private evidence directories are absent, and the
+local3001/3004 listener check returned no listeners. No real browser, credentials,
+forward or production subprocess was launched.
+
+No push, SSH/probe/deploy/recovery, PDF request, live smoke/capture, DB/auth/fact/
+collector/cron, neighbor or Nginx action occurred. Published refs remain last
+verified5b17026; active6f09982/8c79 and predecessor f80607f/6cd2 remain historical
+production evidence only. Route-only rollback target remains3001. The source
+checkpoint requires parent re-review before any publication or live use.
+DONE_WITH_CONCERNS: STOP for review; unsupported valid Nginx constructs remain
+an explicit fail-closed compatibility limitation, not permission to bypass proof.
