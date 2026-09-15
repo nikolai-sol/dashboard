@@ -43,12 +43,23 @@ test("forwards one structured selection, publication, and filters to the JSON re
     registration: { profile: { siteId: "site-med", clientId: "client-med", dashboardId: 42, slug: "medroche", sources: [{ sourceKey: "google_search_console", mode: "manual", bindingId: "gsc", importCadence: [] }] } as never, bindings: [{ bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }] },
     credentialVersion: 3,
     getSession: async () => session,
-    execute: async (query) => { queries.push(query); return { meta: { sourceKey: "google_search_console", period, state: "complete_empty", collectionMode: "manual", completeness: "complete", importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current", latestAttempt: "success" }, summary: null, daily: [], dimensions: [], indexing: { sourceKey: "google_search_console", period: null, state: "missing", collectionMode: "manual", completeness: "unknown", importId: null, exportedAt: null, loadedAt: null, freshness: "unknown", latestAttempt: "none" } }; },
+    execute: async (query) => {
+      queries.push(query);
+      if (query.name === "target_intent") return { siteId: "site-med", dashboardId: 42, versionId: null, label: "", state: "not_configured", rules: [], provenance: null };
+      return { meta: { sourceKey: "google_search_console", period, state: "complete_empty", collectionMode: "manual", completeness: "complete", importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current", latestAttempt: "success" }, summary: null, daily: [], dimensions: [], indexing: { sourceKey: "google_search_console", period: null, state: "missing", collectionMode: "manual", completeness: "unknown", importId: null, exportedAt: null, loadedAt: null, freshness: "unknown", latestAttempt: "none" } };
+    },
   });
   const response = await handler({ slug: "medroche", selection: createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: period }, "Europe/Moscow"), publicationId: "publication-7", filters: { country: "RU" } });
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
-  assert.deepEqual(queries, [{ name: "gsc", scope: { bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }, period, publicationId: "publication-7", filters: { country: "RU" } }]);
+  const body = await response.json() as { targetIntent?: { state?: string; versionId?: string | null }; intent?: unknown };
+  assert.equal(body.targetIntent?.state, "not_configured");
+  assert.equal(body.targetIntent?.versionId, null);
+  assert.equal("intent" in body, false);
+  assert.deepEqual(queries, [
+    { name: "target_intent", scope: { clientId: "client-med", siteId: "site-med", dashboardId: 42 } },
+    { name: "gsc", scope: { bindingId: "gsc", clientId: "client-med", siteId: "site-med", dashboardId: 42, sourceKey: "google_search_console", analyticsAccountId: "account", resourceId: "resource" }, period, publicationId: "publication-7", filters: { country: "RU" } },
+  ]);
 });
 
 test("reports a canonical read failure as unavailable, not as bad credentials", async () => {

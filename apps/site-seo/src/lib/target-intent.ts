@@ -201,6 +201,7 @@ export function buildTargetIntentView(
   input: BuildTargetIntentViewInput,
 ): TargetIntentView {
   if (input.ruleSet === null) return unavailableView(input, "not_configured");
+  if (input.ruleSet.state === "not_configured") return unavailableView(input, "not_configured");
   if (
     input.ruleSet.siteId !== input.siteId ||
     input.ruleSet.dashboardId !== input.dashboardId

@@ -1,9 +1,9 @@
-import type { MedicalIntentView } from "../lib/medical-intent.ts";
+import type { DashboardTargetIntentView } from "../lib/read-model.ts";
 
 const number = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 });
 const value = (metric: number | null) => metric === null ? "—" : number.format(metric);
 
-function coverageCopy(source: MedicalIntentView["sources"][number]): string {
+function coverageCopy(source: DashboardTargetIntentView["sources"][number]): string {
   const label = source.source === "google" ? "Google" : "Яндекс";
   const status = !source.included
     ? source.reason === "failed" ? "ошибка сбора" : source.reason === "invalid_metrics" ? "некорректные данные" : "нет запросов за неделю"
@@ -12,7 +12,7 @@ function coverageCopy(source: MedicalIntentView["sources"][number]): string {
   return `${label}: ${status}${source.included && source.meta?.latestAttempt === "failed" ? "; последняя загрузка не удалась" : ""}`;
 }
 
-export function MedicalIntentPanel({ intent }: Readonly<{ intent: MedicalIntentView }>) {
+export function MedicalIntentPanel({ intent }: Readonly<{ intent: DashboardTargetIntentView }>) {
   const available = intent.sources.some(source => source.included);
   const labels = intent.sources.filter(source => source.included).map(source => source.source === "google" ? "Google" : "Яндекс");
   return <section className="site-seo-panel site-seo-overview-panel site-seo-intent-panel">
@@ -23,11 +23,11 @@ export function MedicalIntentPanel({ intent }: Readonly<{ intent: MedicalIntentV
     </header>
     <div className="site-seo-overview-panel-body">
       <div className="site-seo-intent-cards">
-        {(["noise", "medical"] as const).map(category => {
+        {(["other", "target"] as const).map(category => {
           const card = intent[category];
           return <article key={category} className="site-seo-intent-card" data-category={category}>
-            <div className="site-seo-intent-label">{category === "medical" ? "Мед. интент" : "Шум"}
-              <span title="Желаемое направление, не изменение за период" aria-label={category === "medical" ? "Цель — увеличить долю" : "Цель — снизить долю"}>{category === "medical" ? "↑" : "↓"}</span>
+            <div className="site-seo-intent-label">{card.label}
+              <span title="Желаемое направление, не изменение за период" aria-label={category === "target" ? "Цель — увеличить долю" : "Цель — снизить долю"}>{category === "target" ? "↑" : "↓"}</span>
             </div>
             <div className="site-seo-intent-value">{value(card.sharePct)}{card.sharePct !== null ? "%" : ""}</div>
             <div className="site-seo-intent-caption">доля показов</div>
@@ -43,7 +43,7 @@ export function MedicalIntentPanel({ intent }: Readonly<{ intent: MedicalIntentV
       </div>
       {!available ? <p className="site-seo-intent-unavailable">Нет статистики запросов за выбранную неделю.</p> : null}
       <div className="site-seo-intent-footer">
-        <span title="Доля = показы категории / показы всех доступных запросов. Медицинские запросы определяются по экспертному ядру и расширенным правилам; остальные — шум.">Доли среди запросов с доступной статистикой</span>
+        <span title="Доля = показы категории / показы всех доступных запросов. Целевые запросы определяются активной опубликованной версией правил.">Доли среди запросов с доступной статистикой</span>
         <span title="Один человек может перейти несколько раз; это не число уникальных пользователей.">Клики ≠ пользователи</span>
       </div>
     </div>

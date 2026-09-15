@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createAvailableMetrikaWeeksReadExecutor, createCanonicalReadExecutor } from "./db.ts";
+import { createAvailableMetrikaWeeksReadExecutor, createCanonicalReadExecutor, readTargetIntentData } from "./db.ts";
 
 const scope = {
   clientId: "client-roche",
@@ -11,6 +11,117 @@ const scope = {
   analyticsAccountId: "gsc-account",
   resourceId: "sc-domain:med.roche.ru",
 };
+
+const intentScope = {
+  clientId: scope.clientId,
+  siteId: scope.siteId,
+  dashboardId: scope.dashboardId,
+};
+
+function intentRows(overrides: Record<string, unknown> = {}) {
+  const validationRows = [
+    { sourceRowOrdinal: 1, key: "бевацизумаб", normalizedKey: "бевацизумаб", group: "Препараты", matchType: "phrase" },
+    { sourceRowOrdinal: 2, key: "ros1", normalizedKey: "ros1", group: "Мутации", matchType: "exact" },
+  ];
+  const shared = {
+    site_id: intentScope.siteId,
+    dashboard_id: intentScope.dashboardId,
+    version_id: 12,
+    version_uid: "version-12",
+    label: "Мед. интент",
+    expected_rule_count: 2,
+    publication_id: 13,
+    import_id: 14,
+    source_transport: "upload",
+    source_identity: "medroche-target-intent-v1.xlsx",
+    content_sha256: "a".repeat(64),
+    validation_state: "valid",
+    validation_result_json: JSON.stringify({ state: "valid", rows: validationRows, errors: [] }),
+    published_at: "2026-09-15T12:00:00.000Z",
+    published_by: "admin@example.test",
+    publication_comment: "reviewed initial version",
+    sealed_at: "2026-09-15T11:59:00.000Z",
+    ...overrides,
+  };
+  return [
+    { ...shared, source_row_ordinal: 1, rule_key: "бевацизумаб", normalized_key: "бевацизумаб", group_label: "Препараты", match_type: "phrase" },
+    { ...shared, source_row_ordinal: 2, rule_key: "ros1", normalized_key: "ros1", group_label: "Мутации", match_type: "exact" },
+  ];
+}
+
+test("target-intent reads one exact active site/dashboard snapshot with ordered rules", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const result = await readTargetIntentData({ async execute(sql, params) {
+    calls.push({ sql, params });
+    return [[...intentRows()].reverse(), []];
+  } }, { name: "target_intent", scope: intentScope });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]!.params, [intentScope.siteId, intentScope.dashboardId]);
+  assert.match(calls[0]!.sql, /site_seo_intent_active/);
+  assert.match(calls[0]!.sql, /site_seo_intent_versions/);
+  assert.match(calls[0]!.sql, /site_seo_intent_publications/);
+  assert.match(calls[0]!.sql, /site_seo_intent_imports/);
+  assert.match(calls[0]!.sql, /site_seo_intent_rules/);
+  assert.match(calls[0]!.sql, /WHERE\s+active\.site_id\s*=\s*\?\s+AND\s+active\.dashboard_id\s*=\s*\?/i);
+  assert.doesNotMatch(calls[0]!.sql, /LIMIT\s+1/i, "rules must not be truncated to one row");
+  assert.equal(result?.state, "ready");
+  assert.equal(result?.versionId, "version-12");
+  assert.equal(result?.provenance?.publicationId, "13");
+  assert.deepEqual(result?.rules.map((rule) => rule.key), ["бевацизумаб", "ros1"]);
+  assert.ok(!/api\.|oauth|token/i.test(calls[0]!.sql));
+});
+
+test("target-intent fails closed when rule count or source hash integrity differs", async () => {
+  const duplicateRules = intentRows();
+  duplicateRules[1] = { ...duplicateRules[1]!, normalized_key: duplicateRules[0]!.normalized_key };
+  const changedValidatedRows = intentRows({
+    validation_result_json: JSON.stringify({
+      state: "valid",
+      rows: [
+        { sourceRowOrdinal: 1, key: "changed", normalizedKey: "changed", group: "Препараты", matchType: "phrase" },
+        { sourceRowOrdinal: 2, key: "ros1", normalizedKey: "ros1", group: "Мутации", matchType: "exact" },
+      ],
+      errors: [],
+    }),
+  });
+  for (const rows of [
+    intentRows({ expected_rule_count: 3 }),
+    intentRows({ content_sha256: "not-a-sha" }),
+    intentRows({ validation_state: "invalid" }),
+    changedValidatedRows,
+    duplicateRules,
+  ]) {
+    const result = await readTargetIntentData({ async execute() { return [rows, []]; } }, { name: "target_intent", scope: intentScope });
+    assert.equal(result?.state, "unavailable");
+    assert.deepEqual(result?.rules, []);
+    assert.equal(result?.provenance, null);
+  }
+});
+
+test("target-intent never accepts a cross-site fallback row", async () => {
+  const result = await readTargetIntentData({ async execute() {
+    return [intentRows({ site_id: "site-foreign", dashboard_id: 999, version_uid: "foreign-secret" }), []];
+  } }, { name: "target_intent", scope: intentScope });
+  assert.equal(result?.state, "unavailable");
+  assert.equal(result?.siteId, intentScope.siteId);
+  assert.equal(result?.dashboardId, intentScope.dashboardId);
+  assert.equal(result?.versionId, null);
+  assert.equal(result?.provenance, null);
+});
+
+test("canonical executor exposes not-configured target intent without source binding fallback", async () => {
+  const calls: readonly unknown[][] = [];
+  const mutableCalls = calls as unknown[][];
+  const execute = createCanonicalReadExecutor({ async execute(_sql, params) {
+    mutableCalls.push(params);
+    return [[], []];
+  } });
+  const result = await execute({ name: "target_intent", scope: intentScope });
+  assert.equal("state" in result && result.state, "not_configured");
+  assert.equal("versionId" in result && result.versionId, null);
+  assert.deepEqual(calls, [[intentScope.siteId, intentScope.dashboardId]]);
+});
 
 function importFields() {
   return {

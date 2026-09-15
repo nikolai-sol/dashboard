@@ -1,12 +1,13 @@
-import type { DatasetMeta, Period, SiteRegistration, SourceKey } from "@reportingdash/site-seo-contract";
+import type { DatasetMeta, Period, SiteRegistration, SourceKey, TargetIntentObservedQuery, TargetIntentRuleSet, TargetIntentView } from "@reportingdash/site-seo-contract";
 import { type AliceCanonicalData, type AvailableMetrikaWeeksReadExecutor, type CanonicalDatasetData, type CanonicalReadExecutor, type MetrikaCanonicalData, type SeoOsCanonicalData, type WebmasterCanonicalData, type WordstatCanonicalData } from "./db.ts";
 import { loadGscView } from "./gsc.ts";
-import { buildMedicalIntent, MEDICAL_INTENT_VERSION, sameIntentPeriod, type MedicalIntentView } from "./medical-intent.ts";
+import { buildTargetIntentView } from "./target-intent.ts";
 import type { PeriodSelection } from "./period-selection.ts";
 import { MissingSourceScopeError, resolveSourceScope, type SiteScopeClaim } from "./scope.ts";
 
 export type DashboardReadModel = Readonly<{
-  intent?: MedicalIntentView;
+  /** Runtime reads always populate this; optional only for pre-existing isolated component fixtures. */
+  targetIntent?: DashboardTargetIntentView;
   gsc: ReturnType<typeof loadGscView>;
   indexing: DatasetMeta;
   datasets: Readonly<Partial<Record<SourceKey, DatasetMeta>>>;
@@ -16,6 +17,18 @@ export type DashboardReadModel = Readonly<{
   alice: AliceCanonicalData | null;
   seoOs: SeoOsCanonicalData | null;
   trafficComparison: Readonly<Partial<Record<SourceKey, DatasetMeta | CanonicalDatasetData>>>;
+}>;
+
+export type TargetIntentSourceStatus = Readonly<{
+  source: "google" | "yandex";
+  included: boolean;
+  meta: DatasetMeta | null;
+  reason: "available" | "complete_empty" | "missing" | "failed" | "different_period" | "no_queries" | "invalid_metrics";
+}>;
+
+export type DashboardTargetIntentView = TargetIntentView & Readonly<{
+  period: Period;
+  sources: readonly TargetIntentSourceStatus[];
 }>;
 
 function missingMeta(): DatasetMeta {
@@ -41,6 +54,42 @@ function isWordstatData(value: DatasetMeta | CanonicalDatasetData): value is Wor
 function isAliceData(value: DatasetMeta | CanonicalDatasetData): value is AliceCanonicalData { return "kind" in value && value.kind === "alice"; }
 function isSeoOsData(value: DatasetMeta | CanonicalDatasetData): value is SeoOsCanonicalData { return "kind" in value && value.kind === "seo_os"; }
 
+function sameIntentPeriod(left: Period | null | undefined, right: Period): boolean {
+  return left?.kind === right.kind && left.key === right.key && left.from === right.from && left.to === right.to
+    && left.sourceTimezone === right.sourceTimezone;
+}
+
+function targetIntentSourceMeta(meta: DatasetMeta | null): DatasetMeta | null {
+  if (!meta) return null;
+  const {
+    sourceKey, period, state, collectionMode, completeness, importId,
+    exportedAt, loadedAt, freshness, latestAttempt,
+  } = meta;
+  return {
+    sourceKey, period, state, collectionMode, completeness, importId,
+    exportedAt, loadedAt, freshness, latestAttempt,
+  };
+}
+
+function intentSource(input: Readonly<{
+  source: "google" | "yandex";
+  period: Period;
+  meta: DatasetMeta | null;
+  rows: readonly Readonly<{ query: string; metrics: Readonly<{ impressions: number; clicks: number }> }>[] | undefined;
+}>): Readonly<{ status: TargetIntentSourceStatus; queries: readonly TargetIntentObservedQuery[] }> {
+  let reason: TargetIntentSourceStatus["reason"] = "available";
+  if (!input.meta || input.meta.state === "missing") reason = "missing";
+  else if (input.meta.state === "failed") reason = "failed";
+  else if (!sameIntentPeriod(input.meta.period, input.period)) reason = "different_period";
+  else if (!input.rows?.length) reason = input.rows && input.meta.state === "complete_empty" ? "complete_empty" : "no_queries";
+  else if (input.rows.some((row) => !row.query.trim() || !Number.isFinite(row.metrics.impressions) || row.metrics.impressions < 0 || !Number.isFinite(row.metrics.clicks) || row.metrics.clicks < 0)) reason = "invalid_metrics";
+  const included = reason === "available" || reason === "complete_empty";
+  return {
+    status: { source: input.source, included, meta: targetIntentSourceMeta(input.meta), reason },
+    queries: included ? (input.rows ?? []).map((row) => ({ query: row.query, source: input.source, impressions: row.metrics.impressions, clicks: row.metrics.clicks })) : [],
+  };
+}
+
 export async function loadAvailableMetrikaWeeks(input: Readonly<{
   registration: SiteRegistration;
   claim: SiteScopeClaim;
@@ -62,10 +111,24 @@ export async function loadDashboardReadModel(input: Readonly<{
   filters: Readonly<Record<string, string>>;
   execute: CanonicalReadExecutor;
 }>): Promise<DashboardReadModel> {
+  if (
+    input.claim.dashboardId !== input.registration.profile.dashboardId ||
+    input.claim.siteId !== input.registration.profile.siteId
+  ) {
+    throw new Error("Authenticated site scope does not match this profile");
+  }
+  const targetRuleSet = await input.execute({
+    name: "target_intent",
+    scope: {
+      clientId: input.registration.profile.clientId,
+      siteId: input.registration.profile.siteId,
+      dashboardId: input.registration.profile.dashboardId,
+    },
+  }) as TargetIntentRuleSet;
+  const useTargetIntent = targetRuleSet.state === "ready";
   const missingGsc = missingMeta();
   let gsc = { meta: missingGsc, summary: null, daily: [], dimensions: [], dimensionMeta: {} } as ReturnType<typeof loadGscView>;
   let indexing = missingGsc;
-  const useMedicalIntent = input.registration.profile.seoRulesVersion === MEDICAL_INTENT_VERSION;
   let weeklyGsc = gsc;
   const gscSource = input.registration.profile.sources.find((source) => source.sourceKey === "google_search_console");
   if (gscSource && gscSource.mode !== "disabled") {
@@ -74,7 +137,7 @@ export async function loadDashboardReadModel(input: Readonly<{
       const rows = await input.execute({ name: "gsc", scope, period: input.selection.gsc, publicationId: input.publicationId, filters: input.filters }) as import("./gsc.ts").GscReadRows;
       gsc = loadGscView(rows, input.selection.gsc);
       indexing = rows.indexing;
-      if (useMedicalIntent) {
+      if (useTargetIntent) {
         weeklyGsc = sameIntentPeriod(input.selection.gsc, input.selection.traffic.primary)
           ? gsc
           : loadGscView(await input.execute({ name: "gsc", scope, period: input.selection.traffic.primary, publicationId: input.publicationId, filters: input.filters }) as import("./gsc.ts").GscReadRows, input.selection.traffic.primary);
@@ -115,8 +178,36 @@ export async function loadDashboardReadModel(input: Readonly<{
       datasets[source.sourceKey] = missingMetaFor(source.sourceKey, source.mode === "manual" ? "manual" : "automated");
     }
   }
+  const targetPeriod = input.selection.traffic.primary;
+  const googleIntent = intentSource({
+    source: "google",
+    period: targetPeriod,
+    meta: weeklyGsc.meta.state === "failed" ? weeklyGsc.meta : weeklyGsc.dimensionMeta.query ?? null,
+    rows: weeklyGsc.dimensions.filter((row) => row.dimension === "query").map((row) => ({ query: row.value, metrics: row.metrics })),
+  });
+  const yandexIntent = intentSource({
+    source: "yandex",
+    period: targetPeriod,
+    meta: webmaster ?? datasets.yandex_webmaster ?? null,
+    rows: webmaster?.queryFacts,
+  });
+  const intentSources = [googleIntent, yandexIntent] as const;
+  const hasIncludedSource = intentSources.some(({ status }) => status.included);
+  const effectiveRuleSet = targetRuleSet.state === "ready" && !hasIncludedSource
+    ? { ...targetRuleSet, state: "unavailable" as const }
+    : targetRuleSet;
+  const targetIntent: DashboardTargetIntentView = {
+    ...buildTargetIntentView({
+      siteId: input.registration.profile.siteId,
+      dashboardId: input.registration.profile.dashboardId,
+      label: targetRuleSet.label || "Целевой интент",
+      ruleSet: effectiveRuleSet,
+      queries: intentSources.flatMap(({ queries }) => queries),
+    }),
+    period: targetPeriod,
+    sources: intentSources.map(({ status }) => status),
+  };
   return {
-    gsc, indexing, datasets, metrika, webmaster, wordstat, alice, seoOs, trafficComparison,
-    ...(useMedicalIntent ? { intent: buildMedicalIntent({ period: input.selection.traffic.primary, gsc: weeklyGsc, webmaster, webmasterMeta: datasets.yandex_webmaster }) } : {}),
+    targetIntent, gsc, indexing, datasets, metrika, webmaster, wordstat, alice, seoOs, trafficComparison,
   };
 }

@@ -113,7 +113,7 @@ function buildSeoOsExportRows(input: Readonly<{ period: Period; data: SeoOsCanon
 export function buildDashboardExportRows(input: Readonly<{
   profile: Pick<SiteProfile, "sources">;
   selection: PeriodSelection;
-  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "intent" | "metrika" | "webmaster" | "wordstat" | "alice" | "seoOs" | "trafficComparison">>;
+  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "targetIntent" | "metrika" | "webmaster" | "wordstat" | "alice" | "seoOs" | "trafficComparison">>;
 }>): ExportRow[] {
   const gscEnabled = input.profile.sources.some((source) => source.sourceKey === "google_search_console" && source.mode !== "disabled");
   const rows: ExportRow[] = gscEnabled
@@ -134,19 +134,24 @@ export function buildDashboardExportRows(input: Readonly<{
     }
   }
   const comparison = input.selection.traffic.comparison;
-  const intent = input.model.intent;
+  const intent = input.model.targetIntent;
   if (intent) {
     rows.push(
-      { field: "Медицинский интент", value: `${intent.period.from} — ${intent.period.to}` },
-      { field: "Правила интента", value: intent.version },
-      { field: "SHA-256 экспертного ядра", value: intent.sourceSha256 },
+      { field: "Целевой интент", value: `${intent.period.from} — ${intent.period.to}` },
+      { field: "Метка целевого интента", value: intent.label },
+      { field: "Состояние классификации", value: intent.state },
+      { field: "Активная версия правил", value: intent.versionId ?? "не настроена" },
       { field: "База долей", value: "Показы доступных запросов Google + Яндекс; клики не являются уникальными пользователями" },
     );
+    if (intent.provenance) rows.push({
+      field: "Источник правил",
+      value: `${intent.provenance.sourceTransport}; ${intent.provenance.sourceIdentity}; publication ${intent.provenance.publicationId}; import ${intent.provenance.importId}; SHA-256 ${intent.provenance.contentSha256}; опубликовано ${intent.provenance.publishedAt}; автор ${intent.provenance.publishedBy}; комментарий ${intent.provenance.comment ?? "нет"}`,
+    });
     for (const source of intent.sources) rows.push({
       field: `Интент · ${source.source}`,
       value: `${source.included ? "в расчёте" : "исключён"}; ${source.reason}; ${source.meta?.state ?? "missing"}; completeness ${source.meta?.completeness ?? "unknown"}; import ${source.meta?.importId ?? "нет"}; latestAttempt ${source.meta?.latestAttempt ?? "none"}`,
     });
-    for (const [key, label] of [["noise", "Шум"], ["medical", "Мед. интент"]] as const) {
+    for (const [key, label] of [["other", intent.other.label], ["target", intent.target.label]] as const) {
       const card = intent[key];
       rows.push(
         { field: `${label} · показы`, value: card.impressions === null ? "нет данных" : String(card.impressions) },
@@ -156,7 +161,7 @@ export function buildDashboardExportRows(input: Readonly<{
     }
     for (const query of intent.queries) rows.push({
       field: `Интент · ${query.source} · ${query.query}`,
-      value: `${query.category}; ${query.reason}; группа ${query.group ?? "вне ядра"}; показы ${query.metrics.impressions}; клики ${query.metrics.clicks}`,
+      value: `${query.category}; правило ${query.matchedRule ?? "не найдено"}; тип ${query.matchType ?? "нет"}; группа ${query.group ?? "вне каталога"}; показы ${query.impressions}; клики ${query.clicks}`,
     });
   }
   if (comparison) {

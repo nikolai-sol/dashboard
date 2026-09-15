@@ -21,9 +21,9 @@ export type TargetIntentProvenance = Readonly<{
 export type TargetIntentRuleSet = Readonly<{
   siteId: string;
   dashboardId: number;
-  versionId: string;
+  versionId: string | null;
   label: string;
-  state: "ready" | "unavailable";
+  state: "ready" | "not_configured" | "unavailable";
   rules: readonly TargetIntentRule[];
   provenance: TargetIntentProvenance | null;
 }>;

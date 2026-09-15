@@ -119,6 +119,37 @@ test("exports actual Wordstat snapshot windows, Alice query sources, and publish
   assert.match(csv, /Задача SEO OS task-1.*open/);
 });
 
+test("exports generic target-intent label, active provenance, matched rule and match type", () => {
+  const rows = buildDashboardExportRows({
+    profile: { sources: [] } as never,
+    selection,
+    model: {
+      gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} },
+      datasets: {},
+      targetIntent: {
+        siteId: "site-clinic", dashboardId: 77, versionId: "intent-version-9", label: "Запросы пациентов", state: "ready",
+        period, sources: [],
+        provenance: { importId: "91", publicationId: "92", sourceTransport: "google_sheet", sourceIdentity: "docs.google.com/spreadsheets/d/example", contentSha256: "b".repeat(64), publishedAt: "2026-09-15T13:00:00Z", publishedBy: "admin@example.test", comment: "approved" },
+        target: { label: "Запросы пациентов", impressions: 90, clicks: 9, sharePct: 90, queryCount: 1 },
+        other: { label: "Остальные запросы", impressions: 10, clicks: 1, sharePct: 10, queryCount: 1 },
+        queries: [
+          { query: "лечение", source: "google", impressions: 90, clicks: 9, category: "target", group: "Услуги", matchedRule: "лечение", matchType: "phrase" },
+          { query: "погода", source: "yandex", impressions: 10, clicks: 1, category: "other", group: null, matchedRule: null, matchType: null },
+        ],
+      },
+    },
+  } as never);
+  const text = rows.map((row) => `${row.field}: ${row.value}`).join("\n");
+  assert.match(text, /Целевой интент: 2025-12-29 — 2026-01-04/);
+  assert.match(text, /Метка целевого интента: Запросы пациентов/);
+  assert.match(text, /Активная версия правил: intent-version-9/);
+  assert.match(text, /Источник правил: google_sheet.*docs\.google\.com.*publication 92.*import 91.*SHA-256 b{64}/);
+  assert.match(text, /Запросы пациентов · показы: 90/);
+  assert.match(text, /лечение.*target.*правило лечение.*тип phrase.*группа Услуги/);
+  assert.match(text, /погода.*other.*правило не найдено.*тип нет/);
+  assert.doesNotMatch(text, /Медицинский интент|экспертного ядра|Шум/);
+});
+
 test("refuses an export session from another dashboard before any canonical read", async () => {
   let calls = 0;
   const response = await createExcelExportHandler({
