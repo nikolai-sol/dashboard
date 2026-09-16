@@ -394,7 +394,15 @@ async function actualPdfFixture(t) {
     // request-local, closed failure-stage header; neither changes request/auth/
     // render semantics. Headless mode itself must remain production-equivalent.
     // Retain the pinned deployed request/auth/render contract comparison.
-    if(file.endsWith('abbott-pdf-handler.ts'))current=current.replace('import { PUPPETEER_REVISIONS } from "puppeteer-core/internal/revisions.js";\n','').replace(/        \/\/ Version is derived from the installed locked package, not ambient\n        \/\/ HOME\/cache or another dashboard's browser\. Deploy attests this tree\.\n        headless: true,\n        executablePath: `[^\n]+`,\n        pipe: true,\n        env: \{ PATH: "\/usr\/bin:\/bin", LANG: "C.UTF-8" \},/,'        headless: true,');
+    if(file.endsWith('abbott-pdf-handler.ts'))current=current
+      .replace('import { PUPPETEER_REVISIONS } from "puppeteer-core/internal/revisions.js";\n','')
+      .replace('import { mkdtempSync, rmSync } from "node:fs";\nimport { tmpdir } from "node:os";\nimport { join } from "node:path";\n','')
+      .replace('  makeBrowserHome: () => string;\n  removeBrowserHome: (directory: string) => void;\n','')
+      .replace('  const makeBrowserHome = overrides.makeBrowserHome ?? (() => mkdtempSync(join(tmpdir(), "dashboard-abbott-chrome-")));\n  const removeBrowserHome = overrides.removeBrowserHome ?? ((directory: string) => rmSync(directory, { recursive: true, force: true }));\n','')
+      .replace('    let browserHome: string | null = null;\n','')
+      .replace('      browserHome = makeBrowserHome();\n','')
+      .replace(/        \/\/ Version is derived from the installed locked package, not ambient\n        \/\/ HOME\/cache or another dashboard's browser\. Deploy attests this tree\.\n        headless: true,\n        executablePath: `[^\n]+`,\n        pipe: true,\n        env: \{ PATH: "\/usr\/bin:\/bin", LANG: "C.UTF-8", HOME: browserHome \},/,'        headless: true,')
+      .replace('    } finally {\n      try {\n        if (browser) {\n          await browser.close();\n        }\n      } finally {\n        if (browserHome) removeBrowserHome(browserHome);\n      }\n    }','    } finally {\n      if (browser) {\n        await browser.close();\n      }\n    }');
     if(file.endsWith('abbott-pdf-handler.ts'))current=current.replace('{ status: 500, headers: { "X-Abbott-PDF-Failure-Stage": stage } }','{ status: 500 }');
     assert.equal(hash(current),hash(pinned));pinned.fill(0);
   }

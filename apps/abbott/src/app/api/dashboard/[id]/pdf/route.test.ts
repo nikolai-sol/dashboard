@@ -67,7 +67,9 @@ test("PDF renders isolated page with existing dimensions and headers, then close
     assert.equal(launchOptions.headless,true);
     assert.equal(launchOptions.executablePath,"/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-146.0.7680.76/chrome-linux64/chrome");
     assert.equal(launchOptions.pipe,true);
-    assert.deepEqual(launchOptions.env,{PATH:"/usr/bin:/bin",LANG:"C.UTF-8"});
+    assert.equal((launchOptions.env as Record<string,string>).PATH,"/usr/bin:/bin");
+    assert.equal((launchOptions.env as Record<string,string>).LANG,"C.UTF-8");
+    assert.match((launchOptions.env as Record<string,string>).HOME,/(?:^|\/)dashboard-abbott-chrome-[^/]+$/);
     const goto=fixture.calls.find(([name])=>name==="goto")![1] as [string,unknown];
     const url=new URL(goto[0]);
     assert.equal(url.origin,"http://127.0.0.1:3004");
@@ -82,6 +84,39 @@ test("PDF renders isolated page with existing dimensions and headers, then close
     assert.deepEqual(fixture.calls.at(-1),["close",[]]);
     assert.equal(fixture.calls.filter(([name])=>name==="close").length,1);
   }
+});
+
+test("PDF gives full Chrome a private request-scoped home and removes it after browser cleanup", async () => {
+  const events: string[] = [];
+  const home = "/tmp/dashboard-abbott-chrome-fixture";
+  const fixture = browserFixture();
+  const launch = async (...args: unknown[]) => {
+    events.push("launch");
+    const browser = await fixture.launch(...args) as { close: () => Promise<void> };
+    return {
+      ...browser,
+      close: async () => { events.push("close");await browser.close(); },
+    };
+  };
+  const handler=createAbbottPdfHandler({
+    authorize:async()=>access(),launch:launch as never,wait:async()=>undefined,
+    makeBrowserHome:()=>{events.push("create");return home;},
+    removeBrowserHome:value=>{assert.equal(value,home);events.push("remove");},
+  });
+  const response=await handler(new Request("https://example.test/pdf"),{params:{id:"18"}});
+  assert.equal(response.status,200);
+  const launchOptions=(fixture.calls.find(([name])=>name==="launch")![1] as Record<string,unknown>[])[0];
+  assert.deepEqual(launchOptions.env,{PATH:"/usr/bin:/bin",LANG:"C.UTF-8",HOME:home});
+  assert.deepEqual(events,["create","launch","close","remove"]);
+
+  events.length=0;
+  const failed=createAbbottPdfHandler({
+    authorize:async()=>access(),launch:async()=>{events.push("launch");throw Error("private");},
+    makeBrowserHome:()=>{events.push("create");return home;},
+    removeBrowserHome:value=>{assert.equal(value,home);events.push("remove");},
+  });
+  assert.equal((await failed(new Request("https://example.test/pdf"),{params:{id:"18"}})).status,500);
+  assert.deepEqual(events,["create","launch","remove"]);
 });
 
 test("each failure after launch closes Chromium exactly once; launch failure owns no browser", async (t) => {

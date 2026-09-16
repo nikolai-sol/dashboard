@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import puppeteer from "puppeteer";
 import { PUPPETEER_REVISIONS } from "puppeteer-core/internal/revisions.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createViewerExportToken } from "../../../../src/lib/access-auth";
 import { normalizeAbbottIdentifier } from "@reportingdash/runtime-contract";
 import { authorizeAbbottRoute, isAbbottDashboardIdentity } from "./abbott-route-access";
@@ -61,16 +64,21 @@ export function createAbbottPdfHandler(overrides: Partial<{
   authorize: typeof authorizeAbbottRoute;
   launch: typeof puppeteer.launch;
   wait: (milliseconds: number) => Promise<void>;
+  makeBrowserHome: () => string;
+  removeBrowserHome: (directory: string) => void;
 }> = {}) {
   const authorize = overrides.authorize ?? authorizeAbbottRoute;
   const launch = overrides.launch ?? puppeteer.launch.bind(puppeteer);
   const wait = overrides.wait ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const makeBrowserHome = overrides.makeBrowserHome ?? (() => mkdtempSync(join(tmpdir(), "dashboard-abbott-chrome-")));
+  const removeBrowserHome = overrides.removeBrowserHome ?? ((directory: string) => rmSync(directory, { recursive: true, force: true }));
 
   return async function GET(
     request: Request,
     context: { params: Promise<{ id: string }> | { id: string } },
   ) {
     let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+    let browserHome: string | null = null;
     let stage: "authorize" | "launch" | "prepare" | "navigate" | "ready" | "render" = "authorize";
 
     try {
@@ -93,13 +101,14 @@ export function createAbbottPdfHandler(overrides: Partial<{
       const filenameDate = new Date().toISOString().slice(0, 10);
 
       stage = "launch";
+      browserHome = makeBrowserHome();
       browser = await launch({
         // Version is derived from the installed locked package, not ambient
         // HOME/cache or another dashboard's browser. Deploy attests this tree.
         headless: true,
         executablePath: `/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-${PUPPETEER_REVISIONS.chrome}/chrome-linux64/chrome`,
         pipe: true,
-        env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" },
+        env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8", HOME: browserHome },
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -171,8 +180,12 @@ export function createAbbottPdfHandler(overrides: Partial<{
         { status: 500, headers: { "X-Abbott-PDF-Failure-Stage": stage } },
       );
     } finally {
-      if (browser) {
-        await browser.close();
+      try {
+        if (browser) {
+          await browser.close();
+        }
+      } finally {
+        if (browserHome) removeBrowserHome(browserHome);
       }
     }
   };
