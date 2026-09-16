@@ -521,12 +521,20 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
 
   const projectedAbbottBiData = dashboardType === "abbott_bi" ? dashboard.abbott_bi : null;
   const showAbbottUserIdAnalytics = Boolean(projectedAbbottBiData?.session_journeys);
-  const abbottBiData = projectedAbbottBiData && !projectedAbbottBiData.session_journeys
+  const abbottBiData = projectedAbbottBiData
     ? {
         ...projectedAbbottBiData,
-        session_journeys: { report_date: "", schema: null, summary: null, rows: [] },
+        // The embed API intentionally omits visit-level collections. The
+        // shared renderer still evaluates their selectors even when the
+        // corresponding tabs are hidden, so adapt only the in-memory shape.
+        // No private field is restored to the response or rendered UI.
+        users_summary: projectedAbbottBiData.users_summary ?? [],
+        users_summary_without_admins: projectedAbbottBiData.users_summary_without_admins ?? [],
+        user_actions: projectedAbbottBiData.user_actions ?? [],
+        session_journeys: projectedAbbottBiData.session_journeys
+          ?? { report_date: "", schema: null, summary: null, rows: [] },
       }
-    : projectedAbbottBiData;
+    : null;
 
   if (dashboardType === "abbott_bi" && abbottBiData) {
     return (

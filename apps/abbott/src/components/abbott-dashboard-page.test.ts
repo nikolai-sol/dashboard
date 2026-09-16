@@ -4,8 +4,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import * as dateHelpers from "../../../../src/lib/abbott-date-range";
 import { getDashboardI18n } from "../../../../src/lib/dashboard-i18n";
+import { projectAbbottDashboardData } from "../../../../src/lib/abbott-data-projection";
+import AbbottBiDashboard from "../../../../src/components/AbbottBiDashboard";
+import { abbottFixture } from "../lib/abbott-export-fixture";
 
 const pageUrl = new URL("./AbbottDashboardPage.tsx", import.meta.url);
 const source = () => readFileSync(pageUrl, "utf8");
@@ -121,13 +126,23 @@ function validData() {
 }
 
 test("embed projection renders without restoring private session journeys",async()=>{
-  const embed=validData();delete (embed.abbott_bi as Partial<typeof embed.abbott_bi>).session_journeys;
+  const projected=projectAbbottDashboardData(abbottFixture(),"embed");
+  const {session_journeys: _privateJourneys,...embedAbbott}=projected.abbott_bi!;
+  const embed={...projected,abbott_bi:embedAbbott};
   const app=harness("18","from=2026-08-01&to=2026-08-09&access_token=viewer&embed_key=embed&pdf=true",[{status:200,body:embed}]);
   assert.equal((await app.flush()).props["data-dashboard-ready"],"true");
   const dashboard=app.find("AbbottBiDashboard");
   assert.equal(dashboard.props.showUserIdAnalytics,false);
+  assert.equal(
+    JSON.stringify(Object.fromEntries(["users_summary","users_summary_without_admins","user_actions"].map((key)=>[key,(dashboard.props.data as Record<string,unknown>)[key]]))),
+    JSON.stringify({users_summary:[],users_summary_without_admins:[],user_actions:[]}),
+  );
   assert.equal(JSON.stringify((dashboard.props.data as {session_journeys:unknown}).session_journeys),JSON.stringify({report_date:"",schema:null,summary:null,rows:[]}));
+  const markup=renderToStaticMarkup(React.createElement(AbbottBiDashboard,dashboard.props as React.ComponentProps<typeof AbbottBiDashboard>));
+  assert.match(markup,/Источники трафика/);
   assert.equal(Object.hasOwn(embed.abbott_bi,"session_journeys"),false);
+  assert.equal(Object.hasOwn(embed.abbott_bi,"users_summary"),false);
+  assert.equal(Object.hasOwn(embed.abbott_bi,"user_actions"),false);
 });
 
 for (const id of ["18", "abbott"] as const) {
