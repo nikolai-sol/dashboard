@@ -6,7 +6,7 @@ test('browser bootstrap capsule uses fixed host proof, active release, bounded c
   const sources=Object.fromEntries(['browser','proof','worker','bounded'].map(key=>[key,Buffer.from('export const fixture=true;')]));
   const code=m.buildBrowserBootstrapCapsule(sources,{fixture:true}).toString();
   assert.ok(code.indexOf('verifyAbbottBootstrapSource()')<code.indexOf('mkdirSync'));
-  assert.match(code,/770d6d8b7f904a1e9ae447c86f6065b5/);assert.match(code,/captureBoundedChild/);assert.match(code,/timeout:60000/);assert.match(code,/SIGTERM/);assert.match(code,/signal:abort.signal/);
+  assert.match(code,/1fdaecbdad47430a9d1375566abad001/);assert.match(code,/captureBoundedChild/);assert.match(code,/timeout:60000/);assert.match(code,/SIGTERM/);assert.match(code,/signal:abort.signal/);
   assert.doesNotMatch(code,/apt-get|npx|pm2|nginx|\/root\/\.cache|\.transact\(/);
   assert.match(code,/process\.setgroups\(\[\]\)/);
   assert.match(code,/mkdirSync\(parent,\{mode:0o750\}\);fs\.chmodSync\(parent,0o750\)/);
