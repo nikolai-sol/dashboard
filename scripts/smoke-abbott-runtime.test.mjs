@@ -390,10 +390,11 @@ async function actualPdfFixture(t) {
   for(const [ref,file]of [['8f389a28df1c4b741ec33b7538f0354b74f5a40e','src/app/api/dashboard/[id]/pdf/route.ts'],['f80607fbc8a693aa2c720b0976938e88732cdf1a','apps/abbott/src/lib/abbott-pdf-handler.ts']]){
     const pinned=execFileSync('/usr/bin/git',['--no-replace-objects','show',`${ref}:${file}`],{env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_CONFIG_SYSTEM:'/dev/null'},stdio:['ignore','pipe','pipe'],maxBuffer:65536});
     let current=fs.readFileSync(new URL('../'+file,import.meta.url),'utf8');
-    // Candidate changes are the isolated browser launch and a request-local,
-    // closed failure-stage header; neither changes request/auth/render semantics.
+    // Candidate changes are the isolated browser path/pipe/environment and a
+    // request-local, closed failure-stage header; neither changes request/auth/
+    // render semantics. Headless mode itself must remain production-equivalent.
     // Retain the pinned deployed request/auth/render contract comparison.
-    if(file.endsWith('abbott-pdf-handler.ts'))current=current.replace('import { PUPPETEER_REVISIONS } from "puppeteer-core/internal/revisions.js";\n','').replace(/        \/\/ Version is derived from the installed locked package, not ambient\n        \/\/ HOME\/cache or another dashboard's browser\. Deploy attests this tree\.\n        headless: "shell",\n        executablePath: `[^\n]+`,\n        pipe: true,\n        env: \{ PATH: "\/usr\/bin:\/bin", LANG: "C.UTF-8" \},/,'        headless: true,');
+    if(file.endsWith('abbott-pdf-handler.ts'))current=current.replace('import { PUPPETEER_REVISIONS } from "puppeteer-core/internal/revisions.js";\n','').replace(/        \/\/ Version is derived from the installed locked package, not ambient\n        \/\/ HOME\/cache or another dashboard's browser\. Deploy attests this tree\.\n        headless: true,\n        executablePath: `[^\n]+`,\n        pipe: true,\n        env: \{ PATH: "\/usr\/bin:\/bin", LANG: "C.UTF-8" \},/,'        headless: true,');
     if(file.endsWith('abbott-pdf-handler.ts'))current=current.replace('{ status: 500, headers: { "X-Abbott-PDF-Failure-Stage": stage } }','{ status: 500 }');
     assert.equal(hash(current),hash(pinned));pinned.fill(0);
   }
