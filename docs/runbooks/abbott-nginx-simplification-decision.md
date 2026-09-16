@@ -60,6 +60,16 @@ tests and zero failures, including realistic foreign directives, exact cutover
 ownership, nested/partial rejection, production wiring, and snapshot drift.
 The source hash used by the bounded read-only transport was updated mechanically.
 
+The first two shadow-deploy attempts then refused before mutation at
+`preflight_neighbor_combined/proc_metadata`. A bounded read-only reproduction
+showed that `/proc/1/net/tcp` changed only `mtime`/`ctime` while its open
+descriptor identity, ownership, mode, link count, content bounds, protected
+listeners, and repeated listener snapshot remained valid. Procfs reads now pin
+structural descriptor metadata but do not treat those volatile timestamps as
+file identity; ordinary files and process-directory identities retain the full
+timestamp check. A red/green regression covers this exact churn while the
+existing inode/PID/listener race refusals remain green.
+
 ## Remaining live gates
 
 - Publish the reviewed Abbott branch and deploy only the port-3004 shadow.

@@ -222,6 +222,17 @@ test('bounded discovery refuses ambiguous socket ownership, scan overflow and pr
   assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},mode);assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
  }
 });
+test('protected listener reads tolerate procfs network timestamp churn',async()=>{
+ const m=await api(),f=fixture(),lstat=f.options.io.lstatSync,fstat=f.options.io.fstatSync,read=f.options.io.readSync;let churn=false;
+ const withNetworkTime=(value,file)=>/\/net\/tcp6?$/.test(file??'')?{...value,mtimeMs:churn?2:1,ctimeMs:churn?2:1}:value;
+ f.options.io.lstatSync=file=>withNetworkTime(lstat(file),file);
+ f.options.io.fstatSync=fd=>withNetworkTime(fstat(fd),f.fds.get(fd));
+ f.options.io.readSync=(fd,...args)=>{const count=read(fd,...args);if(/\/net\/tcp6?$/.test(f.fds.get(fd)??''))churn=true;return count;};
+ const proof=m.createAbbottDeploymentProof(f.options);
+ assert.doesNotThrow(()=>proof.preflight());
+ assert.doesNotThrow(()=>proof.perimeter());
+ assert.equal(f.fds.size,0);
+});
 test('unrelated bounded processes and socket changes do not become perimeter authority',async()=>{
  const m=await api(),f=fixture(),proof=m.createAbbottDeploymentProof(f.options);proof.preflight();
  f.processes.push([999,'100',0,0,'/',999]);f.links.set('/proc/999/fd/10','socket:[99999]');proof.perimeter();

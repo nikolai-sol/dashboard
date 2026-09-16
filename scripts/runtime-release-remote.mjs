@@ -170,6 +170,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   let boot,perimeterSnapshot,invalid=false;
   const neighborPolicies=[['combined',0,0,'/var/www/dashboard',3001],['zaruku',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],['medroche',983,983,null,3003]];
   const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
+  const stableProc=(a,b)=>['dev','ino','size','mode','uid','gid','nlink'].every(k=>a[k]===b[k]);
   const metadata=s=>Object.fromEntries(['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].map(k=>[k,s[k]]));
   function ancestry(file,uid=0,gid=0){
     for(let dir=path.dirname(file);dir!=='/';dir=path.dirname(dir)){
@@ -184,9 +185,10 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       if(proc)reason('proc_metadata');
       ancestry(file,ancestorUid,ancestorGid);const a=stat(file);
       if(!a.isFile()||a.isSymbolicLink()||a.nlink!==1||a.uid!==uid||a.gid!==gid||a.mode&0o022||mode!==undefined&&(a.mode&0o7777)!==mode||!proc&&(a.size>max||io.realpathSync(file)!==file))fail();
-      fd=io.openSync(file,io.constants.O_RDONLY|io.constants.O_NOFOLLOW);if(!stable(a,io.fstatSync(fd)))fail();
+      const stableRead=proc?stableProc:stable;
+      fd=io.openSync(file,io.constants.O_RDONLY|io.constants.O_NOFOLLOW);if(!stableRead(a,io.fstatSync(fd)))fail();
       bytes=Buffer.alloc(max+1);let n=0;while(n<bytes.length){const count=io.readSync(fd,bytes,n,bytes.length-n,n);if(!Number.isSafeInteger(count)||count<0||count>bytes.length-n)fail();if(!count)break;n+=count;}
-      if(n>max||!proc&&n!==a.size||!stable(a,io.fstatSync(fd))||!stable(a,stat(file)))fail();nginxReason(utf8Reason);return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes.subarray(0,n));
+      if(n>max||!proc&&n!==a.size||!stableRead(a,io.fstatSync(fd))||!stableRead(a,stat(file)))fail();nginxReason(utf8Reason);return new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes.subarray(0,n));
     }finally{bytes?.fill(0);if(fd!==undefined)io.closeSync(fd);}
   }
   const json=file=>JSON.parse(read(file,8192,{mode:0o600}));
