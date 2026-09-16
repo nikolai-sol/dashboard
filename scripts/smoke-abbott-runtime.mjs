@@ -246,7 +246,11 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
         const data=JSON.parse(bytes);if(audience==='embed'){stage='privacy_shape';scanEmbedPrivacy(data);stage='alias_embed_json';}
         return summarizeAbbottPayload(data,{audience,administratorExclusionCount});
       });
-      stage='pdf_fetch';const pdf=await inspect(origin,'/api/dashboard/'+alias+'/pdf',credential,'pdf',bytes=>{stage='pdf_parse';return parsePdf(bytes,signal);});
+      const pdfEndpoint='/api/dashboard/'+alias+'/pdf';
+      stage='pdf_fetch';let pdf=await inspect(origin,pdfEndpoint,credential,'pdf',bytes=>{stage='pdf_parse';return parsePdf(bytes,signal);});
+      if(origin===ORIGINS[0]&&pdf===CONTROL_PDF_UNAVAILABLE){
+        stage='pdf_fetch';pdf=await inspect(origin,pdfEndpoint,credential,'pdf',bytes=>{stage='pdf_parse';return parsePdf(bytes,signal);});
+      }
       if(origin===ORIGINS[0]){
         const outcome=pdf===CONTROL_PDF_UNAVAILABLE?'unavailable_5xx':'available';
         stage='pdf_compare';if(controlPdfBaseline&&controlPdfBaseline!==outcome)reject('mismatch');controlPdfBaseline=outcome;

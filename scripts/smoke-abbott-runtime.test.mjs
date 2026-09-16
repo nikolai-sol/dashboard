@@ -233,7 +233,7 @@ function fixture(change=()=>{}) {
   return {requests,bodies,manifest,fetchImpl};
 }
 
-function pdfPolicyFixture(statuses=[500,502,503,599],change=()=>{}) {
+function pdfPolicyFixture(statuses=[500,500,502,502,503,503,599,599],change=()=>{}) {
   const f=fixture(r=>{if(r.u.port==='3004'&&r.u.pathname.endsWith('/pdf'))change(r);});
   let cancelled=0,read=0,controls=0;const candidates=[];
   const fetchImpl=async(url,options)=>{
@@ -256,9 +256,16 @@ test('uniform control PDF5xx cancels unread bodies and validates all candidate P
   const result=await m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
   assert.equal(result.status,'passed');assert.equal(result.control_pdf_baseline,'unavailable_5xx');assert.equal(result.pdf_parity,'not_compared');
   assert.equal(result.verification,'candidate_functional_with_baseline_exception');
-  assert.deepEqual(f.counts(),{cancelled:4,read:0,controls:4,candidates:[['18','manager'],['abbott','manager'],['18','embed'],['abbott','embed']]});
+  assert.deepEqual(f.counts(),{cancelled:8,read:0,controls:8,candidates:[['18','manager'],['abbott','manager'],['18','embed'],['abbott','embed']]});
   assert.equal(result.pdfs.manager.pages,1);assert.equal(result.pdfs.embed.pages,1);
   assert.doesNotMatch(JSON.stringify(result),/private|inert|https|access_token/);
+});
+
+test('one transient control PDF5xx is retried once before strict parity',async()=>{
+  const m=await api(),f=pdfPolicyFixture([500,200,200,200,200]);
+  const result=await m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
+  assert.equal(result.control_pdf_baseline,'available');assert.equal(result.pdf_parity,'matched');
+  assert.equal(result.verification,'strict_parity');assert.equal(f.counts().controls,5);assert.equal(f.counts().cancelled,1);
 });
 
 test('control PDF outcome must be uniformly available or uniformly5xx',async()=>{
