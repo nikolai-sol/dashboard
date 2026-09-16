@@ -159,7 +159,7 @@ function prepareOutput() {
   if (!output.isDirectory() || output.uid !== process.getuid() || (output.mode & 0o7777) !== 0o700 || fs.realpathSync(OUTPUT) !== OUTPUT) refuse();
 }
 
-const realPlatform = {
+export const realPlatform = {
   signalSource: process, capsule: productionCapsule, prepareOutput,
   openForward: openOwnedForward, closeForward: closeOwnedForward, verifyForward: verifyOwnedForward,
   recordForward(proof, exitVerified) {
