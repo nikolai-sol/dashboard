@@ -79,6 +79,13 @@ the fixed combined path; all ancestors, Zaruku, MedRoche, and Abbott retain
 their prior ownership rules. Regression tests reject a different UID, a
 writable directory, or a root-owned replacement release file.
 
+The following preflight reached MedRoche and exposed the same stale ownership
+model in its immutable release tree: `/var/www/dashboard-medroche-releases`
+and descendants are root:GID-983 mode 0750, not root:root. The proof now allows
+that exact non-writable group ownership only under the fixed MedRoche release
+root and still binds the resolved SHA path, symlink, cwd, process identity, and
+listener. A different group or group-writable directory is rejected.
+
 ## Remaining live gates
 
 - Publish the reviewed Abbott branch and deploy only the port-3004 shadow.

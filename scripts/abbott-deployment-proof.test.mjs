@@ -59,6 +59,7 @@ function fixture(){
  metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});
  metadata.set('/usr/bin/node',{mode:0o100755});metadata.set('/var/lib/dashboard-abbott/browser-cache/stamp.json',{mode:0o100640,gid:984});
  metadata.set(CONTROL,{mode:0o40700});metadata.set('/var/www/dashboard-abbott-releases',{mode:0o40711});metadata.set('/var/www/dashboard-abbott-backups',{mode:0o40711});
+ for(const directory of ['/var/www/dashboard-medroche-releases',med.slice(0,-'/standalone'.length),med,med+'/apps',med+'/apps/site-seo'])metadata.set(directory,{uid:0,gid:983,mode:0o40750});
  const options={io,hostname:()=> 'ybjqbzojln',getuid:()=>0,digest:b=>b.toString()==='manifest-fixture'?HASH:createHash('sha256').update(b).digest('hex'),verifyActive(r){calls.push('active');assert.deepEqual(r,record);},verifyBrowser(){calls.push('browser');return{archiveSha256:'fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'};}};
  return{options,files,links,metadata,calls,processes,owners,receipt,receiptPath,fds,buffers,opened};
 }
@@ -183,7 +184,7 @@ test('new valid neighbor PIDs, starts and release pointers are captured, never h
  const m=await api();for(const index of [0,1,2]){
   const f=fixture();replacePid(f,index,50000+index,'900000');
   if(index<2)f.files.set(index===0?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha','c'.repeat(40)+'\n');
-  else {const target='/var/www/dashboard-medroche-releases/'+'d'.repeat(40)+'/standalone';f.links.set('/var/www/dashboard-medroche',target);f.links.set('/proc/50002/cwd',target+'/apps/site-seo');}
+  else {const release='/var/www/dashboard-medroche-releases/'+'d'.repeat(40),target=release+'/standalone';f.links.set('/var/www/dashboard-medroche',target);f.links.set('/proc/50002/cwd',target+'/apps/site-seo');for(const directory of [release,target,target+'/apps',target+'/apps/site-seo'])f.metadata.set(directory,{uid:0,gid:983,mode:0o40750});}
   const proof=m.createAbbottDeploymentProof(f.options);proof.preflight();replacePid(f,index,60000+index,'900001');assert.throws(()=>proof.perimeter());
  }
 });
@@ -217,6 +218,12 @@ test('combined neighbor preserves its established uid-501 release ownership',asy
   const invalid=fixture();invalid.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});invalid.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});invalid.metadata.set(file,{...invalid.metadata.get(file),...metadata});
   assert.throws(()=>m.createAbbottDeploymentProof(invalid.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
  }
+});
+test('MedRoche neighbor permits only its established root-group release tree',async()=>{
+ const m=await api(),root='/var/www/dashboard-medroche-releases',release=root+'/13d68b0b2c820ba5d223f254bc4eba6d0cf24418',directories=[root,release,release+'/standalone',release+'/standalone/apps',release+'/standalone/apps/site-seo'];
+ const applyOwner=f=>{for(const directory of directories)f.metadata.set(directory,{uid:0,gid:983,mode:0o40750});};
+ const f=fixture();applyOwner(f);assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());
+ for(const [directory,metadata]of [[directories.at(-1),{gid:984}],[root,{mode:0o40770}]]){const invalid=fixture();applyOwner(invalid);invalid.metadata.set(directory,{...invalid.metadata.get(directory),...metadata});assert.throws(()=>m.createAbbottDeploymentProof(invalid.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});}
 });
 test('bounded discovery refuses ambiguous socket ownership, scan overflow and proc races',async()=>{
  const m=await api();for(const mode of ['duplicate_owner','entries','pids','fds','total_fds','proc_link','fd_link','fd_race','listener_race']){
