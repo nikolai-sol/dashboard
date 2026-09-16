@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { DatasetMeta, ManualSheet, Metrics, Period, SourceScope } from "@reportingdash/site-seo-contract";
+import { normalizeIntentKey } from "@reportingdash/site-seo-contract";
+import type { DatasetMeta, ManualSheet, Metrics, Period, SourceScope, TargetIntentRuleSet } from "@reportingdash/site-seo-contract";
 import mysql from "mysql2/promise";
 import type { GscReadRows } from "./gsc.ts";
 import {
@@ -28,7 +29,12 @@ export type AvailableMetrikaWeeksReadQuery = Readonly<{
   timezone: string;
 }>;
 
-export type CanonicalReadQuery = CanonicalDatasetReadQuery;
+export type TargetIntentReadQuery = Readonly<{
+  name: "target_intent";
+  scope: Pick<SourceScope, "clientId" | "siteId" | "dashboardId">;
+}>;
+
+export type CanonicalReadQuery = CanonicalDatasetReadQuery | TargetIntentReadQuery;
 
 export type AvailableMetrikaWeeks = Readonly<{
   kind: "available_metrika_weeks";
@@ -159,7 +165,7 @@ export type CanonicalDatasetData = MetrikaCanonicalData | WebmasterCanonicalData
  */
 export type CanonicalReadExecutor = (
   query: CanonicalReadQuery,
-) => Promise<GscReadRows | DatasetMeta | CanonicalDatasetData>;
+) => Promise<GscReadRows | DatasetMeta | CanonicalDatasetData | TargetIntentRuleSet>;
 
 export type AvailableMetrikaWeeksReadExecutor = (
   query: AvailableMetrikaWeeksReadQuery,
@@ -179,7 +185,266 @@ export const missingCanonicalReadExecutor: CanonicalReadExecutor = async () => {
 
 type CanonicalDatabase = Readonly<{
   execute(sql: string, params: unknown[]): Promise<[unknown, unknown]>;
+  getConnection?(): Promise<CanonicalDatabase & { release(): void }>;
 }>;
+
+type TargetIntentRow = Readonly<{
+  site_id?: unknown;
+  dashboard_id?: unknown;
+  version_id?: unknown;
+  version_uid?: unknown;
+  label?: unknown;
+  expected_rule_count?: unknown;
+  import_rule_count?: unknown;
+  publication_id?: unknown;
+  import_id?: unknown;
+  source_transport?: unknown;
+  source_identity?: unknown;
+  content_sha256?: unknown;
+  validation_state?: unknown;
+  validation_result_json?: unknown;
+  published_at?: unknown;
+  published_by?: unknown;
+  publication_comment?: unknown;
+  sealed_at?: unknown;
+  source_row_ordinal?: unknown;
+  rule_key?: unknown;
+  normalized_key?: unknown;
+  group_label?: unknown;
+  match_type?: unknown;
+}>;
+
+function unavailableTargetIntent(query: TargetIntentReadQuery): TargetIntentRuleSet {
+  return {
+    siteId: query.scope.siteId,
+    dashboardId: query.scope.dashboardId,
+    versionId: null,
+    label: "",
+    state: "unavailable",
+    rules: [],
+    provenance: null,
+  };
+}
+
+function notConfiguredTargetIntent(query: TargetIntentReadQuery): TargetIntentRuleSet {
+  return {
+    siteId: query.scope.siteId,
+    dashboardId: query.scope.dashboardId,
+    versionId: null,
+    label: "",
+    state: "not_configured",
+    rules: [],
+    provenance: null,
+  };
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function normalizedTimestamp(value: unknown): string | null {
+  const epoch = value instanceof Date ? value.getTime() : nonEmptyString(value) ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(epoch) ? new Date(epoch).toISOString() : null;
+}
+
+function targetIntentRulesHash(rules: readonly Readonly<{
+  sourceRowOrdinal: number;
+  key: string;
+  normalizedKey: string;
+  group: string | null;
+  matchType: "exact" | "phrase";
+}>[]): string {
+  return createHash("sha256").update(JSON.stringify(rules), "utf8").digest("hex");
+}
+
+function validatedTargetIntentRules(value: unknown): readonly Readonly<{
+  sourceRowOrdinal: number;
+  key: string;
+  normalizedKey: string;
+  group: string | null;
+  matchType: "exact" | "phrase";
+}>[] | null {
+  try {
+    const candidate = typeof value === "string" ? JSON.parse(value) : value;
+    if (!candidate || typeof candidate !== "object" || !Array.isArray((candidate as { rows?: unknown }).rows)) return null;
+    const rows = (candidate as { state?: unknown; rows: unknown[] }).rows;
+    if ((candidate as { state?: unknown }).state !== "valid") return null;
+    return rows.map((entry) => {
+      if (!entry || typeof entry !== "object") throw new TypeError("invalid target-intent validation row");
+      const row = entry as Record<string, unknown>;
+      const matchType = String(row.matchType);
+      const group = row.group === null || row.group === undefined ? null : String(row.group);
+      const parsed = {
+        sourceRowOrdinal: Number(row.sourceRowOrdinal),
+        key: String(row.key ?? ""),
+        normalizedKey: String(row.normalizedKey ?? ""),
+        group,
+        matchType: matchType as "exact" | "phrase",
+      };
+      if (
+        !Number.isInteger(parsed.sourceRowOrdinal) || parsed.sourceRowOrdinal <= 0 ||
+        !nonEmptyString(parsed.key) || !nonEmptyString(parsed.normalizedKey) ||
+        !["exact", "phrase"].includes(matchType) || (group !== null && !nonEmptyString(group))
+      ) throw new TypeError("invalid target-intent validation row");
+      return parsed;
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function readTargetIntentData(
+  database: CanonicalDatabase,
+  query: TargetIntentReadQuery,
+): Promise<TargetIntentRuleSet> {
+  const connection = database.getConnection ? await database.getConnection() : null;
+  try {
+    return await readTargetIntentSnapshot(connection ?? database, query);
+  } finally {
+    connection?.release();
+  }
+}
+
+async function readTargetIntentSnapshot(
+  database: CanonicalDatabase,
+  query: TargetIntentReadQuery,
+): Promise<TargetIntentRuleSet> {
+  const metadata = await rowsFor<TargetIntentRow>(database, {
+    sql: `/* site-seo:target-intent */
+          SELECT active.site_id,
+                 active.dashboard_id,
+                 active.version_id,
+                 version.version_uid,
+                 version.label,
+                 version.rule_count AS expected_rule_count,
+                 version.sealed_at,
+                 active.publication_id,
+                 publication.import_id,
+                 publication.published_at,
+                 publication.published_by,
+                 publication.publication_comment,
+                 imported.source_transport,
+                 imported.source_identity,
+                 imported.content_sha256,
+                 imported.rule_count AS import_rule_count,
+                 imported.validation_state,
+                 imported.validation_result_json
+            FROM site_seo_intent_active AS active
+            LEFT JOIN site_seo_intent_versions AS version
+              ON version.site_id = active.site_id
+             AND version.dashboard_id = active.dashboard_id
+             AND version.id = active.version_id
+            LEFT JOIN site_seo_intent_publications AS publication
+              ON publication.site_id = active.site_id
+             AND publication.dashboard_id = active.dashboard_id
+             AND publication.id = active.publication_id
+             AND publication.version_id = active.version_id
+             AND version.import_id = publication.import_id
+            LEFT JOIN site_seo_intent_imports AS imported
+              ON imported.site_id = publication.site_id
+             AND imported.dashboard_id = publication.dashboard_id
+             AND imported.id = publication.import_id
+           WHERE active.site_id = ? AND active.dashboard_id = ?`,
+    params: [query.scope.siteId, query.scope.dashboardId],
+  });
+  if (metadata.length === 0) return notConfiguredTargetIntent(query);
+  if (metadata.length !== 1) return unavailableTargetIntent(query);
+
+  const first = metadata[0]!;
+  const expectedRuleCount = Number(first.expected_rule_count);
+  const importRuleCount = Number(first.import_rule_count);
+  const sealedAt = normalizedTimestamp(first.sealed_at);
+  const publishedAt = normalizedTimestamp(first.published_at);
+  const inScope = first.site_id === query.scope.siteId && Number(first.dashboard_id) === query.scope.dashboardId;
+  const validSnapshot =
+    inScope &&
+    nonEmptyString(first.version_uid) &&
+    nonEmptyString(first.label) &&
+    sealedAt !== null &&
+    Number.isInteger(expectedRuleCount) &&
+    expectedRuleCount > 0 &&
+    Number.isInteger(importRuleCount) &&
+    importRuleCount === expectedRuleCount &&
+    expectedRuleCount <= 10_000 &&
+    ["upload", "google_sheet"].includes(String(first.source_transport)) &&
+    nonEmptyString(first.source_identity) &&
+    /^[a-f0-9]{64}$/i.test(String(first.content_sha256 ?? "")) &&
+    first.validation_state === "valid" &&
+    publishedAt !== null &&
+    nonEmptyString(first.published_by);
+  if (!validSnapshot) return unavailableTargetIntent(query);
+
+  // The selected sealed version and its rules are immutable. Pin that identity
+  // even if a concurrent publication changes the active pointer between reads.
+  const rows = await rowsFor<TargetIntentRow>(database, {
+    sql: `/* site-seo:target-intent-rules */
+          SELECT rule.site_id, rule.dashboard_id, rule.version_id,
+                 rule.source_row_ordinal, rule.rule_key, rule.normalized_key,
+                 rule.group_label, rule.match_type
+            FROM site_seo_intent_rules AS rule
+           WHERE rule.site_id = ? AND rule.dashboard_id = ? AND rule.version_id = ?
+           ORDER BY rule.source_row_ordinal ASC`,
+    params: [query.scope.siteId, query.scope.dashboardId, first.version_id],
+  });
+  if (rows.length !== expectedRuleCount || rows.some(row =>
+    row.site_id !== query.scope.siteId || Number(row.dashboard_id) !== query.scope.dashboardId ||
+    String(row.version_id) !== String(first.version_id)
+  )) return unavailableTargetIntent(query);
+  const ordered = [...rows].sort((left, right) => Number(left.source_row_ordinal) - Number(right.source_row_ordinal));
+  const ordinals = new Set<number>();
+  const normalizedKeys = new Set<string>();
+  const rules: TargetIntentRuleSet["rules"][number][] = [];
+  const integrityRules: {
+    sourceRowOrdinal: number;
+    key: string;
+    normalizedKey: string;
+    group: string | null;
+    matchType: "exact" | "phrase";
+  }[] = [];
+  for (const row of ordered) {
+    const ordinal = Number(row.source_row_ordinal);
+    const matchType = String(row.match_type);
+    const key = String(row.rule_key ?? "");
+    const normalizedKey = String(row.normalized_key ?? "");
+    const group = row.group_label === null || row.group_label === undefined ? null : String(row.group_label);
+    if (
+      !Number.isInteger(ordinal) || ordinal <= 0 || ordinals.has(ordinal) ||
+      !nonEmptyString(key) || !nonEmptyString(normalizedKey) || normalizedKey !== normalizeIntentKey(key) || normalizedKeys.has(normalizedKey) ||
+      !["exact", "phrase"].includes(matchType) || (group !== null && !nonEmptyString(group))
+    ) return unavailableTargetIntent(query);
+    ordinals.add(ordinal);
+    normalizedKeys.add(normalizedKey);
+    rules.push({ key, normalizedKey, group, matchType: matchType as "exact" | "phrase" });
+    integrityRules.push({ sourceRowOrdinal: ordinal, key, normalizedKey, group, matchType: matchType as "exact" | "phrase" });
+  }
+
+  const validatedRules = validatedTargetIntentRules(first.validation_result_json);
+  if (
+    validatedRules === null || validatedRules.length !== expectedRuleCount ||
+    targetIntentRulesHash(validatedRules) !== targetIntentRulesHash(integrityRules)
+  ) return unavailableTargetIntent(query);
+
+  return {
+    siteId: query.scope.siteId,
+    dashboardId: query.scope.dashboardId,
+    versionId: first.version_uid,
+    label: first.label,
+    state: "ready",
+    rules,
+    provenance: {
+      importId: String(first.import_id),
+      publicationId: String(first.publication_id),
+      sourceTransport: first.source_transport as "upload" | "google_sheet",
+      sourceIdentity: first.source_identity,
+      contentSha256: String(first.content_sha256),
+      publishedAt,
+      publishedBy: first.published_by,
+      comment: first.publication_comment === null || first.publication_comment === undefined
+        ? null
+        : String(first.publication_comment),
+    },
+  };
+}
 
 function stableFiltersHash(filters: Readonly<Record<string, string>>): string {
   const canonical = JSON.stringify(Object.fromEntries(Object.entries(filters).sort(([left], [right]) => left.localeCompare(right))));
@@ -1365,6 +1630,7 @@ async function readAvailableMetrikaWeeks(database: CanonicalDatabase, query: Ava
 /** Canonical MySQL is the sole request-time data plane; source APIs and import files are never read here. */
 export function createCanonicalReadExecutor(database: CanonicalDatabase): CanonicalReadExecutor {
   return async (query) => {
+    if (query.name === "target_intent") return readTargetIntentData(database, query);
     if (query.name === "gsc") return readManualGsc(database, query);
     return readDatasetMeta(database, query);
   };
@@ -1394,6 +1660,10 @@ function defaultMysqlPool(): mysql.Pool {
 
 export const canonicalReadExecutor: CanonicalReadExecutor = async (query) => createCanonicalReadExecutor({
   execute: async (sql, params) => defaultMysqlPool().execute(sql, params as never[]),
+  getConnection: async () => {
+    const connection = await defaultMysqlPool().getConnection();
+    return { execute: async (sql, params) => connection.execute(sql, params as never[]), release: () => connection.release() };
+  },
 })(query);
 
 export const availableMetrikaWeeksReadExecutor: AvailableMetrikaWeeksReadExecutor = async (query) => createAvailableMetrikaWeeksReadExecutor({

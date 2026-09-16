@@ -1,4 +1,5 @@
 import DashboardWizard from "@/components/admin/DashboardWizard";
+import { DashboardTargetIntentNavigation } from "@/components/admin/DashboardTargetIntentScreen";
 import Link from "next/link";
 
 export default async function EditDashboardPage({
@@ -13,6 +14,7 @@ export default async function EditDashboardPage({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-slate-900">Edit Dashboard #{id}</h1>
         <div className="flex gap-2">
+          <DashboardTargetIntentNavigation dashboardId={id} />
           <Link
             href={`/admin/dashboards/${id}/media-plan`}
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"

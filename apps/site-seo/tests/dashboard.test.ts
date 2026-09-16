@@ -28,6 +28,16 @@ const profile = {
   ],
 } as unknown as SiteProfile;
 
+const targetIntent = {
+  siteId: "site-fixture", dashboardId: 1, versionId: null, label: "Целевой интент", state: "not_configured" as const,
+  provenance: null,
+  target: { label: "Целевой интент", impressions: null, clicks: null, sharePct: null, queryCount: null },
+  other: { label: "Остальные запросы", impressions: null, clicks: null, sharePct: null, queryCount: null },
+  queries: [],
+  period: { kind: "iso_week" as const, key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" },
+  sources: [],
+};
+
 test("uses the site-scoped standalone login route", () => {
   assert.equal(siteLoginPath("medroche"), "/api/dashboard/medroche/login");
 });
@@ -117,7 +127,7 @@ test("renders period controls and export links without emitting disabled GSC con
   const selection = createPeriodSelection({ primaryWeek: "2026-W01", aliceMonth: "2026-01", gsc: calendarMonthPeriod("2026-01", "Europe/Moscow") }, "Europe/Moscow");
   const disabledGscProfile = { ...profile, title: "Тест", slug: "fixture", sources: [{ sourceKey: "google_search_console" as const, mode: "disabled" as const, bindingId: null, importCadence: [] }, { sourceKey: "yandex_webmaster" as const, mode: "automated" as const, bindingId: "webmaster", importCadence: [] }] } as SiteProfile;
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
-  const model = { gsc: { meta: missing, summary: { clicks: 999, impressions: 999, ctrPct: 99, averagePosition: 1 }, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: { yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "ready" as const, collectionMode: "automated" as const, completeness: "complete" as const, importId: "fixture", freshness: "current" as const, latestAttempt: "success" as const } }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const model = { gsc: { meta: missing, summary: { clicks: 999, impressions: 999, ctrPct: 99, averagePosition: 1 }, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: { yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "ready" as const, collectionMode: "automated" as const, completeness: "complete" as const, importId: "fixture", freshness: "current" as const, latestAttempt: "success" as const } }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent };
   const html = renderToStaticMarkup(createElement(Dashboard, { profile: disabledGscProfile, selection, publicationId: "publication-7", filters: { country: "RU" }, model }));
   assert.match(html, /traffic_week/);
   assert.match(html, /\/excel\?/);
@@ -133,7 +143,7 @@ test("renders one enabled active tab in the neutral shell and preserves scope qu
     { sourceKey: "yandex_wordstat" as const, mode: "disabled" as const, bindingId: null, importCadence: [] },
   ] } as SiteProfile;
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
-  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent };
 
   const html = renderToStaticMarkup(createElement(Dashboard, { profile: searchProfile, selection, publicationId: "publication-7", filters: { country: "RU" }, model, activeTab: "search" }));
 
@@ -155,7 +165,7 @@ test("rolling Wordstat and source quality sheets do not claim the traffic calend
   ] } as SiteProfile;
   const missing = { sourceKey: "yandex_wordstat" as const, period: null, state: "missing" as const, collectionMode: "automated" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const gscMissing = { ...missing, sourceKey: "google_search_console" as const, collectionMode: "manual" as const };
-  const model = { gsc: { meta: gscMissing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: gscMissing, datasets: { yandex_wordstat: missing }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const model = { gsc: { meta: gscMissing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: gscMissing, datasets: { yandex_wordstat: missing }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent };
 
   for (const activeTab of ["wordstat", "sources"] as const) {
     const html = renderToStaticMarkup(createElement(Dashboard, { profile: sourceProfile, selection, publicationId: null, filters: {}, model, activeTab }));
@@ -174,7 +184,7 @@ test("keeps canonical Metrika facts on overview after removing the standalone tr
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
   const model = {
     gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing,
-    datasets: { yandex_metrika: { ...missing, sourceKey: "yandex_metrika" as const, state: "ready" as const }, yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "partial" as const } }, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+    datasets: { yandex_metrika: { ...missing, sourceKey: "yandex_metrika" as const, state: "ready" as const }, yandex_webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "partial" as const } }, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent,
     metrika: { ...missing, sourceKey: "yandex_metrika" as const, state: "ready" as const, kind: "metrika" as const, summary: { visits: 20, pageviews: 30 }, daily: [{ date: "2026-01-02", visits: 4, pageviews: 6, users: 3 }], topPages: [{ page: "/a", visits: 4, pageviews: 6 }] },
     webmaster: { ...missing, sourceKey: "yandex_webmaster" as const, state: "partial" as const, kind: "webmaster" as const, summary: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }], topPages: [{ page: "/a", metrics: { clicks: 5, impressions: 50, ctrPct: 10, averagePosition: 3 } }] },
   };
@@ -199,7 +209,7 @@ test("overview follows the accepted five-panel Zaruku composition with canonical
       dimensions: [], dimensionMeta: {},
     },
     indexing: missing,
-    datasets: {}, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+    datasets: {}, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent,
     metrika: {
       ...ready, sourceKey: "yandex_metrika" as const, collectionMode: "automated" as const,
       kind: "metrika" as const, summary: { visits: 20, pageviews: 30 },
@@ -288,7 +298,7 @@ test("overview keeps all-traffic panels visible when search coverage is missing"
   const gscMissing = { ...searchMissing, sourceKey: "google_search_console" as const, collectionMode: "manual" as const };
   const model = {
     gsc: { meta: gscMissing, summary: null, daily: [], dimensions: [], dimensionMeta: {} },
-    indexing: gscMissing, datasets: { yandex_metrika: searchMissing }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+    indexing: gscMissing, datasets: { yandex_metrika: searchMissing }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent,
     metrika: {
       ...searchMissing, kind: "metrika" as const, summary: null, daily: [], topPages: [], searchEngines: [],
       trafficMeta: trafficPartial,
@@ -308,7 +318,7 @@ test("overview keeps all-traffic panels visible when search coverage is missing"
 
 test("overview keeps the accepted layout while unavailable metrics stay explicit", () => {
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
-  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent };
   const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true }));
 
   assert.equal(html.match(/data-panel-id="overview\./g)?.length, 5);
@@ -335,7 +345,7 @@ test("overview preserves missing and failed empties without exposing completenes
 
   for (const state of Object.keys(expected) as Array<keyof typeof expected>) {
     const meta = { ...base, state, latestAttempt: state === "failed" ? "failed" as const : "none" as const };
-    const model = { gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: base, datasets: { yandex_metrika: { ...meta, sourceKey: "yandex_metrika" as const } }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+    const model = { gsc: { meta, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: base, datasets: { yandex_metrika: { ...meta, sourceKey: "yandex_metrika" as const } }, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent };
     const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: true, showMetrika: true, showWebmaster: false }));
     assert.match(html, new RegExp(expected[state]));
     assert.match(html, new RegExp(`Динамика[^]*${expected[state]}`));
@@ -345,7 +355,7 @@ test("overview preserves missing and failed empties without exposing completenes
 
 test("overview trend aggregates observed dates into one ISO-week point and exposes the weekly total", () => {
   const meta = { sourceKey: "yandex_metrika" as const, period: { kind: "iso_week" as const, key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" }, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "success" as const };
-  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, metrika: { ...meta, kind: "metrika" as const, summary: { visits: 9, pageviews: 12 }, daily: [{ date: "2026-01-01", visits: 2, pageviews: 3, users: 2 }, { date: "2026-01-02", visits: 3, pageviews: 4, users: 3 }, { date: "2026-01-04", visits: 4, pageviews: 5, users: 4 }], topPages: [] } };
+  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent, metrika: { ...meta, kind: "metrika" as const, summary: { visits: 9, pageviews: 12 }, daily: [{ date: "2026-01-01", visits: 2, pageviews: 3, users: 2 }, { date: "2026-01-02", visits: 3, pageviews: 4, users: 3 }, { date: "2026-01-04", visits: 4, pageviews: 5, users: 4 }], topPages: [] } };
   const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: true, showWebmaster: false }));
 
   assert.equal(html.match(/data-week="2026-W01"/g)?.length, 1);
@@ -358,7 +368,7 @@ test("overview trend aggregates observed dates into one ISO-week point and expos
 
 function renderSingleWeekTrend(visits: number): string {
   const meta = { sourceKey: "yandex_metrika" as const, period: { kind: "iso_week" as const, key: "2026-W01", from: "2025-12-29", to: "2026-01-04", sourceTimezone: "Europe/Moscow" }, state: "partial" as const, collectionMode: "automated" as const, completeness: "limited" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "success" as const };
-  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, metrika: { ...meta, kind: "metrika" as const, summary: { visits, pageviews: visits }, daily: [{ date: "2026-01-01", visits, pageviews: visits, users: null }], topPages: [] } };
+  const model = { gsc: { meta: { ...meta, sourceKey: "google_search_console" as const, collectionMode: "manual" as const }, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: meta, datasets: { yandex_metrika: meta }, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent, metrika: { ...meta, kind: "metrika" as const, summary: { visits, pageviews: visits }, daily: [{ date: "2026-01-01", visits, pageviews: visits, users: null }], topPages: [] } };
   return renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: true, showWebmaster: false }));
 }
 
@@ -384,7 +394,7 @@ test("one-visit weekly trend renders unique ticks at the same coordinates as its
 
 test("overview omits Metrika-only panels when the source cannot render a full week", () => {
   const missing = { sourceKey: "google_search_console" as const, period: null, state: "missing" as const, collectionMode: "manual" as const, completeness: "unknown" as const, importId: null, exportedAt: null, loadedAt: null, freshness: "unknown" as const, latestAttempt: "none" as const };
-  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {} };
+  const model = { gsc: { meta: missing, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: missing, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent };
   const html = renderToStaticMarkup(createElement(Overview, { id: "overview", model, showGsc: false, showMetrika: false, showWebmaster: false }));
 
   assert.doesNotMatch(html, /Здоровье трафика|Каналы привлечения|Поисковые системы|Органический поиск|Источник отключён|Источник Метрика отключён/);
@@ -427,7 +437,7 @@ test("unified SEO queries use a labelled local scroll frame and grouped semantic
   const base = { sourceKey: "google_search_console" as const, period: null, state: "ready" as const, collectionMode: "manual" as const, completeness: "complete" as const, importId: "fixture", exportedAt: null, loadedAt: null, freshness: "current" as const, latestAttempt: "success" as const };
   const model = {
     gsc: { meta: base, summary: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 }, daily: [{ date: "2026-01-02", metrics: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 } }], dimensions: [{ dimension: "query" as const, value: "лечение", metrics: { clicks: 2, impressions: 20, ctrPct: 10, averagePosition: 3 }, meta: base }], dimensionMeta: {} },
-    indexing: base, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+    indexing: base, datasets: {}, metrika: null, webmaster: null, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent,
   };
 
   const html = renderToStaticMarkup(createElement(Search, { id: "search", model, showGsc: true }));
@@ -466,7 +476,7 @@ test("standard sheets use the accepted Zaruku-style stack of focused panels", ()
   const webmasterMeta = { ...meta, sourceKey: "yandex_webmaster" as const };
   const model = {
     gsc: { meta: gscMeta, summary: null, daily: [], dimensions: [], dimensionMeta: {} }, indexing: gscMeta,
-    datasets: { yandex_metrika: meta, google_search_console: gscMeta, yandex_webmaster: webmasterMeta }, wordstat: null, alice: null, seoOs: null, trafficComparison: {},
+    datasets: { yandex_metrika: meta, google_search_console: gscMeta, yandex_webmaster: webmasterMeta }, wordstat: null, alice: null, seoOs: null, trafficComparison: {}, targetIntent,
     metrika: { ...meta, kind: "metrika" as const, summary: { visits: 46, pageviews: 75 }, daily: [{ date: "2026-09-10", visits: 15, pageviews: 26, users: 15 }], topPages: [{ page: "/page", visits: 8, pageviews: 12 }] },
     webmaster: { ...webmasterMeta, kind: "webmaster" as const, summary: { clicks: 48, impressions: 1661, ctrPct: 2.9, averagePosition: 8.4 }, daily: [{ date: "2026-09-10", metrics: { clicks: 12, impressions: 400, ctrPct: 3, averagePosition: 8 } }], topPages: [{ page: "/page", metrics: { clicks: 8, impressions: 300, ctrPct: 2.7, averagePosition: 7 } }] },
   };

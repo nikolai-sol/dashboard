@@ -22,6 +22,7 @@ const PROFILE_FIELDS = new Set([
   "locale",
   "businessTimezone",
   "templateVersion",
+  "targetIntentEnabled",
   "sources",
   "seoSections",
   "hiddenTabs",
@@ -131,6 +132,8 @@ export function assertSiteProfile(value: unknown): SiteProfile {
   }
   if (profile.logoAsset !== null && typeof profile.logoAsset !== "string")
     throw new TypeError("logoAsset must be a string or null");
+  if (profile.targetIntentEnabled !== undefined && typeof profile.targetIntentEnabled !== "boolean")
+    throw new TypeError("targetIntentEnabled must be a boolean");
 
   if (!Array.isArray(profile.sources))
     throw new TypeError("sources must be an array");

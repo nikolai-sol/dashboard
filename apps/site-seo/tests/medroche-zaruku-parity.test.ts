@@ -28,6 +28,13 @@ const missing = {
   freshness: "unknown" as const,
   latestAttempt: "none" as const,
 };
+const targetIntent = {
+  siteId: "site-fixture", dashboardId: 1, versionId: null, label: "Целевой интент", state: "not_configured" as const,
+  provenance: null,
+  target: { label: "Целевой интент", impressions: null, clicks: null, sharePct: null, queryCount: null },
+  other: { label: "Остальные запросы", impressions: null, clicks: null, sharePct: null, queryCount: null },
+  queries: [], period: w36, sources: [],
+};
 
 const profile = {
   title: "Клиника",
@@ -114,6 +121,7 @@ function model() {
       tasks: [],
     },
     trafficComparison: {},
+    targetIntent,
   };
 }
 

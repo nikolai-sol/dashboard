@@ -112,6 +112,18 @@ test("overview search engines and weekly trend expose their two-column and label
   assert.match(css, /\.site-seo-trend-axis\[data-single="true"\]\s*\{[^}]*justify-content:\s*center/);
 });
 
+test("target intent uses generic equal-weight overview windows and contained responsive tables", () => {
+  const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
+  const targetCss = css.slice(css.indexOf("/* Universal target-intent overview. */"));
+
+  assert.match(targetCss, /data-target-intent="true"[^]*overview\.north_star[^}]*grid-column:\s*span\s*6/);
+  assert.match(targetCss, /data-target-intent="true"[^]*overview\.traffic_health[^}]*grid-column:\s*span\s*6/);
+  assert.match(targetCss, /\.site-seo-intent-table-frame\s*\{[^}]*max-width:\s*100%[^}]*overflow-x:\s*auto/);
+  assert.match(targetCss, /\.site-seo-intent-table\s*\{[^}]*min-width:\s*780px/);
+  assert.match(targetCss, /@media \(max-width:\s*700px\)[^]*\.site-seo-intent-cards\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.doesNotMatch(targetCss, /medical/i);
+});
+
 test("SEO chart and sortable comparison table match the reference visual language", () => {
   const css = readFileSync(path.join(appRoot, "src/app/globals.css"), "utf8");
 

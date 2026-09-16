@@ -121,7 +121,7 @@ function buildSeoOsExportRows(input: Readonly<{ period: Period; data: SeoOsCanon
 export function buildDashboardExportRows(input: Readonly<{
   profile: Pick<SiteProfile, "sources">;
   selection: PeriodSelection;
-  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "metrika" | "webmaster" | "wordstat" | "alice" | "seoOs" | "trafficComparison">>;
+  model: Pick<DashboardReadModel, "gsc" | "datasets"> & Partial<Pick<DashboardReadModel, "targetIntent" | "metrika" | "webmaster" | "wordstat" | "alice" | "seoOs" | "trafficComparison">>;
 }>): ExportRow[] {
   const gscEnabled = input.profile.sources.some((source) => source.sourceKey === "google_search_console" && source.mode !== "disabled");
   const rows: ExportRow[] = gscEnabled
@@ -142,6 +142,36 @@ export function buildDashboardExportRows(input: Readonly<{
     }
   }
   const comparison = input.selection.traffic.comparison;
+  const intent = input.model.targetIntent;
+  if (intent) {
+    rows.push(
+      { field: "Целевой интент", value: `${intent.period.from} — ${intent.period.to}` },
+      { field: "Метка целевого интента", value: intent.label },
+      { field: "Состояние классификации", value: intent.state },
+      { field: "Активная версия правил", value: intent.versionId ?? "не настроена" },
+      { field: "База долей", value: "Показы доступных запросов Google + Яндекс; клики не являются уникальными пользователями" },
+    );
+    if (intent.provenance) rows.push({
+      field: "Источник правил",
+      value: `${intent.provenance.sourceTransport}; ${intent.provenance.sourceIdentity}; publication ${intent.provenance.publicationId}; import ${intent.provenance.importId}; SHA-256 ${intent.provenance.contentSha256}; опубликовано ${intent.provenance.publishedAt}; автор ${intent.provenance.publishedBy}; комментарий ${intent.provenance.comment ?? "нет"}`,
+    });
+    for (const source of intent.sources) rows.push({
+      field: `Интент · ${source.source}`,
+      value: `${source.included ? "в расчёте" : "исключён"}; ${source.reason}; ${source.meta?.state ?? "missing"}; completeness ${source.meta?.completeness ?? "unknown"}; import ${source.meta?.importId ?? "нет"}; latestAttempt ${source.meta?.latestAttempt ?? "none"}`,
+    });
+    for (const [key, label] of [["other", intent.other.label], ["target", intent.target.label]] as const) {
+      const card = intent[key];
+      rows.push(
+        { field: `${label} · показы`, value: card.impressions === null ? "нет данных" : String(card.impressions) },
+        { field: `${label} · клики`, value: card.clicks === null ? "нет данных" : String(card.clicks) },
+        { field: `${label} · доля показов, %`, value: card.sharePct === null ? "нет данных" : String(card.sharePct) },
+      );
+    }
+    for (const query of intent.queries) rows.push({
+      field: `Интент · ${query.source} · ${query.query}`,
+      value: `${query.category}; правило ${query.matchedRule ?? "не найдено"}; тип ${query.matchType ?? "нет"}; группа ${query.group ?? "вне каталога"}; показы ${query.impressions}; клики ${query.clicks}`,
+    });
+  }
   if (comparison) {
     rows.push({ field: "Сравнение", value: comparison.key });
     const metrika = input.model.trafficComparison?.yandex_metrika;

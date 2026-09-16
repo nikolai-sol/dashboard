@@ -58,6 +58,7 @@ export type SiteProfile = Readonly<{
   locale: string;
   businessTimezone: string;
   templateVersion: string;
+  targetIntentEnabled?: boolean;
   sources: readonly {
     sourceKey: SourceKey;
     mode: "automated" | "manual" | "disabled";
@@ -241,3 +242,16 @@ export function assertImportManifest(value: unknown): ImportManifest {
 }
 
 export { assertSiteProfile, assertSiteRegistry } from "./profile-schema.ts";
+export { normalizeIntentKey, classifyTargetIntentQuery } from "./target-intent.ts";
+export type { TargetIntentObservedSample } from "./target-intent.ts";
+export type {
+  TargetIntentCard,
+  TargetIntentClassification,
+  TargetIntentClassifiedQuery,
+  TargetIntentMatchType,
+  TargetIntentObservedQuery,
+  TargetIntentProvenance,
+  TargetIntentRule,
+  TargetIntentRuleSet,
+  TargetIntentView,
+} from "./target-intent.ts";

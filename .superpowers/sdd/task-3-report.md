@@ -1,236 +1,167 @@
-# Task 3 Report: Shared ISO Week Comparison Controls
+# Task 3 Report: Target Intent Management Screen
+
+## Status
+
+Done. The administrator UI now manages the complete target-intent catalogue through the Task 2 APIs without accepting client-supplied site scope.
 
 ## Delivered
 
-- Added shared ISO-week selection state to `ZarukuSeoDashboard`, initialized from `data.seo_os.latest_week` and preserved while dashboard tabs change.
-- Added `ZarukuSeoWeekToolbar` with a `Single`/`Compare` segmented control, native A/B ISO-week selects, and a Lucide history icon action titled `Сравнить с предыдущей доступной неделей`.
-- The previous-week action selects the prior available week and is disabled when none exists.
-- Added a client-safe selection helper which prevents equal A/B values by moving the other selection to the nearest prior available week, then the next available week.
-- Kept existing tab navigation and tab content unchanged.
+- Added the server page at `/admin/dashboards/[id]/target-intent`; it passes only `dashboardId` to the client screen.
+- Added SEO-only navigation from dashboard editing. Capability is resolved through the protected target-intent endpoint, and unsupported dashboards show a clear disabled explanation.
+- Added a configurable version label and mutually exclusive Excel/CSV upload and Google Sheets URL modes.
+- Kept source inspection manual through `Проверить источник`; editing either source invalidates the old preview and does not auto-refresh.
+- Added explicit source, validating, preview-ready, publishing, active, failed, and restore-confirmation states.
+- Added preview totals, validation errors with row/column context, and sample imported rules. Publication remains disabled for invalid previews.
+- Added the typed `ЗАМЕНИТЬ КАТАЛОГ` confirmation, explicitly warning that publication replaces the full active catalogue.
+- Added audit history and restore-as-new-version confirmation.
+- Preserved the last known active version across validation and rejected mutation failures. Ambiguous network/5xx mutation results are reported as unknown until the canonical state is refreshed.
+- Reused one operation ID for ambiguous retries and allocated a new one when the user's intended publish/restore operation changes.
+- Enforced the 5 MiB upload bound before reading a file; selected files are encoded to base64 only when the preview request is submitted.
+
+## Files
+
+- Added: `src/app/admin/dashboards/[id]/target-intent/page.tsx`
+- Added: `src/components/admin/DashboardTargetIntentScreen.tsx`
+- Added: `src/components/admin/DashboardTargetIntentScreen.test.tsx`
+- Modified: `src/app/admin/dashboards/[id]/edit/page.tsx`
+- Modified: `src/lib/admin-ui-types.ts`
 
 ## TDD Evidence
 
 ### RED
 
-1. `npm test -- src/components/zaruku-seo-week-selection.test.ts`
-   - Failed because `@/components/zaruku-seo-week-selection` did not exist.
-2. After browser verification found a client bundle failure caused by importing the server-side `zaruku-seo-os` module, a focused helper export test was added.
-   - Failed with `TypeError: previousAvailableWeek is not a function`.
+1. Initial focused render/source contract:
+
+   ```sh
+   node --import tsx --test src/components/admin/DashboardTargetIntentScreen.test.tsx
+   ```
+
+   Exit 1: `Cannot find module './DashboardTargetIntentScreen'`; 1 test failed.
+
+2. Incremental tests failed before their implementation for:
+   - history audit fields;
+   - recent failed source checks;
+   - locked controls while publishing;
+   - truthful failed-initial-load state;
+   - capability lookup through the Task 2 endpoint;
+   - mutual exclusion of publish and restore confirmations;
+   - canonical refresh after a successful mutation;
+   - stable idempotency operation IDs;
+   - exact preview payload builders;
+   - honest source-rule sample labelling;
+   - preview invalidation after source edits;
+   - HTTP 5xx mutation ambiguity.
 
 ### GREEN
 
-`npm test -- src/components/zaruku-seo-week-selection.test.ts && npm run typecheck && npm run lint`
+```sh
+node --import tsx --test src/components/admin/DashboardTargetIntentScreen.test.tsx
+```
 
-- Tests: 15 passed, 0 failed.
-- `tsc --noEmit`: exit 0.
-- ESLint: exit 0; two pre-existing `react-hooks/exhaustive-deps` warnings remain in `src/components/admin/DashboardUtmSourceMatching.tsx` at lines 66 and 152. No Task 3 lint issues.
+Result: 14 passed, 0 failed.
 
-## Browser Verification
+```sh
+node --import tsx './src/app/api/admin/dashboards/[id]/target-intent/route.test.ts'
+```
 
-- Ran `npm run dev -- -p 3000` and opened `/dashboard/28`.
-- Initial browser check revealed a `mysql2`/`net` client-bundle error from importing a server-only module. Replaced the import with a client-safe local ISO-week helper.
-- Recheck loaded the dashboard with no console errors and no error overlay.
-- Verified the toolbar appears on Overview and Content, Compare mode persists after tab navigation, and the previous-week button is disabled for the loaded one-week dataset.
+Result: 10 passed, 0 failed.
 
-## Files
+```sh
+node --import tsx --test \
+  src/components/admin/SharedPasswordSettings.ui.test.ts \
+  src/components/admin/SourceAccountCollectionSettings.test.ts \
+  src/components/admin/WizardStepBinding.test.ts \
+  src/components/admin/media-plan-source-selection.test.ts \
+  src/lib/access-auth.test.ts \
+  src/lib/shared-password-admin-route.test.ts \
+  src/lib/shared-password-admin.test.ts \
+  src/lib/admin-dashboards-canonical-bindings.test.ts \
+  src/lib/dashboard-access-policy.test.ts \
+  src/lib/dashboard-access-shared-password.test.ts
+```
 
-- Modified: `src/components/ZarukuSeoDashboard.tsx`
-- Added: `src/components/ZarukuSeoWeekToolbar.tsx`
-- Added: `src/components/zaruku-seo-week-selection.ts`
-- Added: `src/components/zaruku-seo-week-selection.test.ts`
+Result: 58 passed, 0 failed.
 
-## Commit
+```sh
+npx tsc --noEmit --allowImportingTsExtensions
+npx eslint 'src/app/admin/dashboards/[id]/target-intent/page.tsx' \
+  'src/app/admin/dashboards/[id]/edit/page.tsx' \
+  src/components/admin/DashboardTargetIntentScreen.tsx \
+  src/components/admin/DashboardTargetIntentScreen.test.tsx \
+  src/lib/admin-ui-types.ts
+git diff --check
+```
 
-- `5d6143d Add Zaruku ISO week comparison controls`
+Result: all exited 0.
+
+## Independent Review
+
+An independent code review found no remaining Critical or Important issues after follow-up fixes. The review specifically rechecked HTTP 5xx ambiguity, source-edit preview invalidation, stable operation IDs, capability scoping, confirmation mutual exclusion, and post-mutation refresh handling.
 
 ## Self-Review
 
-- Shared state is owned by the dashboard shell, so all existing tabs see the same controls without tab remount resets.
-- The toolbar uses stable grid tracks and native controls, with an accessible name and hover title for the icon-only action.
-- Selection logic has no server imports, preventing server database code from entering the client bundle.
-- `git diff --check` is clean.
+- The client constructs only Task 2 payloads and URLs; it never sends site IDs, release IDs, artifact paths, or source credentials.
+- Source controls are locked during load, validation, and publication to prevent overlapping state transitions.
+- A successful mutation and the subsequent canonical reload are separate transitions, so a refresh failure cannot display stale state as current.
+- The reducer keeps canonical active state on validation or rejected-operation errors.
+- Upload size is checked before `arrayBuffer()`, and base64 content is not stored in component state.
+- No migration, collector, scheduler, deployment, secret change, external API call, or production action was performed.
+- Unrelated modified `.superpowers/sdd/task-1-report.md` and untracked `apps/site-seo/.next-medroche/` were left untouched and are excluded from the Task 3 commit.
 
-## Concerns
+## Residuals
 
-- The local Zaruku record currently provides a single available week, so browser interaction could only validate the disabled previous-week state. The pure tests cover multi-week predecessor selection and duplicate A/B reconciliation.
-- The existing server-side ISO-week helper remains separate from the client-safe helper to avoid changing server data-loader boundaries in this focused task.
+- The Task 2 preview contract does not expose observed-query match samples or CSV delimiter/encoding metadata. The UI therefore labels the available preview rows accurately as source-rule examples and displays worksheet metadata when supplied. Adding those fields would change the Task 2 contract and is outside this Task 3-only assignment.
+- No production/browser smoke was performed. This task's scoped verification is component/source-contract testing plus TypeScript and ESLint; integrated visual verification remains for the later integration task.
 
-## Task 3 Accessibility Follow-up (2026-07-12)
+## Commit
 
-### Delivered
+Requested commit message: `feat(admin): add target intent management screen`.
 
-- Wrapped the disabled previous-week icon action in a focusable non-disabled `span` only when no prior week exists.
-- Moved the unavailable-state native tooltip trigger to that wrapper and retained the existing tooltip for the enabled button state.
-- Preserved the native icon button, its accessible name, and its `disabled` behavior.
-- Added `aria-describedby` on the disabled button and a matching `sr-only` unavailable explanation.
-
-### Commands And Results
-
-1. RED render assertion:
-
-   ```sh
-   node --import tsx --input-type=module --eval 'import assert from "node:assert/strict"; import { createElement } from "react"; import { renderToStaticMarkup } from "react-dom/server"; const module = await import("./src/components/ZarukuSeoWeekToolbar.tsx"); const ZarukuSeoWeekToolbar = module.default.default; const html = renderToStaticMarkup(createElement(ZarukuSeoWeekToolbar, { weeks: ["2026-W01"], primaryWeek: "2026-W01", comparisonWeek: null, comparisonEnabled: false, onComparisonEnabledChange() {}, onPrimaryWeekChange() {}, onComparisonWeekChange() {}, onComparePrevious() {} })); assert.match(html, /tabindex="0"/); assert.match(html, /aria-describedby="zaruku-previous-week-unavailable-description"/); assert.match(html, /id="zaruku-previous-week-unavailable-description"/);'
-   ```
-
-   Result before the change: exit 1. The assertion failed because rendered markup lacked `tabindex="0"`.
-
-2. GREEN render assertion: repeated the exact command above after the change.
-
-   Result: exit 0. The rendered one-week toolbar includes the focusable wrapper, `aria-describedby`, and hidden description.
-
-3. Focused available tests:
-
-   ```sh
-   npm test -- src/components/zaruku-seo-week-selection.test.ts
-   ```
-
-   Result: exit 0; 15 passed, 0 failed.
-
-4. Typecheck:
-
-   ```sh
-   npm run typecheck
-   ```
-
-   Result: exit 0 (`tsc --noEmit`).
-
-5. Lint:
-
-   ```sh
-   npm run lint
-   ```
-
-   Result: exit 0; 0 errors and 2 pre-existing `react-hooks/exhaustive-deps` warnings in `src/components/admin/DashboardUtmSourceMatching.tsx` at lines 66 and 152.
-
-6. Diff validation:
-
-   ```sh
-   git diff --check
-   ```
-
-   Result: exit 0.
-
-7. Browser check:
-
-   ```sh
-   npm run dev -- -p 3000
-   ```
-
-   Opened `http://localhost:3000/dashboard/28` in the in-app browser. The loaded one-week toolbar rendered one wrapper with `tabindex="0"` and title `Нет предыдущей доступной недели для сравнения`; its child button remained disabled, referenced `zaruku-previous-week-unavailable-description`, and that hidden element contained the same explanatory text. The browser automation could not advance tab focus from the selected segmented-control button, and native title tooltips are not captured in its screenshots.
-
-### Files
-
-- Modified: `src/components/ZarukuSeoWeekToolbar.tsx`
-- Appended: `.superpowers/sdd/task-3-report.md`
-
-## Task 3 Accessibility Follow-up: Focus Association (2026-07-12)
+## Root Review Follow-up
 
 ### Delivered
 
-- Added `aria-describedby="zaruku-previous-week-unavailable-description"` to the focusable unavailable-state wrapper.
-- Retained the association on the disabled child button.
-- Added `src/components/ZarukuSeoWeekToolbar.test.ts` with a focused assertion that checks the opening wrapper tag itself carries both `tabindex="0"` and `aria-describedby`.
+- Disabled restore cancellation during publication and added handler-level guards so synthetic or stale callbacks cannot clear the restore target or its stable operation ID while a mutation is running.
+- Replaced the shared `mounted` boolean with a dashboard-scoped request coordinator. Changing `dashboardId` aborts the old scope, starts a new generation, and prevents late load, preview, publish, restore, and post-mutation refresh results from dispatching into the new dashboard.
+- Cleared the previous dashboard's canonical and preview state immediately when the request scope changes, preventing old dashboard metadata from appearing under the new dashboard ID while its state loads.
+- Added the authenticated, server-scoped `?view=capability` projection. The dashboard edit navigation now downloads only `{ supported: true }` and does not read the catalogue, history, previews, or rule rows.
+- Trimmed `rows` from historical preview summaries returned by the management GET. The direct preview response retains current preview rows required by the management screen.
+- Cleared both the selected `File` and inactive Google Sheets URL whenever source mode changes, releasing invisible cached source state.
 
-### Commands And Results
+### Focused RED Evidence
 
-1. RED focused assertion:
+```sh
+node --import tsx --test src/components/admin/DashboardTargetIntentScreen.test.tsx
+```
 
-   ```sh
-   npm test -- src/components/ZarukuSeoWeekToolbar.test.ts
-   ```
+Result before implementation: 12 passed, 4 failed. The new failures proved that:
 
-   Result before the component change: exit 1; 15 passed, 1 failed. The focused assertion failed because the focusable wrapper had `tabindex="0"` but no `aria-describedby`.
+- navigation still fetched the full management resource;
+- restore cancellation remained enabled during publication;
+- no dashboard-scoped request coordinator existed;
+- source-mode changes retained the inactive source.
 
-2. GREEN focused assertion:
+An additional scope-reset regression then failed 16 passed, 1 failed because the old dashboard's canonical state survived the new dashboard's loading transition.
 
-   ```sh
-   npm test -- src/components/ZarukuSeoWeekToolbar.test.ts
-   ```
+```sh
+node --import tsx './src/app/api/admin/dashboards/[id]/target-intent/route.test.ts'
+```
 
-   Result: exit 0; 16 passed, 0 failed.
+Result before implementation: 10 passed, 2 failed. Capability GET returned the full state and called `readState`; management GET still returned all 10,000 historical preview rows.
 
-3. Typecheck:
+### GREEN Evidence
 
-   ```sh
-   npm run typecheck
-   ```
+- Task 3 UI tests: 17 passed, 0 failed.
+- Task 2 target-intent route tests: 12 passed, 0 failed.
+- Existing admin/auth regressions: 58 passed, 0 failed.
+- `npx tsc --noEmit --allowImportingTsExtensions`: exit 0.
+- focused ESLint over the Task 3 and adjacent API files: exit 0 with no warnings.
+- `git diff --check`: exit 0.
 
-   Result: exit 0 (`tsc --noEmit`).
+### Follow-up Self-Review
 
-4. Lint:
-
-   ```sh
-   npm run lint
-   ```
-
-   Result: exit 0; 0 errors and the same 2 pre-existing `react-hooks/exhaustive-deps` warnings in `src/components/admin/DashboardUtmSourceMatching.tsx` at lines 66 and 152.
-
-## Canonical Alice Visibility Read Model (2026-09-04)
-
-### Changes
-
-- Added `loadZarukuAliceVisibility(accountIds)`: a MySQL-only, four-query read model over the canonical Alice snapshot, query, source, and featured-site tables.
-- Returned published monthly summaries with typed query/source details, de-duplicated competitor frequency, featured sites, provenance, and superseded-version metadata.
-- Added `alice_visibility` to `ZarukuSeoData` and loaded it in the existing `seo-db` phase. The AI source status and `data_through` now follow the canonical Alice result; legacy `seo_intelligence` remains intact for compatibility.
-- Missing migration/table or child detail reads fail closed independently: no snapshot table is `unavailable`; failed child reads preserve published summaries as `partial`.
-
-### Files
-
-- `src/lib/zaruku-alice-visibility.ts`
-- `src/lib/zaruku-alice-visibility.test.ts`
-- `src/lib/types.ts`
-- `src/lib/zaruku-seo.ts`
-- `src/lib/zaruku-seo.test.ts`
-
-### TDD Evidence
-
-1. **RED:** `node --import tsx --test src/lib/zaruku-alice-visibility.test.ts` failed with `Cannot find module '@/lib/zaruku-alice-visibility'` after the query/normalization contract was written.
-2. **GREEN:** the same focused test passed after the four-query normalization read model was added.
-3. **RED:** the Zaruku integration regression failed because `data.alice_visibility` was undefined.
-4. **GREEN:** `node --import tsx --test src/lib/zaruku-alice-visibility.test.ts src/lib/zaruku-seo.test.ts` passed 54/54, including the July snapshot retained as `partial` when query detail is unavailable.
-
-### Verification
-
-- Focused tests: 54/54 passed.
-- `npm run typecheck`: passed.
-- `npm run lint`: passed with 4 pre-existing warnings outside these files.
-- `npm test`: 587/588 passed. The sole unrelated failure is the known `tsx` IPC `EPERM` in `scripts/set-dashboard-shared-password.test.ts`; this task did not modify that test.
-
-### Concerns
-
-- The public read model deliberately does not read XLSX files or external APIs. It exposes only canonical, published snapshot data; superseded rows are retained solely as version metadata.
-
-## Canonical Alice Visibility Review Fix (2026-09-04)
-
-### Change
-
-- Kept `alice_visibility` fail-closed when migration 046 is absent, but restored legacy `seo_intelligence.ai` as the source-status and `data_through` fallback in that case only. Canonical Alice remains authoritative for `available` and `partial` results.
-- Added a regression that simulates absent canonical Alice tables alongside an available legacy AI snapshot and verifies the legacy connected status and capture timestamp remain visible.
-
-### Commands and results
-
-1. RED:
-
-   ```sh
-   node --import tsx --test src/lib/zaruku-seo.test.ts
-   ```
-
-   Result before the fix: 52 passed, 1 failed; source status was `unavailable` instead of legacy `connected`.
-
-2. GREEN:
-
-   ```sh
-   node --import tsx --test src/lib/zaruku-seo.test.ts
-   ```
-
-   Result: 53 passed, 0 failed.
-
-3. Focused verification:
-
-   ```sh
-   node --import tsx --test src/lib/zaruku-alice-visibility.test.ts src/lib/zaruku-seo.test.ts
-   npm run typecheck
-   npx eslint src/lib/zaruku-alice-visibility.ts src/lib/zaruku-alice-visibility.test.ts src/lib/zaruku-seo.ts src/lib/zaruku-seo.test.ts
-   ```
-
-   Result: 55 focused tests passed; typecheck and targeted lint passed.
+- The request coordinator compares dashboard ID, monotonically increasing generation, and signal identity. Activating a new dashboard aborts the old signal before any old completion can be accepted.
+- Every asynchronous management operation captures one scope and uses its abort signal for fetches; file reads are checked for staleness immediately after completion.
+- Capability detection still passes through the same administrator authentication and server-side dashboard/site scope resolution as the management endpoint.
+- The management projection removes only historical `rows`; validation errors, counters, source evidence, actor, and timestamp remain available for the audit table.
+- No deployment, migration, external source call, scheduler change, secret change, or production action occurred.

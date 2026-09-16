@@ -26,12 +26,16 @@ test("migration 067 keeps canonically similar GSC dimension values distinct", ()
   );
 });
 
-test("migration 067 is the next registered migration and replays idempotently", () => {
+test("migration 067 follows both registered 066 site-SEO migrations and replays idempotently", () => {
   const files = listMigrationFiles(migrationsDir);
-  const previousIndex = files.indexOf("066_site_seo_alice_periods.sql");
+  const aliceIndex = files.indexOf("066_site_seo_alice_periods.sql");
+  const targetIntentIndex = files.indexOf("066_site_seo_target_intent.sql");
+  const migrationIndex = files.indexOf(migrationName);
 
-  assert.notEqual(previousIndex, -1);
-  assert.equal(files[previousIndex + 1], migrationName);
+  assert.notEqual(aliceIndex, -1);
+  assert.notEqual(targetIntentIndex, -1);
+  assert.ok(aliceIndex < targetIntentIndex);
+  assert.ok(targetIntentIndex < migrationIndex);
   assert.equal(files.filter((file) => file === migrationName).length, 1);
 
   let collation = "utf8mb4_unicode_ci";
