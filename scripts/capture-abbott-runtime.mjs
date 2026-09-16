@@ -162,11 +162,20 @@ export function passesVisualThreshold(comparison) {
 
 export function validateCaptureResult(index) {
   const reject=stage=>{throw markDiagnostic(new SafeStageError('CAPTURE_ACCEPTANCE'),stage,'mismatch');};
-  if(index.console.errors>0)reject('capture_console');
+  if(index.console.errors>0){
+    const reason=['console_resource','console_runtime','console_other'].includes(index.console.error_reason)?index.console.error_reason:'mismatch';
+    throw markDiagnostic(new SafeStageError('CAPTURE_ACCEPTANCE'),'capture_console',reason);
+  }
   for(const item of index.captures){
     if(item.comparison&&!item.comparison.dimensions_match)reject('capture_dimensions');
     if(item.comparison&&!passesVisualThreshold(item.comparison))reject('capture_compare');
   }
+}
+
+export function classifyConsoleError(text) {
+  if(/Failed to load resource|net::ERR_|the server responded with a status/i.test(String(text)))return 'console_resource';
+  if(/Uncaught|(?:Type|Reference|Range|Syntax)Error|Minified React error/i.test(String(text)))return 'console_runtime';
+  return 'console_other';
 }
 
 function defaultPidAlive(pid) {
@@ -411,6 +420,24 @@ export function buildCaptureUrl(candidateBase) {
   return url;
 }
 
+export async function installCaptureClock(page) {
+  const fixed='2026-09-14T12:00:00.000Z';
+  await page.evaluateOnNewDocument(value=>{
+    const NativeDate=Date,timestamp=NativeDate.parse(value);
+    class CaptureDate extends NativeDate {
+      constructor(...args){super(...(args.length?args:[timestamp]));}
+      static now(){return timestamp;}
+    }
+    globalThis.Date=CaptureDate;
+  },fixed);
+}
+
+export async function captureViewportWidth(page,viewport) {
+  const height=await page.evaluate(()=>Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight??0));
+  if(!Number.isSafeInteger(height)||height<1||height>100000||!Number.isSafeInteger(viewport?.width)||viewport.width<1)throw new SafeStageError('CAPTURE_BROWSER_CAPTURE');
+  return Buffer.from(await page.screenshot({type:'png',clip:{x:0,y:0,width:viewport.width,height},captureBeyondViewport:true}));
+}
+
 async function writeIndex(outputDirectory, index) {
   const text = `${JSON.stringify(index, null, 2)}\n`;
   if (INDEX_FORBIDDEN_TEXT.test(text)) throw new Error("Visual parity index contains forbidden content");
@@ -454,12 +481,13 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
     authorize: () => resolveManagerToken(loginBase, candidateBase, { managerPassword, managerAccessToken }),
     launch,
     capture: async ({ browser, authorization: managerToken, outputDirectory }) => {
-      const consoleCounts = { errors: 0, warnings: 0 };
+      const consoleCounts = { errors: 0, warnings: 0, error_reason: null };
       const page = await captureStage('capture_launch',()=>browser.newPage());
       const boundary = await guardCaptureRequests(page, candidateBase);
+      await captureStage('capture_launch',()=>installCaptureClock(page));
       await page.setBypassServiceWorker(true);
       page.on("console", (message) => {
-        if (message.type() === "error") consoleCounts.errors += 1;
+        if (message.type() === "error") {consoleCounts.errors += 1;consoleCounts.error_reason??=classifyConsoleError(message.text());}
         if (message.type() === "warning" || message.type() === "warn") consoleCounts.warnings += 1;
       });
       await page.setViewport(DESKTOP_VIEWPORT);
@@ -491,7 +519,7 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
           throw markDiagnostic(new SafeStageError('CAPTURE_BROWSER_CAPTURE'),'capture_dimensions','mismatch');
         }
         boundary.assertSafe();
-        const candidateBytes = await captureStage('capture_screenshot',async()=>Buffer.from(await page.screenshot({ fullPage: true, type: "png" })));
+        const candidateBytes = await captureStage('capture_screenshot',()=>captureViewportWidth(page,item.viewport));
         boundary.assertSafe();
         await captureStage('capture_output',()=>writePrivateExclusiveFile(outputDirectory, item.filename, candidateBytes));
         const baselinePath = path.join(locations.baseline, item.filename);

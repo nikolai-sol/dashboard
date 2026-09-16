@@ -35,9 +35,9 @@ test('visual launch/navigation/render/screenshot/dimensions errors have closed d
   try{for(const stage of ['capture_launch','capture_navigation','capture_render','capture_screenshot','capture_dimensions']){
     let closed=0;const secret='synthetic-private https://invalid/?access_token=hidden';
     const fault=()=>{throw Object.assign(Error(secret),{code:secret,stage:secret,reason:secret,stack:secret,cause:secret,headers:secret,body:secret,url:secret,path:secret,stdout:secret,stderr:secret});};
-    const page={setRequestInterception:async()=>{},on(){},setBypassServiceWorker:async()=>{},setViewport:async()=>{},setCookie:async()=>{},
+    const page={setRequestInterception:async()=>{},on(){},setBypassServiceWorker:async()=>{},setViewport:async()=>{},setCookie:async()=>{},evaluateOnNewDocument:async()=>{},
       goto:async()=>{if(stage==='capture_navigation')fault();},waitForSelector:async()=>{if(stage==='capture_render')fault();},
-      evaluate:async fn=>String(fn).includes('window.innerWidth')?{width:stage==='capture_dimensions'?0:1440,height:1000}:undefined,
+      evaluate:async fn=>String(fn).includes('window.innerWidth')?{width:stage==='capture_dimensions'?0:1440,height:1000}:String(fn).includes('scrollHeight')?1000:undefined,
       $$eval:async(_selector,_fn,args)=>args?true:['Источники трафика','Действия пользователя','Статистика страниц','Вернувшиеся','Общие материалы'],
       screenshot:async()=>fault(),
     };
@@ -50,10 +50,29 @@ test('visual launch/navigation/render/screenshot/dimensions errors have closed d
 test('visual acceptance reports only dimension, comparison or console enums',async()=>{
   assert.equal(typeof captureTool.validateCaptureResult,'function');const d=await import('./abbott-verification-diagnostics.mjs');
   for(const [stage,index]of [
-    ['capture_console',{console:{errors:1},captures:[]}],
+    ['capture_console',{console:{errors:1,error_reason:'console_resource'},captures:[]}],
     ['capture_dimensions',{console:{errors:0},captures:[{comparison:{dimensions_match:false}}]}],
     ['capture_compare',{console:{errors:0},captures:[{comparison:{dimensions_match:true,pixel_metrics:{changed_pixel_ratio:1,mean_absolute_error:1}}}]}],
-  ]){const error=await Promise.resolve().then(()=>captureTool.validateCaptureResult(index)).catch(e=>e);assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=mismatch\n`);}
+  ]){const error=await Promise.resolve().then(()=>captureTool.validateCaptureResult(index)).catch(e=>e);assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=${stage==='capture_console'?'console_resource':'mismatch'}\n`);}
+});
+
+test('console errors collapse to closed categories without returning their text',()=>{
+  assert.equal(captureTool.classifyConsoleError('Failed to load resource: private https://secret.invalid/?token=x'),'console_resource');
+  assert.equal(captureTool.classifyConsoleError('Uncaught TypeError: private token'),'console_runtime');
+  assert.equal(captureTool.classifyConsoleError('private token'),'console_other');
+});
+
+test('capture clock and screenshot keep the fixed baseline day and CSS viewport width',async()=>{
+  let installed,screenshotOptions;
+  const page={
+    evaluateOnNewDocument:async(fn,value)=>{installed={fn,value};},
+    evaluate:async()=>5477,
+    screenshot:async options=>{screenshotOptions=options;return Buffer.from('png');},
+  };
+  await captureTool.installCaptureClock(page);
+  const bytes=await captureTool.captureViewportWidth(page,{width:390,height:844});
+  assert.ok(Buffer.isBuffer(bytes));assert.equal(installed.value,'2026-09-14T12:00:00.000Z');
+  assert.deepEqual(screenshotOptions,{type:'png',clip:{x:0,y:0,width:390,height:5477},captureBeyondViewport:true});
 });
 
 test("token capture blocks redirects and off-origin requests before credentials can escape", async () => {
@@ -127,6 +146,7 @@ test("token browser failure closes the owned browser and removes output without 
   t.mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ user_ids: [] })));
   const page = {
     setRequestInterception: async () => undefined, on: () => undefined,
+    evaluateOnNewDocument: async () => undefined,
     setBypassServiceWorker: async () => undefined, setViewport: async () => undefined,
     setCookie: async cookie => { assert.equal(cookie.value, token); },
     goto: async () => { throw Error(token); },
