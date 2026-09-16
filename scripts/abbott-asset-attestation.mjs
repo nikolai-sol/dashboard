@@ -1,7 +1,7 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {createHash}from'node:crypto';
 const ROOT='/var/www/dashboard-abbott',CONTROL='/var/www/.dashboard-abbott-control';
-const ID='305cedd2321041b68b4d9e2cf502a2e0',SHA='66983f9969a3a1a92b951599ee2cb5ac253d0aa7';
-const HASH='d908928f199a4c742d648d19dea7a59b3b577103d05a70561cc65e2f71bf080b',PREVIOUS='cf5f0759e633421cba2fbc4fb822a244';
+const ID='978bab9dcd2b486d8c65f29960ef8eaa',SHA='62f034a6d3caabc66a9dcc033ec12a6e62979569';
+const HASH='c74c91a9581f816de10cacb6c2cc15b920e11898331405194f3de5b6f1bf3027',PREVIOUS='305cedd2321041b68b4d9e2cf502a2e0';
 export const ASSET_ATTESTATION_REASONS=Object.freeze(['record_schema','pin_mismatch','tree_hash','asset_prefix','predecessor','transport','source_proof','metadata','unknown','remote_import','remote_attestation']);
 const reasons=new WeakMap();
 const fail=reason=>{const error=Error('ABBOTT_ASSET_ATTESTATION_REFUSED');if(ASSET_ATTESTATION_REASONS.includes(reason))reasons.set(error,reason);throw error;};
