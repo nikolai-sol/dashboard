@@ -361,6 +361,8 @@ test('PDF semantic comparison exposes only a closed mismatch category',async()=>
   assert.equal(m.pdfMismatchReason(base,{...base,dimensions:[[600,792]]}),'page_dimensions');
   assert.equal(m.pdfMismatchReason(base,{...base,text_sha256:hash('different')}),'text_digest');
   assert.equal(m.pdfMismatchReason({...base,text_bag_sha256:hash('bag'),text_token_count:2},{...base,text_sha256:hash('different'),text_bag_sha256:hash('bag'),text_token_count:2}),'text_order');
+  assert.equal(m.pdfMismatchReason({...base,text_bag_sha256:hash('bag'),text_token_count:2},{...base,text_sha256:hash('different'),text_bag_sha256:hash('other'),text_token_count:3}),'text_token_count');
+  assert.equal(m.pdfMismatchReason({...base,text_bag_sha256:hash('bag'),text_token_count:2},{...base,text_sha256:hash('different'),text_bag_sha256:hash('other'),text_token_count:2}),'text_content');
   assert.equal(m.pdfMismatchReason(base,{pages:1,dimensions:[[612,792]]}),'pdf_shape');
 });
 

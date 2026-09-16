@@ -178,6 +178,8 @@ export function pdfMismatchReason(reference,candidate) {
   if(!isDeepStrictEqual(reference.dimensions,candidate.dimensions))return 'page_dimensions';
   if(reference.text_sha256!==candidate.text_sha256){
     if(reference.text_token_count===candidate.text_token_count&&typeof reference.text_bag_sha256==='string'&&reference.text_bag_sha256===candidate.text_bag_sha256)return 'text_order';
+    if(Number.isSafeInteger(reference.text_token_count)&&Number.isSafeInteger(candidate.text_token_count)&&reference.text_token_count!==candidate.text_token_count)return 'text_token_count';
+    if(typeof reference.text_bag_sha256==='string'&&typeof candidate.text_bag_sha256==='string')return 'text_content';
     return 'text_digest';
   }
   return null;
