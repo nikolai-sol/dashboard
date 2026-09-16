@@ -115,6 +115,14 @@ advanced to the exact observed `55ec478` record above, preserving the same
 predecessor, receipt, process, tree, and manifest checks for the next shadow
 activation.
 
+The repaired shadow release is now active at source
+`f0b331f0ee05b8d12438a843777ab8bfb7584acf`, release ID
+`1a63cbfda61f40d894af3e9744c093a3`, predecessor
+`5ec3175697824126b8bc0be1b84e68f3`, and manifest digest
+`8520477ea708c5cbc3dd65f7ac9fbc71c090274607f6b466265a2007c974eba2`.
+Its dashboard HTML and all nine declared browser assets return HTTP 200 directly
+from port 3004.
+
 ## Remaining live gates
 
 - Publish the reviewed Abbott branch and deploy only the port-3004 shadow.

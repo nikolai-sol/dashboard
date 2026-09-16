@@ -166,7 +166,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   const nginxReason=value=>{if(currentPhase==='preflight_nginx')notePhase(currentPhase,value);};
   const stat=file=>{try{return io.lstatSync(file);}catch(error){if(/^\/proc\/[1-9][0-9]*$/.test(file)&&error?.code==='ENOENT')reason('pid_absent');throw error;}};
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
-  const record={scope:'abbott',id:'5ec3175697824126b8bc0be1b84e68f3',sourceSha:'55ec478b42405515f2d3eff3d68dd9c3ac8a8d04',manifestDigest:'137540a76fce42ab5aac2f9ebb6805d0c1baa42ce8fe1677cab8205caa24ea69',previousId:'8c79caf495f147ad91b2174b9bc5f65c'};
+  const record={scope:'abbott',id:'1a63cbfda61f40d894af3e9744c093a3',sourceSha:'f0b331f0ee05b8d12438a843777ab8bfb7584acf',manifestDigest:'8520477ea708c5cbc3dd65f7ac9fbc71c090274607f6b466265a2007c974eba2',previousId:'5ec3175697824126b8bc0be1b84e68f3'};
   let boot,perimeterSnapshot,invalid=false;
   const neighborPolicies=[['combined',0,0,'/var/www/dashboard',3001],['zaruku',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],['medroche',983,983,null,3003]];
   const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
