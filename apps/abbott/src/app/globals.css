@@ -1,4 +1,8 @@
 @import "tailwindcss";
+@source "../../../../src/components/AbbottBiDashboard.tsx";
+@source "../../../../src/components/DashboardAccessGate.tsx";
+@source "../../../../src/components/abbott/AbbottAdminUsersPanel.tsx";
+@source "../../../../src/components/abbott/AbbottDatePicker.tsx";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
