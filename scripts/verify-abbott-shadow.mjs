@@ -13,7 +13,7 @@ import { ASSET_ATTESTATION_REASONS } from './abbott-asset-attestation.mjs';
 
 const ROOT = '/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
 const OUTPUT = '/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026-09-14';
-const BASELINE = '/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026-09-14';
+const BASELINE = '/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026-09-16';
 const AUTH_HASH = '71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f';
 const refuse = () => { throw new Error('ABBOTT_VERIFICATION_REFUSED'); };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
