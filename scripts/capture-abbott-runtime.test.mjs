@@ -112,6 +112,15 @@ test("token capture blocks redirects and off-origin requests before credentials 
   }
 });
 
+test("private successor-baseline capture can bind the same guard to control port only", async () => {
+  let handler,continued=0,aborted=0;
+  const page={setRequestInterception:async()=>{},on:(_event,callback)=>{handler=callback;}};
+  const guard=await captureTool.guardCaptureRequests(page,"http://127.0.0.1:3001",3001);
+  await handler({url:()=>"http://127.0.0.1:3001/dashboard/18",redirectChain:()=>[],resourceType:()=>"document",continue:async()=>{continued++;},abort:async()=>{aborted++;}});
+  assert.equal(continued,1);assert.equal(aborted,0);guard.assertSafe();
+  await assert.rejects(captureTool.guardCaptureRequests(page,"http://127.0.0.1:3001",3004));
+});
+
 test("token capture accepts only bounded base64 image data URLs as non-network image sources", async () => {
   for (const url of [
     "data:image/svg+xml,%3Csvg%3E%3C/svg%3E",

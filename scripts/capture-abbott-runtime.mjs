@@ -451,8 +451,8 @@ async function writeIndex(outputDirectory, index) {
   return writePrivateExclusiveFile(outputDirectory, "parity-index.json", text);
 }
 
-export async function guardCaptureRequests(page, candidateBase) {
-  const origin = assertRuntimeBaseUrl(candidateBase, 3004);
+export async function guardCaptureRequests(page, candidateBase, expectedPort = 3004) {
+  const origin = assertRuntimeBaseUrl(candidateBase, expectedPort);
   let violationReason = null;
   await page.setRequestInterception(true);
   page.on("request", async (request) => {
@@ -479,9 +479,9 @@ export async function guardCaptureRequests(page, candidateBase) {
   return { assertSafe() { if (violationReason) throw markDiagnostic(new SafeStageError("CAPTURE_REQUEST_BOUNDARY"),"capture_navigation",violationReason); } };
 }
 
-export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, managerAccessToken, launch }) {
+export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, managerAccessToken, launch, candidatePort = 3004 }) {
   assertRuntimeBaseUrl(loginBase, 3001);
-  assertRuntimeBaseUrl(candidateBase, 3004);
+  assertRuntimeBaseUrl(candidateBase, candidatePort);
   const locations = await captureStage('capture_output',()=>validateCaptureLocations({ baseline, outputParent }),'CAPTURE_OUTPUT_CREATE');
   return runCaptureLifecycle({
     createOutput: () => createPrivateCandidateDirectory(locations.outputParent),
@@ -490,7 +490,7 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
     capture: async ({ browser, authorization: managerToken, outputDirectory }) => {
       const consoleCounts = { errors: 0, warnings: 0, error_reason: null, resource_reason: null };
       const page = await captureStage('capture_launch',()=>browser.newPage());
-      const boundary = await guardCaptureRequests(page, candidateBase);
+      const boundary = await guardCaptureRequests(page, candidateBase, candidatePort);
       await captureStage('capture_launch',()=>installCaptureClock(page));
       await page.setBypassServiceWorker(true);
       page.on("console", (message) => {
