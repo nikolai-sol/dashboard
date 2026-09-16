@@ -109,6 +109,12 @@ the physical file mandatory; a real-build regression test proves the chunk is
 present in the trusted manifest. No route, data, credential, or API contract is
 changed by this repair.
 
+The repair deployment's first attempt refused before mutation because the
+deployment proof still pinned the former `6f09982` active record. It is now
+advanced to the exact observed `55ec478` record above, preserving the same
+predecessor, receipt, process, tree, and manifest checks for the next shadow
+activation.
+
 ## Remaining live gates
 
 - Publish the reviewed Abbott branch and deploy only the port-3004 shadow.
