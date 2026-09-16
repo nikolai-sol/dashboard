@@ -131,3 +131,36 @@ from port 3004.
   conflicting Abbott ownership, and validate the exact fragment.
 - Cut over only after every shadow gate passes; then run Abbott and neighbor
   regression smoke and retain the route-only rollback checkpoint.
+
+## Pre-cutover result, 2026-09-16
+
+The styled shadow runtime is active at source
+`85ca9546dbdf6d85b9118f4b0326999dc1ad30ca`, release ID
+`1a2f99c57e594fc38d1f3a663f781cf4`, predecessor
+`47d27abb85b343f3a0200835e02cdcda`, and manifest digest
+`39c4e08a87a3aeea2e2623c1095a17f32f18ed23b138c061b1c94de3235bcc3d`.
+The isolated build now explicitly scans only the shared Abbott UI sources that
+it imports; the prior shadow screenshots proved those Tailwind utilities were
+absent. An embedded data-URI icon removes Chromium's automatic favicon 404
+without adding a route. The full Abbott suite passed 854/854 before activation.
+
+The manager/embed data comparison passes and every owned SSH forward exits with
+verified cleanup. The stabilized visual capture has zero console errors and 12
+known chart warnings. All five desktop capture dimensions match the baseline;
+four pass the aggregate threshold, while user-actions reports
+`changed_pixel_ratio=0.045712` with `mean_absolute_error=0.000054`. The old
+mobile baseline is not reproducible under its documented CSS viewport: current
+capture is 800x14753 while the stored image is 800x7192. The baseline must not
+be silently replaced or the threshold relaxed without a reviewed control-side
+recapture.
+
+Read-only smoke remains a hard blocker. JSON, manager/embed privacy, aliases,
+Excel, attested assets, page count, and PDF page dimensions reach parity, but
+the first candidate-versus-control PDF comparison refuses at
+`pdf_compare_candidate/text_token_count`. Closed diagnostics prove this is a
+different normalized text token count, not token ordering or PDF metadata.
+
+No public Nginx edit, syntax test, reload, or route insertion was performed.
+Cutover remains prohibited until both the live visual control baseline and PDF
+semantic parity pass. The active shadow release remains available only on port
+3004 and the existing public Abbott paths continue to use the combined runtime.
