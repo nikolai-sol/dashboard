@@ -262,6 +262,7 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
         if(key==='pdf'&&(previous===CONTROL_PDF_UNAVAILABLE||pdf===CONTROL_PDF_UNAVAILABLE))continue;
         stage=code;
         if(key==='pdf'){
+          stage=origin===ORIGINS[0]?'pdf_compare_control_alias':alias==='18'?'pdf_compare_candidate':'pdf_compare_candidate_alias';
           const reason=pdfMismatchReason(previous,combined[key]);if(reason)reject(reason);
         }else if(!isDeepStrictEqual(previous,combined[key]))reject('mismatch');
       }summaries.set(audience,combined);
