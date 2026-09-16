@@ -308,7 +308,7 @@ test('available control PDFs keep strict semantic parity and an explicit matched
   for(const mismatch of [false,true]){
     const f=pdfPolicyFixture([200,200,200,200],r=>{if(mismatch)r.body=pdf('different candidate text');});
     const pending=m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
-    if(mismatch)await assert.rejects(pending,error=>{assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=mismatch\n');return true;});
+    if(mismatch)await assert.rejects(pending,error=>{assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=text_digest\n');return true;});
     else{const result=await pending;assert.equal(result.control_pdf_baseline,'available');assert.equal(result.pdf_parity,'matched');assert.equal(result.verification,'strict_parity');assert.equal(f.counts().candidates.length,4);}
   }
 });
@@ -349,8 +349,18 @@ test('candidate PDF aliases still compare semantically without a control baselin
   const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
   const f=pdfPolicyFixture(undefined,r=>{if(r.u.pathname==='/api/dashboard/abbott/pdf')r.body=pdf('alias differs');});
   await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl}),error=>{
-    assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=mismatch\n');return true;
+    assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=text_digest\n');return true;
   });
+});
+
+test('PDF semantic comparison exposes only a closed mismatch category',async()=>{
+  const m=await api();assert.equal(typeof m.pdfMismatchReason,'function');
+  const base={pages:1,dimensions:[[612,792]],text_sha256:hash('same')};
+  assert.equal(m.pdfMismatchReason(base,{...base}),null);
+  assert.equal(m.pdfMismatchReason(base,{...base,pages:2}),'page_count');
+  assert.equal(m.pdfMismatchReason(base,{...base,dimensions:[[600,792]]}),'page_dimensions');
+  assert.equal(m.pdfMismatchReason(base,{...base,text_sha256:hash('different')}),'text_digest');
+  assert.equal(m.pdfMismatchReason(base,{pages:1,dimensions:[[612,792]]}),'pdf_shape');
 });
 
 test('baseline exception preserves strict JSON Excel asset and embed privacy gates',async()=>{

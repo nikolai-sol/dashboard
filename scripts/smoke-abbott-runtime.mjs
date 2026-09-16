@@ -170,6 +170,15 @@ function assetType(p,type) {
   return types[extension]?.includes(type);
 }
 
+export function pdfMismatchReason(reference,candidate) {
+  const valid=value=>value&&typeof value==='object'&&Number.isSafeInteger(value.pages)&&Array.isArray(value.dimensions)&&typeof value.text_sha256==='string'&&/^[a-f0-9]{64}$/.test(value.text_sha256);
+  if(!valid(reference)||!valid(candidate))return 'pdf_shape';
+  if(reference.pages!==candidate.pages)return 'page_count';
+  if(!isDeepStrictEqual(reference.dimensions,candidate.dimensions))return 'page_dimensions';
+  if(reference.text_sha256!==candidate.text_sha256)return 'text_digest';
+  return null;
+}
+
 export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},signal,seams={}) {
   signal=AbortSignal.any([signal,AbortSignal.timeout(480000)]);
   const fetchImpl=seams.fetchImpl??fetch,parsePdf=seams.parsePdf??summarizePdf;
@@ -245,7 +254,10 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       const combined={summary,pdf,workbook};if(summaries.has(audience))for(const [key,code]of [['summary','json_compare'],['pdf','pdf_compare'],['workbook','excel_compare']]){
         const previous=summaries.get(audience)[key];
         if(key==='pdf'&&(previous===CONTROL_PDF_UNAVAILABLE||pdf===CONTROL_PDF_UNAVAILABLE))continue;
-        stage=code;if(!isDeepStrictEqual(previous,combined[key]))reject('mismatch');
+        stage=code;
+        if(key==='pdf'){
+          const reason=pdfMismatchReason(previous,combined[key]);if(reason)reject(reason);
+        }else if(!isDeepStrictEqual(previous,combined[key]))reject('mismatch');
       }summaries.set(audience,combined);
       stage='asset_html';
       if(inventories.has(origin)&&!isDeepStrictEqual(inventories.get(origin),paths))reject('alias_mismatch');inventories.set(origin,paths);

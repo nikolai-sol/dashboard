@@ -417,21 +417,25 @@ async function writeIndex(outputDirectory, index) {
 
 export async function guardCaptureRequests(page, candidateBase) {
   const origin = assertRuntimeBaseUrl(candidateBase, 3004);
-  let violated = false;
+  let violationReason = null;
   await page.setRequestInterception(true);
   page.on("request", async (request) => {
     try {
       const url = new URL(request.url());
-      if (url.origin !== origin || url.username || url.password || request.redirectChain().length !== 0) {
-        violated = true;
+      let reason = null;
+      if (request.redirectChain().length !== 0) reason = "redirect";
+      else if (url.username || url.password) reason = "url_credentials";
+      else if (url.origin !== origin) reason = request.resourceType() === "image" ? "off_origin_image" : "off_origin_other";
+      if (reason) {
+        violationReason ??= reason;
         await request.abort();
       } else await request.continue();
     } catch {
-      violated = true;
+      violationReason ??= "malformed_url";
       await request.abort().catch(() => undefined);
     }
   });
-  return { assertSafe() { if (violated) throw new SafeStageError("CAPTURE_REQUEST_BOUNDARY"); } };
+  return { assertSafe() { if (violationReason) throw markDiagnostic(new SafeStageError("CAPTURE_REQUEST_BOUNDARY"),"capture_navigation",violationReason); } };
 }
 
 export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, managerAccessToken, launch }) {

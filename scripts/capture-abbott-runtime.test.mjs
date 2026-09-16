@@ -58,15 +58,28 @@ test('visual acceptance reports only dimension, comparison or console enums',asy
 
 test("token capture blocks redirects and off-origin requests before credentials can escape", async () => {
   assert.equal(typeof captureTool.guardCaptureRequests, "function");
-  for (const [url, redirects, allowed] of [["http://127.0.0.1:3004/dashboard/18", [], true], ["https://example.invalid/", [], false], ["http://127.0.0.1:3001/", [], false], ["http://127.0.0.1:3004/dashboard/18", [{}], false]]) {
+  for (const [url, redirects, resourceType, expected] of [
+    ["http://127.0.0.1:3004/dashboard/18", [], "document", null],
+    ["https://example.invalid/logo.png", [], "image", "off_origin_image"],
+    ["http://127.0.0.1:3001/", [], "xhr", "off_origin_other"],
+    ["http://127.0.0.1:3004/dashboard/18", [{}], "document", "redirect"],
+    ["http://user:password@127.0.0.1:3004/dashboard/18", [], "document", "url_credentials"],
+    ["not a URL", [], "image", "malformed_url"],
+  ]) {
     let handler, intercepted = false, continued = 0, aborted = 0;
     const page = { setRequestInterception: async value => { intercepted = value; }, on: (event, callback) => { assert.equal(event, "request"); handler = callback; } };
     const guard = await captureTool.guardCaptureRequests(page, "http://127.0.0.1:3004");
-    await handler({ url: () => url, redirectChain: () => redirects, continue: async () => { continued += 1; }, abort: async () => { aborted += 1; } });
+    await handler({ url: () => url, redirectChain: () => redirects, resourceType: () => resourceType, continue: async () => { continued += 1; }, abort: async () => { aborted += 1; } });
     assert.equal(intercepted, true);
-    assert.equal(continued, allowed ? 1 : 0);
-    assert.equal(aborted, allowed ? 0 : 1);
-    if (allowed) guard.assertSafe(); else assert.throws(() => guard.assertSafe(), /CAPTURE_REQUEST_BOUNDARY/);
+    assert.equal(continued, expected ? 0 : 1);
+    assert.equal(aborted, expected ? 1 : 0);
+    if (!expected) guard.assertSafe();
+    else {
+      const d = await import("./abbott-verification-diagnostics.mjs");
+      let error;try{guard.assertSafe();}catch(caught){error=caught;}
+      assert.match(String(error),/CAPTURE_REQUEST_BOUNDARY/);
+      assert.equal(d.formatVerificationFailure(error), `ABBOTT_VERIFICATION_REFUSED stage=capture_navigation reason=${expected}\n`);
+    }
   }
 });
 
