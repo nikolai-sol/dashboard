@@ -1,0 +1,58 @@
+import type { SiteProfile, SiteSeoDashboardTabId } from "@reportingdash/site-seo-contract";
+import type { DashboardReadModel } from "../lib/read-model.ts";
+import { Overview } from "./Overview.tsx";
+import { Search } from "./Search.tsx";
+import { Wordstat } from "./Wordstat.tsx";
+import { Alice } from "./Alice.tsx";
+import { SeoOs } from "./SeoOs.tsx";
+import { Sources } from "./Sources.tsx";
+import { PeriodSelector, buildDashboardQuery } from "./PeriodSelector.tsx";
+import type { PeriodSelection } from "../lib/period-selection.ts";
+import { SiteSeoShell } from "./SiteSeoShell.tsx";
+import { Content } from "./Content.tsx";
+
+export type DashboardTab = Readonly<{ id: SiteSeoDashboardTabId; label: string }>;
+
+function enabled(profile: SiteProfile, sourceKey: SiteProfile["sources"][number]["sourceKey"]): boolean {
+  return profile.sources.some((source) => source.sourceKey === sourceKey && source.mode !== "disabled");
+}
+
+export function dashboardTabs(profile: SiteProfile): DashboardTab[] {
+  const tabs: DashboardTab[] = [{ id: "overview", label: "Обзор" }];
+  if (enabled(profile, "yandex_webmaster") || enabled(profile, "google_search_console")) tabs.push({ id: "search", label: "SEO" });
+  if (enabled(profile, "yandex_webmaster_alice_manual")) tabs.push({ id: "alice", label: "ИИ-видимость и конкуренты" });
+  if (enabled(profile, "yandex_wordstat")) tabs.push({ id: "wordstat", label: "Спрос Wordstat" });
+  if (enabled(profile, "yandex_metrika")) tabs.push({ id: "content", label: "Контент" });
+  if (enabled(profile, "seo_os")) tabs.push({ id: "seo-os", label: "Работы и задачи" });
+  tabs.push({ id: "sources", label: "Источники" });
+  const hidden = new Set<SiteSeoDashboardTabId>(profile.hiddenTabs ?? []);
+  return tabs.filter((tab) => !hidden.has(tab.id));
+}
+
+export function resolveActiveTab(tabs: readonly DashboardTab[], requested?: string): string {
+  return tabs.some((tab) => tab.id === requested) ? requested! : tabs[0]!.id;
+}
+
+export function Dashboard({ profile, model, selection, publicationId, filters, availableWeeks = [selection.traffic.primary], activeTab: requestedTab }: Readonly<{ profile: SiteProfile; model: DashboardReadModel; selection: PeriodSelection; publicationId: string | null; filters: Readonly<Record<string, string>>; availableWeeks?: readonly PeriodSelection["traffic"]["primary"][]; activeTab?: string }>) {
+  const query = buildDashboardQuery(selection, publicationId, filters);
+  const gscEnabled = enabled(profile, "google_search_console");
+  const metrikaEnabled = enabled(profile, "yandex_metrika") && availableWeeks.length > 0;
+  const webmasterEnabled = enabled(profile, "yandex_webmaster");
+  const webmasterComparison = model.trafficComparison.yandex_webmaster;
+  const tabs = dashboardTabs(profile);
+  const activeTab = resolveActiveTab(tabs, requestedTab);
+  const tabHref = (id: string) => `?${query}&tab=${encodeURIComponent(id)}`;
+  const toolbar = activeTab === "overview" || activeTab === "search" || activeTab === "content" ? <PeriodSelector selection={selection} publicationId={publicationId} filters={filters} activeTab={activeTab} availableWeeks={availableWeeks} /> : null;
+  const exports = <p><a href={`/api/dashboard/${profile.slug}?${query}`}>JSON</a>{" · "}<a href={`/api/dashboard/${profile.slug}/excel?${query}`}>Excel</a>{" · "}<a href={`/api/dashboard/${profile.slug}/pdf?${query}`}>PDF</a></p>;
+
+  let section;
+  if (activeTab === "overview") section = <Overview id="overview" model={model} showGsc={gscEnabled} showMetrika={metrikaEnabled} showWebmaster={webmasterEnabled} />;
+  else if (activeTab === "search") section = <Search id="search" profile={profile} model={model} showGsc={gscEnabled} showWebmaster={webmasterEnabled} comparison={webmasterComparison} comparisonKey={selection.traffic.comparison?.key} />;
+  else if (activeTab === "wordstat") section = <Wordstat id="wordstat" meta={model.datasets.yandex_wordstat} data={model.wordstat} />;
+  else if (activeTab === "content") section = <Content id="content" profile={profile} data={model.metrika} />;
+  else if (activeTab === "alice") section = <Alice id="alice" meta={model.datasets.yandex_webmaster_alice_manual} data={model.alice} />;
+  else if (activeTab === "seo-os") section = <SeoOs id="seo-os" meta={model.datasets.seo_os} data={model.seoOs} />;
+  else section = <Sources id="sources" profile={profile} model={model} />;
+
+  return <SiteSeoShell title={profile.title} domain={profile.domain} logoAsset={profile.logoAsset} tabs={tabs} activeTab={activeTab} tabHref={tabHref} toolbar={toolbar} exports={exports}>{section}</SiteSeoShell>;
+}

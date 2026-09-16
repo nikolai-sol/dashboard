@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "siteId": "{{siteId}}",
+  "profileVersion": "{{profileVersion}}",
+  "templateVersion": "{{templateVersion}}",
+  "runtime": {
+    "route": "{{route}}",
+    "assetPrefix": "{{assetPrefix}}",
+    "buildOutputDir": "{{buildOutputDir}}",
+    "processName": "{{processName}}",
+    "port": "{{port}}",
+    "deployPath": "{{deployPath}}",
+    "releaseBranch": "{{releaseBranch}}",
+    "deployLockPath": "{{deployLockPath}}"
+  }
+}

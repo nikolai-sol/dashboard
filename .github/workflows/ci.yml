@@ -33,3 +33,15 @@ jobs:
 
       - name: Verify app
         run: npm run ci:verify
+
+      - name: Verify universal site SEO dashboard
+        run: npm run test:site-seo && npm run typecheck:site-seo
+
+      - name: Build isolated MedRoche candidate
+        shell: bash
+        run: |
+          registry_path="$RUNNER_TEMP/site-seo-registry.json"
+          preview_json="$(node scripts/site-seo-create.mjs --profile config/sites/medroche.json --preview --registry "$registry_path")"
+          preview_id="$(printf '%s' "$preview_json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).previewId')"
+          node scripts/site-seo-create.mjs --profile config/sites/medroche.json --apply --preview-id "$preview_id" --registry "$registry_path"
+          npm --workspace apps/site-seo run build -- --site medroche --registry "$registry_path"

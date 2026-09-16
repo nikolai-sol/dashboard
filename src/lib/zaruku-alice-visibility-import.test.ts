@@ -39,6 +39,69 @@ test("ExcelJS parser keeps official SoV separate from exported example coverage"
   assert.equal(parsed.queries[0].portalPosition, 1);
   assert.equal(parsed.queries[1].portalPosition, null);
   assert.equal(parsed.sources.length, 4);
+  assert.deepEqual(parsed.sourcePeriod, {
+    kind: "calendar_month",
+    from: "2026-08-01",
+    to: "2026-08-31",
+  });
+  assert.deepEqual(parsed.officialSovPoints, []);
+});
+
+test("parser accepts a custom source period with ordered Monday-Sunday official points", async () => {
+  const officialSovPoints = [
+    { from: "2026-07-27", to: "2026-08-02", value: 19.25 },
+    { from: "2026-08-03", to: "2026-08-09", value: 21.5 },
+  ];
+  const parsed = await parseAliceVisibilityWorkbook(
+    await workbookBuffer([header]),
+    {
+      ...input,
+      period: "2026-08",
+      officialSovPct: null,
+      sourcePeriod: { kind: "custom", from: "2026-07-27", to: "2026-08-09" },
+      officialSovPoints,
+    },
+  );
+
+  assert.equal(parsed.period, "2026-08");
+  assert.equal(parsed.officialSovPct, null);
+  assert.deepEqual(parsed.sourcePeriod, { kind: "custom", from: "2026-07-27", to: "2026-08-09" });
+  assert.deepEqual(parsed.officialSovPoints, officialSovPoints);
+});
+
+test("legacy monthly parser requires official SOV when there are no weekly points", async () => {
+  const buffer = await workbookBuffer([header]);
+  await assert.rejects(
+    () => parseAliceVisibilityWorkbook(
+      buffer,
+      { ...input, officialSovPct: null },
+    ),
+    /Доля запросов|official/i,
+  );
+});
+
+test("parser rejects invalid custom weekly points without coercing null to zero", async () => {
+  const buffer = await workbookBuffer([header]);
+  const base = {
+    ...input,
+    officialSovPct: null,
+    sourcePeriod: { kind: "custom" as const, from: "2026-07-27", to: "2026-08-09" },
+  };
+  const invalidPoints = [
+    [{ from: "2026-07-28", to: "2026-08-03", value: 20 }],
+    [{ from: "2026-07-27", to: "2026-08-01", value: 20 }],
+    [{ from: "2026-07-20", to: "2026-07-26", value: 20 }],
+    [{ from: "2026-08-03", to: "2026-08-09", value: 20 }, { from: "2026-07-27", to: "2026-08-02", value: 21 }],
+    [{ from: "2026-07-27", to: "2026-08-02", value: null }],
+    [],
+  ];
+
+  for (const officialSovPoints of invalidPoints) {
+    await assert.rejects(
+      () => parseAliceVisibilityWorkbook(buffer, { ...base, officialSovPoints } as never),
+      /weekly|point|Monday|Sunday|source period|value|nonempty|ordered/i,
+    );
+  }
 });
 
 test("ExcelJS parser preserves the reviewed 155/89/1313 real-workbook totals", async () => {

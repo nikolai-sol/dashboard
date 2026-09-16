@@ -1,0 +1,888 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
+
+import { createAvailableMetrikaWeeksReadExecutor, createCanonicalReadExecutor } from "./db.ts";
+
+const scope = {
+  clientId: "client-roche",
+  siteId: "site-medroche",
+  dashboardId: 41,
+  sourceKey: "google_search_console" as const,
+  analyticsAccountId: "gsc-account",
+  resourceId: "sc-domain:med.roche.ru",
+};
+
+function importFields() {
+  return {
+    import_id: 7,
+    import_uid: "publication-7",
+    client_id: scope.clientId,
+    site_id: scope.siteId,
+    dashboard_id: scope.dashboardId,
+    source_key: scope.sourceKey,
+    analytics_account_id: scope.analyticsAccountId,
+    resource_id: scope.resourceId,
+    period_kind: "calendar_month",
+    period_from: "2026-08-01",
+    period_to: "2026-08-31",
+    period_key: "2026-08",
+    source_timezone: "Europe/Moscow",
+    filters_hash: "unused-in-fixture",
+    adapter_version: "gsc-v1",
+    exported_at: "2026-09-01T10:00:00.000Z",
+    revision: 1,
+  };
+}
+
+test("canonical GSC executor reads only full scoped MySQL facts and preserves provenance", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({
+    async execute(sql: string, params: unknown[]) {
+      calls.push({ sql, params });
+      if (sql.includes("canonical_fact_gsc_manual_daily")) return [[{
+        ...importFields(), report_date: "2026-08-03", clicks: "2", impressions: "20",
+        ctr_pct: "10", average_position: "3.5", coverage_state: "complete",
+      }], []];
+      if (sql.includes("canonical_fact_gsc_manual_period_dimensions")) return [[{
+        ...importFields(), dimension_name: "query", dimension_value: "roche", source_row_ordinal: 1,
+        clicks: "2", impressions: "20", ctr_pct: "10", average_position: "3.5",
+      }], []];
+      if (sql.includes("canonical_fact_gsc_manual_indexing")) return [[], []];
+      if (sql.includes("canonical_seo_manual_coverage")) return [[
+        { ...importFields(), layer_name: "daily", coverage_state: "complete", row_count: 1, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+        { ...importFields(), layer_name: "query", coverage_state: "limited", row_count: 1, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+        { ...importFields(), layer_name: "page", coverage_state: "unknown", row_count: 1, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+      ], []];
+      throw new Error("unexpected query");
+    },
+  });
+
+  const result = await execute({
+    name: "gsc",
+    scope,
+    period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" },
+    publicationId: "publication-7",
+    filters: { country: "RU" },
+  });
+
+  assert.ok("dimensions" in result);
+  assert.equal(result.summary?.clicks, 2);
+  assert.equal("meta" in result && result.meta.importId, "publication-7");
+  assert.equal("dimensions" in result && result.dimensions[0]?.meta.completeness, "limited");
+  assert.equal("dimensionCoverage" in result && result.dimensionCoverage?.page?.state, "partial");
+  assert.equal("dimensionCoverage" in result && result.dimensionCoverage?.page?.completeness, "unknown");
+  assert.ok(calls.every(({ params }) => params.includes(scope.clientId) && params.includes(scope.siteId) && params.includes(41)));
+  assert.ok(calls.filter(({ sql }) => !sql.includes("site-seo:gsc-indexing-latest")).every(({ params }) => params.includes("publication-7")));
+  assert.ok(calls.some(({ sql, params }) => sql.includes("site-seo:gsc-indexing-latest") && !params.includes("publication-7")));
+  assert.ok(calls.every(({ sql }) => !/api\.|oauth|token/i.test(sql)));
+});
+
+test("canonical GSC executor maps the latest scoped indexing snapshot independently from the Performance month", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("site-seo:gsc-indexing-latest")) return [[
+      { ...importFields(), import_id: 9, import_uid: "indexing-9", period_kind: "snapshot", period_from: "2026-09-05", period_to: "2026-09-05", period_key: "2026-09-05", snapshot_date: "2026-09-05", reason: "Просканировано, но не проиндексировано", affected_url_count: "12", validation_state: "started", coverage_state: "unknown", row_count: 2, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+      { ...importFields(), import_id: 9, import_uid: "indexing-9", period_kind: "snapshot", period_from: "2026-09-05", period_to: "2026-09-05", period_key: "2026-09-05", snapshot_date: "2026-09-05", reason: "Обнаружено, но не проиндексировано", affected_url_count: "7", validation_state: null, coverage_state: "unknown", row_count: 2, evidence_json: "{}", publication_priority: 0, publication_revision: 1 },
+    ], []];
+    if (sql.includes("canonical_seo_manual_coverage") || sql.includes("canonical_fact_gsc_manual_daily") || sql.includes("canonical_fact_gsc_manual_period_dimensions")) return [[], []];
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "gsc",
+    scope,
+    period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: { country: "all", search_type: "web", device: "all" },
+  });
+
+  assert.ok("indexing" in result);
+  assert.deepEqual(result.indexing.period, { kind: "snapshot", key: "2026-09-05", from: "2026-09-05", to: "2026-09-05", sourceTimezone: "Europe/Moscow" });
+  assert.equal(result.indexing.state, "partial");
+  assert.equal(result.indexing.completeness, "unknown");
+  assert.deepEqual(result.indexingRows, [
+    { snapshotDate: "2026-09-05", reason: "Просканировано, но не проиндексировано", affectedUrlCount: 12, validationState: "started" },
+    { snapshotDate: "2026-09-05", reason: "Обнаружено, но не проиндексировано", affectedUrlCount: 7, validationState: null },
+  ]);
+  const indexingCall = calls.find(({ sql }) => sql.includes("site-seo:gsc-indexing-latest"));
+  assert.deepEqual(indexingCall?.params, [
+    scope.clientId, scope.siteId, scope.dashboardId, scope.sourceKey, scope.analyticsAccountId, scope.resourceId,
+    createHash("sha256").update(JSON.stringify({ country: "all", device: "all", search_type: "web" }), "utf8").digest("hex"),
+  ]);
+  assert.doesNotMatch(indexingCall?.sql ?? "", /2026-08-31|oauth|token|api\./i);
+});
+
+test("Metrika reads exact account coverage from canonical MySQL", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_metrika_breakdown_coverage_daily")) return [[{
+      covered_days: 7, coverage_rows: 7, success_rows: 7, incomplete_rows: 0,
+      import_id: 81, loaded_at: "2026-08-10 12:00:00",
+    }], []];
+    return [[], []];
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_metrika", analyticsAccountId: "counter-account", resourceId: "counter-resource" },
+    period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+  assert.equal("state" in result && result.state, "ready");
+  assert.equal("completeness" in result && result.completeness, "complete");
+  assert.equal("importId" in result && result.importId, "81");
+  assert.equal("trafficMeta" in result && result.trafficMeta?.state, "missing");
+  assert.equal(calls.length, 8);
+  assert.match(calls[0]!.sql, /canonical_metrika_breakdown_coverage_daily/i);
+  assert.deepEqual(calls[0]!.params, ["yandex_metrika", "counter-account", "2026-08-03", "2026-08-09"]);
+  assert.doesNotMatch(calls[0]!.sql, /api\.|oauth|token/i);
+});
+
+test("completed Metrika weeks query is compatible with ONLY_FULL_GROUP_BY", async () => {
+  const execute = createAvailableMetrikaWeeksReadExecutor({ async execute(sql, params) {
+    if (!/FROM\s+\(\s*SELECT YEARWEEK\(report_date, 3\) AS iso_yearweek/i.test(sql)
+      || !/GROUP BY iso_yearweek/i.test(sql)) {
+      const error = new Error("Expression #1 of SELECT list is not in GROUP BY clause");
+      Object.assign(error, { code: "ER_WRONG_FIELD_WITH_GROUP" });
+      throw error;
+    }
+    assert.deepEqual(params, ["yandex_metrika", "counter-account"]);
+    return [[{ week_key: "2026-W36", period_from: "2026-08-31", period_to: "2026-09-06" }], []];
+  } });
+
+  const result = await execute({
+    name: "available_metrika_weeks",
+    scope: { ...scope, sourceKey: "yandex_metrika", analyticsAccountId: "counter-account", resourceId: "counter-resource" },
+    timezone: "Europe/Moscow",
+  });
+
+  assert.deepEqual(result.weeks, [{
+    kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow",
+  }]);
+});
+
+test("canonical source readers preserve empty, partial, and exact resource semantics", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_wordstat_coverage")) return [[{
+      coverage_rows: 2, current_coverage_rows: 1, current_success_rows: 0, current_import_id: 91,
+      historical_coverage_rows: 1, historical_success_rows: 0, historical_import_id: 91,
+      import_id: 91, loaded_at: "2026-09-01 01:00:00",
+    }], []];
+    if (sql.includes("canonical_collector_runs")) return [[
+      { job_key: "yandex_wordstat:wordstat-account:current", status: "success", import_id: 91, loaded_at: "2026-09-01 01:01:00" },
+      { job_key: "yandex_wordstat:wordstat-account:historical", status: "success", import_id: 90, loaded_at: "2026-09-01 00:59:00" },
+    ], []];
+    if (/site-seo:wordstat-(demand|queries)/.test(sql)) return [[], []];
+    if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 92, loaded_at: "2026-08-09 01:00:00" }], []];
+    if (/site-seo:webmaster-(summary|daily|pages|queries)/.test(sql)) return [[], []];
+    if (/site-seo:alice-(summary|sov-weekly|competitors|queries)/.test(sql)) return [[], []];
+    if (sql.includes("canonical_alice_visibility_snapshots")) return [[{ id: 93, row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00" }], []];
+    throw new Error("unexpected query");
+  } });
+  const week = { kind: "iso_week" as const, from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" };
+  const wordstat = await execute({ name: "dataset", scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "wordstat-account", resourceId: "ru" }, period: week, publicationId: null, filters: {} });
+  const webmaster = await execute({ name: "dataset", scope: { ...scope, sourceKey: "yandex_webmaster", analyticsAccountId: "webmaster-account", resourceId: "https:example.test:443" }, period: week, publicationId: null, filters: {} });
+  const alice = await execute({ name: "dataset", scope: { ...scope, sourceKey: "yandex_webmaster_alice_manual", analyticsAccountId: "alice-account", resourceId: "example.test" }, period: { ...week, kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08" }, publicationId: null, filters: {} });
+
+  assert.equal("state" in wordstat && wordstat.state, "complete_empty");
+  assert.equal("state" in webmaster && webmaster.state, "partial");
+  assert.equal("state" in alice && alice.state, "ready");
+  assert.match(calls[0]!.sql, /canonical_wordstat_coverage/i);
+  assert.deepEqual(calls.find((call) => call.sql.includes("site-seo:webmaster-meta"))?.params, ["yandex_webmaster", "webmaster-account", "https:example.test:443", "2026-08-03", "2026-08-09"]);
+  assert.deepEqual(calls.at(-1)?.params, ["93", "yandex_webmaster_alice_manual", "alice-account", "example.test", "2026-08-01", "2026-08-31"]);
+});
+
+test("derived SEO OS without a scoped canonical run stays honestly missing without reading positions", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) { calls.push(sql); return [[], []]; } });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os" }, period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+  assert.equal("state" in result && result.state, "missing");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, /site-seo:seo-os-run/);
+});
+
+test("SEO OS rejects non-Monday observation evidence before reading position facts", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    calls.push(sql);
+    return [[{
+      run_id: 72,
+      week_key: "2026-W37",
+      run_week_key: "2026-W37",
+      status: "completed",
+      loaded_at: "2026-09-11 09:30:00",
+      stages: JSON.stringify({
+        selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+        observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-08", to: "2026-09-14", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+      }),
+    }], []];
+  } });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+  assert.equal("state" in result && result.state, "missing");
+  assert.equal(calls.length, 1);
+});
+
+test("SEO OS rejects incomplete tracking-set evidence before reading position facts", async () => {
+  for (const tracking of [
+    { tracking_set_item_count: 0, tracking_set_checksum: "a".repeat(64) },
+    { tracking_set_item_count: 28, tracking_set_checksum: "not-a-sha256" },
+  ]) {
+    const calls: string[] = [];
+    const execute = createCanonicalReadExecutor({ async execute(sql) {
+      calls.push(sql);
+      return [[{
+        run_id: 72, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed", ingestion_run_id: "seo-os-medroche-1", loaded_at: "2026-09-11 09:30:00",
+        stages: JSON.stringify({
+          selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+          observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+        }),
+        ...tracking,
+      }], []];
+    } });
+    const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+    assert.equal("state" in result && result.state, "missing");
+    assert.equal(calls.length, 1);
+  }
+});
+
+test("Wordstat pins one latest rolling snapshot and exposes its actual window", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_wordstat_coverage")) return [[{
+      coverage_rows: 2, current_coverage_rows: 1, current_success_rows: 1, current_import_id: 12,
+      historical_coverage_rows: 1, historical_success_rows: 1, historical_import_id: 11,
+      import_id: 12, loaded_at: "2026-08-26 01:00:00",
+    }], []];
+    if (sql.includes("canonical_collector_runs")) return [[
+      { job_key: "yandex_wordstat:wordstat-account:current", status: "success", import_id: 12, loaded_at: "2026-08-26 01:01:00" },
+      { job_key: "yandex_wordstat:wordstat-account:historical", status: "success", import_id: 11, loaded_at: "2026-08-26 00:59:00" },
+    ], []];
+    if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
+    if (sql.includes("site-seo:wordstat-queries")) return [[{
+      query_text: "лечение", count: "100", request_kind: "popular",
+      snapshot_date: "2026-08-25", window_from: "2026-07-27", window_to: "2026-08-25",
+      registry_version: "registry-2", ingestion_run_id: "run-2",
+    }], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "wordstat-account", resourceId: "region:225" },
+    period: { kind: "iso_week", from: "2026-08-17", to: "2026-08-23", key: "2026-W34", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "wordstat");
+  assert.equal("state" in result && result.state, "ready");
+  assert.deepEqual("period" in result && result.period, {
+    kind: "iso_week", key: "2026-W34", from: "2026-08-17", to: "2026-08-23", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("snapshotPeriod" in result && result.snapshotPeriod, {
+    kind: "custom", key: "rolling:2026-07-27:2026-08-25", from: "2026-07-27", to: "2026-08-25", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("queries" in result && result.queries, [{
+    query: "лечение", count: 100, kind: "popular",
+    window: { from: "2026-07-27", to: "2026-08-25", snapshotDate: "2026-08-25", registryVersion: "registry-2", importId: "run-2" },
+  }]);
+  const queryCall = calls.find((call) => call.sql.includes("site-seo:wordstat-queries"));
+  assert.match(calls[0]!.sql, /current_success_rows/i);
+  assert.doesNotMatch(calls[0]!.sql, /ORDER BY[\s\S]*LIMIT 1/i);
+  assert.match(calls[0]!.sql, /endpoint = 'top_requests'\s+OR/i);
+  assert.match(calls[0]!.sql, /endpoint = 'dynamics' AND requested_from <= \?/i);
+  assert.match(queryCall!.sql, /WITH selected_snapshot/i);
+  assert.doesNotMatch(queryCall!.sql, /window_from <= \?/i);
+  assert.doesNotMatch(queryCall!.sql, /window_to >= \?/i);
+  assert.match(queryCall!.sql, /ORDER BY window_to DESC/i);
+  assert.match(queryCall!.sql, /snapshot_date DESC, ingestion_run_id DESC, registry_version DESC/i);
+  assert.match(queryCall!.sql, /fact\.request_kind = 'popular'/i);
+  assert.doesNotMatch(queryCall!.sql, /SUM\(count\)/i);
+  assert.deepEqual(queryCall!.params, ["yandex_wordstat", "wordstat-account", "yandex_wordstat", "wordstat-account"]);
+  assert.deepEqual(
+    calls.find((call) => call.sql.includes("site-seo:wordstat-demand"))?.params,
+    ["yandex_wordstat", "wordstat-account", "225", "2026-08-17", "2026-08-23"],
+  );
+});
+
+test("Wordstat keeps the latest rolling snapshot visible when the selected week ends later", async () => {
+  let snapshotSql = "";
+  const attemptSql: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_wordstat_coverage")) {
+      const currentSnapshotIsPeriodIndependent = /endpoint = 'top_requests'\s+OR/i.test(sql)
+        && /endpoint = 'dynamics' AND requested_from <= \?/i.test(sql);
+      return [[currentSnapshotIsPeriodIndependent ? {
+        coverage_rows: 1, current_coverage_rows: 1, current_success_rows: 1, current_import_id: 2474,
+        historical_coverage_rows: 0, historical_success_rows: 0, historical_import_id: null,
+        import_id: 2474, loaded_at: "2026-09-11 06:55:01",
+      } : {
+        coverage_rows: 0, current_coverage_rows: 0, current_success_rows: 0, current_import_id: null,
+        historical_coverage_rows: 0, historical_success_rows: 0, historical_import_id: null,
+        import_id: null, loaded_at: null,
+      }], []];
+    }
+    if (sql.includes("canonical_collector_runs")) {
+      attemptSql.push(sql);
+      if (sql.includes("site-seo:wordstat-current-attempts")) return [[{
+        job_key: "yandex_wordstat:94927113:current", status: "failed", import_id: 2475, loaded_at: "2026-09-12 06:55:01",
+      }], []];
+      return [[], []];
+    }
+    if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: null }], []];
+    if (sql.includes("site-seo:wordstat-queries")) {
+      snapshotSql = sql;
+      if (/window_from <= \?/i.test(sql)) return [[], []];
+      return [[{
+        query_text: "бевацизумаб", count: "14982", request_kind: "popular",
+        snapshot_date: "2026-09-11", window_from: "2026-08-13", window_to: "2026-09-11",
+        registry_version: "medroche-core-webmaster-w36-v1", ingestion_run_id: "2474",
+      }], []];
+    }
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "94927113", resourceId: "region:225" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "wordstat");
+  assert.equal("latestAttempt" in result && result.latestAttempt, "failed");
+  assert.deepEqual("period" in result && result.period, {
+    kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("snapshotPeriod" in result && result.snapshotPeriod, {
+    kind: "custom", key: "rolling:2026-08-13:2026-09-11", from: "2026-08-13", to: "2026-09-11", sourceTimezone: "Europe/Moscow",
+  });
+  assert.equal("queries" in result && result.queries[0]?.query, "бевацизумаб");
+  assert.doesNotMatch(snapshotSql, /window_from <= \?/i);
+  assert.doesNotMatch(snapshotSql, /window_to >= \?/i);
+  assert.equal(attemptSql.length, 2);
+  assert.doesNotMatch(attemptSql.find((sql) => sql.includes("wordstat-current-attempts")) ?? "", /date_from <= \?/i);
+  assert.match(attemptSql.find((sql) => sql.includes("wordstat-historical-attempts")) ?? "", /date_from <= \?/i);
+});
+
+test("Wordstat reports a failed scoped collection instead of inventing zero demand", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_wordstat_coverage")) return [[], []];
+    if (sql.includes("wordstat-current-attempts")) return [[{
+      job_key: "yandex_wordstat:medroche-wordstat:current", status: "failed", import_id: 117, loaded_at: "2026-09-10 08:00:00",
+    }], []];
+    if (sql.includes("wordstat-historical-attempts")) return [[], []];
+    throw new Error("facts must not be read after a failed collection");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "medroche-wordstat", resourceId: "ru" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("state" in result && result.state, "failed");
+  assert.equal("latestAttempt" in result && result.latestAttempt, "failed");
+  assert.equal(calls.length, 3);
+  assert.match(calls[1]!.sql, /canonical_collector_runs/i);
+  assert.deepEqual(calls[1]!.params, [
+    "yandex_wordstat",
+    "yandex_wordstat:medroche-wordstat:current",
+    "yandex_wordstat:medroche-wordstat:all",
+  ]);
+  assert.deepEqual(calls[2]!.params, [
+    "yandex_wordstat",
+    "yandex_wordstat:medroche-wordstat:historical",
+    "yandex_wordstat:medroche-wordstat:all",
+    "2026-09-07",
+    "2026-09-13",
+  ]);
+});
+
+test("Wordstat keeps covered facts visible and an unrelated newer regions success cannot hide a partial current run", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    calls.push(sql);
+    if (sql.includes("canonical_wordstat_coverage")) return [[{
+      coverage_rows: 2, current_coverage_rows: 1, current_success_rows: 1, current_import_id: 118,
+      historical_coverage_rows: 1, historical_success_rows: 1, historical_import_id: 117,
+      import_id: 118, loaded_at: "2026-09-10 08:00:00",
+    }], []];
+    if (sql.includes("wordstat-current-attempts")) return [[
+      { job_key: "yandex_wordstat:medroche-wordstat:current", status: "partial", import_id: 118, loaded_at: "2026-09-10 08:01:00" },
+      { job_key: "yandex_wordstat:medroche-wordstat:regions", status: "success", import_id: 119, loaded_at: "2026-09-10 08:02:00" },
+    ], []];
+    if (sql.includes("wordstat-historical-attempts")) return [[
+      { job_key: "yandex_wordstat:medroche-wordstat:historical", status: "success", import_id: 117, loaded_at: "2026-09-10 08:00:00" },
+    ], []];
+    if (sql.includes("site-seo:wordstat-demand")) return [[{ demand: "35" }], []];
+    if (sql.includes("site-seo:wordstat-queries")) return [[{
+      query_text: "лечение", count: "100", request_kind: "popular",
+      snapshot_date: "2026-09-10", window_from: "2026-08-12", window_to: "2026-09-10",
+      registry_version: "registry-2", ingestion_run_id: "118",
+    }], []];
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "medroche-wordstat", resourceId: "ru" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "wordstat");
+  assert.equal("state" in result && result.state, "partial");
+  assert.equal("latestAttempt" in result && result.latestAttempt, "failed");
+  assert.equal("demand" in result && result.demand, 35);
+  assert.equal("queries" in result && result.queries.length, 1);
+  assert.ok(calls.some((sql) => sql.includes("canonical_collector_runs")));
+  assert.ok(calls.some((sql) => sql.includes("site-seo:wordstat-queries")));
+});
+
+test("Wordstat remains missing when neither scoped coverage nor an attempt exists", async () => {
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_wordstat_coverage") || sql.includes("canonical_collector_runs")) return [[], []];
+    throw new Error("unexpected fact query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_wordstat", analyticsAccountId: "new-wordstat-account", resourceId: "ru" },
+    period: { kind: "iso_week", from: "2026-09-07", to: "2026-09-13", key: "2026-W37", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+  assert.equal("state" in result && result.state, "missing");
+});
+
+test("Alice retains published per-query portal and ranked source facts without conflating official SOV", async () => {
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{
+      id: 93, row_count: 1, import_id: "alice-93", loaded_at: "2026-09-02 01:00:00",
+      source_period_kind: "calendar_month", source_period_from: "2026-08-01", source_period_to: "2026-08-31",
+    }], []];
+    if (sql.includes("site-seo:alice-summary")) return [[{ official_sov_pct: "43.91", sample_presence_pct: "43.87" }], []];
+    if (sql.includes("site-seo:alice-sov-weekly")) return [[], []];
+    if (sql.includes("site-seo:alice-competitors")) return [[{ site_domain: "competitor.test" }], []];
+    if (sql.includes("site-seo:alice-queries")) return [[
+      { query_id: 7, query_text: "лечение", portal_present: 1, portal_position: 2, portal_url: "https://portal.test/a", source_rank: 1, source_domain: "one.test", source_url: "https://one.test/a" },
+      { query_id: 7, query_text: "лечение", portal_present: 1, portal_position: 2, portal_url: "https://portal.test/a", source_rank: 2, source_domain: "two.test", source_url: "https://two.test/a" },
+      { query_id: 8, query_text: "диагностика", portal_present: 0, portal_position: null, portal_url: null, source_rank: 1, source_domain: "three.test", source_url: "https://three.test/a" },
+    ], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "yandex_webmaster_alice_manual", analyticsAccountId: "alice-account", resourceId: "example.test" }, period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+  assert.equal("kind" in result && result.kind, "alice");
+  assert.equal("officialSovPct" in result && result.officialSovPct, 43.91);
+  assert.deepEqual("officialSovPeriod" in result && result.officialSovPeriod, {
+    kind: "calendar_month", key: "2026-08", from: "2026-08-01", to: "2026-08-31", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("officialSovHistory" in result && result.officialSovHistory, []);
+  assert.equal("samplePresencePct" in result && result.samplePresencePct, 43.87);
+  assert.deepEqual("queries" in result && result.queries, [
+    { query: "лечение", portalPresent: true, portalPosition: 2, portalUrl: "https://portal.test/a", sources: [{ rank: 1, domain: "one.test", url: "https://one.test/a" }, { rank: 2, domain: "two.test", url: "https://two.test/a" }] },
+    { query: "диагностика", portalPresent: false, portalPosition: null, portalUrl: null, sources: [{ rank: 1, domain: "three.test", url: "https://three.test/a" }] },
+  ]);
+});
+
+test("Alice keeps legacy monthly writers readable when exact source columns are null", async () => {
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{
+      id: 94, row_count: 1, import_id: "alice-legacy-writer", loaded_at: "2026-09-02 01:00:00",
+      period_month: "2026-08-01", source_period_kind: null, source_period_from: null, source_period_to: null,
+    }], []];
+    if (sql.includes("site-seo:alice-summary")) return [[{ official_sov_pct: "43.91", sample_presence_pct: "57.4194" }], []];
+    if (sql.includes("site-seo:alice-sov-weekly") || sql.includes("site-seo:alice-competitors") || sql.includes("site-seo:alice-queries")) return [[], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_webmaster_alice_manual", analyticsAccountId: "alice-account", resourceId: "example.test" },
+    period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.deepEqual("period" in result && result.period, {
+    kind: "calendar_month", key: "2026-08", from: "2026-08-01", to: "2026-08-31", sourceTimezone: "Europe/Moscow",
+  });
+  assert.equal("officialSovPct" in result && result.officialSovPct, 43.91);
+});
+
+test("Alice exposes the exact source period and falls back to the latest weekly official SOV from the same scoped snapshot", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_alice_visibility_snapshots") && !sql.includes("site-seo:alice-")) return [[{
+      id: 108,
+      row_count: 1,
+      import_id: "alice-weekly-8",
+      loaded_at: "2026-09-02 01:00:00",
+      source_period_kind: "custom",
+      source_period_from: "2026-07-27",
+      source_period_to: "2026-09-06",
+      period_month: "2026-08-01",
+    }], []];
+    if (sql.includes("site-seo:alice-summary")) return [[{
+      official_sov_pct: null,
+      sample_presence_pct: "43.87",
+    }], []];
+    if (sql.includes("site-seo:alice-sov-weekly")) return [[
+      { week_from: "2026-08-24", week_to: "2026-08-30", official_sov_pct: "2.9" },
+      { week_from: "2026-08-31", week_to: "2026-09-06", official_sov_pct: "3.2" },
+    ], []];
+    if (sql.includes("site-seo:alice-competitors") || sql.includes("site-seo:alice-queries")) return [[], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_webmaster_alice_manual", analyticsAccountId: "alice-account", resourceId: "example.test" },
+    period: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31", key: "2026-08", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "alice");
+  assert.deepEqual("period" in result && result.period, {
+    kind: "custom", key: "custom:2026-07-27:2026-09-06", from: "2026-07-27", to: "2026-09-06", sourceTimezone: "Europe/Moscow",
+  });
+  assert.equal("officialSovPct" in result && result.officialSovPct, 3.2);
+  assert.deepEqual("officialSovPeriod" in result && result.officialSovPeriod, {
+    kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow",
+  });
+  assert.deepEqual("officialSovHistory" in result && result.officialSovHistory, [
+    { period: { kind: "iso_week", key: "2026-W35", from: "2026-08-24", to: "2026-08-30", sourceTimezone: "Europe/Moscow" }, officialSovPct: 2.9 },
+    { period: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" }, officialSovPct: 3.2 },
+  ]);
+  assert.equal("samplePresencePct" in result && result.samplePresencePct, 43.87);
+  for (const call of calls.filter(({ sql }) => sql.includes("site-seo:alice-"))) {
+    assert.match(call.sql, /source_key = \?/);
+    assert.match(call.sql, /analytics_account_id = \?/);
+    assert.match(call.sql, /domain = \?/);
+    assert.match(call.sql, /period_month BETWEEN \? AND \?/);
+    assert.match(call.sql, /publication_status = 'published'/);
+    assert.match(call.sql, /ORDER BY period_month DESC, id DESC/);
+    assert.deepEqual(call.params, ["108", "yandex_webmaster_alice_manual", "alice-account", "example.test", "2026-08-01", "2026-08-31"]);
+  }
+});
+
+const seoOsObservationGeneratedAt = "2026-09-11T09:20:00.000Z";
+const seoOsCheckedAt = "2026-09-11 09:20:00";
+
+function seoOsFixturePositions() {
+  return Array.from({ length: 28 }, (_, index) => {
+    const query = index === 0 ? "Лечение рака" : index === 1 ? "Бевацизумаб" : `Запрос ${index + 1}`;
+    const clusterId = createHash("sha256").update(query, "utf8").digest("hex");
+    const found = index === 0;
+    return {
+      week_key: "2026-W37", section: found ? "diseases" : "unassigned", cluster_id: clusterId, query,
+      serp_position: found ? "4.50" : null, delta_prev: found ? "-2.00" : null,
+      matched_url: found ? "https://med.roche.ru/diseases/cancer/" : null,
+      status: found ? "found" : "no_data", checked_at: seoOsCheckedAt, ingestion_run_id: "seo-os-medroche-1",
+    };
+  });
+}
+
+function seoOsFixtureRun(positions = seoOsFixturePositions()) {
+  const queryHashes = positions.map((position) => position.cluster_id).sort();
+  return {
+    run_id: 71, week_key: "2026-W37", run_week_key: "2026-W37", status: "completed",
+    loaded_at: seoOsCheckedAt, ingestion_run_id: "seo-os-medroche-1",
+    tracking_set_item_count: positions.length, tracking_set_checksum: "a".repeat(64),
+    tracking_set_snapshot: JSON.stringify({
+      schemaVersion: "site_seo_tracking_set_v1", sourceKey: "seo_os", bindingId: "binding-seo-os-medroche",
+      analyticsAccountId: "94927113", resourceId: "med.roche.ru", selectionWeek: "2026-W36",
+      observationWeek: "2026-W37", observedAt: seoOsObservationGeneratedAt, region: "225", language: "ru",
+      device: "desktop", checksum: "a".repeat(64), itemCount: positions.length,
+      items: queryHashes.map((queryHash) => ({ clusterId: queryHash, queryHash, source: "approved_response", region: "225" })),
+    }),
+    stages: JSON.stringify({
+      contractVersion: 1,
+      scope: { clientId: "client-roche", siteId: "site-medroche", dashboardId: 41, sourceKey: "seo_os",
+        bindingId: "binding-seo-os-medroche", analyticsAccountId: "94927113", resourceId: "med.roche.ru",
+        region: "225", language: "ru", device: "desktop" },
+      selectionPeriod: { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" },
+      observationPeriod: { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", date: "2026-09-11", sourceTimezone: "Europe/Moscow" },
+      requestPreviewId: "a".repeat(64), requestFileSha256: "b".repeat(64), responseSha256: "c".repeat(64),
+      responseFileSha256: "d".repeat(64), publicationPreviewId: "e".repeat(64), canonicalIngestionRunId: "seo-os-medroche-1",
+      provider: { providerKey: "yandex-serp", providerRunId: "provider-run-1", generatedAt: seoOsObservationGeneratedAt },
+      validation: { status: "passed", expectedCount: positions.length, resultCount: positions.length },
+      positions: positions.map((position) => ({ queryHash: position.cluster_id, status: position.status,
+        checkedAt: seoOsObservationGeneratedAt, previousWeek: null, previousPosition: null, deltaPrev: position.delta_prev,
+        deltaConvention: "current-minus-previous", providerEvidence: {} })),
+      recommendations: [{ kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел", sourceIds: ["opp-1"], sourcePeriods: ["2026-W36"], evidence: { ruleVersion: "v3" } }],
+    }),
+  };
+}
+
+test("SEO OS reads the latest exact-account observation and its region-225 positions independently from the selected traffic week", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const fixturePositions = seoOsFixturePositions();
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("site-seo:seo-os-run")) return [[seoOsFixtureRun(fixturePositions)], []];
+    if (sql.includes("site-seo:seo-os-positions")) return [fixturePositions, []];
+    if (sql.includes("site-seo:seo-os-tasks")) return [[{ task_id: "task-1", status: "open" }], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+
+  assert.equal("kind" in result && result.kind, "seo_os");
+  assert.deepEqual("period" in result && result.period, { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", sourceTimezone: "Europe/Moscow" });
+  assert.deepEqual("observationPeriod" in result && result.observationPeriod, { kind: "iso_week", key: "2026-W37", from: "2026-09-07", to: "2026-09-13", sourceTimezone: "Europe/Moscow" });
+  assert.equal("observationDate" in result && result.observationDate, "2026-09-11");
+  assert.deepEqual("selectionPeriod" in result && result.selectionPeriod, { kind: "iso_week", key: "2026-W36", from: "2026-08-31", to: "2026-09-06", sourceTimezone: "Europe/Moscow" });
+  assert.equal("state" in result && result.state, "ready");
+  assert.equal("completeness" in result && result.completeness, "complete");
+  assert.equal("positions" in result && result.positions.length, 28);
+  assert.deepEqual("positions" in result && result.positions.slice(0, 2), [
+    { week: "2026-W37", section: "diseases", clusterId: fixturePositions[0]!.cluster_id, query: "Лечение рака", serpPosition: 4.5, deltaPrev: -2, matchedUrl: "https://med.roche.ru/diseases/cancer/", status: "found", checkedAt: seoOsCheckedAt, ingestionRunId: "seo-os-medroche-1" },
+    { week: "2026-W37", section: "unassigned", clusterId: fixturePositions[1]!.cluster_id, query: "Бевацизумаб", serpPosition: null, deltaPrev: null, matchedUrl: null, status: "no_data", checkedAt: seoOsCheckedAt, ingestionRunId: "seo-os-medroche-1" },
+  ]);
+  assert.deepEqual("recommendations" in result && result.recommendations, [{
+    kind: "topic_opportunity", topic: "Онкология", pageUrl: "https://example.test/oncology", action: "Добавить раздел",
+    sourceIds: ["opp-1"], sourcePeriods: ["2026-W36"], ruleVersion: "v3", publicationStatus: "completed",
+  }]);
+  assert.deepEqual("tasks" in result && result.tasks, [{ id: "task-1", status: "open" }]);
+  const runCall = calls.find((call) => call.sql.includes("site-seo:seo-os-run"))!;
+  assert.match(runCall.sql, /source_key = 'seo_os'/);
+  assert.match(runCall.sql, /status = 'completed'/);
+  assert.match(runCall.sql, /ORDER BY run_week_key DESC/);
+  assert.match(runCall.sql, /tracking_set_item_count/);
+  assert.match(runCall.sql, /tracking_set_checksum/);
+  assert.match(runCall.sql, /tracking_set_snapshot/);
+  assert.deepEqual(runCall.params, ["94927113"]);
+  assert.doesNotMatch(runCall.sql, /2026-W36|api\.|oauth|token/i);
+  const positionCall = calls.find((call) => call.sql.includes("site-seo:seo-os-positions"))!;
+  assert.match(positionCall.sql, /FROM seo_positions_weekly/);
+  assert.match(positionCall.sql, /source_key = 'seo_os'/);
+  assert.match(positionCall.sql, /region = '225'/);
+  assert.deepEqual(positionCall.params, ["94927113", "2026-W37"]);
+  const taskCall = calls.find((call) => call.sql.includes("site-seo:seo-os-tasks"))!;
+  assert.match(taskCall.sql, /source_key = 'seo_os'/);
+  assert.deepEqual(taskCall.params, ["94927113", "2026-W37"]);
+  assert.ok(calls.every((call) => !/seo_ai_visibility_weekly|api\.|oauth|token/i.test(call.sql)));
+});
+
+test("SEO OS fails closed when canonical facts diverge from signed publication evidence", async () => {
+  const valid = seoOsFixturePositions();
+  const cases = [
+    valid.map((row, index) => index === 0 ? { ...row, serp_position: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, matched_url: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, status: "no_data", serp_position: null, delta_prev: null, matched_url: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, matched_url: "https://foreign.example/unapproved" } : row),
+    valid.map((row, index) => index === 0 ? { ...row, query: "Подменённый запрос" } : row),
+    valid.map((row, index) => index === 0 ? { ...row, checked_at: null } : row),
+    valid.map((row, index) => index === 0 ? { ...row, week_key: "2026-W36" } : row),
+    valid.map((row, index) => index === 0 ? { ...row, ingestion_run_id: "another-run" } : row),
+    valid.map((row, index) => index === 1 ? { ...row, cluster_id: valid[0]!.cluster_id } : row),
+  ];
+  for (const positions of cases) {
+    const execute = createCanonicalReadExecutor({ async execute(sql) {
+      if (sql.includes("site-seo:seo-os-run")) return [[seoOsFixtureRun(valid)], []];
+      if (sql.includes("site-seo:seo-os-positions")) return [positions, []];
+      if (sql.includes("site-seo:seo-os-tasks")) return [[], []];
+      throw new Error("unexpected query");
+    } });
+    const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+    assert.equal("state" in result && result.state, "missing");
+  }
+});
+
+test("SEO OS fails closed when run scope, digests, tracking set, or provider time evidence is invalid", async () => {
+  const positions = seoOsFixturePositions();
+  const mutations = [
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, tracking_set_checksum: "f".repeat(64) }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, tracking_set_snapshot: "{}" }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, stages: JSON.stringify({ ...JSON.parse(run.stages), responseSha256: "invalid" }) }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, stages: JSON.stringify({ ...JSON.parse(run.stages), scope: { ...JSON.parse(run.stages).scope, siteId: "site-other" } }) }),
+    (run: ReturnType<typeof seoOsFixtureRun>) => ({ ...run, stages: JSON.stringify({ ...JSON.parse(run.stages), provider: { ...JSON.parse(run.stages).provider, generatedAt: "2026-09-11T10:00:00.000Z" } }) }),
+  ];
+  for (const mutate of mutations) {
+    const run = mutate(seoOsFixtureRun(positions));
+    const execute = createCanonicalReadExecutor({ async execute(sql) {
+      if (sql.includes("site-seo:seo-os-run")) return [[run], []];
+      if (sql.includes("site-seo:seo-os-positions")) return [positions, []];
+      if (sql.includes("site-seo:seo-os-tasks")) return [[], []];
+      throw new Error("unexpected query");
+    } });
+    const result = await execute({ name: "dataset", scope: { ...scope, sourceKey: "seo_os", analyticsAccountId: "94927113", resourceId: "med.roche.ru" }, period: { kind: "iso_week", from: "2026-08-31", to: "2026-09-06", key: "2026-W36", sourceTimezone: "Europe/Moscow" }, publicationId: null, filters: {} });
+    assert.equal("state" in result && result.state, "missing");
+  }
+});
+
+test("Metrika returns scoped visits and pageviews while keeping users daily-only", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("canonical_metrika_breakdown_coverage_daily")) return [[{
+      covered_days: 7, coverage_rows: 7, success_rows: 7, incomplete_rows: 0,
+      import_id: 81, loaded_at: "2026-08-10 12:00:00",
+    }], []];
+    if (sql.includes("site-seo:metrika-summary")) return [[{ visits: "20", pageviews: "30" }], []];
+    if (sql.includes("site-seo:metrika-daily")) return [[
+      { report_date: "2026-08-03", visits: "8", pageviews: "12", users: "6" },
+      { report_date: "2026-08-04", visits: "12", pageviews: "18", users: "9" },
+    ], []];
+    if (sql.includes("site-seo:metrika-pages")) return [[{ page_url: "https://clinic.example.test/a", visits: "7", pageviews: "11" }], []];
+    if (sql.includes("site-seo:metrika-content-pages")) return [[{
+      page_url: "/products/a", page_title: "Препарат A", pageviews: "31", visits: "12",
+      bounce_rate: "25", avg_visit_duration_seconds: "90", page_depth: "2.5",
+      bounce_measured_visits: "8", duration_measured_visits: "11", depth_measured_visits: "10",
+    }], []];
+    if (sql.includes("site-seo:metrika-traffic-health")) return [[{
+      visits: "100", pageviews: "160", bounce_rate: "17.5",
+      avg_visit_duration_seconds: "95", page_depth: "2.4",
+      row_count: "14", covered_days: "7", import_id: "84", loaded_at: "2026-08-10 13:00:00",
+    }], []];
+    if (sql.includes("site-seo:metrika-channels")) return [[
+      { label: "Search engine traffic", visits: "60", pageviews: "100", bounce_rate: "10", avg_visit_duration_seconds: "110", page_depth: "2.8" },
+      { label: "Direct traffic", visits: "40", pageviews: "60", bounce_rate: "28.75", avg_visit_duration_seconds: "72.5", page_depth: "1.8" },
+    ], []];
+    if (sql.includes("site-seo:metrika-search-engines")) return [[
+      { id: "google", label: "Google, search results", visits: "12", pageviews: "18", bounce_rate: "8", avg_visit_duration_seconds: "120", page_depth: "2.5" },
+      { id: "yandex", label: "Yandex, search results", visits: "8", pageviews: "12", bounce_rate: "15", avg_visit_duration_seconds: "90", page_depth: "2" },
+    ], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_metrika", analyticsAccountId: "counter-account", resourceId: "counter-resource" },
+    period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "metrika");
+  assert.deepEqual("summary" in result && result.summary, { visits: 20, pageviews: 30 });
+  assert.deepEqual("daily" in result && result.daily, [
+    { date: "2026-08-03", visits: 8, pageviews: 12, users: 6 },
+    { date: "2026-08-04", visits: 12, pageviews: 18, users: 9 },
+  ]);
+  assert.equal("summary" in result && "users" in (result.summary ?? {}), false);
+  assert.deepEqual("trafficHealth" in result && result.trafficHealth, {
+    visits: 100, pageviews: 160, bounceRate: 17.5, avgVisitDurationSeconds: 95, pageDepth: 2.4,
+  });
+  assert.deepEqual("trafficMeta" in result && result.trafficMeta, {
+    sourceKey: "yandex_metrika",
+    period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
+    state: "ready", collectionMode: "automated", completeness: "complete",
+    importId: "84", exportedAt: null, loadedAt: "2026-08-10 13:00:00", freshness: "unknown", latestAttempt: "success",
+  });
+  assert.deepEqual("channels" in result && result.channels, [
+    { id: null, label: "Search engine traffic", visits: 60, pageviews: 100, bounceRate: 10, avgVisitDurationSeconds: 110, pageDepth: 2.8 },
+    { id: null, label: "Direct traffic", visits: 40, pageviews: 60, bounceRate: 28.75, avgVisitDurationSeconds: 72.5, pageDepth: 1.8 },
+  ]);
+  assert.equal("searchEngines" in result && result.searchEngines?.[0]?.label, "Google, search results");
+  assert.equal("topPages" in result && result.topPages[0]?.page, "https://clinic.example.test/a");
+  assert.deepEqual("contentPages" in result && result.contentPages, [{
+    url: "/products/a", title: "Препарат A", pageviews: 31, visits: 12,
+    bounceRate: 25, avgVisitDurationSeconds: 90, pageDepth: 2.5,
+    bounceMeasuredVisits: 8, durationMeasuredVisits: 11, depthMeasuredVisits: 10,
+  }]);
+  const facts = calls.filter((call) => call.sql.includes("canonical_fact_metrika_breakdowns_daily"));
+  assert.equal(facts.length, 4);
+  assert.ok(facts.every((call) => call.params.includes("yandex_metrika") && call.params.includes("counter-account") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
+  assert.ok(facts.every((call) => !/api\.|oauth|token/i.test(call.sql)));
+  const trafficFacts = calls.filter((call) => call.sql.includes("canonical_fact_site_analytics_daily"));
+  assert.equal(trafficFacts.length, 3);
+  assert.ok(trafficFacts.filter((call) => !call.sql.includes("site-seo:metrika-content-pages")).every((call) => /analytics_scope\s*=\s*'other'/i.test(call.sql)));
+  assert.ok(trafficFacts.every((call) => call.params.includes("yandex_metrika") && call.params.includes("counter-account") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
+  assert.ok(trafficFacts.every((call) => /bounce_rate[^]*visits/i.test(call.sql) && /avg_visit_duration_seconds[^]*visits/i.test(call.sql) && /page_depth[^]*visits/i.test(call.sql)));
+  assert.match(trafficFacts.find((call) => call.sql.includes("site-seo:metrika-traffic-health"))!.sql, /COUNT\(\*\) AS row_count[^]*COUNT\(DISTINCT report_date\) AS covered_days[^]*MAX\(ingestion_run_id\) AS import_id[^]*MAX\(updated_at\) AS loaded_at/i);
+  const contentFacts = trafficFacts.find((call) => call.sql.includes("site-seo:metrika-content-pages"))!;
+  assert.match(contentFacts.sql, /analytics_scope\s+IN\s*\(\s*'page'\s*,\s*'entry_page'\s*\)/i);
+  assert.match(contentFacts.sql, /CASE WHEN analytics_scope = 'page' THEN COALESCE\(pageviews, 0\)/i);
+  assert.match(contentFacts.sql, /CASE WHEN analytics_scope = 'entry_page' THEN COALESCE\(visits, 0\)/i);
+  assert.match(contentFacts.sql, /bounce_rate[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
+  assert.match(contentFacts.sql, /avg_visit_duration_seconds[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
+  assert.match(contentFacts.sql, /page_depth[^]*CASE WHEN analytics_scope = 'entry_page'[^]*visits/i);
+  assert.match(contentFacts.sql, /AS bounce_measured_visits/i);
+  assert.match(contentFacts.sql, /AS duration_measured_visits/i);
+  assert.match(contentFacts.sql, /AS depth_measured_visits/i);
+  assert.doesNotMatch(contentFacts.sql, /\bLIMIT\b/i);
+  const engineFacts = calls.filter((call) => call.sql.includes("site-seo:metrika-search-engines"));
+  assert.equal(engineFacts.length, 1);
+  assert.match(engineFacts[0]!.sql, /report_key\s*=\s*'search_engines'[^]*segment_key\s*=\s*'russia'[^]*row_kind\s*=\s*'detail'/i);
+});
+
+test("Metrika preserves all-traffic facts when search-engine coverage is missing", async () => {
+  const calls: string[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql) {
+    calls.push(sql);
+    if (sql.includes("canonical_metrika_breakdown_coverage_daily")) return [[{ coverage_rows: 0 }], []];
+    if (sql.includes("site-seo:metrika-traffic-health")) return [[{
+      visits: "9", pageviews: "14", bounce_rate: "20", avg_visit_duration_seconds: "75", page_depth: "1.8",
+      row_count: "4", covered_days: "4", import_id: "90", loaded_at: "2026-08-09 12:00:00",
+    }], []];
+    if (sql.includes("site-seo:metrika-channels")) return [[{
+      label: "Direct traffic", visits: "9", pageviews: "14", bounce_rate: "20", avg_visit_duration_seconds: "75", page_depth: "1.8",
+    }], []];
+    if (sql.includes("site-seo:metrika-content-pages")) return [[], []];
+    if (/site-seo:metrika-(summary|daily|pages|search-engines)/.test(sql)) return [[], []];
+    throw new Error("unexpected query");
+  } });
+
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_metrika", analyticsAccountId: "counter-account", resourceId: "counter-resource" },
+    period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "metrika");
+  assert.equal("state" in result && result.state, "missing", "main Metrika meta remains the search-engine coverage state");
+  assert.equal("trafficMeta" in result && result.trafficMeta?.state, "partial");
+  assert.equal("trafficMeta" in result && result.trafficMeta?.completeness, "unknown");
+  assert.equal("trafficHealth" in result && result.trafficHealth?.visits, 9);
+  assert.equal("channels" in result && result.channels?.[0]?.label, "Direct traffic");
+  assert.equal("summary" in result && result.summary, null);
+  assert.equal("daily" in result && result.daily.length, 0);
+  assert.equal("searchEngines" in result && result.searchEngines?.length, 0);
+  assert.equal(calls.length, 4);
+  assert.equal(calls.some((sql) => /site-seo:metrika-(summary|daily|pages|search-engines)/.test(sql)), false);
+});
+
+test("Webmaster aggregates scoped canonical facts with derived CTR and weighted position", async () => {
+  const calls: { sql: string; params: readonly unknown[] }[] = [];
+  const execute = createCanonicalReadExecutor({ async execute(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("site-seo:webmaster-meta")) return [[{ row_count: 2, covered_days: 2, import_id: 91, loaded_at: "2026-08-10 12:00:00" }], []];
+    if (sql.includes("site-seo:webmaster-summary")) return [[{ clicks: "10", impressions: "100", ctr_pct: "10", average_position: "4.2" }], []];
+    if (sql.includes("site-seo:webmaster-daily")) return [[{ report_date: "2026-08-03", clicks: "3", impressions: "20", ctr_pct: "15", average_position: "2" }], []];
+    if (sql.includes("site-seo:webmaster-pages")) return [[{ page_url: "https://clinic.example.test/a", clicks: "5", impressions: "50", ctr_pct: "10", average_position: "3" }], []];
+    if (sql.includes("site-seo:webmaster-queries")) return [[{ query_text: "лечение", clicks: "4", impressions: "40", ctr_pct: "10", average_position: "3.5" }], []];
+    throw new Error("unexpected query");
+  } });
+  const result = await execute({
+    name: "dataset",
+    scope: { ...scope, sourceKey: "yandex_webmaster", analyticsAccountId: "webmaster-account", resourceId: "https:clinic.example.test:443" },
+    period: { kind: "iso_week", from: "2026-08-03", to: "2026-08-09", key: "2026-W32", sourceTimezone: "Europe/Moscow" },
+    publicationId: null,
+    filters: {},
+  });
+
+  assert.equal("kind" in result && result.kind, "webmaster");
+  assert.deepEqual("summary" in result && result.summary, { clicks: 10, impressions: 100, ctrPct: 10, averagePosition: 4.2 });
+  assert.equal("state" in result && result.state, "partial");
+  assert.equal("queryFacts" in result && result.queryFacts?.[0]?.query, "лечение");
+  const facts = calls.filter((call) => /canonical_fact_webmaster_(summary|pages|queries)_daily/i.test(call.sql));
+  assert.equal(facts.length, 5);
+  assert.ok(facts.every((call) => call.params.includes("yandex_webmaster") && call.params.includes("webmaster-account") && call.params.includes("https:clinic.example.test:443") && call.params.includes("2026-08-03") && call.params.includes("2026-08-09")));
+  assert.ok(facts.every((call) => /device_type\s*=\s*'ALL'/i.test(call.sql)));
+});

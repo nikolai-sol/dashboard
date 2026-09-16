@@ -42,6 +42,20 @@ test("Alice visibility fingerprint upgrade preserves existing snapshots and repl
   assert.doesNotMatch(sql, /UPDATE canonical_alice_visibility_snapshots/);
 });
 
+test("Alice period migration preserves monthly rows and adds exact weekly point storage", () => {
+  const sql = readFileSync("src/db/migrations/066_site_seo_alice_periods.sql", "utf8");
+  assert.match(sql, /source_period_kind/);
+  assert.match(sql, /source_period_from/);
+  assert.match(sql, /source_period_to/);
+  assert.match(sql, /MODIFY COLUMN official_sov_pct DECIMAL\(7,4\) (?:DEFAULT )?NULL/);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS canonical_alice_visibility_sov_weekly/);
+  assert.match(sql, /UNIQUE KEY uniq_alice_sov_weekly \(snapshot_id, week_from, week_to\)/);
+  assert.match(sql, /official_sov_pct DECIMAL\(7,4\) NOT NULL/);
+  assert.match(sql, /UPDATE canonical_alice_visibility_snapshots[\s\S]*source_period_from = period_month/);
+  assert.doesNotMatch(sql, /MODIFY COLUMN source_period_(?:kind|from|to)[^,;]*NOT NULL/);
+  assert.doesNotMatch(sql, /DELETE FROM canonical_alice_visibility/);
+});
+
 test("README deprecates the historical Alice aggregate path without assigning meanings to July 89/155", () => {
   const readme = readFileSync("README.md", "utf8");
   const historical = readme.slice(
@@ -120,6 +134,8 @@ function parsedSnapshot(): ParsedAliceVisibilitySnapshot {
     portalDomain: "zaruku.ru",
     period: "2026-08",
     officialSovPct: 43.91,
+    sourcePeriod: { kind: "calendar_month", from: "2026-08-01", to: "2026-08-31" },
+    officialSovPoints: [],
     capturedAt: "2026-09-04T13:28:14.000Z",
     sourceFilename: "export.xlsx",
     featuredSites: [],
@@ -161,6 +177,9 @@ class FakeConnection implements AliceVisibilityImportConnection {
         id: 9,
         domain: snapshot.portalDomain,
         period_month: `${snapshot.period}-01`,
+        source_period_kind: "calendar_month",
+        source_period_from: "2026-08-01",
+        source_period_to: "2026-08-31",
         captured_at: "2026-09-04 13:28:14",
         official_sov_pct: "43.9100",
         exported_query_count: snapshot.exportedQueryCount,
@@ -180,7 +199,10 @@ class FakeConnection implements AliceVisibilityImportConnection {
         list_kind: "yandex_random_high_mentions",
       })) : [], undefined] as const;
     }
-    if (sql.includes("WHERE analytics_account_id = ? AND period_month = ? AND publication_status = 'published'")) {
+    if (sql.trimStart().startsWith("SELECT week_from") && sql.includes("FROM canonical_alice_visibility_sov_weekly")) {
+      return [[], undefined] as const;
+    }
+    if (sql.includes("WHERE source_key = ? AND analytics_account_id = ? AND domain = ?") && sql.includes("publication_status = 'published'")) {
       if (this.mode === "same") return [[{ id: 9, source_sha256: "a".repeat(64) }], undefined] as const;
       return [this.mode === "other" ? [{ id: 7, source_sha256: "b".repeat(64) }] : [], undefined] as const;
     }
@@ -188,8 +210,9 @@ class FakeConnection implements AliceVisibilityImportConnection {
       const queryCount = this.calls.filter(({ sql: calledSql }) => calledSql.startsWith("INSERT INTO canonical_alice_visibility_queries")).length;
       const sourceCount = this.calls.filter(({ sql: calledSql }) => calledSql.startsWith("INSERT INTO canonical_alice_visibility_sources")).length;
       const featuredCount = this.calls.filter(({ sql: calledSql }) => calledSql.startsWith("INSERT INTO canonical_alice_visibility_featured_sites")).length;
+      const officialSovPointCount = this.calls.filter(({ sql: calledSql }) => calledSql.startsWith("INSERT INTO canonical_alice_visibility_sov_weekly")).length;
       const portalPresentCount = this.calls.filter(({ sql: calledSql }) => calledSql.startsWith("INSERT INTO canonical_alice_visibility_queries") && calledSql.length > 0).filter(({ params: calledParams }) => calledParams[3] === 1).length;
-      return [[{ query_count: queryCount, source_count: this.mode === "bad_counts" ? sourceCount - 1 : sourceCount, portal_present_count: portalPresentCount, featured_count: featuredCount }], undefined] as const;
+      return [[{ query_count: queryCount, source_count: this.mode === "bad_counts" ? sourceCount - 1 : sourceCount, portal_present_count: portalPresentCount, featured_count: featuredCount, official_sov_point_count: officialSovPointCount }], undefined] as const;
     }
     if (sql.startsWith("INSERT INTO canonical_alice_visibility_snapshots")) return [{ insertId: 42 }, undefined] as const;
     if (sql.startsWith("INSERT INTO canonical_alice_visibility_queries")) return [{ insertId: this.nextId++ }, undefined] as const;
@@ -204,7 +227,88 @@ test("persists a complete Alice snapshot transactionally and reconciles its chil
   assert.equal(connection.calls.filter(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_queries")).length, 155);
   assert.equal(connection.calls.filter(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_sources")).length, 1313);
   assert.equal(connection.calls.filter(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_featured_sites")).length, 10);
+  assert.equal(connection.calls.filter(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_sov_weekly")).length, 0);
   assert.equal(connection.calls.filter(({ sql }) => sql.includes("AS query_count")).length, 1);
+});
+
+test("published predecessor selection is scoped to source account domain and month", async () => {
+  const connection = new FakeConnection("new");
+  const snapshot = parsedSnapshot();
+  await persistAliceVisibilitySnapshot(connection, snapshot, {
+    sourceKey: "yandex_webmaster_alice_manual",
+  });
+  const publishedSelection = connection.calls.find(({ sql }) =>
+    sql.includes("publication_status = 'published'") && sql.includes("FOR UPDATE") &&
+    !sql.includes("source_sha256 = ?"));
+  assert.ok(publishedSelection);
+  assert.match(
+    publishedSelection.sql,
+    /source_key = \? AND analytics_account_id = \? AND domain = \?\s+AND period_month = \?/,
+  );
+  assert.deepEqual(publishedSelection.params, [
+    "yandex_webmaster_alice_manual",
+    snapshot.accountId,
+    snapshot.portalDomain,
+    "2026-08-01",
+  ]);
+});
+
+test("persists custom exact period and weekly official points and reconciles their count", async () => {
+  const value = parsedSnapshot();
+  value.period = "2026-08";
+  value.officialSovPct = null;
+  value.sourcePeriod = { kind: "custom", from: "2026-07-27", to: "2026-08-09" };
+  value.officialSovPoints = [
+    { from: "2026-07-27", to: "2026-08-02", value: 19.25 },
+    { from: "2026-08-03", to: "2026-08-09", value: 21.5 },
+  ];
+  const connection = new FakeConnection("new");
+
+  assert.equal(await persistAliceVisibilitySnapshot(connection, value, {}), "inserted");
+  const snapshotInsert = connection.calls.find(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_snapshots"));
+  assert.match(snapshotInsert!.sql, /source_period_kind/);
+  assert.deepEqual(snapshotInsert!.params.slice(3, 9), [
+    "2026-08-01", "custom", "2026-07-27", "2026-08-09", "2026-09-04 13:28:14", null,
+  ]);
+  assert.equal(connection.calls.filter(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_sov_weekly")).length, 2);
+});
+
+test("authoritative fingerprint binds exact period and official weekly points", async () => {
+  const first = parsedSnapshot();
+  first.officialSovPct = null;
+  first.sourcePeriod = { kind: "custom", from: "2026-07-27", to: "2026-08-02" };
+  first.officialSovPoints = [{ from: "2026-07-27", to: "2026-08-02", value: 19.25 }];
+  const second = structuredClone(first);
+  second.officialSovPoints[0]!.value = 19.26;
+  const firstConnection = new FakeConnection("new");
+  const secondConnection = new FakeConnection("new");
+
+  await persistAliceVisibilitySnapshot(firstConnection, first, {});
+  await persistAliceVisibilitySnapshot(secondConnection, second, {});
+  const fingerprint = (connection: FakeConnection) => connection.calls
+    .find(({ sql }) => sql.startsWith("INSERT INTO canonical_alice_visibility_snapshots"))!.params[14];
+  assert.notEqual(fingerprint(firstConnection), fingerprint(secondConnection));
+});
+
+test("persistence rejects malformed custom periods before opening a transaction", async () => {
+  const cases: Array<(value: ParsedAliceVisibilitySnapshot) => void> = [
+    (value) => { value.officialSovPct = 0; },
+    (value) => { value.officialSovPoints[0]!.value = Number.NaN; },
+    (value) => { value.officialSovPoints[0]!.from = "2026-07-28"; },
+  ];
+  for (const mutate of cases) {
+    const value = parsedSnapshot();
+    value.officialSovPct = null;
+    value.sourcePeriod = { kind: "custom", from: "2026-07-27", to: "2026-08-02" };
+    value.officialSovPoints = [{ from: "2026-07-27", to: "2026-08-02", value: 19.25 }];
+    mutate(value);
+    const connection = new FakeConnection("new");
+    await assert.rejects(
+      () => persistAliceVisibilitySnapshot(connection, value, {}),
+      /official|weekly|Monday|value/i,
+    );
+    assert.deepEqual(connection.lifecycle, []);
+  }
 });
 
 test("returns already_exists for the same source checksum", async () => {

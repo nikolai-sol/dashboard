@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import pool from "./db";
 import { hashPassword, verifyPassword } from "./access-auth";
-import { isSharedPasswordClient } from "./shared-password-policy";
+import { isSharedPasswordDashboard } from "./shared-password-policy";
 
 export type SharedPasswordCredential = {
   source: "database" | "abbott_env_fallback" | "missing";
@@ -55,6 +55,7 @@ type SharedAccessSettingsRow = {
 
 type DashboardCredentialRow = {
   client_id: string;
+  dashboard_type?: string;
   password_hash: string | null;
   credential_version: number | string | null;
   updated_at: string | Date | null;
@@ -115,6 +116,7 @@ export function createDashboardSharedAccessStore(
       const [rows] = await database.execute(
         `SELECT
            d.client_id,
+           d.dashboard_type,
            s.password_hash,
            s.credential_version,
            s.updated_at
@@ -141,7 +143,7 @@ export function createDashboardSharedAccessStore(
     const requestedClientId = normalizeClientId(clientId);
     const authoritativeClientId = normalizeClientId(row.client_id);
     if (
-      !isSharedPasswordClient(authoritativeClientId) ||
+      !isSharedPasswordDashboard(authoritativeClientId, row.dashboard_type) ||
       authoritativeClientId !== requestedClientId
     ) {
       return {
@@ -194,6 +196,7 @@ export function createDashboardSharedAccessStore(
       const [rows] = await database.execute(
         `SELECT
            d.client_id,
+           d.dashboard_type,
            s.password_hash,
            s.credential_version,
            s.updated_at
@@ -219,7 +222,7 @@ export function createDashboardSharedAccessStore(
     }
 
     const clientId = normalizeClientId(row.client_id);
-    const supported = isSharedPasswordClient(clientId);
+    const supported = isSharedPasswordDashboard(clientId, row.dashboard_type);
     const hasDatabaseSetting = row.password_hash !== null;
     const databaseConfigured = supported && hasDatabaseSetting;
     let credentialVersion = 0;
@@ -253,7 +256,7 @@ export function createDashboardSharedAccessStore(
       await connection.beginTransaction();
 
       const [dashboardRows] = await connection.execute(
-        `SELECT client_id
+        `SELECT client_id, dashboard_type
          FROM dashboards
          WHERE id = ?
            AND is_active = TRUE
@@ -261,14 +264,14 @@ export function createDashboardSharedAccessStore(
          FOR UPDATE`,
         [dashboardId],
       );
-      const dashboard = firstRow<{ client_id: string }>(dashboardRows);
+      const dashboard = firstRow<{ client_id: string; dashboard_type?: string }>(dashboardRows);
       if (!dashboard) {
         throw new SharedPasswordRotationError("DASHBOARD_NOT_FOUND");
       }
 
       const clientId = normalizeClientId(dashboard.client_id);
       if (
-        !isSharedPasswordClient(clientId) ||
+        !isSharedPasswordDashboard(clientId, dashboard.dashboard_type) ||
         (expectedClientId !== undefined && expectedClientId !== clientId)
       ) {
         throw new SharedPasswordRotationError("UNSUPPORTED_DASHBOARD");
@@ -344,8 +347,6 @@ export function createDashboardSharedAccessStore(
     clientId: string,
     password: string,
   ): Promise<{ credentialVersion: number } | null> {
-    if (!isSharedPasswordClient(clientId)) return null;
-
     const credential = await loadSharedPasswordCredential(dashboardId, clientId);
     const matches = credential.password_hash
       ? verifyPassword(password, credential.password_hash)

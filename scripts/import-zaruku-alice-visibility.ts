@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import mysql from "mysql2/promise";
 import {
+  normalizeAliceVisibilityPeriod,
   parseAliceVisibilityWorkbookFile,
   type ParsedAliceVisibilitySnapshot,
 } from "../src/lib/zaruku-alice-visibility-import";
@@ -20,7 +21,7 @@ export interface AliceVisibilityImportConnection {
 
 export type AliceVisibilityPersistableSnapshot = Pick<
   ParsedAliceVisibilitySnapshot,
-  "accountId" | "portalDomain" | "period" | "officialSovPct" | "capturedAt" | "sourceSha256" | "queries" | "sources" | "featured"
+  "accountId" | "portalDomain" | "period" | "sourcePeriod" | "officialSovPct" | "officialSovPoints" | "capturedAt" | "sourceSha256" | "queries" | "sources" | "featured"
 > & {
   sourceFilename: string | null;
   exportedQueryCount: number | null;
@@ -107,6 +108,9 @@ function authoritativeSnapshotPayload(
     analytics_account_id: snapshot.accountId,
     domain: snapshot.portalDomain,
     period_month: periodMonth(snapshot.period),
+    source_period_kind: snapshot.sourcePeriod.kind,
+    source_period_from: snapshot.sourcePeriod.from,
+    source_period_to: snapshot.sourcePeriod.to,
     captured_at: mysqlDate(snapshot.capturedAt),
     official_sov_pct: decimalKey(snapshot.officialSovPct),
     exported_query_count: snapshot.exportedQueryCount,
@@ -115,6 +119,11 @@ function authoritativeSnapshotPayload(
     source_filename: snapshot.sourceFilename,
     source_sha256: snapshot.sourceSha256,
     source_payload_json: sourcePayloadJson ?? null,
+    official_sov_points: snapshot.officialSovPoints.map((point) => ({
+      week_from: point.from,
+      week_to: point.to,
+      official_sov_pct: decimalKey(point.value),
+    })),
     featured_sites: snapshot.featured.map((site) => ({
       display_order: site.displayOrder,
       site_url: site.siteUrl,
@@ -129,6 +138,7 @@ function storedAuthoritativeSnapshotPayload(
   sourceKey: string,
   accountId: string,
   featuredSites: Array<Record<string, unknown>>,
+  officialSovPoints: Array<Record<string, unknown>>,
 ) {
   return {
     source_key: sourceKey,
@@ -137,6 +147,13 @@ function storedAuthoritativeSnapshotPayload(
     period_month: row.period_month instanceof Date
       ? row.period_month.toISOString().slice(0, 10)
       : String(row.period_month ?? "").slice(0, 10),
+    source_period_kind: String(row.source_period_kind ?? ""),
+    source_period_from: row.source_period_from instanceof Date
+      ? row.source_period_from.toISOString().slice(0, 10)
+      : String(row.source_period_from ?? "").slice(0, 10),
+    source_period_to: row.source_period_to instanceof Date
+      ? row.source_period_to.toISOString().slice(0, 10)
+      : String(row.source_period_to ?? "").slice(0, 10),
     captured_at: row.captured_at instanceof Date
       ? row.captured_at.toISOString().slice(0, 19).replace("T", " ")
       : String(row.captured_at ?? "").slice(0, 19).replace("T", " "),
@@ -147,6 +164,15 @@ function storedAuthoritativeSnapshotPayload(
     source_filename: row.source_filename == null ? null : String(row.source_filename),
     source_sha256: String(row.source_sha256 ?? ""),
     source_payload_json: normalizeStoredJson(row.source_payload_json),
+    official_sov_points: officialSovPoints.map((point) => ({
+      week_from: point.week_from instanceof Date
+        ? point.week_from.toISOString().slice(0, 10)
+        : String(point.week_from ?? "").slice(0, 10),
+      week_to: point.week_to instanceof Date
+        ? point.week_to.toISOString().slice(0, 10)
+        : String(point.week_to ?? "").slice(0, 10),
+      official_sov_pct: decimalKey(point.official_sov_pct),
+    })),
     featured_sites: featuredSites.map((site) => ({
       display_order: Number(site.display_order),
       site_url: String(site.site_url ?? ""),
@@ -164,8 +190,9 @@ function validateSnapshot(snapshot: AliceVisibilityPersistableSnapshot): void {
   if (!/^[a-f0-9]{64}$/.test(snapshot.sourceSha256)) throw new Error("source_sha256 должен быть SHA-256");
   periodMonth(snapshot.period);
   mysqlDate(snapshot.capturedAt);
-  if (!Number.isFinite(snapshot.officialSovPct) || snapshot.officialSovPct < 0 || snapshot.officialSovPct > 100) {
-    throw new Error("official-sov должен быть от 0 до 100");
+  const normalizedPeriod = normalizeAliceVisibilityPeriod(snapshot);
+  if (stableJson(normalizedPeriod.sourcePeriod) !== stableJson(snapshot.sourcePeriod) || stableJson(normalizedPeriod.officialSovPoints) !== stableJson(snapshot.officialSovPoints)) {
+    throw new Error("Alice source period and weekly points must be normalized");
   }
   const queryHashes = new Set(snapshot.queries.map((query) => query.queryHash));
   if (queryHashes.size !== snapshot.queries.length) throw new Error("Повторяющиеся query_hash в snapshot");
@@ -245,7 +272,8 @@ export async function persistAliceVisibilitySnapshot(
   await connection.beginTransaction();
   try {
     const sameChecksum = rows(await connection.execute(
-      `SELECT id, domain, period_month, captured_at, official_sov_pct,
+      `SELECT id, domain, period_month, source_period_kind, source_period_from, source_period_to,
+         captured_at, official_sov_pct,
          exported_query_count, portal_present_query_count, sample_presence_pct,
          source_filename, source_sha256, snapshot_fingerprint_sha256,
          ingestion_run_id, source_payload_json
@@ -261,11 +289,19 @@ export async function persistAliceVisibilitySnapshot(
          ORDER BY list_kind, display_order`,
         [candidate.id],
       ));
+      const officialSovPoints = rows(await connection.execute(
+        `SELECT week_from, week_to, official_sov_pct
+         FROM canonical_alice_visibility_sov_weekly
+         WHERE snapshot_id = ?
+         ORDER BY week_from, week_to`,
+        [candidate.id],
+      ));
       const storedPayload = storedAuthoritativeSnapshotPayload(
         candidate,
         sourceKey,
         snapshot.accountId,
         featuredSites,
+        officialSovPoints,
       );
       if (stableJson(storedPayload) === stableJson(authoritativePayload)) {
         await connection.commit();
@@ -275,8 +311,9 @@ export async function persistAliceVisibilitySnapshot(
 
     const publishedForMonth = rows(await connection.execute(
       `SELECT id, source_sha256 FROM canonical_alice_visibility_snapshots
-       WHERE analytics_account_id = ? AND period_month = ? AND publication_status = 'published' FOR UPDATE`,
-      [snapshot.accountId, periodMonth(snapshot.period)],
+       WHERE source_key = ? AND analytics_account_id = ? AND domain = ?
+         AND period_month = ? AND publication_status = 'published' FOR UPDATE`,
+      [sourceKey, snapshot.accountId, snapshot.portalDomain, periodMonth(snapshot.period)],
     ));
     if (publishedForMonth.length > 1) throw new Error("Для периода найдено несколько опубликованных snapshots");
     const currentPublished = publishedForMonth[0];
@@ -292,19 +329,28 @@ export async function persistAliceVisibilitySnapshot(
 
     const snapshotResult = await connection.execute(
       `INSERT INTO canonical_alice_visibility_snapshots
-       (source_key, analytics_account_id, domain, period_month, captured_at, official_sov_pct,
+       (source_key, analytics_account_id, domain, period_month,
+        source_period_kind, source_period_from, source_period_to, captured_at, official_sov_pct,
         exported_query_count, portal_present_query_count, sample_presence_pct, source_filename,
         source_sha256, snapshot_fingerprint_sha256, publication_status, supersedes_snapshot_id,
         ingestion_run_id, source_payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?)`,
       [
-        sourceKey, snapshot.accountId, snapshot.portalDomain, periodMonth(snapshot.period), mysqlDate(snapshot.capturedAt), snapshot.officialSovPct,
+        sourceKey, snapshot.accountId, snapshot.portalDomain, periodMonth(snapshot.period),
+        snapshot.sourcePeriod.kind, snapshot.sourcePeriod.from, snapshot.sourcePeriod.to, mysqlDate(snapshot.capturedAt), snapshot.officialSovPct,
         snapshot.exportedQueryCount, snapshot.portalPresentQueryCount, snapshot.samplePresencePct, snapshot.sourceFilename,
         snapshot.sourceSha256, snapshotFingerprint, options.supersedeSnapshotId ?? null, ingestionRunId,
         options.sourcePayloadJson ? JSON.stringify(options.sourcePayloadJson) : null,
       ],
     );
     const snapshotId = insertId(snapshotResult);
+    for (const point of snapshot.officialSovPoints) {
+      await connection.execute(
+        `INSERT INTO canonical_alice_visibility_sov_weekly
+         (snapshot_id, week_from, week_to, official_sov_pct) VALUES (?, ?, ?, ?)`,
+        [snapshotId, point.from, point.to, point.value],
+      );
+    }
     const queryIds = new Map<string, number>();
     for (const query of snapshot.queries) {
       const result = await connection.execute(
@@ -335,10 +381,11 @@ export async function persistAliceVisibilitySnapshot(
         (SELECT COUNT(*) FROM canonical_alice_visibility_sources source
           JOIN canonical_alice_visibility_queries q ON q.id = source.query_id WHERE q.snapshot_id = ?) AS source_count,
         (SELECT COUNT(*) FROM canonical_alice_visibility_queries WHERE snapshot_id = ? AND portal_present = 1) AS portal_present_count,
-        (SELECT COUNT(*) FROM canonical_alice_visibility_featured_sites WHERE snapshot_id = ?) AS featured_count`,
-      [snapshotId, snapshotId, snapshotId, snapshotId],
+        (SELECT COUNT(*) FROM canonical_alice_visibility_featured_sites WHERE snapshot_id = ?) AS featured_count,
+        (SELECT COUNT(*) FROM canonical_alice_visibility_sov_weekly WHERE snapshot_id = ?) AS official_sov_point_count`,
+      [snapshotId, snapshotId, snapshotId, snapshotId, snapshotId],
     ))[0];
-    if (!reconciliation || Number(reconciliation.query_count) !== snapshot.queries.length || Number(reconciliation.source_count) !== snapshot.sources.length || Number(reconciliation.portal_present_count) !== snapshot.queries.filter((query) => query.portalPresent).length || Number(reconciliation.featured_count) !== snapshot.featured.length) {
+    if (!reconciliation || Number(reconciliation.query_count) !== snapshot.queries.length || Number(reconciliation.source_count) !== snapshot.sources.length || Number(reconciliation.portal_present_count) !== snapshot.queries.filter((query) => query.portalPresent).length || Number(reconciliation.featured_count) !== snapshot.featured.length || Number(reconciliation.official_sov_point_count) !== snapshot.officialSovPoints.length) {
       throw new Error("Post-write reconciliation Alice visibility snapshot failed");
     }
     await connection.commit();
@@ -449,6 +496,11 @@ export function createSummaryOnlySnapshot(options: CliOptions): { snapshot: Alic
       portalDomain: options.domain,
       period: options.period,
       officialSovPct: options.officialSovPct,
+      sourcePeriod: normalizeAliceVisibilityPeriod({
+        period: options.period,
+        officialSovPct: options.officialSovPct,
+      }).sourcePeriod,
+      officialSovPoints: [],
       capturedAt: options.capturedAt,
       sourceFilename: null,
       sourceSha256: createHash("sha256").update(stableJson(checksumPayload)).digest("hex"),

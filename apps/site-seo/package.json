@@ -1,0 +1,24 @@
+{
+  "name": "@reportingdash/site-seo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "node --import tsx ../../scripts/site-seo-build.mjs",
+    "start": "node .next-medroche/standalone/apps/site-seo/server.js"
+  },
+  "dependencies": {
+    "@reportingdash/site-seo-contract": "0.1.0",
+    "next": "16.1.6",
+    "puppeteer": "^24.39.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}

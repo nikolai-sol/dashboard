@@ -5,7 +5,7 @@ import {
   resolveDashboardAudience,
   resolveDashboardAuthMode,
 } from "./dashboard-access-policy";
-import { isSharedPasswordClient } from "./shared-password-policy";
+import { isSharedPasswordClient, isSharedPasswordDashboard } from "./shared-password-policy";
 
 test("Abbott and Zaruku always use shared password access", () => {
   for (const clientId of ["abbott", " ABBOTT ", "zaruku", "ZARUKU"]) {
@@ -20,6 +20,13 @@ test("non-shared-password dashboards keep their existing auth modes", () => {
   assert.equal(resolveDashboardAuthMode("other", 0, true), "password_only");
   assert.equal(resolveDashboardAuthMode("other", 0, false), "public");
   assert.equal(isProtectedClient("other"), false);
+});
+
+test("every generic site-seo dashboard requires its own shared password", () => {
+  assert.equal(isSharedPasswordClient("client-roche"), false);
+  assert.equal(isSharedPasswordDashboard("client-roche", "site_seo"), true);
+  assert.equal(resolveDashboardAuthMode("client-roche", 0, false, "site_seo"), "password_only");
+  assert.equal(isSharedPasswordDashboard("other", "performance"), false);
 });
 
 test("embed keys and signed sessions resolve the correct audience", () => {

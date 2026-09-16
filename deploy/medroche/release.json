@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "scope": "site-seo",
+  "siteId": "site-medroche",
+  "profilePath": "config/sites/medroche.json",
+  "profileVersion": "2026.09.12-3",
+  "templateVersion": "6740052799605cb90aabea776631d5303409323a",
+  "route": "/dashboard/medroche",
+  "assetPrefix": "/_next-medroche",
+  "buildOutputDir": ".next-medroche",
+  "processName": "dashboard-medroche",
+  "port": 3003,
+  "deployPath": "/var/www/dashboard-medroche",
+  "releaseBranch": "release/medroche",
+  "deployLockPath": "/var/www/.dashboard-medroche-deploy.lock",
+  "sourceBindings": {
+    "binding-metrika-medroche": {"sourceKey": "yandex_metrika", "counterId": "94927113", "status": "configured"},
+    "binding-gsc-medroche": {"sourceKey": "google_search_console", "analyticsAccountId": "94927113", "resourceId": "https://med.roche.ru/", "status": "configured"},
+    "binding-webmaster-medroche": {"sourceKey": "yandex_webmaster", "analyticsAccountId": "94927113", "resourceId": "https:med.roche.ru:443", "status": "configured"},
+    "binding-wordstat-medroche": {"sourceKey": "yandex_wordstat", "analyticsAccountId": "94927113", "resourceId": "region:225", "status": "configured"},
+    "binding-alice-medroche": {"sourceKey": "yandex_webmaster_alice_manual", "analyticsAccountId": "94927113", "resourceId": "med.roche.ru", "status": "configured"},
+    "binding-seo-os-medroche": {"sourceKey": "seo_os", "analyticsAccountId": "94927113", "resourceId": "med.roche.ru", "status": "configured"}
+  }
+}

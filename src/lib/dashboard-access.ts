@@ -17,7 +17,7 @@ import {
   loadSharedPasswordCredential,
   verifySharedDashboardPassword,
 } from "@/lib/dashboard-shared-access";
-import { isSharedPasswordClient } from "@/lib/shared-password-policy";
+import { isSharedPasswordDashboard } from "@/lib/shared-password-policy";
 
 export type { DashboardAuthMode } from "@/lib/dashboard-access-policy";
 
@@ -101,11 +101,12 @@ function getSharedDashboardEmbedKey(clientId: string) {
   return null;
 }
 
-function resolveAuthMode(clientId: string, accessUsersCount: number): DashboardAuthMode {
+function resolveAuthMode(clientId: string, accessUsersCount: number, dashboardType?: string): DashboardAuthMode {
   return resolveDashboardAuthMode(
     clientId,
     accessUsersCount,
     Boolean(getSharedDashboardPassword(clientId)),
+    dashboardType,
   );
 }
 
@@ -120,7 +121,7 @@ function rowToContext(row: DashboardAccessContextRow): DashboardAccessContext {
     dashboard_name: String(row.dashboard_name),
     is_active: Boolean(row.is_active),
     access_users_count: accessUsersCount,
-    auth_mode: resolveAuthMode(clientId, accessUsersCount),
+    auth_mode: resolveAuthMode(clientId, accessUsersCount, row.dashboard_type),
   };
 }
 
@@ -261,7 +262,7 @@ export async function verifyDashboardAccessContextCredentials(
 ): Promise<VerifiedDashboardAccessContext | null> {
   if (context.auth_mode === "public") return context;
   if (context.auth_mode === "password_only") {
-    if (isSharedPasswordClient(context.client_id)) {
+    if (isSharedPasswordDashboard(context.client_id, context.dashboard_type)) {
       const verified = await verifySharedDashboardPassword(
         context.id,
         context.client_id,
@@ -403,7 +404,7 @@ export function createDashboardAccessAuthorizer(
       return { context, authorized: false as const, reason: "auth_required" as const };
     }
     let credentialVersion: number | undefined;
-    if (isSharedPasswordClient(context.client_id) && payload.audience === "manager") {
+    if (isSharedPasswordDashboard(context.client_id, context.dashboard_type) && payload.audience === "manager") {
       const credential = await dependencies.loadSharedPasswordCredential(
         context.id,
         context.client_id,
