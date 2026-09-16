@@ -254,7 +254,7 @@ function pdfPolicyFixture(statuses=[500,500,502,502,503,503,599,599],change=()=>
 test('uniform control PDF5xx cancels unread bodies and validates all candidate PDFs with explicit exception',async()=>{
   const m=await api(),f=pdfPolicyFixture();
   const result=await m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
-  assert.equal(result.status,'passed');assert.equal(result.control_pdf_baseline,'unavailable_5xx');assert.equal(result.pdf_parity,'not_compared');
+  assert.equal(result.status,'passed');assert.deepEqual(result.control_pdf_baseline,{manager:'unavailable_5xx',embed:'unavailable_5xx'});assert.deepEqual(result.pdf_parity,{manager:'not_compared',embed:'not_compared'});
   assert.equal(result.verification,'candidate_functional_with_baseline_exception');
   assert.deepEqual(f.counts(),{cancelled:8,read:0,controls:8,candidates:[['18','manager'],['abbott','manager'],['18','embed'],['abbott','embed']]});
   assert.equal(result.pdfs.manager.pages,1);assert.equal(result.pdfs.embed.pages,1);
@@ -264,7 +264,7 @@ test('uniform control PDF5xx cancels unread bodies and validates all candidate P
 test('one transient control PDF5xx is retried once before strict parity',async()=>{
   const m=await api(),f=pdfPolicyFixture([500,200,200,200,200]);
   const result=await m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
-  assert.equal(result.control_pdf_baseline,'available');assert.equal(result.pdf_parity,'matched');
+  assert.deepEqual(result.control_pdf_baseline,{manager:'available',embed:'available'});assert.deepEqual(result.pdf_parity,{manager:'matched',embed:'matched'});
   assert.equal(result.verification,'strict_parity');assert.equal(f.counts().controls,5);assert.equal(f.counts().cancelled,1);
 });
 
@@ -276,6 +276,15 @@ test('control PDF outcome must be uniformly available or uniformly5xx',async()=>
       assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare reason=mismatch\n');return true;
     });assert.equal(f.counts().read,0);
   }
+});
+
+test('control PDF baseline is strict per audience and permits the observed manager/embed split',async()=>{
+  const m=await api(),f=pdfPolicyFixture([200,200,500,500,500,500]);
+  const result=await m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
+  assert.deepEqual(result.control_pdf_baseline,{manager:'available',embed:'unavailable_5xx'});
+  assert.deepEqual(result.pdf_parity,{manager:'matched',embed:'not_compared'});
+  assert.equal(result.verification,'mixed_strict_and_functional');
+  assert.equal(result.status,'passed');
 });
 
 test('unavailable control PDF never exempts candidate status type bounds or parse validity',async()=>{
@@ -316,7 +325,7 @@ test('available control PDFs keep strict semantic parity and an explicit matched
     const f=pdfPolicyFixture([200,200,200,200],r=>{if(mismatch)r.body=pdf('different candidate text');});
     const pending=m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl});
     if(mismatch)await assert.rejects(pending,error=>{assert.equal(d.formatVerificationFailure(error),'ABBOTT_VERIFICATION_REFUSED stage=pdf_compare_candidate reason=text_token_count\n');return true;});
-    else{const result=await pending;assert.equal(result.control_pdf_baseline,'available');assert.equal(result.pdf_parity,'matched');assert.equal(result.verification,'strict_parity');assert.equal(f.counts().candidates.length,4);}
+    else{const result=await pending;assert.deepEqual(result.control_pdf_baseline,{manager:'available',embed:'available'});assert.deepEqual(result.pdf_parity,{manager:'matched',embed:'matched'});assert.equal(result.verification,'strict_parity');assert.equal(f.counts().candidates.length,4);}
   }
 });
 
@@ -328,7 +337,7 @@ test('control5xx and successful candidate PDFs never inspect failure-stage heade
     return response;
   };
   const result=await m.runReadOnlySmoke({managerAccessToken:'inert-token',embedKey:'inert-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl});
-  assert.equal(result.control_pdf_baseline,'unavailable_5xx');assert.equal(result.status,'passed');assert.equal(f.counts().read,0);
+  assert.deepEqual(result.control_pdf_baseline,{manager:'unavailable_5xx',embed:'unavailable_5xx'});assert.equal(result.status,'passed');assert.equal(f.counts().read,0);
 });
 
 test('every candidate PDF alias and audience remains mandatory with an unavailable baseline',async()=>{
@@ -491,7 +500,7 @@ test('real PDF handlers preserve hard failures and explicitly report uniform con
     const before=f.counts().generated;
     const result=await m.runReadOnlySmoke(f,new AbortController().signal,{fetchImpl:f.fetchImpl}).catch(e=>e);
     if(port==='3001'&&kind==='5xx'){
-      assert.equal(result.status,'passed');assert.equal(result.control_pdf_baseline,'unavailable_5xx');assert.equal(result.pdf_parity,'not_compared');
+      assert.equal(result.status,'passed');assert.deepEqual(result.control_pdf_baseline,{manager:'unavailable_5xx',embed:'unavailable_5xx'});assert.deepEqual(result.pdf_parity,{manager:'not_compared',embed:'not_compared'});
       assert.equal(result.verification,'candidate_functional_with_baseline_exception');assert.equal(f.counts().generated-before,4);
     }else assert.equal(d.formatVerificationFailure(result),`ABBOTT_VERIFICATION_REFUSED stage=pdf_fetch reason=${port==='3004'&&kind==='5xx'?'candidate_pdf_launch':`${port==='3001'?'control':'candidate'}_${kind}`}\n`);
     assert.equal(f.counts().launches,f.counts().closed);

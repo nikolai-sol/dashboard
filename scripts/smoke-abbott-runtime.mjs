@@ -188,7 +188,7 @@ export function pdfMismatchReason(reference,candidate) {
 export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},signal,seams={}) {
   signal=AbortSignal.any([signal,AbortSignal.timeout(480000)]);
   const fetchImpl=seams.fetchImpl??fetch,parsePdf=seams.parsePdf??summarizePdf;
-  let checks=0,stage='setup',controlPdfBaseline;const summaries=new Map(),inventories=new Map(),assetResults=new Map();
+  let checks=0,stage='setup';const controlPdfBaseline={},summaries=new Map(),inventories=new Map(),assetResults=new Map();
   const reject=reason=>{throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),stage,reason);};
   try{
     active(signal);
@@ -253,7 +253,7 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       }
       if(origin===ORIGINS[0]){
         const outcome=pdf===CONTROL_PDF_UNAVAILABLE?'unavailable_5xx':'available';
-        stage='pdf_compare';if(controlPdfBaseline&&controlPdfBaseline!==outcome)reject('mismatch');controlPdfBaseline=outcome;
+        stage='pdf_compare';if(controlPdfBaseline[audience]&&controlPdfBaseline[audience]!==outcome)reject('mismatch');controlPdfBaseline[audience]=outcome;
       }
       stage='excel_fetch';const workbook=await inspect(origin,'/api/dashboard/'+alias+'/excel',credential,'excel',bytes=>{stage='excel_parse';return summarizeWorkbook(bytes);});
       stage='asset_html';
@@ -287,6 +287,8 @@ export async function runReadOnlySmoke({managerAccessToken,embedKey,manifest},si
       }
     }
     active(signal);
-    return {status:'passed',verification:controlPdfBaseline==='available'?'strict_parity':'candidate_functional_with_baseline_exception',control_pdf_baseline:controlPdfBaseline,pdf_parity:controlPdfBaseline==='available'?'matched':'not_compared',period:{from:'2026-09-01',to:'2026-09-13'},aliases:2,audiences:2,checks,pdfs:Object.fromEntries([...summaries].map(([key,value])=>[key,value.pdf])),workbooks:Object.fromEntries([...summaries].map(([key,value])=>[key,hash(JSON.stringify(value.workbook))])),candidate_assets:approved.size,reference_assets:inventories.get(ORIGINS[0]).length};
+    const pdfParity=Object.fromEntries(['manager','embed'].map(audience=>[audience,controlPdfBaseline[audience]==='available'?'matched':'not_compared']));
+    const verification=Object.values(controlPdfBaseline).every(value=>value==='available')?'strict_parity':Object.values(controlPdfBaseline).every(value=>value==='unavailable_5xx')?'candidate_functional_with_baseline_exception':'mixed_strict_and_functional';
+    return {status:'passed',verification,control_pdf_baseline:controlPdfBaseline,pdf_parity:pdfParity,period:{from:'2026-09-01',to:'2026-09-13'},aliases:2,audiences:2,checks,pdfs:Object.fromEntries([...summaries].map(([key,value])=>[key,value.pdf])),workbooks:Object.fromEntries([...summaries].map(([key,value])=>[key,hash(JSON.stringify(value.workbook))])),candidate_assets:approved.size,reference_assets:inventories.get(ORIGINS[0]).length};
   }catch(error){throw carryDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),error,stage,signal.aborted?'cancelled':'failed');}
 }
