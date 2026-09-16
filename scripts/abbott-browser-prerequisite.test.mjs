@@ -12,6 +12,7 @@ const api=()=>import('./abbott-browser-prerequisite.mjs').catch(()=>({}));
 
 test('browser contract derives the production-equivalent pinned Linux Chrome build and official source',async()=>{
   const m=await api();assert.equal(typeof m.deriveBrowserContract,'function');
+  assert.deepEqual(m.BROWSER_SIZE_LIMITS,{archive:256*1024*1024,file:384*1024*1024,tree:768*1024*1024});
   const c=await m.deriveBrowserContract();
   assert.equal(c.buildId,'146.0.7680.76');assert.equal(c.browser,'chrome');assert.equal(c.platform,'linux');
   assert.equal(c.source,'https://storage.googleapis.com/chrome-for-testing-public/146.0.7680.76/linux64/chrome-linux64.zip');

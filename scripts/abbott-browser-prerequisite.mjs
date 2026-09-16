@@ -5,7 +5,8 @@ import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 
 export const BROWSER_ROOT='/var/lib/dashboard-abbott/browser-cache-chrome';
-const MAX_ARCHIVE=256*1024*1024,MAX_TREE=768*1024*1024;
+const MAX_ARCHIVE=256*1024*1024,MAX_FILE=384*1024*1024,MAX_TREE=768*1024*1024;
+export const BROWSER_SIZE_LIMITS=Object.freeze({archive:MAX_ARCHIVE,file:MAX_FILE,tree:MAX_TREE});
 const fail=()=>{throw Error('ABBOTT_BROWSER_REFUSED');};
 const hash=x=>createHash('sha256').update(x).digest('hex');
 const requireHere=()=>createRequire(import.meta.url);
@@ -82,7 +83,7 @@ function inventory(root,{uid,gid,normalize=false}={}){
     for(const name of fs.readdirSync(dir).sort()){
       if(!/^[A-Za-z0-9_.-]+$/.test(name))fail();const file=path.join(dir,name),s=fs.lstatSync(file);
       if(s.isDirectory()){visit(file);continue;}
-      if(!s.isFile()||s.nlink!==1||s.size>MAX_ARCHIVE||(total+=s.size)>MAX_TREE)fail();
+      if(!s.isFile()||s.nlink!==1||s.size>MAX_FILE||(total+=s.size)>MAX_TREE)fail();
       const relative=path.relative(root,file);if(relative==='stamp.json')continue;
       const mode=s.mode&0o111?0o750:0o640;
       if(normalize){fs.chmodSync(file,mode);fs.chownSync(file,uid,gid);}else if(s.uid!==uid||s.gid!==gid||(s.mode&0o7777)!==mode)fail();
