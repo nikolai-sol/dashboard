@@ -299,7 +299,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
     verifyActive(record);
     phase('preflight_browser');
-    const stamp='/var/lib/dashboard-abbott/browser-cache-chrome/stamp.json',before=read(stamp,1048576,{gid:984,mode:0o640});
+    const stamp='/var/lib/dashboard-abbott/browser-cache/stamp.json',before=read(stamp,1048576,{gid:984,mode:0o640});
     if(verifyBrowser().archiveSha256!=='fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'||read(stamp,1048576,{gid:984,mode:0o640})!==before)fail();
     perimeter();phase('preflight_current');kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
     if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record))fail();
