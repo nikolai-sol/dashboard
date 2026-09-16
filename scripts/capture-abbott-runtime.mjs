@@ -163,7 +163,8 @@ export function passesVisualThreshold(comparison) {
 export function validateCaptureResult(index) {
   const reject=stage=>{throw markDiagnostic(new SafeStageError('CAPTURE_ACCEPTANCE'),stage,'mismatch');};
   if(index.console.errors>0){
-    const reason=['console_resource','console_runtime','console_other'].includes(index.console.error_reason)?index.console.error_reason:'mismatch';
+    const resourceReasons=['resource_image_4xx','resource_image_5xx','resource_style_4xx','resource_style_5xx','resource_script_4xx','resource_script_5xx','resource_data_4xx','resource_data_5xx','resource_other_4xx','resource_other_5xx','resource_request_failed'];
+    const reason=index.console.error_reason==='console_resource'&&resourceReasons.includes(index.console.resource_reason)?index.console.resource_reason:['console_resource','console_runtime','console_other'].includes(index.console.error_reason)?index.console.error_reason:'mismatch';
     throw markDiagnostic(new SafeStageError('CAPTURE_ACCEPTANCE'),'capture_console',reason);
   }
   for(const item of index.captures){
@@ -176,6 +177,11 @@ export function classifyConsoleError(text) {
   if(/Failed to load resource|net::ERR_|the server responded with a status/i.test(String(text)))return 'console_resource';
   if(/Uncaught|(?:Type|Reference|Range|Syntax)Error|Minified React error/i.test(String(text)))return 'console_runtime';
   return 'console_other';
+}
+
+export function classifyResourceFailure(type,status) {
+  const kind=type==='image'?'image':type==='stylesheet'?'style':type==='script'?'script':['xhr','fetch'].includes(type)?'data':'other';
+  return `resource_${kind}_${status>=500?'5xx':'4xx'}`;
 }
 
 function defaultPidAlive(pid) {
@@ -481,7 +487,7 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
     authorize: () => resolveManagerToken(loginBase, candidateBase, { managerPassword, managerAccessToken }),
     launch,
     capture: async ({ browser, authorization: managerToken, outputDirectory }) => {
-      const consoleCounts = { errors: 0, warnings: 0, error_reason: null };
+      const consoleCounts = { errors: 0, warnings: 0, error_reason: null, resource_reason: null };
       const page = await captureStage('capture_launch',()=>browser.newPage());
       const boundary = await guardCaptureRequests(page, candidateBase);
       await captureStage('capture_launch',()=>installCaptureClock(page));
@@ -490,6 +496,10 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
         if (message.type() === "error") {consoleCounts.errors += 1;consoleCounts.error_reason??=classifyConsoleError(message.text());}
         if (message.type() === "warning" || message.type() === "warn") consoleCounts.warnings += 1;
       });
+      page.on("response",response=>{
+        try{const status=response.status(),url=new URL(response.url());if(status>=400&&url.origin===new URL(candidateBase).origin)consoleCounts.resource_reason??=classifyResourceFailure(response.request().resourceType(),status);}catch{}
+      });
+      page.on("requestfailed",()=>{consoleCounts.resource_reason??='resource_request_failed';});
       await page.setViewport(DESKTOP_VIEWPORT);
       await page.setCookie({
         name: "dashboard_viewer_18",

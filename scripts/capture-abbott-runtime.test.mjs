@@ -50,16 +50,24 @@ test('visual launch/navigation/render/screenshot/dimensions errors have closed d
 test('visual acceptance reports only dimension, comparison or console enums',async()=>{
   assert.equal(typeof captureTool.validateCaptureResult,'function');const d=await import('./abbott-verification-diagnostics.mjs');
   for(const [stage,index]of [
-    ['capture_console',{console:{errors:1,error_reason:'console_resource'},captures:[]}],
+    ['capture_console',{console:{errors:1,error_reason:'console_resource',resource_reason:'resource_image_4xx'},captures:[]}],
     ['capture_dimensions',{console:{errors:0},captures:[{comparison:{dimensions_match:false}}]}],
     ['capture_compare',{console:{errors:0},captures:[{comparison:{dimensions_match:true,pixel_metrics:{changed_pixel_ratio:1,mean_absolute_error:1}}}]}],
-  ]){const error=await Promise.resolve().then(()=>captureTool.validateCaptureResult(index)).catch(e=>e);assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=${stage==='capture_console'?'console_resource':'mismatch'}\n`);}
+  ]){const error=await Promise.resolve().then(()=>captureTool.validateCaptureResult(index)).catch(e=>e);assert.equal(d.formatVerificationFailure(error),`ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=${stage==='capture_console'?'resource_image_4xx':'mismatch'}\n`);}
 });
 
 test('console errors collapse to closed categories without returning their text',()=>{
   assert.equal(captureTool.classifyConsoleError('Failed to load resource: private https://secret.invalid/?token=x'),'console_resource');
   assert.equal(captureTool.classifyConsoleError('Uncaught TypeError: private token'),'console_runtime');
   assert.equal(captureTool.classifyConsoleError('private token'),'console_other');
+});
+
+test('resource failures collapse status and browser type to closed categories',()=>{
+  assert.equal(captureTool.classifyResourceFailure('image',404),'resource_image_4xx');
+  assert.equal(captureTool.classifyResourceFailure('stylesheet',503),'resource_style_5xx');
+  assert.equal(captureTool.classifyResourceFailure('script',404),'resource_script_4xx');
+  assert.equal(captureTool.classifyResourceFailure('xhr',500),'resource_data_5xx');
+  assert.equal(captureTool.classifyResourceFailure('private-secret',418),'resource_other_4xx');
 });
 
 test('capture clock and screenshot keep the fixed baseline day and CSS viewport width',async()=>{
