@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 const api = async () => { try { return await import('./smoke-abbott-runtime.mjs'); } catch(e) { if(e.code==='ERR_MODULE_NOT_FOUND')return {};throw e; } };
 const hash = x => createHash('sha256').update(x).digest('hex');
-const deployed = JSON.parse(fs.readFileSync(new URL('./fixtures/abbott-deployed-record-4904f6b.json',import.meta.url),'utf8'));
+const deployed = JSON.parse(fs.readFileSync(new URL('./fixtures/abbott-deployed-record-85ca954.json',import.meta.url),'utf8'));
 
 test('smoke and remote attester pins agree with the observed deployed record',()=>{
   const pin=(file,name,length)=>{
