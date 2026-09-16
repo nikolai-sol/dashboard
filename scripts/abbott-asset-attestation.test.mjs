@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';import test from 'node:test';import {createHash}from'node:crypto';import fs from'node:fs';
 const api=async()=>{try{return await import('./abbott-asset-attestation.mjs');}catch(e){if(e.code==='ERR_MODULE_NOT_FOUND')return {};throw e;}};
 const digest=x=>createHash('sha256').update(x).digest('hex');
-const ID='978bab9dcd2b486d8c65f29960ef8eaa',SHA='62f034a6d3caabc66a9dcc033ec12a6e62979569',HASH='c74c91a9581f816de10cacb6c2cc15b920e11898331405194f3de5b6f1bf3027',PREVIOUS='305cedd2321041b68b4d9e2cf502a2e0';
+const ID='770d6d8b7f904a1e9ae447c86f6065b5',SHA='76a18c69d9e459d9aa8ac20d3a9b3457a5900abe',HASH='72d9503f82a8feff4cc0662b1669889190695a0ebb73e37ae76f6c94fa0220c4',PREVIOUS='978bab9dcd2b486d8c65f29960ef8eaa';
 function fixture(pins={ID,SHA,HASH,PREVIOUS}){
   const {ID,SHA,HASH,PREVIOUS}=pins;
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control',asset='apps/abbott/.next-abbott/static/chunks/a.js',bytes=Buffer.from('synthetic-static');
@@ -18,7 +18,7 @@ test('asset attester binds fixed release/hash, source proof and every public fil
   const m=await api();assert.equal(typeof m.readAttestedAbbottAssets,'function');const f=fixture();
   const result=m.readAttestedAbbottAssets(f.platform);assert.equal(result.releaseId,ID);assert.equal(result.sourceSha,SHA);assert.equal(result.assets.length,1);assert.equal(result.assets[0].path,'/_next-abbott/_next/static/chunks/a.js');assert.equal(f.proofs(),2);assert.equal(f.fds.size,0);assert.ok(!JSON.stringify(result).includes('synthetic-static'));
 });
-test('attestation rejects an older release after the observed 62f034a deployment',async()=>{
+test('attestation rejects an older release after the observed 76a18c6 deployment',async()=>{
   const m=await api(),f=fixture({ID:'5ec3175697824126b8bc0be1b84e68f3',SHA:'55ec478b42405515f2d3eff3d68dd9c3ac8a8d04',HASH:'137540a76fce42ab5aac2f9ebb6805d0c1baa42ce8fe1677cab8205caa24ea69',PREVIOUS:'8c79caf495f147ad91b2174b9bc5f65c'});
   assert.throws(()=>m.readAttestedAbbottAssets(f.platform),/^Error: ABBOTT_ASSET_ATTESTATION_REFUSED$/);assert.equal(f.fds.size,0);
 });
@@ -39,7 +39,7 @@ test('host, source, manifest, pointer, public hash/mode/link and unattested file
 });
 
 test('actual sanitized deployed record has the exact accepted schema and pins',async()=>{
-  const m=await api(),f=fixture(),bytes=fs.readFileSync(new URL('./fixtures/abbott-deployed-record-62f034a.json',import.meta.url));
+  const m=await api(),f=fixture(),bytes=fs.readFileSync(new URL('./fixtures/abbott-deployed-record-76a18c6.json',import.meta.url));
   const record=JSON.parse(bytes);assert.deepEqual(record,{id:ID,previousId:PREVIOUS,scope:'abbott',sourceSha:SHA,manifestDigest:HASH});
   f.files.set(f.control+'/current.json',bytes);f.files.set(f.control+'/'+ID+'/record.json',bytes);
   assert.equal(m.readAttestedAbbottAssets(f.platform).releaseId,ID);
