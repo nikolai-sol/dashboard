@@ -56,6 +56,7 @@ function fixture(){
  function stat(p){const file=files.has(p),link=links.has(p),pid=Number(/^\/proc\/(\d+)/.exec(p)?.[1]),[uid,gid]=owners.get(pid)??[0,0],net=p.includes('/net');return{dev:1,ino:2,size:file?Buffer.byteLength(files.get(p)):0,uid:net?0:uid,gid:net?0:gid,mode:link?0o120777:file?0o100600:0o40755,nlink:1,mtimeMs:1,ctimeMs:1,isFile:()=>file,isDirectory:()=>!file&&!link,isSymbolicLink:()=>link,...metadata.get(p)};}
  const io={constants:fs.constants,lstatSync:stat,fstatSync:fd=>stat(fds.get(fd)),realpathSync:p=>links.get(p)??p,readlinkSync:p=>links.get(p),readdirSync:p=>p===CONTROL?[receiptPath.split('/').at(-1)]:p==='/proc'?['1','self','net',...processes.map(r=>String(r[0]))]:p==='/proc/1/fd'?[]:p.endsWith('/fd')?['10']:[],openSync(p,flags){assert.equal(flags,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);opened.push(p);fds.set(++serial,p);return serial;},readSync(fd,b,o,l,pos){buffers.push(b);return Buffer.from(files.get(fds.get(fd))).copy(b,o,pos,pos+l);},closeSync:fd=>fds.delete(fd)};
  for(const file of[NGINX,'/var/www/dashboard/.release-source-sha','/var/www/dashboard-zaruku/.release-source-sha'])metadata.set(file,{mode:0o100644});
+ metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});
  metadata.set('/usr/bin/node',{mode:0o100755});metadata.set('/var/lib/dashboard-abbott/browser-cache/stamp.json',{mode:0o100640,gid:984});
  metadata.set(CONTROL,{mode:0o40700});metadata.set('/var/www/dashboard-abbott-releases',{mode:0o40711});metadata.set('/var/www/dashboard-abbott-backups',{mode:0o40711});
  const options={io,hostname:()=> 'ybjqbzojln',getuid:()=>0,digest:b=>b.toString()==='manifest-fixture'?HASH:createHash('sha256').update(b).digest('hex'),verifyActive(r){calls.push('active');assert.deepEqual(r,record);},verifyBrowser(){calls.push('browser');return{archiveSha256:'fa769d4b10dd6efd02284749029f15bc51a4adaa28b3b3e8d7740cec3d792d04'};}};
@@ -205,6 +206,16 @@ test('every captured neighbor field and release metadata stays exact throughout 
 test('neighbor cwd and release ancestry are root-owned nonwritable real directories',async()=>{
  const m=await api();for(const file of ['/var/www/dashboard-zaruku/apps/zaruku','/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone/apps'])for(const mode of ['owner','write','symlink']){
   const f=fixture();if(mode==='symlink')f.links.set(file,'/elsewhere');else f.metadata.set(file,mode==='owner'?{uid:983}:{mode:0o40777});assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},file+'/'+mode);
+ }
+});
+test('combined neighbor preserves its established uid-501 release ownership',async()=>{
+ const m=await api(),f=fixture();
+ f.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});
+ f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});
+ assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());
+ for(const [file,metadata]of [['/var/www/dashboard',{uid:502}],['/var/www/dashboard',{mode:0o40777}],['/var/www/dashboard/.release-source-sha',{uid:0}]]){
+  const invalid=fixture();invalid.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});invalid.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});invalid.metadata.set(file,{...invalid.metadata.get(file),...metadata});
+  assert.throws(()=>m.createAbbottDeploymentProof(invalid.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
  }
 });
 test('bounded discovery refuses ambiguous socket ownership, scan overflow and proc races',async()=>{

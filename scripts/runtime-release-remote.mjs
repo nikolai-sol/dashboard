@@ -172,18 +172,19 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
   const stableProc=(a,b)=>['dev','ino','size','mode','uid','gid','nlink'].every(k=>a[k]===b[k]);
   const metadata=s=>Object.fromEntries(['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].map(k=>[k,s[k]]));
-  function ancestry(file,uid=0,gid=0){
+  function ancestry(file,uid=0,gid=0,ownedDirectory=null){
     for(let dir=path.dirname(file);dir!=='/';dir=path.dirname(dir)){
       const s=stat(dir),proc=/^\/proc\/[1-9][0-9]*(?:\/|$)/.test(dir);
       const browser=dir==='/var/lib/dashboard-abbott'||dir.startsWith('/var/lib/dashboard-abbott/');
       if(!s.isDirectory()||s.isSymbolicLink()||io.realpathSync(dir)!==dir||s.mode&0o022)fail();
-      if(!(s.uid===0&&(s.gid===0||browser&&s.gid===984)||proc&&s.uid===uid&&s.gid===gid)){if(proc)reason('uid_gid');fail();}
+      const owned=ownedDirectory&&dir===ownedDirectory.path&&s.uid===ownedDirectory.uid&&s.gid===ownedDirectory.gid;
+      if(!(s.uid===0&&(s.gid===0||browser&&s.gid===984)||proc&&s.uid===uid&&s.gid===gid||owned)){if(proc)reason('uid_gid');fail();}
     }
   }
-  function read(file,max=8192,{uid=0,gid=0,mode,proc=false,ancestorUid=uid,ancestorGid=gid,utf8Reason='utf8'}={}){
+  function read(file,max=8192,{uid=0,gid=0,mode,proc=false,ancestorUid=uid,ancestorGid=gid,ancestorOwned=null,utf8Reason='utf8'}={}){
     let fd,bytes;try{
       if(proc)reason('proc_metadata');
-      ancestry(file,ancestorUid,ancestorGid);const a=stat(file);
+      ancestry(file,ancestorUid,ancestorGid,ancestorOwned);const a=stat(file);
       if(!a.isFile()||a.isSymbolicLink()||a.nlink!==1||a.uid!==uid||a.gid!==gid||a.mode&0o022||mode!==undefined&&(a.mode&0o7777)!==mode||!proc&&(a.size>max||io.realpathSync(file)!==file))fail();
       const stableRead=proc?stableProc:stable;
       fd=io.openSync(file,io.constants.O_RDONLY|io.constants.O_NOFOLLOW);if(!stableRead(a,io.fstatSync(fd)))fail();
@@ -263,11 +264,12 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       phase('preflight_neighbor_'+name,'listener');const listener=discovered.find(r=>r.port===port);if(!listener||listener.uid!==uid)fail();
       reason('cwd');const cwd=io.realpathSync('/proc/'+listener.pid+'/cwd');
       if(fixedCwd?cwd!==fixedCwd:!/^\/var\/www\/dashboard-medroche-releases\/[a-f0-9]{40}\/standalone\/apps\/site-seo$/.test(cwd))fail();
-      ancestry(cwd+'/server.js');const cwdDirectory=stat(cwd);
-      if(!cwdDirectory.isDirectory()||cwdDirectory.isSymbolicLink()||cwdDirectory.uid!==0||cwdDirectory.gid!==0||cwdDirectory.mode&0o022||io.realpathSync(cwd)!==cwd)fail();
+      const combinedOwner=name==='combined'?{path:cwd,uid:501,gid:0}:null;
+      ancestry(cwd+'/server.js',0,0,combinedOwner);const cwdDirectory=stat(cwd),cwdUid=combinedOwner?.uid??0;
+      if(!cwdDirectory.isDirectory()||cwdDirectory.isSymbolicLink()||cwdDirectory.uid!==cwdUid||cwdDirectory.gid!==0||cwdDirectory.mode&0o022||io.realpathSync(cwd)!==cwd)fail();
       reason('release_record');let release;
       if(name==='medroche'){const target=cwd.slice(0,-'/apps/site-seo'.length),file='/var/www/dashboard-medroche';ancestry(file);link(file,target);release={target,metadata:metadata(stat(file))};}
-      else{const file=name==='combined'?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha',bytes=read(file,128);if(!/^[a-f0-9]{40}\n?$/.test(bytes))fail();release={bytes,metadata:metadata(stat(file))};}
+      else{const file=name==='combined'?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha',bytes=read(file,128,combinedOwner?{uid:501,gid:0,ancestorOwned:combinedOwner}:{});if(!/^[a-f0-9]{40}\n?$/.test(bytes))fail();release={bytes,metadata:metadata(stat(file))};}
       const process=kernel([listener.pid,null,uid,gid,cwd,port],cwd+'/server.js');if(process.listener[2]!==listener.inode)fail();
       reason('cwd');if(!stable(cwdDirectory,stat(cwd)))fail();
       neighbors.push({name,release,process,listener,cwdDirectory:metadata(cwdDirectory)});

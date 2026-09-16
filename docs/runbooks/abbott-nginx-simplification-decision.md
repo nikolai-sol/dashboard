@@ -70,6 +70,15 @@ file identity; ordinary files and process-directory identities retain the full
 timestamp check. A red/green regression covers this exact churn while the
 existing inode/PID/listener race refusals remain green.
 
+The next preflight exposed a second stale fixture assumption: the established
+combined runtime directory and `.release-source-sha` are UID 501, GID 0, modes
+0755/0644, while its process remains root. The production proof previously
+required root ownership and therefore could never attest the live neighbor.
+It now accepts only that exact non-writable UID-501 leaf and release file for
+the fixed combined path; all ancestors, Zaruku, MedRoche, and Abbott retain
+their prior ownership rules. Regression tests reject a different UID, a
+writable directory, or a root-owned replacement release file.
+
 ## Remaining live gates
 
 - Publish the reviewed Abbott branch and deploy only the port-3004 shadow.
