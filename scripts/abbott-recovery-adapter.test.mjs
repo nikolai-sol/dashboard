@@ -10,7 +10,7 @@ function fixture(){
   const old={id:P.old,previousId:null,scope:'abbott',sourceSha:P.oldSha,manifestDigest:P.oldHash},candidate={id:P.candidate,previousId:P.old,scope:'abbott',sourceSha:P.candidateSha,manifestDigest:P.candidateHash};
   for(const r of[old,candidate])put(`${CONTROL}/${r.id}/record.json`,JSON.stringify(r),0o600);
   put(CONTROL+'/current.json',JSON.stringify(old),0o600);
-  for(const[p,r]of[[APP,candidate],[BACKUP,old]]){put(p+'/.release-source-sha',r.sourceSha+'\n');put(p+'/.env',"SAFE='fixture'\n"+(r===candidate?"PUPPETEER_EXECUTABLE_PATH='/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell'\n":''),0o640,P.gid);put(p+'/apps/abbott/server.js',r.sourceSha);}
+  for(const[p,r]of[[APP,candidate],[BACKUP,old]]){put(p+'/.release-source-sha',r.sourceSha+'\n');put(p+'/.env',"SAFE='fixture'\n"+(r===candidate?"PUPPETEER_EXECUTABLE_PATH='/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-146.0.7680.76/chrome-linux64/chrome'\n":''),0o640,P.gid);put(p+'/apps/abbott/server.js',r.sourceSha);}
   put('/etc/nginx/conf.d/dashboard-next.conf','fixed-nginx');put('/proc/sys/kernel/random/boot_id',P.boot);put('/root/.pm2/pm2.pid',String(P.daemon));
   put('/var/www/dashboard/.release-source-sha','8f389a28df1c4b741ec33b7538f0354b74f5a40e');put('/var/www/dashboard-zaruku/.release-source-sha','af1948c8b9a0f70d8696afb9c8abc254408a5daa');
   put('/etc/passwd','dashboard-abbott:x:982:984::/nonexistent:/usr/sbin/nologin\n');

@@ -344,7 +344,7 @@ function fixture(authority=RUNTIME_MANIFESTS.abbott) {
     deploymentPreflight() {},
     assertDeploymentPerimeter() {},
     account: () => ({ uid: 1001, gid: 1001 }),
-    browser: () => '/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell',
+    browser: () => '/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-146.0.7680.76/chrome-linux64/chrome',
     chown: () => {},
     secrets: () => Object.fromEntries(Object.entries(runtime).filter(([key]) => !['NODE_ENV','HOSTNAME','PORT','INTERNAL_BASE_URL'].includes(key))),
     verify: async artifact => {

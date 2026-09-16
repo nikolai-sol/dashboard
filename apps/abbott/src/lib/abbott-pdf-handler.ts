@@ -97,7 +97,7 @@ export function createAbbottPdfHandler(overrides: Partial<{
         // Version is derived from the installed locked package, not ambient
         // HOME/cache or another dashboard's browser. Deploy attests this tree.
         headless: true,
-        executablePath: `/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-${PUPPETEER_REVISIONS["chrome-headless-shell"]}/chrome-headless-shell-linux64/chrome-headless-shell`,
+        executablePath: `/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-${PUPPETEER_REVISIONS.chrome}/chrome-linux64/chrome`,
         pipe: true,
         env: { PATH: "/usr/bin:/bin", LANG: "C.UTF-8" },
         args: [

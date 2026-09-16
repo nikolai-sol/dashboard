@@ -10,17 +10,17 @@ import JSZip from 'jszip';
 import {EventEmitter} from 'node:events';
 const api=()=>import('./abbott-browser-prerequisite.mjs').catch(()=>({}));
 
-test('browser contract derives exact installed pinned Linux headless-shell build and official source',async()=>{
+test('browser contract derives the production-equivalent pinned Linux Chrome build and official source',async()=>{
   const m=await api();assert.equal(typeof m.deriveBrowserContract,'function');
   const c=await m.deriveBrowserContract();
-  assert.equal(c.buildId,'146.0.7680.76');assert.equal(c.browser,'chrome-headless-shell');assert.equal(c.platform,'linux');
-  assert.equal(c.source,'https://storage.googleapis.com/chrome-for-testing-public/146.0.7680.76/linux64/chrome-headless-shell-linux64.zip');
-  assert.equal(c.executable,'chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell');
+  assert.equal(c.buildId,'146.0.7680.76');assert.equal(c.browser,'chrome');assert.equal(c.platform,'linux');
+  assert.equal(c.source,'https://storage.googleapis.com/chrome-for-testing-public/146.0.7680.76/linux64/chrome-linux64.zip');
+  assert.equal(c.executable,'chrome/linux-146.0.7680.76/chrome-linux64/chrome');
   assert.equal(c.coreVersion,'24.39.1');assert.equal(c.browsersVersion,'2.13.0');
 });
 
 function fixture(t){
-  const parent=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'abbott-browser-fixture-')),root=path.join(parent,'browser-cache');
+  const parent=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'abbott-browser-fixture-')),root=path.join(parent,'browser-cache-chrome');
   t.after(()=>fs.rmSync(parent,{recursive:true,force:true}));return {parent,root,uid:process.getuid(),gid:process.getgid()};
 }
 const digest=x=>createHash('sha256').update(x).digest('hex');
@@ -47,7 +47,7 @@ test('interrupted download or extraction never publishes and removes owned stagi
 
 test('archive metadata rejects traversal, duplicates, symlinks, oversized expansion and foreign roots',async()=>{
   const m=await api();assert.equal(typeof m.validateArchiveEntries,'function');
-  const good={name:'chrome-headless-shell-linux64/chrome-headless-shell',size:20,mode:0o100755};
+  const good={name:'chrome-linux64/chrome',size:20,mode:0o100755};
   assert.doesNotThrow(()=>m.validateArchiveEntries([good]));
   for(const entries of [[{...good,name:'../escape'}],[good,good],[{...good,mode:0o120777}],[{...good,size:1024**3}],[{...good,name:'/etc/passwd'}],[{...good,name:'other/browser'}]])assert.throws(()=>m.validateArchiveEntries(entries),/^Error: ABBOTT_BROWSER_REFUSED$/);
 });
@@ -62,7 +62,7 @@ test('existing symlink cache or invalid contract refuses without download or pri
 test('installed API extracts only validated preseeded ZIP with every HTTP method disabled',async(t)=>{
   const m=await api(),f=fixture(t),contract=await m.deriveBrowserContract();
   for(const protocol of [http,https])for(const method of ['get','request'])t.mock.method(protocol,method,()=>assert.fail('Network forbidden in extraction test'));
-  const zip=new JSZip();zip.file('chrome-headless-shell-linux64/chrome-headless-shell','fixture executable',{unixPermissions:0o100755});
+  const zip=new JSZip();zip.file('chrome-linux64/chrome','fixture executable',{unixPermissions:0o100755});
   const bytes=await zip.generateAsync({type:'nodebuffer',platform:'UNIX'});
   const result=await m.installBrowserPrerequisite({...f,contract,download:async()=>Buffer.from(bytes),unpack:m.unpackWithInstalledApi,checkExecutable:()=>true});
   assert.equal(result.status,'created');assert.equal(fs.readFileSync(path.join(f.root,contract.executable),'utf8'),'fixture executable');
@@ -81,7 +81,7 @@ test('wrong version, mode, symlink, executable access or extra file never passes
 
 test('invalid archive and unexecutable staged browser refuse before publication',async(t)=>{
   const m=await api(),f=fixture(t),contract=await m.deriveBrowserContract();
-  const zip=new JSZip();zip.file('chrome-headless-shell-linux64/escape','../../escape',{unixPermissions:0o120777});
+  const zip=new JSZip();zip.file('chrome-linux64/escape','../../escape',{unixPermissions:0o120777});
   await assert.rejects(m.validateZip(await zip.generateAsync({type:'nodebuffer',platform:'UNIX'})),/ABBOTT_BROWSER_REFUSED/);
   const p={...f,contract,download:async()=>Buffer.from('archive'),validateArchive:async()=>{},unpack:async stage=>{const file=path.join(stage,contract.executable);fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,'browser',{mode:0o755});},checkExecutable:()=>false};
   await assert.rejects(m.installBrowserPrerequisite(p),/ABBOTT_BROWSER_REFUSED/);assert.equal(fs.existsSync(f.root),false);assert.deepEqual(fs.readdirSync(f.parent),[]);

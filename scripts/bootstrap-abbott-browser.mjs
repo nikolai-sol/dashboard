@@ -18,7 +18,7 @@ try{
 if(process.argv.length!==1||Object.keys(process.env).some(k=>k!=='UV_USE_IO_URING'||process.env[k]!=='0')||process.getuid()!==0)throw Error();
 const proof=await import(${JSON.stringify(url(sources.proof))});proof.verifyAbbottBootstrapSource();
 const worker=await import(${JSON.stringify(url(sources.worker))});const installer=worker.createRuntimeInstaller(${JSON.stringify(authority)},${JSON.stringify(envKeys)});
-const active=installer.inspectActiveRuntime();if(active?.id!=='6cd2f12e245a47dcbd5f6ce928c4ed83'||active.sourceSha!=='f80607fbc8a693aa2c720b0976938e88732cdf1a'||active.manifestDigest!=='7b9acd076ec821840d221f03dcc754eae09b921603e22f3941a0c489a102bd1f')throw Error();
+const active=installer.inspectActiveRuntime();if(active?.id!=='cf5f0759e633421cba2fbc4fb822a244'||active.sourceSha!=='b607f1111f1143d7cfa35f0c8c0b9d6d3f6d62a8'||active.manifestDigest!=='115ccb22599201672d7270948fc96c744e7b7b92ab62e7ace9380be420297504')throw Error();
 const browser=await import(${JSON.stringify(url(sources.browser))});const {captureBoundedChild}=await import(${JSON.stringify(url(sources.bounded))});
 const requirePackage=createRequire('/var/www/dashboard-abbott/package.json'),contract=browser.deriveBrowserContract(requirePackage);if(JSON.stringify(contract)!==JSON.stringify(${JSON.stringify(contract)}))throw Error();
 const user=fs.readFileSync('/etc/passwd','utf8').split('\\n').filter(x=>x.startsWith('dashboard-abbott:'));if(user.length!==1)throw Error();const fields=user[0].split(':');if(fields[2]!=='982'||fields[3]!=='984'||fields[5]!=='/nonexistent'||fields[6]!=='/usr/sbin/nologin')throw Error();

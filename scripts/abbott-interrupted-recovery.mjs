@@ -82,7 +82,7 @@ export function createRecoveryAdapter(environmentKeys,signal){
     try{
       if(b.length>65536)refusal();const digest=hash(b),previous=environmentDigests.get(r.id);if(previous&&previous!==digest)refusal();environmentDigests.set(r.id,digest);
       const lines=b.toString().split('\n').filter(l=>l.startsWith('PUPPETEER_EXECUTABLE_PATH='));
-      if(r.id===P.candidate){if(lines.length!==1||lines[0]!=="PUPPETEER_EXECUTABLE_PATH='/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell'")refusal();}
+      if(r.id===P.candidate){if(lines.length!==1||lines[0]!=="PUPPETEER_EXECUTABLE_PATH='/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-146.0.7680.76/chrome-linux64/chrome'")refusal();}
       else if(lines.length)refusal();
     }finally{b.fill(0);}
   };

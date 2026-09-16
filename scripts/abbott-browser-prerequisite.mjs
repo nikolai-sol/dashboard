@@ -4,7 +4,7 @@ import https from 'node:https';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
 
-export const BROWSER_ROOT='/var/lib/dashboard-abbott/browser-cache';
+export const BROWSER_ROOT='/var/lib/dashboard-abbott/browser-cache-chrome';
 const MAX_ARCHIVE=256*1024*1024,MAX_TREE=768*1024*1024;
 const fail=()=>{throw Error('ABBOTT_BROWSER_REFUSED');};
 const hash=x=>createHash('sha256').update(x).digest('hex');
@@ -15,9 +15,9 @@ export function deriveBrowserContract(requirePackage=requireHere()){
   const coreEntry=requirePackage.resolve('puppeteer-core'),browserEntry=requirePackage.resolve('@puppeteer/browsers');
   const coreVersion=JSON.parse(fs.readFileSync(path.resolve(coreEntry,'../../../../package.json'))).version;
   const browsersVersion=JSON.parse(fs.readFileSync(path.resolve(browserEntry,'../../../package.json'))).version;
-  const buildId=core.PUPPETEER_REVISIONS['chrome-headless-shell'];
+  const buildId=core.PUPPETEER_REVISIONS.chrome;
   if(!/^\d+\.\d+\.\d+\.\d+$/.test(buildId))fail();
-  const browser='chrome-headless-shell',platform='linux';
+  const browser='chrome',platform='linux';
   const source=browsers.getDownloadUrl(browser,platform,buildId).href;
   const executable=path.relative('/cache',browsers.computeExecutablePath({cacheDir:'/cache',browser,platform,buildId}));
   const contract={version:1,coreVersion,browsersVersion,buildId,browser,platform,source,executable};
@@ -25,14 +25,14 @@ export function deriveBrowserContract(requirePackage=requireHere()){
 }
 
 export function validateContract(c){
-  if(!c||Object.keys(c).sort().join(',')!=='browser,browsersVersion,buildId,coreVersion,executable,platform,source,version'||c.version!==1||c.browser!=='chrome-headless-shell'||c.platform!=='linux'||!/^\d+\.\d+\.\d+\.\d+$/.test(c.buildId)||!/^\d+\.\d+\.\d+$/.test(c.coreVersion)||!/^\d+\.\d+\.\d+$/.test(c.browsersVersion)||c.source!==`https://storage.googleapis.com/chrome-for-testing-public/${c.buildId}/linux64/chrome-headless-shell-linux64.zip`||c.executable!==`chrome-headless-shell/linux-${c.buildId}/chrome-headless-shell-linux64/chrome-headless-shell`)fail();
+  if(!c||Object.keys(c).sort().join(',')!=='browser,browsersVersion,buildId,coreVersion,executable,platform,source,version'||c.version!==1||c.browser!=='chrome'||c.platform!=='linux'||!/^\d+\.\d+\.\d+\.\d+$/.test(c.buildId)||!/^\d+\.\d+\.\d+$/.test(c.coreVersion)||!/^\d+\.\d+\.\d+$/.test(c.browsersVersion)||c.source!==`https://storage.googleapis.com/chrome-for-testing-public/${c.buildId}/linux64/chrome-linux64.zip`||c.executable!==`chrome/linux-${c.buildId}/chrome-linux64/chrome`)fail();
 }
 
 export function validateArchiveEntries(entries){
   if(!Array.isArray(entries)||!entries.length||entries.length>4096)fail();let total=0;const names=new Set();
   for(const e of entries){
     const name=e.name,parts=typeof name==='string'?name.replace(/\/$/,'').split('/'):[];
-    if(!parts.length||parts[0]!=='chrome-headless-shell-linux64'||parts.some(p=>!p||p==='.'||p==='..'||! /^[A-Za-z0-9_.-]+$/.test(p))||names.has(name)||!Number.isSafeInteger(e.size)||e.size<0||(total+=e.size)>MAX_TREE||!Number.isInteger(e.mode)||![0,0o100000,0o040000].includes(e.mode&0o170000))fail();
+    if(!parts.length||parts[0]!=='chrome-linux64'||parts.some(p=>!p||p==='.'||p==='..'||! /^[A-Za-z0-9_.-]+$/.test(p))||names.has(name)||!Number.isSafeInteger(e.size)||e.size<0||(total+=e.size)>MAX_TREE||!Number.isInteger(e.mode)||![0,0o100000,0o040000].includes(e.mode&0o170000))fail();
     names.add(name);
   }
 }
@@ -107,7 +107,7 @@ export function verifyBrowserInstallation({root=BROWSER_ROOT,contract,uid=0,gid=
 export async function installBrowserPrerequisite({root=BROWSER_ROOT,parent=path.dirname(root),uid=0,gid=984,contract,download=downloadOfficialArchive,validateArchive=validateZip,unpack,checkExecutable,signal}={}){
   let stage,bytes;
   try{
-    if(signal?.aborted)fail();validateContract(contract);safeAncestors(root,uid);if(path.dirname(root)!==parent||path.basename(root)!=='browser-cache')fail();
+    if(signal?.aborted)fail();validateContract(contract);safeAncestors(root,uid);if(path.dirname(root)!==parent||path.basename(root)!==path.basename(BROWSER_ROOT))fail();
     const p=fs.lstatSync(parent);if(!p.isDirectory()||fs.realpathSync(parent)!==parent||p.uid!==uid||p.mode&0o022)fail();
     if(fs.existsSync(root)||fs.lstatSync(root,{throwIfNoEntry:false}))return {...verifyBrowserInstallation({root,contract,uid,gid,checkExecutable}),status:'unchanged'};
     if(typeof unpack!=='function'||typeof checkExecutable!=='function')fail();
@@ -126,8 +126,8 @@ export async function installBrowserPrerequisite({root=BROWSER_ROOT,parent=path.
 export async function unpackWithInstalledApi(stage,bytes,contract,requirePackage=requireHere()){
   validateContract(contract);
   const browsers=requirePackage('@puppeteer/browsers');
-  const expected=path.join(stage,contract.executable),dir=path.join(stage,'chrome-headless-shell');fs.mkdirSync(dir,{mode:0o700});
-  const archive=path.join(dir,`${contract.buildId}-chrome-headless-shell-linux64.zip`);fs.writeFileSync(archive,bytes,{flag:'wx',mode:0o600});
+  const expected=path.join(stage,contract.executable),dir=path.join(stage,'chrome');fs.mkdirSync(dir,{mode:0o700});
+  const archive=path.join(dir,`${contract.buildId}-chrome-linux64.zip`);fs.writeFileSync(archive,bytes,{flag:'wx',mode:0o600});
   const result=await browsers.install({cacheDir:stage,browser:contract.browser,platform:contract.platform,buildId:contract.buildId,baseUrl:'https://storage.googleapis.com/chrome-for-testing-public',installDeps:false});
   if(result.executablePath!==expected)fail();
 }

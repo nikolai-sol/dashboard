@@ -65,7 +65,7 @@ test("PDF renders isolated page with existing dimensions and headers, then close
     assert.equal(await response.text(),"%PDF");
     const launchOptions=(fixture.calls.find(([name])=>name==="launch")![1] as Record<string,unknown>[])[0];
     assert.equal(launchOptions.headless,true);
-    assert.equal(launchOptions.executablePath,"/var/lib/dashboard-abbott/browser-cache/chrome-headless-shell/linux-146.0.7680.76/chrome-headless-shell-linux64/chrome-headless-shell");
+    assert.equal(launchOptions.executablePath,"/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-146.0.7680.76/chrome-linux64/chrome");
     assert.equal(launchOptions.pipe,true);
     assert.deepEqual(launchOptions.env,{PATH:"/usr/bin:/bin",LANG:"C.UTF-8"});
     const goto=fixture.calls.find(([name])=>name==="goto")![1] as [string,unknown];
