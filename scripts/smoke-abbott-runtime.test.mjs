@@ -70,7 +70,8 @@ test('recursive journey objects accept empty rows and do not accept inherited ro
 test('asset inventory rejects redirects, foreign origins, dynamic and traversal paths',async()=>{
   const m=await api();assert.equal(typeof m.assetInventory,'function');
   assert.deepEqual(m.assetInventory('<script src="/_next-abbott/_next/static/chunks/a.js"></script><link href="/_next-abbott/_next/static/css/a.css" rel="stylesheet">','http://127.0.0.1:3004'),['/_next-abbott/_next/static/chunks/a.js','/_next-abbott/_next/static/css/a.css']);
-  for(const path of ['https://evil.test/a.js','//evil.test/a.js','/api/health','/_next/static/a.js','/_next-abbott/static/../private.js','/_next-abbott/static/a.js?token=synthetic','data:text/javascript,x']){
+  assert.deepEqual(m.assetInventory('<script src="/_next-abbott/_next/static/chunks/app/dashboard/%5Bid%5D/page.js"></script>','http://127.0.0.1:3004'),['/_next-abbott/_next/static/chunks/app/dashboard/[id]/page.js']);
+  for(const path of ['https://evil.test/a.js','//evil.test/a.js','/api/health','/_next/static/a.js','/_next-abbott/static/../private.js','/_next-abbott/static/a.js?token=synthetic','/_next-abbott/_next/static/chunks/%5Bother%5D/a.js','/_next-abbott/_next/static/chunks/%5bid%5d/a.js','data:text/javascript,x']){
     assert.throws(()=>m.assetInventory(`<script src="${path}"></script>`,'http://127.0.0.1:3004'),/^Error: ABBOTT_SMOKE_REFUSED$/);
   }
 });

@@ -35,14 +35,19 @@ export function scanEmbedPrivacy(value) {
 function safeAssetPath(value,origin,stage='asset_attestation') {
   const reject=reason=>{throw markDiagnostic(new Error('ABBOTT_SMOKE_REFUSED'),stage,reason);};
   if(!ORIGINS.includes(origin)||typeof value==='string'&&(/^[a-z][a-z0-9+.-]*:/i.test(value)||value.startsWith('//')))reject('unexpected_asset_origin');
-  if(typeof value!=='string'||value.length>512||!value.startsWith('/')||/[\\%?#\s<>"'&]/.test(value)||value.split('/').some(x=>x==='.'||x==='..'))reject('unexpected_asset_path');
+  if(typeof value!=='string'||value.length>512||!value.startsWith('/'))reject('unexpected_asset_path');
+  // Next URL-encodes the literal [id] directory in its client-reference HTML,
+  // while the attested physical static tree uses [id]. Canonicalize only that
+  // exact generated segment; every other percent/bracket form stays forbidden.
+  const canonical=value.replaceAll('%5Bid%5D','[id]');
+  if(/[\\%?#\s<>"'&]/.test(canonical)||canonical.split('/').some(x=>x==='.'||x==='..'||/[\[\]]/.test(x)&&x!=='[id]'))reject('unexpected_asset_path');
   // Next appends /_next/static to assetPrefix and installs an internal rewrite.
   const prefix=origin===ORIGINS[1]?'/_next-abbott/_next/static/':'/_next/static/';
-  if(stage==='asset_html'&&!value.startsWith(prefix))reject('unexpected_asset_path');
-  if(value.startsWith('/_next')&&!value.startsWith(prefix))reject('unexpected_asset_path');
-  if(!value.startsWith(prefix)&&!/^\/[A-Za-z0-9_./-]+\.(?:svg|png|jpe?g|webp|ico|woff2?)$/.test(value))reject('unexpected_asset_path');
-  if(!/\.(?:js|css|svg|png|jpe?g|webp|ico|woff2?)$/.test(value))reject('unexpected_asset_path');
-  return value;
+  if(stage==='asset_html'&&!canonical.startsWith(prefix))reject('unexpected_asset_path');
+  if(canonical.startsWith('/_next')&&!canonical.startsWith(prefix))reject('unexpected_asset_path');
+  if(!canonical.startsWith(prefix)&&!/^\/[A-Za-z0-9_./-]+\.(?:svg|png|jpe?g|webp|ico|woff2?)$/.test(canonical))reject('unexpected_asset_path');
+  if(!/\.(?:js|css|svg|png|jpe?g|webp|ico|woff2?)$/.test(canonical))reject('unexpected_asset_path');
+  return canonical;
 }
 
 const htmlSpace=character=>character!==undefined&&/[\t\n\f\r ]/.test(character);
