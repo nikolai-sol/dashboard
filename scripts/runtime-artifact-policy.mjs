@@ -332,7 +332,12 @@ function inspectFileClosure(files, violations, { rejectUntraced = true } = {}) {
   const addAssets = (value) => {
     if (typeof value === "string" && value.startsWith("static/")) {
       if (!staticName(value)) throw new Error();
-      if (files.has(`${ABBOTT_NEXT}/${value}`)) include(`${ABBOTT_NEXT}/${value}`);
+      // Next writes dynamic route directories with literal brackets, while its
+      // client-reference manifest uses their canonical URL-encoded form.
+      // Decode only the two bracket escapes already admitted by staticName;
+      // every other percent escape remains outside the accepted grammar.
+      const physical = value.replaceAll("%5B", "[").replaceAll("%5D", "]");
+      include(`${ABBOTT_NEXT}/${physical}`);
     } else if (Array.isArray(value)) value.forEach(addAssets);
     else if (value && typeof value === "object") Object.values(value).forEach(addAssets);
   };
@@ -793,7 +798,40 @@ function stampOperation(action, relativePath, data, mode, expected) {
   };
 }
 
-function stampRuntimeFiles(root, sourceTrace, sourceSha) {
+function stampDirectoryOperation(relativePath) {
+  return { action: "mkdir", path: relativePath, mode: 0o755 };
+}
+
+function staticMaterializationOperations(root, trusted) {
+  const prefix = `${ABBOTT_NEXT}/static/`;
+  const directories = new Set();
+  const files = [];
+  let totalBytes = 0;
+  for (const [name, entry] of trusted.entries) {
+    if (entry.required) continue;
+    if (!name.startsWith(prefix) || files.length >= 256) throw new Error("invalid optional static authority");
+    const target = path.join(root, name);
+    const existing = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (existing) continue;
+    const relative = name.slice(prefix.length);
+    const source = readStableFile(path.join(path.dirname(root), "static", relative));
+    totalBytes += source.buffer.length;
+    if (totalBytes > MAX_FILE_BYTES || source.buffer.length !== entry.size || source.mode !== entry.mode ||
+      createHash("sha256").update(source.buffer).digest("hex") !== entry.sha256) throw new Error("static source differs from trusted authority");
+    for (let parent = path.posix.dirname(name); parent !== "."; parent = path.posix.dirname(parent)) {
+      const absolute = path.join(root, parent), stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
+      if (stat) {
+        if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(absolute) !== absolute || stat.mode & 0o022) throw new Error("unsafe static target ancestor");
+      } else directories.add(parent);
+    }
+    files.push(stampOperation("create", name, source.buffer, source.mode));
+  }
+  const directoryOperations = [...directories].sort((left, right) => left.split("/").length - right.split("/").length || left.localeCompare(right, "en")).map(stampDirectoryOperation);
+  if (directoryOperations.length + files.length > 516) throw new Error("excessive static materialization plan");
+  return directoryOperations.concat(files);
+}
+
+function stampRuntimeFiles(root, sourceTrace, sourceSha, trusted) {
   const packagePath = path.join(root, "package.json");
   const packageSource = readStableFile(packagePath);
   const packageJson = JSON.parse(decodeUtf8(packageSource.buffer));
@@ -808,6 +846,7 @@ function stampRuntimeFiles(root, sourceTrace, sourceSha) {
     version: 1,
     root,
     operations: [
+      ...staticMaterializationOperations(root, trusted),
       stampOperation("replace", "package.json", runtimePackage, packageSource.mode, packageSource.buffer),
       stampOperation("create", `${ABBOTT_NEXT}/next-server.js.nft.json`, sourceTrace.buffer, sourceTrace.mode),
       stampOperation("create", ".release-source-sha", sha, 0o644),
@@ -836,7 +875,7 @@ export function stampRuntimeArtifact(artifactRoot, scope, sourceSha, trustedMani
   const sourceStat = lstatSync(sourceTrace);
   if (!sourceStat.isFile() || sourceStat.nlink !== 1 || sourceStat.size > MAX_FILE_BYTES) throw new Error("invalid standalone server trace");
   const trace = readStableFile(sourceTrace);
-  stampRuntimeFiles(root, trace, sourceSha);
+  stampRuntimeFiles(root, trace, sourceSha, trusted);
 }
 
 function usage() {

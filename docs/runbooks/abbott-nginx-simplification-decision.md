@@ -99,6 +99,16 @@ with release ID `5ec3175697824126b8bc0be1b84e68f3`, predecessor
 `137540a76fce42ab5aac2f9ebb6805d0c1baa42ce8fe1677cab8205caa24ea69`.
 The read-only smoke and asset attester are pinned to this exact observed record.
 
+Pre-cutover visual and PDF smoke then exposed a missing browser chunk for the
+dynamic dashboard route. Next's client-reference authority names the chunk with
+URL-encoded `%5Bid%5D`, while the physical build tree uses `[id]`. The trusted
+artifact closure previously skipped that reference because the two canonical
+forms were not mapped, producing a validly attested but incomplete static tree.
+The builder now decodes only those already-allowlisted bracket escapes and makes
+the physical file mandatory; a real-build regression test proves the chunk is
+present in the trusted manifest. No route, data, credential, or API contract is
+changed by this repair.
+
 ## Remaining live gates
 
 - Publish the reviewed Abbott branch and deploy only the port-3004 shadow.

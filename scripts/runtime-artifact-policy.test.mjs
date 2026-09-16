@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 
 import {
   assertRuntimeArtifact as assertSealedArtifact,
+  createTrustedRuntimeManifest,
   stampRuntimeArtifact,
 } from "./runtime-artifact-policy.mjs";
 import * as runtimePolicy from "./runtime-artifact-policy.mjs";
@@ -387,6 +388,25 @@ test("closure: only manifested browser assets may supplement the traced files", 
   write(root, `${NEXT_ROOT}/static/chunks/foreign.js`, "// unowned browser chunk\n");
   assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("static/chunks/foreign.js")));
 }));
+
+test("trusted manifest maps encoded dynamic-route chunk URLs to physical static files", () => {
+  const buildRoot = path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott");
+  const artifactRoot = path.join(buildRoot, "standalone");
+  const authorityParent = mkdtempSync(path.join(tmpdir(), "abbott-dynamic-static-"));
+  const authority = path.join(authorityParent, "trusted-runtime-manifest.json");
+  try {
+    const sourceSha = readFileSync(path.join(artifactRoot, ".release-source-sha"), "utf8").trim();
+    createTrustedRuntimeManifest(artifactRoot, "abbott", sourceSha, authority);
+    const manifest = JSON.parse(readFileSync(authority, "utf8"));
+    const clientReference = readFileSync(path.join(buildRoot, "server/app/dashboard/[id]/page_client-reference-manifest.js"), "utf8");
+    const encoded = /static\/chunks\/app\/dashboard\/%5Bid%5D\/[\w.-]+\.js/.exec(clientReference)?.[0];
+    assert.ok(encoded, "dynamic page client chunk must be present in the route authority");
+    const physical = `${NEXT_ROOT}/${encoded.replaceAll("%5B", "[").replaceAll("%5D", "]")}`;
+    assert.ok(manifest.files.some((entry) => entry.path === physical), `missing ${physical}`);
+  } finally {
+    rmSync(authorityParent, { recursive: true, force: true });
+  }
+});
 
 test("accepts the complete Abbott standalone route set and required static schema only", () => {
   withArtifact((root) => {

@@ -11,7 +11,7 @@ import sys
 
 MAX_REQUEST_BYTES = 48 * 1024 * 1024
 MAX_FILE_BYTES = 32 * 1024 * 1024
-MAX_OPERATIONS = 8
+MAX_OPERATIONS = 520
 
 
 def reject(category):
@@ -73,9 +73,13 @@ def decode_operation(operation):
         reject("invalid-operation")
     action = operation.get("action")
     parts = validate_relative_path(operation.get("path"))
+    mode = operation.get("mode")
+    if action == "mkdir":
+        if set(operation) != {"action", "path", "mode"} or not isinstance(mode, int) or mode < 0 or mode > 0o777:
+            reject("invalid-operation")
+        return action, parts, None, None, mode, None
     encoded = operation.get("data")
     digest = operation.get("sha256")
-    mode = operation.get("mode")
     if action not in ("create", "replace") or not isinstance(encoded, str):
         reject("invalid-operation")
     if not isinstance(digest, str) or len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
@@ -118,7 +122,15 @@ def apply_operation(root_fd, operation):
     parent_fd, parent_descriptors = open_parent(root_fd, parts)
     descriptor = None
     try:
-        if action == "create":
+        if action == "mkdir":
+            os.mkdir(parts[-1], mode, dir_fd=parent_fd)
+            descriptor = os.open(parts[-1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+            after = os.fstat(descriptor)
+            if not stat.S_ISDIR(after.st_mode):
+                reject("written-directory-mismatch")
+            os.fchmod(descriptor, mode)
+            os.fsync(descriptor)
+        elif action == "create":
             descriptor = os.open(
                 parts[-1],
                 os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -134,6 +146,8 @@ def apply_operation(root_fd, operation):
                 reject("existing-file-mismatch")
             os.ftruncate(descriptor, 0)
             os.lseek(descriptor, 0, os.SEEK_SET)
+        if action == "mkdir":
+            return
         os.fchmod(descriptor, mode)
         offset = 0
         while offset < len(data):
