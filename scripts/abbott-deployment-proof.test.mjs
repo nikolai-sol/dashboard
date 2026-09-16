@@ -1,6 +1,6 @@
 import test from'node:test';import assert from'node:assert/strict';import fs from'node:fs';import{createHash}from'node:crypto';
 const api=()=>import('./runtime-release-remote.mjs');
-const ID='cf5f0759e633421cba2fbc4fb822a244',SHA='b607f1111f1143d7cfa35f0c8c0b9d6d3f6d62a8',HASH='115ccb22599201672d7270948fc96c744e7b7b92ab62e7ace9380be420297504';
+const ID='305cedd2321041b68b4d9e2cf502a2e0',SHA='66983f9969a3a1a92b951599ee2cb5ac253d0aa7',HASH='d908928f199a4c742d648d19dea7a59b3b577103d05a70561cc65e2f71bf080b';
 const NGINX='/etc/nginx/conf.d/dashboard-next.conf',ROOT='/var/www/dashboard-abbott',CONTROL='/var/www/.dashboard-abbott-control';
 const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e';
 const NGINX_TEXT='server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; location / { proxy_pass http://127.0.0.1:3001; } }\n';
@@ -35,7 +35,7 @@ test('Abbott ownership validator accepts only the complete direct cutover fragme
 });
 function fixture(){
  const med='/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone';
- const record={scope:'abbott',id:ID,sourceSha:SHA,manifestDigest:HASH,previousId:'1a2f99c57e594fc38d1f3a663f781cf4'};
+ const record={scope:'abbott',id:ID,sourceSha:SHA,manifestDigest:HASH,previousId:'cf5f0759e633421cba2fbc4fb822a244'};
  const processes=[[3722244,'122353749',0,0,'/var/www/dashboard',3001],[791065,'131477500',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],[1870897,'139126198',983,983,med+'/apps/site-seo',3003],[12345,'555',982,984,ROOT+'/apps/abbott',3004]];
  const registration={appName:'dashboard-abbott',pmId:6,exec:'/usr/bin/env',cwd:ROOT+'/apps/abbott',args:['-i','PATH=/usr/local/bin:/usr/bin:/bin','/usr/bin/node','/var/www/.dashboard-abbott-launcher.cjs'],uid:'dashboard-abbott',gid:'dashboard-abbott',releaseId:ID,sourceSha:SHA};
  const receipt={version:1,binding:{sourceSha:SHA,runId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},transaction:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',record,directory:{dev:'1',ino:'2'},process:{appName:'dashboard-abbott',pmId:6,pid:12345,startTime:'555',bootId:BOOT,uid:982,gid:984,cwd:ROOT+'/apps/abbott',script:'/var/www/.dashboard-abbott-launcher.cjs',sourceSha:SHA,registration}};

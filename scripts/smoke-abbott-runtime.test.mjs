@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 const api = async () => { try { return await import('./smoke-abbott-runtime.mjs'); } catch(e) { if(e.code==='ERR_MODULE_NOT_FOUND')return {};throw e; } };
 const hash = x => createHash('sha256').update(x).digest('hex');
-const deployed = JSON.parse(fs.readFileSync(new URL('./fixtures/abbott-deployed-record-b607f11.json',import.meta.url),'utf8'));
+const deployed = JSON.parse(fs.readFileSync(new URL('./fixtures/abbott-deployed-record-66983f9.json',import.meta.url),'utf8'));
 
 test('smoke and remote attester pins agree with the observed deployed record',()=>{
   const pin=(file,name,length)=>{
@@ -596,7 +596,7 @@ test('semantic PDF differences, period drift, manager denial and unapproved inve
       if(kind==='empty'&&r.u.pathname.startsWith('/dashboard/'))r.body='<html>login</html>';
     });
     await assert.rejects(m.runReadOnlySmoke({managerAccessToken:'synthetic-token',embedKey:'synthetic-embed',manifest:f.manifest},new AbortController().signal,{fetchImpl:f.fetchImpl,parsePdf:async()=>({pages:1,dimensions:[[612,792]],text_sha256:hash(kind==='pdf'?String(calls++):'same')})}),error=>{
-      const stage={pdf:'pdf_compare',period:'alias_manager_json',manager:'admin_manager',unattested:'asset_attestation',type:'asset_fetch',empty:'asset_html'}[kind];
+      const stage={pdf:'pdf_compare_control_alias',period:'alias_manager_json',manager:'admin_manager',unattested:'asset_attestation',type:'asset_fetch',empty:'asset_html'}[kind];
       assert.match(d.formatVerificationFailure(error),new RegExp(`^ABBOTT_VERIFICATION_REFUSED stage=${stage} reason=[a-z_]+\\n$`));return /^Error: ABBOTT_SMOKE_REFUSED$/.test(String(error));
     });
   }
