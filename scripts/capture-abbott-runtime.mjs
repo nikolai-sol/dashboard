@@ -479,13 +479,14 @@ export async function guardCaptureRequests(page, candidateBase, expectedPort = 3
   return { assertSafe() { if (violationReason) throw markDiagnostic(new SafeStageError("CAPTURE_REQUEST_BOUNDARY"),"capture_navigation",violationReason); } };
 }
 
-export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, managerAccessToken, launch, candidatePort = 3004 }) {
+export async function captureAbbottRuntime({ loginBase, candidateBase, baseline, outputParent, managerPassword, managerAccessToken, launch, candidatePort = 3004, authorizationBase = candidateBase }) {
   assertRuntimeBaseUrl(loginBase, 3001);
   assertRuntimeBaseUrl(candidateBase, candidatePort);
+  assertRuntimeBaseUrl(authorizationBase, 3004);
   const locations = await captureStage('capture_output',()=>validateCaptureLocations({ baseline, outputParent }),'CAPTURE_OUTPUT_CREATE');
   return runCaptureLifecycle({
     createOutput: () => createPrivateCandidateDirectory(locations.outputParent),
-    authorize: () => resolveManagerToken(loginBase, candidateBase, { managerPassword, managerAccessToken }),
+    authorize: () => resolveManagerToken(loginBase, authorizationBase, { managerPassword, managerAccessToken }),
     launch,
     capture: async ({ browser, authorization: managerToken, outputDirectory }) => {
       const consoleCounts = { errors: 0, warnings: 0, error_reason: null, resource_reason: null };
