@@ -29,9 +29,11 @@ Monday–Sunday ISO-week range.
 ### Alice AI visibility
 
 Yandex Webmaster documents the visibility report and an interface download, but
-does not document a public API for this report. Alice remains a manual source. A
-weekly protocol means a weekly reminder, reviewed workbook upload, validation and
-publication; it does not mean an undocumented API call or browser automation.
+does not document a public API for this report. Alice therefore uses an
+operator-assisted browser skill against an existing authenticated session. The
+skill reads the official weekly series embedded in the page, downloads the query
+workbook, and hands both to the reviewed canonical import path. It never bypasses
+login or CAPTCHA and retains manual upload as the fallback.
 
 The official Share of Voice and the percentage calculated from downloaded example
 queries remain separate measurements. The example workbook is not the denominator
@@ -72,7 +74,7 @@ another site's facts under the MedRoche account, and one future site's failure d
 not suppress the health result of another site. Provider request budgets are checked
 before the first paid request. An invalid or ambiguous binding fails closed.
 
-### Alice: weekly reviewed manual snapshots
+### Alice: weekly browser-assisted reviewed snapshots
 
 Change standardized SEO Alice cadence from `previous_month` to
 `previous_iso_week`. Reuse the existing protected preview/publish flow, extending
@@ -83,7 +85,8 @@ Each weekly handoff contains:
 
 - the downloaded `.xlsx` workbook;
 - the completed ISO-week key and exact Monday–Sunday dates;
-- official Share of Voice copied from the Yandex Webmaster interface;
+- official Share of Voice read from `window._initData.alice.sov` for the exact
+  requested week;
 - source capture timestamp with timezone;
 - optional reviewed featured-site URLs.
 
@@ -101,12 +104,14 @@ snapshots remain readable and unchanged.
 
 ## Alternatives not selected
 
-### Browser automation for Alice
+### Fully unattended browser cron for Alice
 
-An authenticated browser could attempt to open Webmaster and download the file.
-This is rejected because session expiry, CAPTCHA and UI changes make it unsuitable
-as a canonical production collector. It would also blur the boundary between a
-reviewed official metric and an inferred value.
+A headless desktop cron that owns credentials or bypasses login is rejected.
+Session expiry, CAPTCHA, machine lock and interface changes make it unsuitable as
+an unattended canonical producer. The selected browser skill is operator-assisted:
+it may use an already authenticated session, but authentication interruption fails
+the run and requests user action. Canonical success is recorded only after import,
+publication and reread, never after download alone.
 
 ### Telegatask as the collector scheduler
 
@@ -166,12 +171,14 @@ On the configured weekly checkpoint it evaluates the standardized SEO registry:
 
 - Wordstat: previous-week dynamics plus this week's rolling snapshot must have
   successful canonical coverage;
-- Alice: the previous ISO week must have a published snapshot.
+- Alice: the previous ISO week must have a published snapshot and a successful
+  `site-seo:<site_id>:alice` browser-collection run covering the same dates;
+- GSC manual bindings: the message asks for the previous ISO week's export.
 
 If Wordstat is missing or failed, the message identifies the site, source, expected
-period and last successful capture. If Alice is missing, the message asks for the
-new Webmaster workbook and official SoV. It does not include credentials, internal
-paths or raw exception text.
+period and last successful capture. If Alice is missing, the message asks to run
+the browser skill. For a manual GSC binding it asks for a new export for the same
+week. It does not include credentials, internal paths or raw exception text.
 
 The reminder is deduplicated per site, source and expected period. It is sent once
 when the period becomes due and can be repeated only under the existing notification
@@ -191,7 +198,7 @@ Alice shows:
 - official SoV for the selected ISO week;
 - change in percentage points to the previous published ISO week;
 - query and source coverage from that week's workbook;
-- a visible `Ручная выгрузка` source label and capture time;
+- a visible browser-assisted source label and capture time;
 - missing, delayed, complete-empty and failed states without borrowing another
   week.
 
@@ -225,6 +232,8 @@ IDs is rejected according to the existing registry scope rules.
   are never written to the registry, dashboard release or logs.
 - The Wordstat service accepts only scopes selected from the trusted deployed
   registry; command-line site/account overrides cannot broaden a scheduled run.
+- Alice browser sessions reuse the user's existing authentication and never store
+  credentials, cookies or browser profile data in evidence.
 - Alice files remain outside public/release paths and are size-bounded and
   content-addressed.
 - Preview validation performs no database write. Publication is transactional and
@@ -240,7 +249,8 @@ IDs is rejected according to the existing registry scope rules.
 1. Reconcile the MedRoche feature branch with the active production dashboard
    lineage and restore all live GSC, Alice and SEO OS bindings before deployment.
 2. Add period-aware Alice schema and compatibility reads.
-3. Extend the generic Alice preview/publish adapter and admin UI to ISO weeks.
+3. Add and validate the `collecting-yandex-alice-visibility` project skill; extend
+   the generic Alice preview/publish adapter and admin UI to ISO weeks.
 4. Add registry-driven Wordstat weekly orchestration and unit files.
 5. Add Telegram weekly health/reminder evaluation to the existing summary job.
 6. Verify with fixture databases and dry-run collection plans.
@@ -276,8 +286,8 @@ Telegram preview without sending, and MedRoche desktop/mobile dashboard smoke.
 
 ## Out of scope
 
-- Undocumented Yandex Alice APIs or browser automation.
-- Automatic extraction of official Alice SoV from the authenticated interface.
+- A fully unattended browser cron, credential automation, CAPTCHA bypass or use of
+  undocumented Yandex HTTP endpoints.
 - A new Telegatask collector or second Telegram cron.
 - Email notification delivery.
 - Changes to legacy Zaruku collection and display.
