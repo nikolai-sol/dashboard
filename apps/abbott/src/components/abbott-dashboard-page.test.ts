@@ -18,6 +18,7 @@ test("focused page calls only the matching Abbott API alias", () => {
 test("Abbott header, dashboard, and completed-period handlers retain production markup and bodies", () => {
   const baseline = execFileSync("git", ["show", "8f389a28df1c4b741ec33b7538f0354b74f5a40e:src/app/dashboard/[id]/page.tsx"], { encoding: "utf8" });
   const page = source();
+  const productionComparablePage = page.replace("            showUserIdAnalytics={showAbbottUserIdAnalytics}\n", "");
   for (const name of ["resolveInitialAbbottRange", "formatPeriodDate"]) {
     const body = baseline.slice(baseline.indexOf(`function ${name}(`)).split("\n}\n")[0] + "\n}";
     assert.ok(page.includes(body), `${name} must match production`);
@@ -30,7 +31,7 @@ test("Abbott header, dashboard, and completed-period handlers retain production 
   for (const tag of ["DashboardHeader", "AbbottBiDashboard"]) {
     const start = branch.indexOf(`<${tag}`);
     const end = tag === "DashboardHeader" ? branch.indexOf("\n        />", start) + 11 : branch.indexOf("\n          />", start) + 13;
-    assert.ok(page.includes(branch.slice(start, end)), `${tag} JSX must match production`);
+    assert.ok(productionComparablePage.includes(branch.slice(start, end)), `${tag} JSX must match production`);
   }
 });
 
@@ -116,8 +117,18 @@ function harness(id: "18" | "abbott", query: string, replies: ResponseFixture[],
 }
 
 function validData() {
-  return { dashboard: { type: "abbott_bi", language: "ru", client_name: "Abbott", dashboard_name: "Аналитика трафика", period: { from: "2026-08-01", to: "2026-08-09" } }, abbott_bi: { data_quality: { status: "complete" } } };
+  return { dashboard: { type: "abbott_bi", language: "ru", client_name: "Abbott", dashboard_name: "Аналитика трафика", period: { from: "2026-08-01", to: "2026-08-09" } }, abbott_bi: { data_quality: { status: "complete" }, session_journeys: { report_date: "", schema: null, summary: null, rows: [] } } };
 }
+
+test("embed projection renders without restoring private session journeys",async()=>{
+  const embed=validData();delete (embed.abbott_bi as Partial<typeof embed.abbott_bi>).session_journeys;
+  const app=harness("18","from=2026-08-01&to=2026-08-09&access_token=viewer&embed_key=embed&pdf=true",[{status:200,body:embed}]);
+  assert.equal((await app.flush()).props["data-dashboard-ready"],"true");
+  const dashboard=app.find("AbbottBiDashboard");
+  assert.equal(dashboard.props.showUserIdAnalytics,false);
+  assert.equal(JSON.stringify((dashboard.props.data as {session_journeys:unknown}).session_journeys),JSON.stringify({report_date:"",schema:null,summary:null,rows:[]}));
+  assert.equal(Object.hasOwn(embed.abbott_bi,"session_journeys"),false);
+});
 
 for (const id of ["18", "abbott"] as const) {
   test(`${id} loads matching API and retains PDF, mobile, token, and embed parameters`, async () => {

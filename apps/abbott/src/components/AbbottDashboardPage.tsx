@@ -519,7 +519,14 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
   )}`;
   const clientName = dashboard.dashboard.client_name || dashboardId.toUpperCase();
 
-  const abbottBiData = dashboardType === "abbott_bi" ? dashboard.abbott_bi : null;
+  const projectedAbbottBiData = dashboardType === "abbott_bi" ? dashboard.abbott_bi : null;
+  const showAbbottUserIdAnalytics = Boolean(projectedAbbottBiData?.session_journeys);
+  const abbottBiData = projectedAbbottBiData && !projectedAbbottBiData.session_journeys
+    ? {
+        ...projectedAbbottBiData,
+        session_journeys: { report_date: "", schema: null, summary: null, rows: [] },
+      }
+    : projectedAbbottBiData;
 
   if (dashboardType === "abbott_bi" && abbottBiData) {
     return (
@@ -566,6 +573,7 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
         ) : (
           <AbbottBiDashboard
             data={abbottBiData}
+            showUserIdAnalytics={showAbbottUserIdAnalytics}
             locale={locale}
             portalName="ABBOTT"
             periodFrom={dashboard.dashboard.period.from}
