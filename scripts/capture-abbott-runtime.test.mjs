@@ -60,6 +60,7 @@ test("token capture blocks redirects and off-origin requests before credentials 
   assert.equal(typeof captureTool.guardCaptureRequests, "function");
   for (const [url, redirects, resourceType, expected] of [
     ["http://127.0.0.1:3004/dashboard/18", [], "document", null],
+    ["data:image/png;base64,aGVsbG8=", [], "image", null],
     ["https://example.invalid/logo.png", [], "image", "off_origin_image"],
     ["http://127.0.0.1:3001/", [], "xhr", "off_origin_other"],
     ["http://127.0.0.1:3004/dashboard/18", [{}], "document", "redirect"],
@@ -80,6 +81,21 @@ test("token capture blocks redirects and off-origin requests before credentials 
       assert.match(String(error),/CAPTURE_REQUEST_BOUNDARY/);
       assert.equal(d.formatVerificationFailure(error), `ABBOTT_VERIFICATION_REFUSED stage=capture_navigation reason=${expected}\n`);
     }
+  }
+});
+
+test("token capture accepts only bounded base64 image data URLs as non-network image sources", async () => {
+  for (const url of [
+    "data:image/svg+xml,%3Csvg%3E%3C/svg%3E",
+    "data:text/html;base64,aGVsbG8=",
+    "data:image/png;base64,not_base64!",
+    `data:image/png;base64,${"a".repeat(1_400_001)}`,
+  ]) {
+    let handler, continued = 0, aborted = 0;
+    const page = { setRequestInterception: async () => {}, on: (_event, callback) => { handler = callback; } };
+    const guard = await captureTool.guardCaptureRequests(page, "http://127.0.0.1:3004");
+    await handler({ url: () => url, redirectChain: () => [], resourceType: () => "image", continue: async () => { continued++; }, abort: async () => { aborted++; } });
+    assert.equal(continued, 0);assert.equal(aborted, 1);assert.throws(() => guard.assertSafe(), /CAPTURE_REQUEST_BOUNDARY/);
   }
 });
 

@@ -58,6 +58,8 @@ const REQUIRED_BASELINE_FILES = [
   "06-users-summary-mobile.png",
 ];
 const INDEX_FORBIDDEN_TEXT = /access_token|embed_key|cookie|raw_user_id|visit_id|start_url|end_url|https?:\/\//i;
+const EMBEDDED_IMAGE_DATA_URL = /^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/;
+const MAX_EMBEDDED_IMAGE_URL_BYTES = 1_400_000;
 export const VISUAL_THRESHOLDS = Object.freeze({ changed_pixel_ratio: 0.02, mean_absolute_error: 0.005 });
 
 function sha256(bytes) {
@@ -421,11 +423,16 @@ export async function guardCaptureRequests(page, candidateBase) {
   await page.setRequestInterception(true);
   page.on("request", async (request) => {
     try {
-      const url = new URL(request.url());
+      const rawUrl = request.url();
       let reason = null;
       if (request.redirectChain().length !== 0) reason = "redirect";
-      else if (url.username || url.password) reason = "url_credentials";
-      else if (url.origin !== origin) reason = request.resourceType() === "image" ? "off_origin_image" : "off_origin_other";
+      else if (request.resourceType() === "image" && Buffer.byteLength(rawUrl) <= MAX_EMBEDDED_IMAGE_URL_BYTES && EMBEDDED_IMAGE_DATA_URL.test(rawUrl)) {
+        await request.continue();return;
+      } else {
+        const url = new URL(rawUrl);
+        if (url.username || url.password) reason = "url_credentials";
+        else if (url.origin !== origin) reason = request.resourceType() === "image" ? "off_origin_image" : "off_origin_other";
+      }
       if (reason) {
         violationReason ??= reason;
         await request.abort();
