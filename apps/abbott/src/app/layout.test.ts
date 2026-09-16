@@ -5,7 +5,8 @@ import test from "node:test";
 
 test("isolated layout stays at the production baseline and CSS scans only its shared Abbott UI", () => {
   const layout = execFileSync("git", ["show", "8f389a28df1c4b741ec33b7538f0354b74f5a40e:src/app/layout.tsx"], { encoding: "utf8" });
-  assert.equal(readFileSync(new URL("./layout.tsx", import.meta.url), "utf8"), layout);
+  const isolatedLayout=layout.replace('  description: "Client reporting dashboards",','  description: "Client reporting dashboards",\n  icons: { icon: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iOCIgZmlsbD0iIzAwNzJjNiIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMTYiIHI9IjYiIGZpbGw9IndoaXRlIi8+PC9zdmc+" },');
+  assert.equal(readFileSync(new URL("./layout.tsx", import.meta.url), "utf8"), isolatedLayout);
   const baselineCss = execFileSync("git", ["show", "8f389a28df1c4b741ec33b7538f0354b74f5a40e:src/app/globals.css"], { encoding: "utf8" });
   const sources = [
     '@source "../../../../src/components/AbbottBiDashboard.tsx";',
