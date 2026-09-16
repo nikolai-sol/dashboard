@@ -86,6 +86,19 @@ that exact non-writable group ownership only under the fixed MedRoche release
 root and still binds the resolved SHA path, symlink, cwd, process identity, and
 listener. A different group or group-writable directory is rejected.
 
+After the isolated release was committed, the first parity run refused before
+credential issuance because the combined-runtime identity pin still named its
+superseded PID. The read-only host proof confirmed the unchanged boot ID,
+combined source SHA, cwd, ownership boundary, and a new PID/start pair. The
+issuer proof is re-pinned only to that observed process identity; the source,
+parser, credential allowlist, and signing contract remain unchanged.
+
+The committed isolated release is `55ec478b42405515f2d3eff3d68dd9c3ac8a8d04`
+with release ID `5ec3175697824126b8bc0be1b84e68f3`, predecessor
+`8c79caf495f147ad91b2174b9bc5f65c`, and trusted-manifest digest
+`137540a76fce42ab5aac2f9ebb6805d0c1baa42ce8fe1677cab8205caa24ea69`.
+The read-only smoke and asset attester are pinned to this exact observed record.
+
 ## Remaining live gates
 
 - Publish the reviewed Abbott branch and deploy only the port-3004 shadow.

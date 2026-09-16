@@ -8,8 +8,8 @@ import { markDiagnostic, carryDiagnostic } from './abbott-verification-diagnosti
 const fail = () => { throw new Error('ABBOTT_SMOKE_REFUSED'); };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const ORIGINS = ['http://127.0.0.1:3001','http://127.0.0.1:3004'];
-const RELEASE = '8c79caf495f147ad91b2174b9bc5f65c';
-const SOURCE = '6f09982fb1e8068f02340ddfcb5c945fb02ebfd5';
+const RELEASE = '5ec3175697824126b8bc0be1b84e68f3';
+const SOURCE = '55ec478b42405515f2d3eff3d68dd9c3ac8a8d04';
 const CONTROL_PDF_UNAVAILABLE = Symbol('control_pdf_unavailable_5xx');
 const active = signal => { if(signal?.aborted)fail(); };
 

@@ -17,6 +17,13 @@ const localEvaluator = bytes => evaluateNextEnvironment(bytes, installedParser, 
 const allowed = JSON.parse(fs.readFileSync(path.join(root, 'deploy/abbott/environment.json')));
 const generated = ['NODE_ENV', 'HOSTNAME', 'PORT', 'INTERNAL_BASE_URL'];
 
+test('issuer host proof is pinned to the current combined runtime identity', () => {
+  assert.equal(HOST.sourcePid, 1061009);
+  assert.equal(HOST.sourceStart, '164679343');
+  assert.equal(HOST.sourceBoot, '1c736efb-eaa2-42d9-b247-bd1a2ef36a4e');
+  assert.equal(HOST.sourceSha, '8f389a28df1c4b741ec33b7538f0354b74f5a40e');
+});
+
 test('issuer source reader repeats sealed proof without account operations or writes', () => {
   const f = fixture();
   try {

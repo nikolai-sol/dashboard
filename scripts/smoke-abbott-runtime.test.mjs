@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 const api = async () => { try { return await import('./smoke-abbott-runtime.mjs'); } catch(e) { if(e.code==='ERR_MODULE_NOT_FOUND')return {};throw e; } };
 const hash = x => createHash('sha256').update(x).digest('hex');
-const deployed = JSON.parse(fs.readFileSync(new URL('./fixtures/abbott-deployed-record-6f09982.json',import.meta.url),'utf8'));
+const deployed = JSON.parse(fs.readFileSync(new URL('./fixtures/abbott-deployed-record-55ec478.json',import.meta.url),'utf8'));
 
 test('smoke and remote attester pins agree with the observed deployed record',()=>{
   const pin=(file,name,length)=>{
@@ -32,7 +32,7 @@ test('deployed attestation proceeds to an inert fetch shim without network acces
 test('predecessor and wrong identity refuse as pin_mismatch before any fetch',async()=>{
   const m=await api(),d=await import('./abbott-verification-diagnostics.mjs');
   for(const identity of [
-    {releaseId:'6cd2f12e245a47dcbd5f6ce928c4ed83',sourceSha:'f80607fbc8a693aa2c720b0976938e88732cdf1a'},
+    {releaseId:'8c79caf495f147ad91b2174b9bc5f65c',sourceSha:'6f09982fb1e8068f02340ddfcb5c945fb02ebfd5'},
     {releaseId:'private-release https://invalid/?access_token=private',sourceSha:deployed.sourceSha},
     {releaseId:deployed.id,sourceSha:'private-source'},
   ]){
