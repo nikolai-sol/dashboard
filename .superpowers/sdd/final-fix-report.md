@@ -69,7 +69,7 @@ Budget stop: none.
 
 ## Final re-review follow-up
 
-Source commit: `35ceee51fda8ee991fc05119808cd7e6801f4010` (`fix(admin): close intent CSV and snapshot compatibility gaps`). This supersedes source `54b9f5bf` and attestation `a7e5395278048ff7c7de041b1cd7bfa444fdffb9`. The separate final attestation commit containing this update pins both profiles to `35ceee51fda8ee991fc05119808cd7e6801f4010`; its hash is reported in the handoff.
+Integrated source commit: `5a02c5f589249e911d5205b94d07959eab59af5e` (`Merge universal target intent into site SEO main`). This combines the reviewed target-intent source `35ceee51fda8ee991fc05119808cd7e6801f4010` with the current universal site-SEO main line. The separate release attestation commit containing this update pins the MedRoche profile and registry to that integrated source; its hash is reported in the handoff.
 
 All three re-review findings were reproduced before fixes: four focused tests failed (ragged CSV remained valid, v1 snapshot lookup returned no receipt, Google lacked account/resource predicates, and the configured-binding resolver was absent).
 
@@ -87,7 +87,7 @@ Final follow-up verification:
 - Full `npm run test:site-seo`: 198 TypeScript plus 27 build/isolation tests passed.
 - Both root and site-seo typechecks, focused ESLint and diff checks passed.
 - Root production build passed, including TypeScript and all 28 generated pages.
-- Exact-source/profile/registry build dry-run passed at `35ceee51fda8ee991fc05119808cd7e6801f4010`.
+- Exact-source/profile/registry build dry-run passed at the reviewed target-intent source before integration; the integrated release is re-verified against `5a02c5f589249e911d5205b94d07959eab59af5e` before deployment.
 
 The standalone runtime/template source did not change in this follow-up; the prior isolated build, health/login smoke and verified process/output cleanup remain applicable. No new server/browser was created, no production or source API action occurred, and the unrelated dirty Task 1 report and `.next-medroche` remain preserved. Existing real-MySQL/Linux/release verification gates above remain outstanding.
 
