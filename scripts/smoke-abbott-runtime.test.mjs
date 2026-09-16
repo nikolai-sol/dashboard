@@ -200,7 +200,7 @@ function pdf(text='Synthetic Abbott') {
 test('PDF parser consumes pipes and returns only valid pages, dimensions and normalized text hash',async()=>{
   const m=await api();assert.equal(typeof m.summarizePdf,'function');
   const bytes=pdf();const result=await m.summarizePdf(bytes,new AbortController().signal);
-  assert.deepEqual(result,{pages:1,dimensions:[[612,792]],text_sha256:hash('Synthetic Abbott')});
+  assert.deepEqual(result,{pages:1,dimensions:[[612,792]],text_sha256:hash('Synthetic Abbott'),text_bag_sha256:hash('Abbott\0Synthetic'),text_token_count:2});
   await assert.rejects(m.summarizePdf(Buffer.from('%PDF-1.4\ninvalid'),new AbortController().signal),/^Error: ABBOTT_SMOKE_REFUSED$/);
   const controller=new AbortController();controller.abort();await assert.rejects(m.summarizePdf(bytes,controller.signal),/^Error: ABBOTT_SMOKE_REFUSED$/);bytes.fill(0);
 });
@@ -360,6 +360,7 @@ test('PDF semantic comparison exposes only a closed mismatch category',async()=>
   assert.equal(m.pdfMismatchReason(base,{...base,pages:2}),'page_count');
   assert.equal(m.pdfMismatchReason(base,{...base,dimensions:[[600,792]]}),'page_dimensions');
   assert.equal(m.pdfMismatchReason(base,{...base,text_sha256:hash('different')}),'text_digest');
+  assert.equal(m.pdfMismatchReason({...base,text_bag_sha256:hash('bag'),text_token_count:2},{...base,text_sha256:hash('different'),text_bag_sha256:hash('bag'),text_token_count:2}),'text_order');
   assert.equal(m.pdfMismatchReason(base,{pages:1,dimensions:[[612,792]]}),'pdf_shape');
 });
 

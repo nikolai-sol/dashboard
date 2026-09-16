@@ -153,7 +153,8 @@ export async function summarizePdf(bytes,signal) {
     if(text.status!==0||text.signal||text.stderr.length)fail();
     const normalized=new TextDecoder('utf8',{fatal:true}).decode(text.stdout).normalize('NFC').replace(/\s+/gu,' ').trim();
     if(!normalized)fail();active(signal);
-    return {pages,dimensions,text_sha256:hash(normalized)};
+    const tokens=normalized.split(' ');
+    return {pages,dimensions,text_sha256:hash(normalized),text_bag_sha256:hash([...tokens].sort().join('\0')),text_token_count:tokens.length};
   }catch{fail();}finally{input?.fill(0);for(const result of [info,text]){result?.stdout?.fill(0);result?.stderr?.fill(0);}}
 }
 
@@ -175,7 +176,10 @@ export function pdfMismatchReason(reference,candidate) {
   if(!valid(reference)||!valid(candidate))return 'pdf_shape';
   if(reference.pages!==candidate.pages)return 'page_count';
   if(!isDeepStrictEqual(reference.dimensions,candidate.dimensions))return 'page_dimensions';
-  if(reference.text_sha256!==candidate.text_sha256)return 'text_digest';
+  if(reference.text_sha256!==candidate.text_sha256){
+    if(reference.text_token_count===candidate.text_token_count&&typeof reference.text_bag_sha256==='string'&&reference.text_bag_sha256===candidate.text_bag_sha256)return 'text_order';
+    return 'text_digest';
+  }
   return null;
 }
 
