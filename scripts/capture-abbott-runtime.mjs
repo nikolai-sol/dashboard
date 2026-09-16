@@ -163,7 +163,7 @@ export function passesVisualThreshold(comparison) {
 export function validateCaptureResult(index) {
   const reject=stage=>{throw markDiagnostic(new SafeStageError('CAPTURE_ACCEPTANCE'),stage,'mismatch');};
   if(index.console.errors>0){
-    const resourceReasons=['resource_image_4xx','resource_image_5xx','resource_style_4xx','resource_style_5xx','resource_script_4xx','resource_script_5xx','resource_data_4xx','resource_data_5xx','resource_other_4xx','resource_other_5xx','resource_request_failed'];
+    const resourceReasons=['resource_favicon_4xx','resource_image_4xx','resource_image_5xx','resource_style_4xx','resource_style_5xx','resource_script_4xx','resource_script_5xx','resource_data_4xx','resource_data_5xx','resource_other_4xx','resource_other_5xx','resource_request_failed'];
     const reason=index.console.error_reason==='console_resource'&&resourceReasons.includes(index.console.resource_reason)?index.console.resource_reason:['console_resource','console_runtime','console_other'].includes(index.console.error_reason)?index.console.error_reason:'mismatch';
     throw markDiagnostic(new SafeStageError('CAPTURE_ACCEPTANCE'),'capture_console',reason);
   }
@@ -179,7 +179,8 @@ export function classifyConsoleError(text) {
   return 'console_other';
 }
 
-export function classifyResourceFailure(type,status) {
+export function classifyResourceFailure(type,status,pathname='') {
+  if(pathname==='/favicon.ico'&&status>=400&&status<500)return 'resource_favicon_4xx';
   const kind=type==='image'?'image':type==='stylesheet'?'style':type==='script'?'script':['xhr','fetch'].includes(type)?'data':'other';
   return `resource_${kind}_${status>=500?'5xx':'4xx'}`;
 }
@@ -497,7 +498,7 @@ export async function captureAbbottRuntime({ loginBase, candidateBase, baseline,
         if (message.type() === "warning" || message.type() === "warn") consoleCounts.warnings += 1;
       });
       page.on("response",response=>{
-        try{const status=response.status(),url=new URL(response.url());if(status>=400&&url.origin===new URL(candidateBase).origin)consoleCounts.resource_reason??=classifyResourceFailure(response.request().resourceType(),status);}catch{}
+        try{const status=response.status(),url=new URL(response.url());if(status>=400&&url.origin===new URL(candidateBase).origin)consoleCounts.resource_reason??=classifyResourceFailure(response.request().resourceType(),status,url.pathname);}catch{}
       });
       page.on("requestfailed",()=>{consoleCounts.resource_reason??='resource_request_failed';});
       await page.setViewport(DESKTOP_VIEWPORT);

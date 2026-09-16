@@ -63,6 +63,7 @@ test('console errors collapse to closed categories without returning their text'
 });
 
 test('resource failures collapse status and browser type to closed categories',()=>{
+  assert.equal(captureTool.classifyResourceFailure('other',404,'/favicon.ico'),'resource_favicon_4xx');
   assert.equal(captureTool.classifyResourceFailure('image',404),'resource_image_4xx');
   assert.equal(captureTool.classifyResourceFailure('stylesheet',503),'resource_style_5xx');
   assert.equal(captureTool.classifyResourceFailure('script',404),'resource_script_4xx');
