@@ -6,6 +6,33 @@ const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e';
 const NGINX_TEXT='server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; location / { proxy_pass http://127.0.0.1:3001; } }\n';
 const FOREIGN_INCLUDE='/etc/nginx/snippets/foreign-project.conf';
 test('deployment proof snapshots only the main Nginx file and never opens foreign includes',async()=>{const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace('location / {','include '+FOREIGN_INCLUDE+'; location / {'));const proof=m.createAbbottDeploymentProof(f.options);assert.doesNotThrow(()=>proof.preflight());proof.perimeter();assert.ok(!f.opened.includes(FOREIGN_INCLUDE));const original=f.files.get(NGINX);f.files.set(NGINX,original.replace('foreign-project','other-project'));assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});f.files.set(NGINX,original);assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.equal(f.fds.size,0);});
+test('shadow deployment ignores foreign route semantics while pinning the shared Nginx file',async()=>{
+ const m=await api(),f=fixture();
+ const foreign=`
+root /var/www/foreign;
+index index.html;
+location /foreign-static/ { alias /var/www/foreign-static/; try_files $uri =404; }
+location = /public/coopervision-misight-attribution-preview { return 301 /public/coopervision-misight-attribution-preview/; }
+location = /previews/coopervision { auth_request /foreign-auth; error_page 401 = @coopervision_login_redirect; proxy_pass http://127.0.0.1:8093$request_uri; }
+location @coopervision_login_redirect { return 302 /previews/coopervision/login?next=$uri; }
+`;
+ f.files.set(NGINX,NGINX_TEXT.replace('location / { proxy_pass http://127.0.0.1:3001; }',foreign+'location / { proxy_pass http://127.0.0.1:3001; }'));
+ f.options.validateNginx=m.validateAbbottNginxOwnershipText;
+ const proof=m.createAbbottDeploymentProof(f.options);
+ assert.doesNotThrow(()=>proof.preflight());
+ const original=f.files.get(NGINX);f.files.set(NGINX,original+'# concurrent foreign change\n');
+ assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+ assert.equal(f.fds.size,0);
+});
+test('Abbott ownership validator accepts only the complete direct cutover fragment',async()=>{
+ const m=await api(),fragment=fs.readFileSync(new URL('../deploy/abbott/nginx-routes.conf',import.meta.url),'utf8');
+ const cutover=NGINX_TEXT.replace('location / { proxy_pass http://127.0.0.1:3001; }',fragment+'\nlocation / { proxy_pass http://127.0.0.1:3001; }');
+ assert.doesNotThrow(()=>m.validateAbbottNginxOwnershipText(cutover));
+ assert.throws(()=>m.validateAbbottNginxOwnershipText(cutover.replace(fragment.split('location = /dashboard/18/ {')[0],'')),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+ const nested=NGINX_TEXT.replace('location / { proxy_pass http://127.0.0.1:3001; }','if ($request_method = GET) { '+fragment+' } location / { proxy_pass http://127.0.0.1:3001; }');
+ assert.throws(()=>m.validateAbbottNginxOwnershipText(nested),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+ assert.throws(()=>m.validateAbbottNginxOwnershipText(cutover.replace('127.0.0.1:3004','127.0.0.1:3005')),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+});
 function fixture(){
  const med='/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone';
  const record={scope:'abbott',id:ID,sourceSha:SHA,manifestDigest:HASH,previousId:'6cd2f12e245a47dcbd5f6ce928c4ed83'};
@@ -142,7 +169,7 @@ test('proof is filesystem-only and real Abbott path wires it before any account/
  assert.ok(transaction.indexOf("if(scope==='abbott')")<transaction.indexOf('platform.deploymentPreflight(phase)'));
  for(const operation of ['platform.account()','fs.mkdirSync(LOCK','platform.browser(account)'])assert.ok(transaction.indexOf('platform.deploymentPreflight(phase)')<transaction.indexOf(operation));
  const wired=source.slice(source.indexOf('let abbottDeploymentProtection'),source.indexOf('  browser(account)'));
- assert.match(wired,/createAbbottDeploymentProof/);assert.match(wired,/verifyActive:record=>.*current\(\)/);assert.match(wired,/verifyBrowser:.*verifyBrowserInstallation/);assert.doesNotMatch(wired,/execFileSync|spawn|fetch/);
+ assert.match(wired,/createAbbottDeploymentProof/);assert.match(wired,/validateNginx:\s*validateAbbottNginxOwnershipText/);assert.match(wired,/verifyActive:record=>.*current\(\)/);assert.match(wired,/verifyBrowser:.*verifyBrowserInstallation/);assert.doesNotMatch(wired,/execFileSync|spawn|fetch/);
 });
 
 function replacePid(f,index,pid,start){

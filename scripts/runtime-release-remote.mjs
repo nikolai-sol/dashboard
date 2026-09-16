@@ -110,6 +110,32 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
   }
 
 export function validateAbbottNginxText(text,note=()=>{}){analyzeAbbottNginxText(text,note,null);}
+export function validateAbbottNginxOwnershipText(text,note=()=>{}){
+  const refuse=reason=>{note(reason);throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
+  note('syntax');
+  try{
+    analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes)=>{
+      note('tls_count');
+      const target=selectAbbottNginxTls(nodes,()=>refuse('tls_count'));
+      const exact=new Set(['/dashboard/18','/dashboard/18/','/dashboard/abbott','/dashboard/abbott/','/api/dashboard/18','/api/dashboard/18/pdf','/api/dashboard/18/excel','/api/dashboard/18/abbott-admin-users','/api/dashboard/abbott','/api/dashboard/abbott/pdf','/api/dashboard/abbott/excel','/api/dashboard/abbott/abbott-admin-users']);
+      const expected=new Set([...exact].map(route=>'= '+route).concat('^~ /_next-abbott/'));
+      const directions=[['proxy_pass','http://127.0.0.1:3004'],['proxy_set_header','Host','$host'],['proxy_set_header','X-Real-IP','$remote_addr'],['proxy_set_header','X-Forwarded-For','$proxy_add_x_forwarded_for'],['proxy_set_header','X-Forwarded-Proto','$scheme']];
+      const owned=new Set();
+      const abbottPath=value=>{const lower=value.toLowerCase(),parts=lower.split('/').filter(Boolean);return lower.includes('_next-abbott')||parts.some((part,index)=>part==='dashboard'&&(parts[index+1]==='abbott'||Number(parts[index+1])===18));};
+      const port3004=value=>/(?:^|:)0*3004(?:$|\D)/.test(value);
+      const locationIdentity=node=>node.name==='location'&&node.block&&literalNodes.has(node)&&(node.args.length===2&&node.args[0]==='='&&exact.has(node.args[1])?'= '+node.args[1]:node.args.length===2&&node.args[0]==='^~'&&node.args[1]==='/_next-abbott/'?'^~ /_next-abbott/':null);
+      const validateOwned=node=>{
+        const identity=locationIdentity(node);if(!identity||owned.has(identity)||node.children.length!==directions.length)refuse('existing_abbott_route');
+        for(let index=0;index<directions.length;index++){const child=node.children[index],wanted=directions[index];if(child.block||child.name!==wanted[0]||!literalNodes.has(child)||child.args.length!==wanted.length-1||child.args.some((value,i)=>value!==wanted[i+1]))refuse('existing_abbott_route');}
+        owned.add(identity);
+      };
+      const walk=(list,directTargetChildren=false)=>{for(const node of list){const identity=directTargetChildren&&locationIdentity(node);if(identity){validateOwned(node);continue;}const values=[node.name,...node.args];if(values.some(abbottPath)||values.some(port3004))refuse(values.some(abbottPath)?'existing_abbott_route':'existing_3004');walk(node.children,node===target);}};
+      walk(nodes);
+      if(owned.size&& (owned.size!==expected.size||[...expected].some(identity=>!owned.has(identity))))refuse('existing_abbott_route');
+      note('metadata');
+    });
+  }catch(error){if(error?.message==='ABBOTT_DEPLOY_PREFLIGHT_REFUSED')throw error;refuse('syntax');}
+}
 export function canonicalAbbottIncludePaths(paths){return Array.isArray(paths)&&paths.length<=8&&paths.every((v,i)=>typeof v==='string'&&v.length<=256&&/^\/etc\/(?:nginx|letsencrypt)\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(v)&&!v.split('/').some(s=>s==='.'||s==='..')&&(i===0||paths[i-1]<v));}
 export function inventoryAbbottNginxIncludes(text){try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();return analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes)=>{
  const fail=()=>{throw Error();},walk=(list,depth=0,parent=null)=>{for(const n of list){if(n.name==='server'&&(n.block||depth===0)&&(depth!==0||!n.block||n.args.length||!literalNodes.has(n)))fail();if(['listen','server_name'].includes(n.name)&&(depth!==1||parent!=='server'||n.block||!literalNodes.has(n)))fail();walk(n.children,depth+1,n.name);}};walk(nodes);
@@ -132,7 +158,7 @@ export function classifyAbbottNginxFirstRejection(text){let first;const known=ne
 
 // Fixed checkpoint authority, not a caller-selected inventory. This proof makes
 // no subprocess, supervisor/socket connection, network request or filesystem write.
-export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=()=>process.getuid(),digest=b=>createHash('sha256').update(b).digest('hex'),verifyActive,verifyBrowser,notePhase=()=>{}}={}) {
+export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=()=>process.getuid(),digest=b=>createHash('sha256').update(b).digest('hex'),verifyActive,verifyBrowser,notePhase=()=>{},validateNginx=validateAbbottNginxText}={}) {
   const fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
   let currentPhase='preflight_current';
   const phase=(stage,reason='failed')=>{currentPhase=stage;notePhase(stage,reason);};
@@ -227,7 +253,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     phase('preflight_current');if(getuid()!==0||hostname()!=='ybjqbzojln')fail();
     const observedBoot=read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim();if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(observedBoot))fail();if(boot&&boot!==observedBoot)fail();boot=observedBoot;
     phase('preflight_nginx','metadata');const nginxPath='/etc/nginx/conf.d/dashboard-next.conf',nginxMeta=metadata(stat(nginxPath)),nginx=read(nginxPath,1048576,{mode:0o644});
-    validateAbbottNginxText(nginx,nginxReason);
+    validateNginx(nginx,nginxReason);
     nginxReason('metadata');
     if(!isDeepStrictEqual(nginxMeta,metadata(stat(nginxPath))))fail();const nginxRecord={bytes:nginx,hash:digest(Buffer.from(nginx)),metadata:nginxMeta};
     phase('preflight_neighbor_combined','listener');const discovered=discover(),neighbors=[];
@@ -629,6 +655,7 @@ const realPlatform = {
     if(scope!=='abbott'||!browserPrerequisite)fail('Abbott deployment preflight unavailable');
     abbottDeploymentProtection=createAbbottDeploymentProof({
       notePhase,
+      validateNginx:validateAbbottNginxOwnershipText,
       verifyActive:record=>{if(!isDeepStrictEqual(current(),record))fail('Abbott active checkpoint drift');},
       verifyBrowser:()=>browserPrerequisite.verifyBrowserInstallation({contract:browserPrerequisite.contract,gid:984,checkExecutable:executable=>{
         // Existing immutable root:Abbott modes grant UID982 access without
