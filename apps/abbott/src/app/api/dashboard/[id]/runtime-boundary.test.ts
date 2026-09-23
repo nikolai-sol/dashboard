@@ -39,6 +39,7 @@ const ALLOWED_INTERNAL_INPUTS = new Set([
   "src/lib/schema-parser.ts",
   "src/lib/shared-password-policy.ts",
   "src/lib/source-mapping.ts",
+  "src/lib/zaruku-date-range.ts",
 ]);
 
 function assertLiteralDynamicImports(inputs: string[]) {
@@ -96,7 +97,13 @@ for (const route of ["route.ts", "abbott-admin-users/route.ts", "excel/route.ts"
     }
     assert.match(trace, /packages\/runtime-contract\/src\/index\.ts/);
     assert.match(trace, /packages\/runtime-contract\/src\/manifest\.mjs/);
-    assert.doesNotMatch(trace, /dashboard-data-loader\.ts|zaruku|advertising-binding|google-ads|yandex-direct|metrika-client|bitrix.*client|manual-data-fetcher/);
+    const zarukuInputs = inputs.filter((input) => /(?:^|\/)zaruku/i.test(input));
+    assert.deepEqual(
+      zarukuInputs,
+      route === "route.ts" || route === "excel/route.ts" ? ["src/lib/zaruku-date-range.ts"] : [],
+      "only the audited pure date-range clamp may cross the shared date-range boundary",
+    );
+    assert.doesNotMatch(trace, /dashboard-data-loader\.ts|advertising-binding|google-ads|yandex-direct|metrika-client|bitrix.*client|manual-data-fetcher/);
     assert.doesNotMatch(trace, /^src\/app\/api\/dashboard\/\[id\]\//m);
     assert.doesNotMatch(trace, /admin-auth|admin-password|dashboard-shared-password-admin/);
 
