@@ -1,17 +1,17 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-const ROOT = path.resolve(import.meta.dirname, '..');
 const failures=new WeakMap();
 const failure=reason=>{const error=new Error('ABBOTT_VERIFICATION_REFUSED');failures.set(error,reason);return error;};
 export const boundedChildFailureReason=error=>failures.get(error)??'unknown';
+const defaultCwd=()=>{if(typeof import.meta.dirname!=='string')throw failure('spawn');return path.resolve(import.meta.dirname,'..');};
 
 // Leaf module: consumers must never import the CLI that is awaiting them.
-export function captureBoundedChild(binary, args, { input, timeout, maxBytes, signal, cwd = ROOT, graceMs = 2000, spawnChild = spawn }) {
+export function captureBoundedChild(binary, args, { input, timeout, maxBytes, signal, cwd, graceMs = 2000, spawnChild = spawn }) {
   return new Promise((resolve, reject) => {
     const output = [], errors = [];
     let bytes = 0, failed = null, killTimer, child;
-    try { child = spawnChild(binary, args, { cwd, env: { PATH: '/usr/bin:/bin' }, stdio: ['pipe', 'pipe', 'pipe'] }); }
+    try { child = spawnChild(binary, args, { cwd:cwd===undefined?defaultCwd():cwd, env: { PATH: '/usr/bin:/bin' }, stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch { reject(failure('spawn'));return; }
     const stop = reason => {
       failed ??= reason;

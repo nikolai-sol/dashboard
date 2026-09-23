@@ -48,7 +48,7 @@ export function buildPdfStageInput(sources){
  const bytes=Buffer.from(JSON.stringify(frame));if(bytes.length>262144){bytes.fill(0);throw Error();}return bytes;
 }
 async function main(){let input;const sources=[],abort=new AbortController(),stop=()=>abort.abort();for(const name of['SIGINT','SIGTERM'])process.on(name,stop);
- try{const git=verifyRecoveryLocalAuthority();git('merge-base','--is-ancestor','8f5e8fe2910069a5714409df7cf427cb66ebe8ff','HEAD');if(fs.realpathSync(process.argv[1])!=='/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation/scripts/read-abbott-pdf-stage.mjs'||!git('show','HEAD:scripts/read-abbott-pdf-stage.mjs').equals(fs.readFileSync(new URL(import.meta.url))))throw Error();
+ try{const git=verifyRecoveryLocalAuthority();git('merge-base','--is-ancestor','05afbed92c9d84f0a556960a53ed8ebf9af43e8e','HEAD');if(fs.realpathSync(process.argv[1])!==fs.realpathSync(new URL(import.meta.url))||!git('show','HEAD:scripts/read-abbott-pdf-stage.mjs').equals(fs.readFileSync(new URL(import.meta.url))))throw Error();
   const map={};for(const[key,file]of Object.entries(files)){const b=git('show','HEAD:scripts/'+file);sources.push(b);if(!b.equals(fs.readFileSync(new URL('./'+file,import.meta.url))))throw Error();map[key]=b;}
   input=buildPdfStageInput(map);const line=await runPdfStageWithEvidence(input,{signal:abort.signal});process.stdout.write(line);if(line===UNKNOWN)process.exitCode=1;
  }catch{process.stdout.write(UNKNOWN);process.exitCode=1;}finally{input?.fill(0);for(const b of sources)b.fill(0);for(const name of['SIGINT','SIGTERM'])process.removeListener(name,stop);}

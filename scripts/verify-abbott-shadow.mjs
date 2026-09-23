@@ -11,7 +11,8 @@ export { captureBoundedChild } from './abbott-bounded-child.mjs';
 import { markDiagnostic, carryDiagnostic, diagnosticFromChild, formatVerificationFailure } from './abbott-verification-diagnostics.mjs';
 import { ASSET_ATTESTATION_REASONS } from './abbott-asset-attestation.mjs';
 
-const ROOT = '/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
+const ROOT = fs.realpathSync(path.resolve(import.meta.dirname, '..'));
+const REVIEWED_INTEGRATION = '05afbed92c9d84f0a556960a53ed8ebf9af43e8e';
 const OUTPUT = '/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026-09-14';
 const BASELINE = '/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026-09-16';
 const AUTH_HASH = '71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f';
@@ -76,6 +77,7 @@ function productionCapsule(kind='issuer') {
   if (!match) refuse();
   const gitDir = path.resolve(ROOT, match[1]);
   if (fs.realpathSync(gitDir) !== gitDir || fs.readFileSync(path.join(gitDir,'gitdir'),'utf8').trim() !== marker || git('rev-parse','--absolute-git-dir').toString().trim() !== gitDir) refuse();
+  git('merge-base','--is-ancestor',REVIEWED_INTEGRATION,'HEAD');
   if (git('status', '--porcelain=v1').length || git('rev-parse', '--show-toplevel').toString().trim() !== ROOT) refuse();
   const bootstrapSource=git('show','HEAD:scripts/bootstrap-abbott-host.mjs');
   if(kind==='assets')return buildAssetCapsule({bootstrapSource,attestationSource:git('show','HEAD:scripts/abbott-asset-attestation.mjs')});

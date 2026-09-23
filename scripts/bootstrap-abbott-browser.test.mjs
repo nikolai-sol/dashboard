@@ -21,6 +21,7 @@ test('bootstrap source has fixed pipe transport and verified cleanup, never brow
   const source=fs.readFileSync(new URL('./bootstrap-abbott-browser.mjs',import.meta.url),'utf8');
   assert.match(source,/ControlMaster=no/);assert.match(source,/ControlPath=none/);assert.match(source,/captureBoundedChild/);
   assert.doesNotMatch(source,/\.launch\(|manager_access_token|password|createViewer/);
+  assert.doesNotMatch(source,/\.worktrees\/abbott-runtime-isolation/);assert.match(source,/05afbed92c9d84f0a556960a53ed8ebf9af43e8e/);
 });
 
 test('complete committed-module capsule parses without executing or accessing network',async()=>{

@@ -2,8 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {EventEmitter,getEventListeners}from'node:events';
 import {spawn}from'node:child_process';
+import fs from'node:fs';
 import {captureBoundedChild}from'./abbott-bounded-child.mjs';
 const secret='synthetic-secret https://invalid.test/?access_token=private';
+
+test('bounded child loads from a data URL and honors an explicit cwd',async()=>{
+  const source=fs.readFileSync(new URL('./abbott-bounded-child.mjs',import.meta.url));
+  const m=await import(`data:text/javascript;base64,${source.toString('base64')}`);
+  source.fill(0);
+  const result=await m.captureBoundedChild(process.execPath,['-e',''],{input:Buffer.alloc(0),timeout:1000,maxBytes:32,cwd:'/'});
+  try{assert.equal(result.status,0);assert.equal(result.stdout.length,0);assert.equal(result.stderr.length,0);}
+  finally{result.stdout.fill(0);result.stderr.fill(0);}
+});
 
 test('bounded child privately brands spawn failure without reading error fields',async()=>{
   const m=await import('./abbott-bounded-child.mjs');assert.equal(typeof m.boundedChildFailureReason,'function');

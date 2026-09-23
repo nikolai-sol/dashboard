@@ -412,6 +412,11 @@ test('verification consumer graph is acyclic and child runner is a node-only lea
   assert.doesNotMatch(leaf,/(?:from\s*|import\s*\()\s*['"](?!node:)/);
 });
 
+test('shadow authority derives its checkout and pins the reviewed integration lineage',()=>{
+  const source=fs.readFileSync(new URL('./verify-abbott-shadow.mjs',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/\.worktrees\/abbott-runtime-isolation/);assert.match(source,/05afbed92c9d84f0a556960a53ed8ebf9af43e8e/);
+});
+
 for(const phase of ['load','consumer'])for(const cause of ['deadline','signal','reject']){
   test(`bounded ${phase} ${cause} clears retained buffers and verifies forward cleanup`,async()=>{
     const api=await moduleUnderTest(),signals=new EventEmitter(),bytes=frame(),assets=Buffer.from('{}'),code=Buffer.from('code');

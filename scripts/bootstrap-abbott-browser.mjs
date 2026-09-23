@@ -1,7 +1,8 @@
 import fs from 'node:fs';import path from 'node:path';import{execFileSync}from'node:child_process';import{pathToFileURL}from'node:url';
 import{deriveBrowserContract}from'./abbott-browser-prerequisite.mjs';
 import{captureBoundedChild}from'./abbott-bounded-child.mjs';
-const ROOT='/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
+const ROOT=fs.realpathSync(path.resolve(import.meta.dirname,'..'));
+const REVIEWED_INTEGRATION='05afbed92c9d84f0a556960a53ed8ebf9af43e8e';
 const fail=()=>{throw Error('ABBOTT_BROWSER_REFUSED');};
 export function validateBrowserBootstrapInvocation(args,env){
   if(args.length||Object.keys(env).some(k=>/^(?:GIT_|NODE_|PUPPETEER_|BROWSER_|HTTPS?_PROXY$|ALL_PROXY$|NO_PROXY$)/.test(k)))fail();
@@ -45,6 +46,7 @@ async function main(){
   const marker=path.join(ROOT,'.git'),stat=fs.lstatSync(marker);if(!stat.isFile()||stat.nlink!==1||fs.realpathSync(marker)!==marker)fail();
   const match=/^gitdir: ([^\r\n]+)\n?$/.exec(fs.readFileSync(marker,'utf8'));if(!match)fail();const gitDir=path.resolve(ROOT,match[1]);
   if(fs.realpathSync(gitDir)!==gitDir||fs.readFileSync(path.join(gitDir,'gitdir'),'utf8').trim()!==marker||git('rev-parse','--absolute-git-dir').toString().trim()!==gitDir||git('rev-parse','--show-toplevel').toString().trim()!==ROOT)fail();
+  git('merge-base','--is-ancestor',REVIEWED_INTEGRATION,'HEAD');
   if(git('status','--porcelain').length)fail();
   const names={browser:'abbott-browser-prerequisite.mjs',proof:'bootstrap-abbott-host.mjs',worker:'abbott-runtime-release-remote.mjs',bounded:'abbott-bounded-child.mjs'};
   const sources=Object.fromEntries(Object.entries(names).map(([key,file])=>[key,git('show','HEAD:scripts/'+file)]));

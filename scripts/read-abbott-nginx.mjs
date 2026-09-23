@@ -50,7 +50,7 @@ export function buildNginxReadInput(sources){
  const bytes=Buffer.from(JSON.stringify(frame));if(bytes.length>262144){bytes.fill(0);throw Error();}return bytes;
 }
 async function main(){let input,reason='local_authority';const sources=[],abort=new AbortController(),stop=()=>abort.abort();for(const name of['SIGINT','SIGTERM','SIGHUP'])process.on(name,stop);
- try{const git=verifyRecoveryLocalAuthority();git('merge-base','--is-ancestor','9fb03e3d17284c6fba6c6bbfb9edefc4797772d6','HEAD');if(fs.realpathSync(process.argv[1])!=='/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation/scripts/read-abbott-nginx.mjs'||!git('show','HEAD:scripts/read-abbott-nginx.mjs').equals(fs.readFileSync(new URL(import.meta.url))))throw Error();
+ try{const git=verifyRecoveryLocalAuthority();git('merge-base','--is-ancestor','05afbed92c9d84f0a556960a53ed8ebf9af43e8e','HEAD');if(fs.realpathSync(process.argv[1])!==fs.realpathSync(new URL(import.meta.url))||!git('show','HEAD:scripts/read-abbott-nginx.mjs').equals(fs.readFileSync(new URL(import.meta.url))))throw Error();
   reason='local_source';const map={};for(const[key,file]of Object.entries(files)){const b=git('show','HEAD:scripts/'+file);sources.push(b);if(!b.equals(fs.readFileSync(new URL('./'+file,import.meta.url))))throw Error();map[key]=b;}
   input=buildNginxReadInput(map);reason='transport';const line=await runNginxReadWithEvidence(input,{signal:abort.signal});process.stdout.write(line);if(line.startsWith('ABBOTT_NGINX_READ_REFUSED '))process.exitCode=1;
  }catch{process.stdout.write(refused(reason));process.exitCode=1;}finally{input?.fill(0);for(const b of sources)b.fill(0);for(const name of['SIGINT','SIGTERM','SIGHUP'])process.removeListener(name,stop);}

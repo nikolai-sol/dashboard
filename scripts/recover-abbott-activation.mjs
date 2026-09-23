@@ -2,7 +2,8 @@ import fs from'node:fs';import path from'node:path';import{execFileSync}from'nod
 import{runRecoveryTransport}from'./abbott-recovery-transport.mjs';
 import{formatRecoveryDiagnostic,safeRecoveryDiagnostic}from'./abbott-recovery-diagnostics.mjs';
 import{createRecoveryEvidence}from'./abbott-recovery-evidence.mjs';
-const ROOT='/Users/nafanya/ReportingDash/dashboard-next/.worktrees/abbott-runtime-isolation';
+const ROOT=fs.realpathSync(path.resolve(import.meta.dirname,'..'));
+const REVIEWED_INTEGRATION='05afbed92c9d84f0a556960a53ed8ebf9af43e8e';
 const fail=()=>{throw Error('ABBOTT_RECOVERY_REFUSED');};
 export async function runWithRecoveryEvidence(input,{signal,transport=runRecoveryTransport,evidence}={}){
   let result={status:'ABBOTT_RECOVERY_UNACKNOWLEDGED',diagnostic:{stage:'unknown',reason:'unknown'}},summary;
@@ -42,8 +43,8 @@ export function verifyRecoveryLocalAuthority(expectedArgs=[]){
   const git=(...args)=>execFileSync('/usr/bin/git',['--no-replace-objects','-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',...args],{cwd:ROOT,env:{PATH:'/usr/bin:/bin',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_SYSTEM:'/dev/null',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1',GIT_GRAFT_FILE:'/dev/null'},stdio:['ignore','pipe','pipe'],timeout:10000,maxBuffer:262144});
   const marker=path.join(ROOT,'.git'),s=fs.lstatSync(marker);if(!s.isFile()||s.nlink!==1||fs.realpathSync(marker)!==marker)fail();
   const match=/^gitdir: ([^\r\n]+)\n?$/.exec(fs.readFileSync(marker,'utf8'));if(!match)fail();const gitDir=path.resolve(ROOT,match[1]);
-  if(gitDir!=='/Users/nafanya/ReportingDash/dashboard-next/.git/worktrees/abbott-runtime-isolation'||fs.realpathSync(gitDir)!==gitDir||fs.readFileSync(path.join(gitDir,'gitdir'),'utf8').trim()!==marker||git('rev-parse','--absolute-git-dir').toString().trim()!==gitDir||git('rev-parse','--show-toplevel').toString().trim()!==ROOT||git('status','--porcelain').length)fail();
-  git('merge-base','--is-ancestor','9aaed34feeb9b73b4d177dccab5a2b750776b4c3','HEAD');
+  if(fs.realpathSync(gitDir)!==gitDir||fs.readFileSync(path.join(gitDir,'gitdir'),'utf8').trim()!==marker||git('rev-parse','--absolute-git-dir').toString().trim()!==gitDir||git('rev-parse','--show-toplevel').toString().trim()!==ROOT||git('status','--porcelain').length)fail();
+  git('merge-base','--is-ancestor',REVIEWED_INTEGRATION,'HEAD');
   return git;
 }
 async function main(){

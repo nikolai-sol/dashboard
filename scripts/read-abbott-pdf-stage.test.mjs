@@ -63,3 +63,4 @@ test('CLI refuses arguments and ambient authority before SSH, with only the clos
   const chunks=[],errors=[];child.stdout.on('data',b=>chunks.push(b));child.stderr.on('data',b=>errors.push(b));const timer=setTimeout(()=>child.kill('SIGKILL'),3000);const status=await new Promise(resolve=>child.on('close',resolve));clearTimeout(timer);assert.equal(status,1);assert.equal(Buffer.concat(chunks).toString(),UNKNOWN);assert.equal(Buffer.concat(errors).length,0);assert.throws(()=>process.kill(child.pid,0),{code:'ESRCH'});for(const b of [...chunks,...errors])b.fill(0);
  }
 });
+test('caller derives its own path and pins the reviewed integration lineage',()=>{const source=fs.readFileSync(new URL('./read-abbott-pdf-stage.mjs',import.meta.url),'utf8');assert.doesNotMatch(source,/\.worktrees\/abbott-runtime-isolation|8f5e8fe2910069a5714409df7cf427cb66ebe8ff/);assert.match(source,/05afbed92c9d84f0a556960a53ed8ebf9af43e8e/);});
