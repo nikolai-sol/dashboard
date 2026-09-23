@@ -113,6 +113,8 @@ export function normalizePlan(
   periodFrom: string,
   periodTo: string,
   defaultYear?: number,
+  configFrom?: string,
+  configTo?: string,
 ): number {
   let total = 0;
   for (const [monthNameRaw, monthValueRaw] of Object.entries(monthly ?? {})) {
@@ -121,8 +123,21 @@ export function normalizePlan(
     const monthValue = Number(monthValueRaw) || 0;
     if (monthNum === undefined || monthValue <= 0) continue;
 
+    const campaignMonthYear =
+      configFrom && configTo
+        ? (() => {
+            let cursor = monthStart(configFrom);
+            while (cursor <= configTo) {
+              const date = toUtcDate(cursor);
+              if (date.getUTCMonth() === monthNum) return date.getUTCFullYear();
+              cursor = shiftDate(monthEnd(cursor), 1);
+            }
+            return undefined;
+          })()
+        : undefined;
     const year =
       defaultYear ??
+      campaignMonthYear ??
       (() => {
         const from = toUtcDate(periodFrom);
         const to = toUtcDate(periodTo);
@@ -132,12 +147,17 @@ export function normalizePlan(
         return from.getUTCFullYear();
       })();
 
+    if (configFrom && configTo && campaignMonthYear === undefined) continue;
+
     const monthStartIso = new Date(Date.UTC(year, monthNum, 1)).toISOString().slice(0, 10);
     const monthEndIso = new Date(Date.UTC(year, monthNum + 1, 0)).toISOString().slice(0, 10);
-    const overlapFrom = maxIso(periodFrom, monthStartIso);
-    const overlapTo = minIso(periodTo, monthEndIso);
-    if (overlapFrom > overlapTo) continue;
-    total += monthValue * (inclusiveDays(overlapFrom, overlapTo) / daysInMonth(year, monthNum));
+    const allocationFrom = maxIso(monthStartIso, configFrom ?? monthStartIso);
+    const allocationTo = minIso(monthEndIso, configTo ?? monthEndIso);
+    const overlapFrom = maxIso(periodFrom, allocationFrom);
+    const overlapTo = minIso(periodTo, allocationTo);
+    const allocationDays = inclusiveDays(allocationFrom, allocationTo);
+    if (overlapFrom > overlapTo || allocationDays <= 0) continue;
+    total += monthValue * (inclusiveDays(overlapFrom, overlapTo) / allocationDays);
   }
   return total;
 }
@@ -152,7 +172,7 @@ export function normalizeValueForPeriod({
 }: NormalizeOptions): number {
   const monthEntries = Object.values(monthly ?? {}).filter((value) => Number(value) > 0);
   if (monthEntries.length > 0) {
-    return normalizePlan(monthly ?? {}, periodFrom, periodTo);
+    return normalizePlan(monthly ?? {}, periodFrom, periodTo, undefined, configFrom, configTo);
   }
 
   if (total <= 0) return 0;

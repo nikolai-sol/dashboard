@@ -456,6 +456,7 @@ Recent completed changes that should not be rediscovered:
 21. Advertising canonical read-model rollout contract:
     - advertising API, email attachment, uploaded file, and Google Sheet actuals are collector inputs; dashboard runtime reads published canonical MySQL facts only
     - stored media-plan rows remain the plan authority; effective account-aware bindings connect each plan `line_key` to canonical campaign identities
+    - dashboard `period_from` / `period_to` are authoritative campaign dates for media-plan allocation. A monthly plan amount is allocated across only that month's campaign overlap; a selected subrange receives its share of that overlap, dates outside the campaign receive zero, and plans without campaign bounds retain calendar-month allocation. Channel and platform/Excel plan projections use the same normalized values while raw plan rows remain available for fact-derived calculations.
     - confirmed lead rows are read only from their reviewed MySQL snapshot and never fetched from a Sheet during dashboard requests
     - `npm run compare:advertising-read-model` checks Gidrofuril first, then all active non-Abbott/non-Zaruku dashboards; any metric mismatch or unbound campaign blocks `AD_CANONICAL_READ_V2=1`
     - the comparison and binding diagnostics are read-only; rollout, migration, cron, source collection, and deployment remain separate reviewed operations
