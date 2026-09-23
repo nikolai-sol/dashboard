@@ -156,9 +156,9 @@ export function diagnoseAbbottNginxText(text){const names=new Set(),known=new Se
 export function abbottNginxFirstRejectionCodes(){return ['none',...['upstream','map','geo','split_clients','log_format','proxy_cache_path','limit_req_zone','limit_conn_zone','other'].map(n=>'top_'+n),...abbottNginxDiagnosticNames().filter(n=>n!=='include').map(n=>'selected_'+n),'selected_include_other'];}
 export function classifyAbbottNginxFirstRejection(text){let first;const known=new Set(abbottNginxFirstRejectionCodes());try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();analyzeAbbottNginxText(text,()=>{},null,(context,name)=>{first??=context==='selected'&&name==='include'?'selected_include_other':known.has(context+'_'+name)?context+'_'+name:context+'_other';});return {rejection:'none'};}catch{return first?{rejection:first}:{reason:'parser_ambiguity'};}}
 
-// Fixed checkpoint authority, not a caller-selected inventory. This proof makes
-// no subprocess, supervisor/socket connection, network request or filesystem write.
-export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=()=>process.getuid(),digest=b=>createHash('sha256').update(b).digest('hex'),verifyActive,verifyBrowser,notePhase=()=>{},validateNginx=validateAbbottNginxText}={}) {
+// Protected current-release authority, not a caller-selected inventory. Kernel
+// and filesystem checks are read-only; the installer supplies live/saved attestation.
+export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=()=>process.getuid(),digest=b=>createHash('sha256').update(b).digest('hex'),verifyActive,verifyBrowser,reattestProcess,notePhase=()=>{},validateNginx=validateAbbottNginxText}={}) {
   const fail=()=>{throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
   let currentPhase='preflight_current';
   const phase=(stage,reason='failed')=>{currentPhase=stage;notePhase(stage,reason);};
@@ -166,8 +166,8 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   const nginxReason=value=>{if(currentPhase==='preflight_nginx')notePhase(currentPhase,value);};
   const stat=file=>{try{return io.lstatSync(file);}catch(error){if(/^\/proc\/[1-9][0-9]*$/.test(file)&&error?.code==='ENOENT')reason('pid_absent');throw error;}};
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
-  const record={scope:'abbott',id:'1fdaecbdad47430a9d1375566abad001',sourceSha:'dfd6267a742d1c7d88ccac636b89661df9b96f9f',manifestDigest:'586533387dca0928c75d6e9807503e918d316507b6f1ec128e087e075211690e',previousId:'770d6d8b7f904a1e9ae447c86f6065b5'};
-  let boot,perimeterSnapshot,invalid=false;
+  let record;
+  let boot,perimeterSnapshot,invalid=false,reattestedProcess;
   const neighborPolicies=[['combined',0,0,'/var/www/dashboard',3001],['zaruku',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],['medroche',983,983,null,3003]];
   const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
   const stableProc=(a,b)=>['dev','ino','size','mode','uid','gid','nlink'].every(k=>a[k]===b[k]);
@@ -288,14 +288,23 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     const passwd=read('/etc/passwd',1048576).split('\n').map(l=>l.split(':')).filter(v=>v[0]==='dashboard-abbott'||v[2]==='982');
     const group=read('/etc/group',1048576).split('\n').map(l=>l.split(':')).filter(v=>v[0]==='dashboard-abbott'||v[2]==='984'||v[3]?.split(',').includes('dashboard-abbott'));
     if(passwd.length!==1||passwd[0].length!==7||passwd[0][0]!=='dashboard-abbott'||passwd[0][2]!=='982'||passwd[0][3]!=='984'||passwd[0][5]!=='/nonexistent'||passwd[0][6]!=='/usr/sbin/nologin'||group.length!==1||group[0].length!==4||group[0][0]!=='dashboard-abbott'||group[0][2]!=='984'||!['','dashboard-abbott'].includes(group[0][3]))fail();
-    perimeter();phase('preflight_current');if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record)||read(root+'/.release-source-sha',128)!==record.sourceSha+'\n'||read(root+'/.release-runtime-scope',64)!=='abbott\n')fail();
+    perimeter();phase('preflight_current');
+    const observed=json(control+'/current.json');
+    if(!observed||Object.keys(observed).sort().join(',')!=='id,manifestDigest,previousId,scope,sourceSha'||observed.scope!=='abbott'||! /^[a-f0-9]{32}$/.test(observed.id)||! /^[a-f0-9]{40}$/.test(observed.sourceSha)||! /^[a-f0-9]{64}$/.test(observed.manifestDigest)||observed.previousId!==null&&! /^[a-f0-9]{32}$/.test(observed.previousId)||record&&!isDeepStrictEqual(observed,record))fail();
+    record??=observed;
+    if(!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record)||read(root+'/.release-source-sha',128)!==record.sourceSha+'\n'||read(root+'/.release-runtime-scope',64)!=='abbott\n')fail();
     if(digest(Buffer.from(read(control+'/'+record.id+'/trusted-runtime-manifest.json',2*1024*1024,{mode:0o600})))!==record.manifestDigest)fail();
     const launcher='/var/www/.dashboard-abbott-launcher.cjs';if(read(launcher,65536)!==read(control+'/'+record.id+'/deploy/abbott/start.cjs',65536))fail();
     const names=io.readdirSync(control);if(names.length>256)fail();const receipts=names.filter(n=>/^ownership-[a-f0-9-]{36}\.json$/.test(n)).map(n=>json(control+'/'+n)).filter(r=>r.record?.id===record.id);
-    if(receipts.length!==1)fail();const r=receipts[0],p=r.process,dir=stat(root);
+    if(receipts.length!==1)fail();const r=receipts[0],dir=stat(root);let p=r.process;
     if(Object.keys(r).sort().join(',')!=='binding,directory,process,record,transaction,version'||r.version!==1||!isDeepStrictEqual(r.record,record)||!isDeepStrictEqual(r.directory,{dev:String(dir.dev),ino:String(dir.ino)})||r.binding?.sourceSha!==record.sourceSha||Object.keys(r.binding).sort().join(',')!=='runId,sourceSha'||! /^[a-f0-9-]{36}$/.test(r.binding.runId)||! /^[a-f0-9-]{36}$/.test(r.transaction))fail();
-    if(!p||Object.keys(p).sort().join(',')!=='appName,bootId,cwd,gid,pid,pmId,registration,script,sourceSha,startTime,uid'||p.appName!=='dashboard-abbott'||p.bootId!==boot||p.uid!==982||p.gid!==984||p.sourceSha!==record.sourceSha||p.cwd!==root+'/apps/abbott'||p.script!==launcher||!Number.isSafeInteger(p.pid)||p.pid<=0||!Number.isSafeInteger(p.pmId)||p.pmId<0||!/^\d{1,20}$/.test(p.startTime))fail();
+    if(!p||Object.keys(p).sort().join(',')!=='appName,bootId,cwd,gid,pid,pmId,registration,script,sourceSha,startTime,uid'||p.appName!=='dashboard-abbott'||! /^[a-f0-9-]{36}$/.test(p.bootId)||!reattestProcess&&p.bootId!==boot||p.uid!==982||p.gid!==984||p.sourceSha!==record.sourceSha||p.cwd!==root+'/apps/abbott'||p.script!==launcher||!Number.isSafeInteger(p.pid)||p.pid<=0||!Number.isSafeInteger(p.pmId)||p.pmId<0||!/^\d{1,20}$/.test(p.startTime))fail();
     const reg=p.registration;if(!reg||!['dashboard-abbott',982].includes(reg.uid)||!['dashboard-abbott',984].includes(reg.gid)||!isDeepStrictEqual(reg,{appName:'dashboard-abbott',pmId:p.pmId,exec:'/usr/bin/env',cwd:p.cwd,args:['-i','PATH=/usr/local/bin:/usr/bin:/bin','/usr/bin/node',launcher],uid:reg.uid,gid:reg.gid,releaseId:record.id,sourceSha:record.sourceSha}))fail();
+    if(reattestProcess){
+      const live=reattestProcess(record,p),durable=value=>{const {pid,pmId,startTime,bootId,registration,...rest}=value;const {pmId:registrationId,...launch}=registration;return{...rest,registration:launch};};
+      if(!live||live.bootId!==boot||!Number.isSafeInteger(live.pid)||live.pid<=0||!Number.isSafeInteger(live.pmId)||live.pmId<0||live.registration?.pmId!==live.pmId||!/^\d{1,20}$/.test(live.startTime)||!isDeepStrictEqual(durable(live),durable(p))||reattestedProcess&&!isDeepStrictEqual(live,reattestedProcess))fail();
+      reattestedProcess=live;p=live;
+    }
     kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
     verifyActive(record);
     phase('preflight_browser');
@@ -513,7 +522,7 @@ function readRuntimeSecrets() {
   } catch { fail('Missing or unsafe dedicated runtime credential file'); }
 }
 
-const commandEnv = () => ({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: os.homedir(), PM2_HOME: path.join(os.homedir(), '.pm2') });
+const commandEnv = () => ({ PATH: '/usr/local/bin:/usr/bin:/bin', HOME: scope==='abbott'?'/root':os.homedir(), PM2_HOME: scope==='abbott'?'/root/.pm2':path.join(os.homedir(), '.pm2') });
 function releaseCommandEnvironment(record) {
   if (!record || !ID.test(record.id) || !SHA.test(record.sourceSha) || record.scope !== scope) fail('Invalid PM2 release binding');
   return { RUNTIME_RELEASE_ID: record.id, RUNTIME_RELEASE_SOURCE_SHA: record.sourceSha };
@@ -655,12 +664,45 @@ async function verifyStagedArtifact(artifact, manifest, boot) {
 
 let abbottDeploymentProtection;
 const realPlatform = {
-  deploymentPreflight(notePhase) {
+  startupState() {
+    // Fixed root PM2 home; never print definitions, which can contain secrets.
+    const readDump = file => {
+      if (!fs.lstatSync(file, {throwIfNoEntry:false})) return null;
+      owned('/root/.pm2', true); owned(file);
+      const stat=fs.lstatSync(file);
+      if(stat.gid!==0||stat.nlink!==1||stat.size>16*1024*1024)fail('Unsafe PM2 startup state');
+      return JSON.parse(stableRead(file));
+    };
+    const rows=JSON.parse(command('pm2',['jlist']));
+    return {live:rows.map(row=>({...row.pm2_env,name:row.name})),saved:readDump('/root/.pm2/dump.pm2'),backup:readDump('/root/.pm2/dump.pm2.bak')};
+  },
+  async saveStartup() {
+    // --force also commits an empty list after a failed first installation.
+    command('pm2',['save','--force']);
+    for(const filename of ['/root/.pm2/dump.pm2','/root/.pm2/dump.pm2.bak']){
+      if(!fs.lstatSync(filename,{throwIfNoEntry:false}))continue;
+      owned(filename);const fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+      try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+    }
+    const fd=fs.openSync('/root/.pm2',fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);
+    try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  },
+  async deploymentPreflight(notePhase) {
     if(scope!=='abbott'||!browserPrerequisite)fail('Abbott deployment preflight unavailable');
+    let live;
     abbottDeploymentProtection=createAbbottDeploymentProof({
       notePhase,
       validateNginx:validateAbbottNginxOwnershipText,
       verifyActive:record=>{if(!isDeepStrictEqual(current(),record))fail('Abbott active checkpoint drift');},
+      reattestProcess:record=>{
+        const account=realPlatform.account();live=processProof(realPlatform,account);
+        if(!live||live.sourceSha!==record.sourceSha||live.registration.releaseId!==record.id)fail('Abbott current process requires recovery');
+        const state=startupSnapshot(realPlatform);assertSavedRegistration(state.saved,live,account);
+        if(state.backup===null)fail('Abbott startup backup missing');assertSavedRegistration(state.backup,live,account);
+        const onlyAbbott=rows=>rows.filter(row=>row.name===appName);
+        if(!isDeepStrictEqual(onlyAbbott(state.live),onlyAbbott(state.saved))||!isDeepStrictEqual(onlyAbbott(state.saved),onlyAbbott(state.backup)))fail('Abbott persisted launch definition mismatch');
+        return live;
+      },
       verifyBrowser:()=>browserPrerequisite.verifyBrowserInstallation({contract:browserPrerequisite.contract,gid:984,checkExecutable:executable=>{
         // Existing immutable root:Abbott modes grant UID982 access without
         // launching any process before the complete preflight has succeeded.
@@ -668,6 +710,8 @@ const realPlatform = {
       }}),
     });
     abbottDeploymentProtection.preflight();
+    await realPlatform.health(live);abbottDeploymentProtection.perimeter();
+    return live;
   },
   assertDeploymentPerimeter() {
     if(!abbottDeploymentProtection)fail('Abbott deployment preflight unavailable');
@@ -770,6 +814,35 @@ function validateRuntimeRegistration(value, account) {
       ![appName, account.uid].includes(value.uid) || ![appName, account.gid].includes(value.gid) || !ID.test(value.releaseId) || !SHA.test(value.sourceSha) ||
       !Array.isArray(value.args) || value.args.length !== launcherArgs.length || value.args.some((arg, index) => arg !== launcherArgs[index])) fail('Runtime registration identity mismatch');
   return value;
+}
+
+// PM2 removes pm_id/instances on save; the remaining omissions are observed
+// process counters/telemetry, not launch policy. All other fields (including
+// nested env, arguments, credentials and restart options) participate in equality.
+function startupDefinitions(rows) {
+  if(rows===null)return [];
+  if(!Array.isArray(rows)||rows.length>256)fail('Invalid PM2 startup state');
+  const transient=new Set(['pm_id','instances','pid','status','pm_uptime','created_at','restart_time','unstable_restarts','exit_code','prev_restart_delay','axm_monitor','vizion_running']);
+  const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+  const definitions=rows.map(row=>{
+    if(!row||typeof row!=='object'||typeof row.name!=='string')fail('Invalid PM2 startup definition');
+    return stable(Object.fromEntries(Object.entries(row).filter(([key])=>!transient.has(key))));
+  });
+  return definitions.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+function startupSnapshot(platform) {
+  const state=platform.startupState();
+  return {live:startupDefinitions(state.live),saved:startupDefinitions(state.saved),backup:state.backup===null?null:startupDefinitions(state.backup)};
+}
+function startupNeighbors(state) {
+  return state.filter(row=>row.name!==appName);
+}
+function assertSavedRegistration(rows, proof, account) {
+  const matches=rows.filter(row=>row.name===appName);
+  if(!proof){if(matches.length)fail('Uncommitted Abbott startup remains');return;}
+  if(matches.length!==1)fail('Abbott startup registration missing or duplicated');
+  const registration=captureRuntimeRegistration([{name:appName,pm_id:proof.pmId,pm2_env:matches[0]}],account);
+  if(!isDeepStrictEqual(registration,proof.registration))fail('Abbott startup identity mismatch');
 }
 
 function captureRuntimeRegistration(processes, account) {
@@ -901,6 +974,14 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
   const sameDir=(p,d)=>{if(!isDeepStrictEqual(dir(p),d))fail('Activation directory identity changed');};
   const candidateDirectory=dir(stage),oldDirectory=old?dir(APP):null;
   const originalPointer=old?stableRead(CURRENT,true):null,oldEnv=old?hash(stableRead(`${APP}/.env`)):null;
+  let neighborDefinitions;
+  const checkStartupNeighbors=()=>{
+    const state=startupSnapshot(platform),neighbors=startupNeighbors(state.saved);
+    if(!isDeepStrictEqual(startupNeighbors(state.live),neighbors)||state.backup!==null&&!isDeepStrictEqual(startupNeighbors(state.backup),neighbors)||neighborDefinitions&&!isDeepStrictEqual(neighbors,neighborDefinitions)){
+      phase('persistence','neighbor_saved_drift');fail('Unrelated PM2 startup definitions require reconciliation');
+    }
+    neighborDefinitions??=neighbors;return state;
+  };
   let mutated=false,oldMoved=false,candidateMoved=false,startAttempted=false,ownedRegistration=null,ownedProcess=null,pointerPublished=false;
   const lockProof=()=>{owned(LOCK,true);const s=fs.lstatSync(LOCK);if(s.gid!==0||(s.mode&0o7777)!==0o700||stableRead(`${LOCK}/owner`,true).toString()!==owner||fs.readdirSync(LOCK).join()!=='owner')fail('Activation lock drift');};
   const pointerProof=()=>{
@@ -916,6 +997,21 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     lockProof();const next=journalPath+'.next';absent(next);
     if(fs.existsSync(journalPath)){owned(journalPath);const s=fs.lstatSync(journalPath);if(s.gid!==0||(s.mode&0o7777)!==0o600)fail('Activation journal drift');const prior=JSON.parse(stableRead(journalPath,true));if(prior.owner!==owner)fail('Activation journal drift');}
     durableFile(next,{version:1,owner,state,predecessor:old, candidate:record,stage,oldDirectory,candidateDirectory});fs.renameSync(next,journalPath);
+  };
+  const persist=async(proof,compensating=false)=>{
+    if(!compensating)phase('persistence');
+    // Two supported saves make both the primary and PM2's fallback coherent.
+    // Recheck before each write; never restore a stale whole-host dump.
+    for(let pass=0;pass<2;pass++){
+      lockProof();if(!compensating)guard();checkStartupNeighbors();
+      journal(compensating?'restoration_persisting':'candidate_persisting');
+      await platform.saveStartup();
+      const state=checkStartupNeighbors();assertSavedRegistration(state.saved,proof,account);
+      if(!isDeepStrictEqual(state.live,state.saved))fail('PM2 startup readback mismatch');
+      if(pass===1){if(state.backup===null)fail('PM2 startup backup missing');assertSavedRegistration(state.backup,proof,account);if(!isDeepStrictEqual(state.saved,state.backup))fail('PM2 startup backup mismatch');}
+      if(!compensating)await checkpoint();
+    }
+    journal(compensating?'restoration_persisted':'candidate_persisted');
   };
   const checkpoint=async()=>{await new Promise(resolve=>setTimeout(resolve,0));guard();lockProof();pointerProof();};
   const noRegistration=async()=>{if(platform.registration()!==null)fail('Abbott registration remains');await platform.assertNoListener();};
@@ -967,6 +1063,7 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
   };
   try{
     await before();await checkpoint();await before();
+    checkStartupNeighbors();
     // No activation write or process/layout operation precedes this marker.
     // A missing registration is refusal, never an implicit successful stop.
     guard();provePredecessor();perimeter();provePredecessor();
@@ -987,6 +1084,7 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     if(!isDeepStrictEqual(processProof(platform,account),ownedProcess))fail('Candidate readiness identity changed');
     if(old)tree(oldBackup,old,oldDirectory,oldEnv);
     await checkpoint();await platform.health(ownedProcess);capture(true);pointerProof();
+    perimeter();await persist(ownedProcess);capture(true);tree(APP,record,candidateDirectory,envDigest);
     perimeter();phase('pointer');publishPointer(record);pointerPublished=true;
     if(request.binding)durableFile(`${CONTROL}/ownership-${request.binding.runId}.json`,{version:1,binding:request.binding,transaction:owner,record,directory:directoryIdentity(),process:ownedProcess});
     await checkpoint();capture(true);tree(APP,record,candidateDirectory,envDigest);journal('committed');return record;
@@ -1014,8 +1112,11 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
           await platform.health(live);tree(APP,old,oldDirectory,oldEnv);pointerProof();perimeter();
           if(!isDeepStrictEqual(processProof(platform,account),live)||!isDeepStrictEqual(current(),old))fail('Predecessor restart identity changed');
           perimeter();
+          await persist(live,true);
+          if(!isDeepStrictEqual(processProof(platform,account),live))fail('Restored process changed during persistence');
+          tree(APP,old,oldDirectory,oldEnv);pointerProof();await platform.health(live);
         }catch{await remove(restored.registration,live);throw Error();}
-      }else{absent(APP);if(pointerPublished){owned(CURRENT);fs.unlinkSync(CURRENT);pointerPublished=false;}await noRegistration();}
+      }else{absent(APP);if(pointerPublished){owned(CURRENT);fs.unlinkSync(CURRENT);pointerPublished=false;}await noRegistration();await persist(null,true);}
       if(!old)perimeter();journal('restored');if(terminal)terminal.status='RESTORED';fail(old?'runtime activation failed; attested predecessor restored':'runtime activation failed; service stopped');
     }catch(error){
       if(error.message==='runtime activation failed; attested predecessor restored'||error.message==='runtime activation failed; service stopped')throw error;
@@ -1030,8 +1131,9 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
   const guard = stagedGuard ?? (() => {});
   const phase=(value,reason='failed')=>{if(terminal){terminal.phase=value;terminal.reason=reason;}};
   guard();
+  let preflightProcess;
   if(scope==='abbott'){
-    phase('preflight_current');platform.deploymentPreflight(phase);
+    phase('preflight_current');preflightProcess=await platform.deploymentPreflight(phase);
     guard();
     phase('lock');
     if(fs.lstatSync(LOCK,{throwIfNoEntry:false}))fail('runtime deployment lock is already held or unsafe');
@@ -1060,6 +1162,7 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
     if(platform===realPlatform&&request.action==='deploy')bindingValid(request.binding);
     if(request.binding){bindingValid(request.binding);if(request.payload?.sourceSha!==request.binding.sourceSha||fs.lstatSync(`${CONTROL}/ownership-${request.binding.runId}.json`,{throwIfNoEntry:false}))fail('Deployment binding source or run reuse mismatch');}
     const beforeProcess=processProof(platform,account);
+    if(preflightProcess&&!isDeepStrictEqual(beforeProcess,preflightProcess))fail('Abbott identity changed after startup re-attestation');
     if(!old&&beforeProcess)fail('Unowned process exists before deployment');
     let record, stage;
     if (request.action === 'deploy') ({ record, stage } = materialize(request.payload, randomUUID().replaceAll('-', ''), old, platform, account,browserExecutable));
@@ -1182,6 +1285,7 @@ async function transactAcknowledged(request,signal,platform=realPlatform){
   const terminal={status:'REFUSED',phase:'unknown',reason:'failed'},guard=()=>{if(signal?.aborted)fail('Abbott activation cancelled');};
   try{return{status:'COMMITTED',record:await transact(request,platform,guard,terminal),diagnostic:{stage:'complete',reason:'none'}};}
   catch{
+    if(terminal.status==='REFUSED'&&terminal.phase==='persistence')return{status:'REFUSED',record:null,diagnostic:{stage:'persistence',reason:terminal.reason==='neighbor_saved_drift'?'neighbor_saved_drift':'failed'}};
     const stage=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'].includes(terminal.phase)?terminal.phase:'unknown';
     const neighbor=['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'].includes(stage);
     const specific=neighbor?['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']:stage==='preflight_nginx'?['metadata','utf8','syntax','tls_count','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown','unsupported_location','unsupported_proxy_pass','unsupported_return','unsupported_add_header','unsupported_root','unsupported_alias','unsupported_index','unsupported_try_files','unsupported_error_page','unsupported_proxy_redirect','unsupported_proxy_cache','unsupported_ssl_ecdh_curve','unsupported_ssl_conf_command','unsupported_client_body_buffer_size','unsupported_charset','unsupported_gzip_vary','unsupported_if','unsupported_other']:null;

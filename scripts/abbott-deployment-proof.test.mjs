@@ -5,6 +5,32 @@ const NGINX='/etc/nginx/conf.d/dashboard-next.conf',ROOT='/var/www/dashboard-abb
 const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e';
 const NGINX_TEXT='server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; location / { proxy_pass http://127.0.0.1:3001; } }\n';
 const FOREIGN_INCLUDE='/etc/nginx/snippets/foreign-project.conf';
+test('successor and rollback proof use the protected current record rather than historical release pins',async()=>{
+ const m=await api();for(const previousId of [ID,null]){
+  const f=fixture(),id='c'.repeat(32),sha='e'.repeat(40);
+  Object.assign(f.receipt.record,{id,sourceSha:sha,previousId});f.receipt.binding.sourceSha=sha;f.receipt.process.sourceSha=sha;Object.assign(f.receipt.process.registration,{releaseId:id,sourceSha:sha});
+  f.files.set(CONTROL+'/current.json',JSON.stringify(f.receipt.record));f.files.set(CONTROL+'/'+id+'/record.json',JSON.stringify(f.receipt.record));f.files.set(f.receiptPath,JSON.stringify(f.receipt));f.files.set(ROOT+'/.release-source-sha',sha+'\n');
+  for(const file of ['trusted-runtime-manifest.json','deploy/abbott/start.cjs'])f.files.set(CONTROL+'/'+id+'/'+file,f.files.get(CONTROL+'/'+ID+'/'+file));
+  const proof=m.createAbbottDeploymentProof(f.options);assert.doesNotThrow(()=>proof.preflight());
+  f.files.set(CONTROL+'/'+id+'/record.json',JSON.stringify({...f.receipt.record,sourceSha:'f'.repeat(40)}));assert.throws(()=>proof.preflight());
+ }
+});
+test('reboot requires fresh durable registration attestation before accepting new kernel identity',async()=>{
+ const m=await api();
+ for(const mode of ['valid','wrong_source','wrong_release','wrong_boot','missing']){
+  const f=fixture(),newBoot='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',oldPid=f.receipt.process.pid,newPid=23456;
+  f.files.set('/proc/sys/kernel/random/boot_id',newBoot+'\n');
+  for(const [key,value]of [...f.files])if(key.startsWith('/proc/'+oldPid+'/'))f.files.set(key.replace('/'+oldPid+'/', '/'+newPid+'/'),key.endsWith('/stat')?value.replace(String(oldPid)+' (',String(newPid)+' (').replace(/555$/,'777'):value);
+  for(const [key,value]of [...f.links])if(key.startsWith('/proc/'+oldPid+'/'))f.links.set(key.replace('/'+oldPid+'/', '/'+newPid+'/'),value);
+  f.owners.set(newPid,[982,984]);f.processes.at(-1)[0]=newPid;
+  const live=structuredClone(f.receipt.process);Object.assign(live,{pid:newPid,pmId:20,startTime:'777',bootId:newBoot});live.registration.pmId=20;
+  if(mode==='wrong_source')live.sourceSha='f'.repeat(40);if(mode==='wrong_release')live.registration.releaseId='f'.repeat(32);if(mode==='wrong_boot')live.bootId=BOOT;
+  let calls=0;f.options.reattestProcess=(record,prior)=>{calls++;assert.equal(prior.pid,oldPid);assert.equal(record.id,ID);return mode==='missing'?null:live;};
+  const proof=m.createAbbottDeploymentProof(f.options);
+  if(mode==='valid'){assert.doesNotThrow(()=>proof.preflight());assert.equal(calls,1);f.files.set('/proc/'+newPid+'/stat',f.files.get('/proc/'+newPid+'/stat').replace(/777$/,'778'));assert.throws(()=>proof.preflight());}
+  else assert.throws(()=>proof.preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+ }
+});
 test('deployment proof snapshots only the main Nginx file and never opens foreign includes',async()=>{const m=await api(),f=fixture();f.files.set(NGINX,NGINX_TEXT.replace('location / {','include '+FOREIGN_INCLUDE+'; location / {'));const proof=m.createAbbottDeploymentProof(f.options);assert.doesNotThrow(()=>proof.preflight());proof.perimeter();assert.ok(!f.opened.includes(FOREIGN_INCLUDE));const original=f.files.get(NGINX);f.files.set(NGINX,original.replace('foreign-project','other-project'));assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});f.files.set(NGINX,original);assert.throws(()=>proof.perimeter(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.equal(f.fds.size,0);});
 test('shadow deployment ignores foreign route semantics while pinning the shared Nginx file',async()=>{
  const m=await api(),f=fixture();

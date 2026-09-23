@@ -330,17 +330,22 @@ function fixture(authority=RUNTIME_MANIFESTS.abbott) {
   const source = read('scripts/abbott-runtime-release-remote.mjs').replace(/^import .*;\n/gm, '').replaceAll('export function ', 'function ');
   vm.runInContext(source + '\nthis.installer = createRuntimeInstaller(authority, environmentKeys);', context);
   let processRow = null, serial = 10, healthFailure = false,lastDeletedRegistration=null;
+  let saved = [], backup = [], neighbors = [], bootId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const definitions = () => [...clone(neighbors), ...(processRow ? [{...clone(processRow.pm2_env), name:processRow.name, pm_id:processRow.pm_id}] : [])];
   let nextStartup = 'ready', startup = 'ready', listening = false;
   const events = [];
   const processText = filename => {
     if (filename.endsWith('/status')) return 'Uid:\t1001\t1001\t1001\t1001\nGid:\t1001\t1001\t1001\t1001\n';
     if (filename.endsWith('/stat')) return `${serial} (node) ${['S', ...Array(18).fill('0'), String(serial)].join(' ')}`;
-    if (filename.endsWith('/boot_id')) return 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n';
+    if (filename.endsWith('/boot_id')) return bootId+'\n';
     if (filename.endsWith('/cmdline')) return '/usr/bin/node\0/var/www/.dashboard-abbott-launcher.cjs\0';
     if (filename.endsWith('/.release-source-sha')) return fs.readFileSync(map(filename), 'utf8');
     throw new Error('unexpected fixture process read');
   };
   const platform = {
+    startupState: () => clone({live:definitions(), saved, backup}),
+    async saveStartup() { events.push(['save']); backup=clone(saved);saved=definitions(); },
     deploymentPreflight() {},
     assertDeploymentPerimeter() {},
     account: () => ({ uid: 1001, gid: 1001 }),
@@ -357,6 +362,7 @@ function fixture(authority=RUNTIME_MANIFESTS.abbott) {
       events.push(['start', control]);
       const previousRegistration = processRow?.pm2_env;
       processRow = { name: 'dashboard-abbott', pid: ++serial, pm_id: serial, pm2_env: { pm_exec_path: '/usr/bin/env', pm_cwd: '/var/www/dashboard-abbott/apps/abbott', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', '/usr/bin/node', '/var/www/.dashboard-abbott-launcher.cjs'], uid: 'dashboard-abbott', gid: 'dashboard-abbott', RUNTIME_RELEASE_ID: path.basename(control), RUNTIME_RELEASE_SOURCE_SHA: fs.readFileSync(map('/var/www/dashboard-abbott/.release-source-sha'), 'utf8').trim(), status: 'online' } };
+      Object.assign(processRow.pm2_env,{PORT:3004,HOSTNAME:'127.0.0.1'});
       startup = nextStartup; nextStartup = 'ready'; listening = startup === 'ready';
       if(startup==='retained:predecessor'&&!previousRegistration){startup='ready';listening=true;}
       if (startup === 'retained:predecessor' && previousRegistration) {
@@ -421,8 +427,100 @@ function fixture(authority=RUNTIME_MANIFESTS.abbott) {
     const manifest = JSON.stringify({ version: 1, scope: 'abbott', sourceSha, files: entries });
     return { scope: 'abbott', sourceSha, manifest, manifestDigest: createHash('sha256').update(manifest).digest('hex'), control: [], files: entries.map(entry => ({ path: entry.path, mode: entry.mode, data: Buffer.from(values[entry.path]).toString('base64') })) };
   }
-  return { installer: context.installer, platform, events, map, io, context, payload, exitProcess:()=>{processRow=null;listening=false;}, mutateRow: fn=>fn(processRow), nextStartup: value => { nextStartup = value; }, failHealth: () => { healthFailure = true; }, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
+  return { installer: context.installer, platform, events, map, io, context, payload,
+    saved:()=>clone(saved), backup:()=>clone(backup),
+    neighbors:rows=>{neighbors=clone(rows);saved=clone(rows);backup=clone(rows);},
+    mutateNeighbors:fn=>fn(neighbors), mutateSaved:fn=>fn(saved), mutateBackup:fn=>fn(backup),
+    restart:({fallback=false}={})=>{const rows=(fallback?backup:saved).filter(r=>r.name==='dashboard-abbott');assert.ok(rows.length<=1);bootId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';processRow=rows.length?{name:'dashboard-abbott',pid:++serial,pm_id:serial,pm2_env:{...clone(rows[0]),status:'online'}}:null;listening=Boolean(processRow);},
+    exitProcess:()=>{processRow=null;listening=false;}, mutateRow: fn=>fn(processRow), nextStartup: value => { nextStartup = value; }, failHealth: () => { healthFailure = true; }, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
 }
+
+test('healthy first deployment survives restart from primary and backup startup lists',async()=>{
+ const f=fixture();try{
+  const record=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+  for(const rows of [f.saved(),f.backup()]){assert.equal(rows.length,1);assert.equal(rows[0].PORT,3004);assert.equal(rows[0].HOSTNAME,'127.0.0.1');}
+  for(const fallback of [false,true]){f.restart({fallback});assert.equal(f.platform.snapshot()?.registration.releaseId,record.id);assert.equal(f.platform.snapshot().sourceSha,record.sourceSha);assert.equal(f.platform.snapshot().cwd,'/var/www/dashboard-abbott/apps/abbott');}
+ }finally{f.cleanup();}
+});
+
+test('real PM2 persistence adapter reads owned default-mode dumps and saves through fixed PM2 home',async()=>{
+ const f=fixture();try{
+  fs.mkdirSync(f.map('/root/.pm2'),{recursive:true,mode:0o700});
+  const dump=f.map('/root/.pm2/dump.pm2'),backup=dump+'.bak',rows=[{name:'other',pm2_env:{name:'other',pm_exec_path:'/usr/bin/node',env:{SYNTHETIC:'fixture'}}}];
+  fs.writeFileSync(dump,'[]',{mode:0o644});const calls=[];
+  f.context.execFileSync=(bin,args,options)=>{assert.equal(bin,'pm2');assert.equal(options.env.PM2_HOME,'/root/.pm2');calls.push(args);
+    if(args[0]==='jlist')return JSON.stringify(rows);
+    assert.deepEqual(Array.from(args),['save','--force']);fs.copyFileSync(dump,backup);fs.writeFileSync(dump,JSON.stringify(rows.map(row=>row.pm2_env)));return '';
+  };
+  const platform=f.installer.interruptedRecoveryTools().platform;
+  assert.deepEqual(JSON.parse(JSON.stringify(platform.startupState().saved)),[]);
+  await platform.saveStartup();await platform.saveStartup();
+  const state=platform.startupState();assert.deepEqual(JSON.parse(JSON.stringify(state.live)),rows.map(row=>row.pm2_env));assert.deepEqual(state.live,state.saved);assert.deepEqual(state.saved,state.backup);assert.equal(calls.filter(args=>args[0]==='save').length,2);
+ }finally{f.cleanup();}
+});
+
+test('successor and explicit rollback persist exactly the selected release',async()=>{
+ const f=fixture();try{
+  const first=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);
+  const second=await f.installer.transact({action:'deploy',expectedActiveSha:first.sourceSha,payload:f.payload('b'.repeat(40))},f.platform);
+  f.restart();assert.equal(f.platform.snapshot()?.registration.releaseId,second.id);
+  await f.installer.transact({action:'rollback',expectedActiveSha:second.sourceSha},f.platform);
+  f.restart({fallback:true});assert.equal(f.platform.snapshot()?.registration.releaseId,first.id);
+ }finally{f.cleanup();}
+});
+
+for(const failure of ['health','save_before','save_after','readback','interrupt_before','interrupt_after','permanent_save'])test(`startup failure ${failure} cannot acknowledge a live-only deployment`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),abort=new AbortController();
+  const save=f.platform.saveStartup;let hit=false;
+  if(failure==='health')f.nextStartup('fail');
+  else f.platform.saveStartup=async()=>{if(hit&&failure!=='permanent_save')return save();hit=true;if(failure==='save_before'||failure==='permanent_save')throw Error('private');if(failure==='interrupt_before')abort.abort();await save();if(failure==='save_after')throw Error('private');if(failure==='readback')f.mutateSaved(rows=>rows.find(r=>r.name==='dashboard-abbott').RUNTIME_RELEASE_ID='d'.repeat(32));if(failure==='interrupt_after')abort.abort();};
+  const result=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},abort.signal,f.platform);
+  assert.equal(result.status,failure==='permanent_save'?'REVIEW_REQUIRED':'RESTORED');
+  if(result.status==='RESTORED')for(const fallback of [false,true]){f.restart({fallback});assert.equal(f.platform.snapshot()?.registration.releaseId,old.id);assert.equal(f.installer.inspectActiveRuntime().id,old.id);}
+ }finally{f.cleanup();}
+});
+
+test('failed first install clears candidate from primary and backup startup lists',async()=>{
+ const f=fixture();try{const save=f.platform.saveStartup;let failed=false;f.platform.saveStartup=async()=>{await save();if(!failed){failed=true;throw Error('private');}};
+  const result=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},new AbortController().signal,f.platform);
+  assert.equal(result.status,'RESTORED');for(const fallback of [false,true]){f.restart({fallback});assert.equal(f.platform.snapshot(),null);}
+ }finally{f.cleanup();}
+});
+
+for(const drift of [false,true])test(`shared startup definitions ${drift?'refuse neighbor drift':'preserve unrelated environment and restart policy'}`,async()=>{
+ const f=fixture();try{
+  const neighbors=[{name:'dashboard-zaruku',pm_exec_path:'/usr/bin/node',pm_cwd:'/var/www/dashboard-zaruku',args:['server.js'],uid:984,gid:991,env:{PRIVATE:'fixture-value'},autorestart:true,restart_delay:700}];f.neighbors(neighbors);
+  if(drift)f.mutateNeighbors(rows=>rows[0].env.PRIVATE='changed');
+  const result=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},new AbortController().signal,f.platform);
+  assert.equal(result.status,drift?'REFUSED':'COMMITTED');
+  assert.deepEqual(f.saved().filter(r=>r.name!=='dashboard-abbott'),neighbors);assert.deepEqual(f.backup().filter(r=>r.name!=='dashboard-abbott'),neighbors);
+  if(drift){assert.equal(result.diagnostic.reason,'neighbor_saved_drift');assert.equal(f.events.filter(e=>['fresh','save','stop'].includes(e[0])).length,0);}
+ }finally{f.cleanup();}
+});
+
+test('backup readback failure compensates both startup copies',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),save=f.platform.saveStartup;let saves=0;
+  f.platform.saveStartup=async()=>{await save();if(++saves===2)f.mutateBackup(rows=>rows.find(r=>r.name==='dashboard-abbott').RUNTIME_RELEASE_ID='f'.repeat(32));};
+  const result=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},new AbortController().signal,f.platform);
+  assert.equal(result.status,'RESTORED');for(const fallback of [false,true]){f.restart({fallback});assert.equal(f.platform.snapshot().registration.releaseId,old.id);}
+ }finally{f.cleanup();}
+});
+
+for(const boundary of ['before_save','after_save'])test(`concurrent neighbor change ${boundary} preserves new state and requires review`,async()=>{
+ const f=fixture();try{
+  f.neighbors([{name:'other',env:{PRIVATE:'original'},restart_delay:100}]);
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),save=f.platform.saveStartup,health=f.platform.health;let changed=false;
+  const drift=()=>{if(!changed){changed=true;f.mutateNeighbors(rows=>rows[0].env.PRIVATE='newer');}};
+  if(boundary==='before_save')f.platform.health=async proof=>{await health(proof);if(proof.sourceSha!==old.sourceSha)drift();};
+  else f.platform.saveStartup=async()=>{drift();await save();};
+  const result=await f.installer.transactAcknowledged({action:'deploy',expectedActiveSha:old.sourceSha,payload:f.payload('b'.repeat(40))},new AbortController().signal,f.platform);
+  assert.equal(result.status,'REVIEW_REQUIRED');assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),true);
+  assert.equal(f.platform.startupState().live.find(r=>r.name==='other').env.PRIVATE,'newer');
+  assert.equal(f.saved().find(r=>r.name==='other').env.PRIVATE,boundary==='before_save'?'original':'newer');
+ }finally{f.cleanup();}
+});
 
 test('fresh Abbott activation deletes the proven predecessor and cannot retain its PM2 env',async()=>{
   const f=fixture();try{

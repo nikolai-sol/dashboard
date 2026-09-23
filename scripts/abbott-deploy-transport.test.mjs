@@ -3,6 +3,16 @@ const api=()=>import('./abbott-deploy-transport.mjs').catch(()=>({}));
 const source=()=>Buffer.from('export async function run(){return {status:"COMMITTED",record:null,diagnostic:{stage:"complete",reason:"none"}}}');
 const payload=()=>Buffer.from('{"action":"inspect"}');
 const record={id:'a'.repeat(32),previousId:null,scope:'abbott',sourceSha:'b'.repeat(40),manifestDigest:'c'.repeat(64)};
+test('startup reconciliation blocker has a closed redacted transport diagnostic',async()=>{
+ const m=await api(),digest='d'.repeat(64);
+ for(const reason of ['failed','neighbor_saved_drift']){
+  const diagnostic={stage:'persistence',reason},wire=m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic);
+  assert.deepEqual(m.parseAbbottDeployResult(wire,digest),{status:'REFUSED',record:null,diagnostic});
+  assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),`ABBOTT_DEPLOY_REFUSED stage=persistence reason=${reason}\n`);
+ }
+ assert.throws(()=>m.encodeAbbottDeployResult('REFUSED',null,digest,{stage:'persistence',reason:'private_token'}));
+ assert.throws(()=>m.encodeAbbottDeployResult('COMMITTED',record,digest,{stage:'persistence',reason:'neighbor_saved_drift'}));
+});
 test('remote status diagnostic pairs are mandatory, hash-bound and never complete for REFUSED',async()=>{
  const m=await api(),d='d'.repeat(64),phases=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'];
  for(const stage of phases){const diagnostic={stage,reason:stage.startsWith('preflight_neighbor_')||stage==='preflight_nginx'?'unknown':'failed'},wire=m.encodeAbbottDeployResult('REFUSED',null,d,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,d),{status:'REFUSED',record:null,diagnostic});assert.match(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),new RegExp(`stage=${stage} reason=${diagnostic.reason}`));}
