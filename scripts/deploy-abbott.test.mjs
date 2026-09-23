@@ -536,6 +536,67 @@ test('cold current restores exact stored release and both startup copies',async(
   for(const fallback of [false,true]){f.restart({fallback});assert.equal(f.platform.snapshot().registration.releaseId,old.id);}
  }finally{f.cleanup();}
 });
+const runtimeUuidA = '11111111-1111-4111-8111-111111111111';
+const runtimeUuidB = '22222222-2222-4222-8222-222222222222';
+for (const mode of [
+  'top_uuid', 'nested_uuid', 'missing_nested_uuid',
+  'unexpected_uuid', 'deeper_uuid', 'private_env', 'pid_path',
+  'ssh_backup', 'xdg_backup', 'args', 'restart_policy',
+]) test(`startup UUID boundary ${mode}`, async () => {
+  const f = fixture();
+  try {
+    const old = await f.installer.transact({
+      action: 'deploy', expectedActiveSha: null,
+      payload: f.payload('a'.repeat(40)),
+    }, f.platform);
+    f.makeCold();
+    f.neighbors([{
+      name: 'dashboard-medroche', unique_id: runtimeUuidA,
+      pm_pid_path: '/fixture/medroche-1.pid', args: ['server.js'],
+      restart_delay: 700,
+      SSH_CLIENT: 'fixture-session-a', XDG_SESSION_ID: 'fixture-a',
+      env: {
+        unique_id: runtimeUuidA, PRIVATE: 'fixture-value',
+        SSH_CLIENT: 'fixture-session-a', XDG_SESSION_ID: 'fixture-a',
+        user: { unique_id: runtimeUuidA },
+      },
+    }]);
+    if (mode === 'top_uuid') f.mutateNeighbors(r => r[0].unique_id = runtimeUuidB);
+    if (mode === 'nested_uuid') f.mutateNeighbors(r => r[0].env.unique_id = runtimeUuidB);
+    if (mode === 'missing_nested_uuid') {
+      f.mutateSaved(r => { delete r[0].env.unique_id; });
+      f.mutateBackup(r => { delete r[0].env.unique_id; });
+    }
+    if (mode === 'unexpected_uuid') f.mutateNeighbors(r => r[0].unique_id = 'user-defined');
+    if (mode === 'deeper_uuid') f.mutateNeighbors(r => r[0].env.user.unique_id = runtimeUuidB);
+    if (mode === 'private_env') f.mutateNeighbors(r => r[0].env.PRIVATE = 'changed');
+    if (mode === 'pid_path') f.mutateNeighbors(r => r[0].pm_pid_path = '/fixture/other-2.pid');
+    if (mode === 'ssh_backup') f.mutateBackup(r => {
+      r[0].SSH_CLIENT = 'fixture-session-b'; r[0].env.SSH_CLIENT = 'fixture-session-b';
+    });
+    if (mode === 'xdg_backup') f.mutateBackup(r => {
+      r[0].XDG_SESSION_ID = 'fixture-b'; r[0].env.XDG_SESSION_ID = 'fixture-b';
+    });
+    if (mode === 'args') f.mutateNeighbors(r => r[0].args = ['other.js']);
+    if (mode === 'restart_policy') f.mutateNeighbors(r => r[0].restart_delay = 900);
+    const beforeSaved = f.saved(), beforeBackup = f.backup();
+    f.events.length = 0;
+    const result = await f.installer.transactAcknowledged(
+      coldRequest(old), new AbortController().signal, f.platform,
+    );
+    const allowed = ['top_uuid', 'nested_uuid', 'missing_nested_uuid'].includes(mode);
+    assert.equal(result.status, allowed ? 'COMMITTED' : 'REFUSED');
+    if (!allowed) {
+      assert.equal(result.diagnostic.reason, 'neighbor_saved_drift');
+      assert.equal(f.events.filter(e => ['fresh', 'save', 'stop', 'delete'].includes(e[0])).length, 0);
+      assert.deepEqual(f.saved(), beforeSaved);
+      assert.deepEqual(f.backup(), beforeBackup);
+    } else {
+      assert.equal(f.events.filter(e => e[0] === 'save').length, 2);
+      assert.equal(f.saved().find(r => r.name === 'dashboard-medroche').env.PRIVATE, 'fixture-value');
+    }
+  } finally { f.cleanup(); }
+});
 test('failed cold health compensates to absent Abbott, not a healthy predecessor',async()=>{
  const f=fixture();try{
   const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);f.makeCold();f.failHealth();

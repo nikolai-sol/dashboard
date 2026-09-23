@@ -855,9 +855,16 @@ function startupDefinitions(rows) {
   if(!Array.isArray(rows)||rows.length>256)fail('Invalid PM2 startup state');
   const transient=new Set(['pm_id','instances','pid','status','pm_uptime','created_at','restart_time','unstable_restarts','exit_code','prev_restart_delay','axm_monitor','vizion_running']);
   const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+  const runtimeUuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
   const definitions=rows.map(row=>{
     if(!row||typeof row!=='object'||typeof row.name!=='string')fail('Invalid PM2 startup definition');
-    return stable(Object.fromEntries(Object.entries(row).filter(([key])=>!transient.has(key))));
+    const definition=Object.fromEntries(Object.entries(row).filter(([key])=>!transient.has(key)));
+    if(runtimeUuid(definition.unique_id))delete definition.unique_id;
+    if(definition.env&&typeof definition.env==='object'&&!Array.isArray(definition.env)&&runtimeUuid(definition.env.unique_id)){
+      definition.env={...definition.env};
+      delete definition.env.unique_id;
+    }
+    return stable(definition);
   });
   return definitions.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }

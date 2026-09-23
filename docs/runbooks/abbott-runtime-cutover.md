@@ -80,6 +80,8 @@ accepts a complete uniform route set on 3001 or 3004 (or its existing no-owned-
 route case); mixed or partial sets are refused. Its healthy-current requirement
 is unchanged.
 
+Startup comparison ignores canonical UUID-shaped PM2 identity metadata only at top-level unique_id and immediate env.unique_id. It does not ignore PID paths, inherited session variables, arbitrary environment, arguments or restart policy. Local success does not authorize publication, host reconciliation or recovery.
+
 The cold worker owns the existing deployment lock, records durable start,
 health, primary-save, backup-save and compensation phases, starts the exact
 sealed launcher, checks database health, saves twice and verifies both startup
