@@ -149,6 +149,35 @@ then memory must be cleaned, not only appended to.
 
 ## Current production runtime
 
+### Runtime ownership verified 2026-09-23
+
+| Scope | Source and process | Actual serving boundary |
+| --- | --- | --- |
+| Media advertising | Root `src`, `dashboard-next`, `/var/www/dashboard`, port `3001` | Also still serves public Abbott; production SHA `8f389a28` |
+| Zaruku | `apps/zaruku`, `dashboard-zaruku`, `/var/www/dashboard-zaruku`, port `3002` | Exact Zaruku page/API/export routes and `/_next-zaruku/`; production SHA `af1948c8` |
+| Site SEO / MedRoche | `apps/site-seo`, `dashboard-medroche`, port `3003` | MedRoche page/API/asset routes; current target `/var/www/dashboard-medroche-releases/8fd6d122aca117b76d8bef5a145247cc232135fa/standalone` |
+| Abbott isolation candidate | Separate branch `codex/abbott-runtime-isolation` / `release/abbott`, intended port `3004` | Not cut over. On inspection no Abbott PM2 process or `3004` listener; public routes still point to `3001`. Stored candidate SHA `dfd6267a` is not proof of a running runtime. |
+
+The owner requires media changes not to interfere with Abbott, Zaruku, or site
+SEO. Keep domain code, build artifacts, deployment locks and runtime identities
+separate. Do not merge another dashboard's older release tree over main. Root
+media-only changes must not be deployed through the combined application while
+Abbott still depends on it without a separately reviewed Abbott-safe release;
+full independence requires completing Abbott's own integration and cutover.
+Do not move Abbott onto `3003`: MedRoche already owns that port.
+
+`main` is the source integration baseline, not a single production pointer.
+The September 23 reconciliation preserves published Zaruku work and the tested
+campaign-date plan patch; it does not deploy any runtime. Abbott isolation is
+unfinished work and remains separate. Details and branch disposition:
+`docs/operations/2026-09-23-main-reconciliation.md`.
+
+Media `period_from/period_to` always mean actual campaign dates. Preserve a
+monthly plan amount over the intersection of that month and the campaign;
+report subranges receive their share of those campaign days. The reusable
+normalizer fix is integrated in main; no Gidrofuril-specific backfill or live
+release is part of the owner's current priority.
+
 ### Dashboard app
 
 - app: `dashboard-next`
@@ -200,10 +229,15 @@ filesystem with about 49 GiB available. The open-file limit is 1024.
 
 ### Canonical collectors runtime
 
-- runtime path: `/root/reportingdash-canonical`
-- scheduler: root `crontab`
-- python env: `/root/reportingdash-canonical/venv`
-- collector logs: `/root/reportingdash-canonical/logs`
+- Advertising runtime verified September 23: per-source systemd timers and
+  `/opt/reportingdash/collectors/<source>/current`, each with its own venv.
+- `/root/reportingdash-canonical` remains shared utilities/legacy runtime;
+  Abbott retains its separately attested collector and root cron boundary.
+- The current operational snapshot and seven completed-campaign shutdowns
+  are documented in root `docs/operations/2026-09-23-media-collection-audit.md`
+  and `PLATFORMS-ACCESS-MEMORY.md`. Between's timer is disabled.
+- Direct's installed Collection filter runs after API fetch; disabling that
+  setting alone does not prove source requests stopped.
 
 ### Abbott canonical/private rollout package
 
@@ -322,24 +356,25 @@ From local machine, root `.env` currently points to:
 Do not rediscover DB names each time.
 Use `report_bd` and `report_bd_tech` unless there is an explicit migration away from them.
 
-## Current cron schedule
+## Scheduler state verified 2026-09-23
 
-Canonical daily jobs on VPS:
-- `02:12` Yandex Metrika canonical: generic collection excluding Abbott and the attested Abbott active-release launcher are serialized by the shared Metrika lock.
-- `02:18` Yandex Metrika returning-content canonical for account `66624469` (`fetch_yandex_metrika_returning_canonical.py --account-id 66624469 --run-type cron`). The installed selector was repaired on 2026-07-28.
-- `06:20` LinkedIn
-- `06:30` Reddit
-- `06:32` GetIntent
-- `06:34` Yandex Direct
-- `06:36` Yandex Promopages
-- `06:35` VK Ads v2
-- `06:37` Hybrid
-- `06:50` Yandex Webmaster canonical daily collector
-- `06:55` Google Search Console canonical daily collector (`fetch_gsc_canonical.py --backfill-days 3 --lag-days 3 --run-type cron`)
-- `04:50` Abbott health probe
-- `05:00` Telegram summary
+Observed systemd timer times in UTC:
+- `03:50` Between — disabled September 23 after campaign completion
+- `04:22` generic Metrika
+- `04:28` Metrika returning-content
+- `04:42` GetIntent
+- `04:44` Direct, plus retry `06:40`
+- `04:45` VK Ads v2
+- `04:46` Promopages
+- `04:47` Hybrid
+- `05:05` Google Search Console
+- `07:00` Yandex Webmaster
 
-The legacy `06:10` localhost Metrika bridge was removed under TASK-072. Do not restore it; the `06:12` canonical collector and `06:18` returning-content collector are the active owners.
+Root cron contains Abbott collection `06:12`, health `07:05`, summary `07:10`,
+advertising import worker `04:55`, and canonical monitor `06:50`. LinkedIn and
+Reddit cron entries are disabled. Do not restore the removed legacy Metrika bridge.
+An enabled timer does not establish accepted collection: Hybrid fails installed
+release validation; disabled account settings also apply. See the current audit.
 
 Important collector rule:
 - cron windows do not include the current day

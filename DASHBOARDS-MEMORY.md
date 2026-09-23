@@ -15,12 +15,18 @@ If dashboard work changes materially, update this file in the same turn.
 ## Repos and runtime
 
 - Main dashboard repo: `dashboard-next`
-- Production app path on VPS: `/var/www/dashboard`
+- Combined media/Abbott app path on VPS: `/var/www/dashboard`
 - Public domain: `https://dashboards.adreports.ru`
 - Process manager: `PM2`
-- Local bind on VPS: `127.0.0.1:3001`
+- Combined media/Abbott bind on VPS: `127.0.0.1:3001`
+- Zaruku separately serves from `apps/zaruku` on `127.0.0.1:3002`.
+- Site SEO/MedRoche separately serves from `apps/site-seo` on `127.0.0.1:3003`.
+- Abbott extraction is on a separate branch, intended for `3004`; as verified
+  September 23 it is not serving public traffic. The candidate directory does
+  not establish a successful cutover. Keep media-only deployment from replacing
+  Abbott's serving bundle without a separately reviewed release.
 
-Deploy:
+Combined deployment (not a generic deploy for all dashboards):
 
 ```bash
 cd dashboard-next
@@ -36,6 +42,13 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 ```
 
 ## Current dashboard architecture
+
+September 23 main reconciliation includes the actual published Zaruku release
+`af1948c8`, its completed cutover operator source/evidence, and reusable media
+campaign-date plan correction `772f3673`. Site SEO was already integrated at
+`8fd6d122`. No application was deployed by this reconciliation. Abbott isolation
+remains an explicitly unfinished separate branch, not a completed main feature.
+See `docs/operations/2026-09-23-main-reconciliation.md` for exact boundaries.
 
 Zaruku is isolated in production since 2026-09-10: exact page/API/export routes
 and `/_next-zaruku/` use `dashboard-zaruku` on loopback port 3002; other routes

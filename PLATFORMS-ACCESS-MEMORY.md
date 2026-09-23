@@ -18,28 +18,51 @@ If platform access or cron behavior changes, update this file in the same turn.
 
 ## Runtime and paths
 
-- Root collectors workspace: `/Users/nicko/ReportingDash`
-- Canonical runtime on VPS: `/root/reportingdash-canonical`
-- Python venv on VPS: `/root/reportingdash-canonical/venv`
-- Logs: `/root/reportingdash-canonical/logs`
-- Scheduler: root `crontab`
+- Root collectors workspace: `/Users/nafanya/ReportingDash`
+- Advertising runtime on VPS: `/opt/reportingdash/collectors/<source>/current`
+- Advertising Python venv: `/opt/reportingdash/collectors/<source>/venv`
+- Advertising scheduler: per-source `reportingdash-collector-*.timer` / `.service`
+- Shared utilities and legacy runtime: `/root/reportingdash-canonical`
+- Shared logs: `/root/reportingdash-canonical/logs`; inspect the matching systemd
+  journal as well, since launcher failures happen before collector run records.
+- Abbott retains its separately attested runtime and root cron.
 
 Main production DBs:
 - primary: `report_bd`
 - tech: `report_bd_tech`
 
-## Current canonical cron
+## Current scheduling evidence (2026-09-23)
 
-Daily jobs on VPS:
-- `06:20` LinkedIn
-- `06:30` Reddit
-- `06:32` GetIntent
-- `06:34` Yandex Direct
-- `06:35` VK Ads v2
-- `06:37` Hybrid
-- `06:40` canonical monitor
-- `06:50` Telegram summary
-- `06:55` Google Search Console canonical daily collector
+Observed timer next-run times in UTC: Between `03:50`, generic Metrika `04:22`,
+returning Metrika `04:28`, GetIntent `04:42`, Direct `04:44` (retry `06:40`),
+VK `04:45`, Promopages `04:46`, Hybrid `04:47`, GSC `05:05`, Webmaster `07:00`.
+Root cron: import worker `04:55`, monitor `06:50`, Abbott collection `06:12`,
+Abbott health `07:05`, summary `07:10`. LinkedIn/Reddit cron is commented out.
+
+Initial snapshot, before the later seven-setting change: all Hybrid/VK/GetIntent/
+Promopages accounts were disabled in
+Collection. Between remained enabled but failed launcher verification, as did
+Hybrid: both release trees contained an extra `__pycache__`, with all manifest
+hashes matching. Never bypass verification to restart them. Direct's settings
+filter runs after API requests; inspect `req_system` and the actual selector
+before claiming external collection has stopped.
+
+Full evidence and confirmed campaign-date semantics:
+[media collection audit](../docs/operations/2026-09-23-media-collection-audit.md).
+`period_from/period_to` are actual campaign placement dates. Monthly plan
+amounts are apportioned across campaign days; selected subranges prorate within
+that interval. Regular collection stops at the campaign end date. Late data and
+backfills are separate bounded operations. The automatic date predicate is not
+implemented. Commit `772f3673` fixes monthly plan allocation within campaign
+dates; it is integrated into main, passed tests and independent review, but is
+not deployed. The owner deferred further Gidrofuril-specific work.
+
+After the initial 2026-09-23 snapshot, seven settings were changed from
+`cron_enabled=1` to `0` while retaining `is_active=1`: Between `gidrofuril`,
+Google `4803391254`, and five Landsail Yandex Direct campaign accounts. History
+and totals were invariant. Only `reportingdash-collector-between.timer` was
+stopped; other source timers were unchanged. The Between gap for 2026-09-14..15
+remains unresolved.
 
 Important runtime rule:
 - cron does not collect the current day
@@ -75,35 +98,36 @@ ssh beget 'pm2 status'
 ### LinkedIn
 
 - collector: `/Users/nicko/ReportingDash/fetch_linkedin_canonical.py`
-- cron enabled
+- cron disabled; account Collection settings disabled (verified 2026-09-23)
 - canonical-only accepted source
 - monitored
 
 ### Reddit
 
 - collector: `/Users/nicko/ReportingDash/fetch_reddit_canonical.py`
-- cron enabled
+- cron disabled; account Collection settings disabled (verified 2026-09-23)
 - canonical-only accepted source
 - monitored
 
 ### VK Ads v2
 
 - collector: `/Users/nicko/ReportingDash/fetch_vk_ads_v2_canonical.py`
-- cron enabled
+- systemd timer enabled; all 5 Collection accounts disabled (2026-09-23)
 - bridged source
 - monitored non-blocking
 
 ### GetIntent
 
 - collector: `/Users/nicko/ReportingDash/fetch_getintent_canonical.py`
-- cron enabled
+- systemd timer enabled; both Collection accounts disabled (2026-09-23)
 - bridged source
 - monitored non-blocking
 
 ### Hybrid
 
 - collector: `/Users/nicko/ReportingDash/fetch_hybrid_canonical.py`
-- cron enabled
+- systemd timer enabled; all 36 Collection accounts disabled; launcher fails
+  release-tree validation as recorded above (2026-09-23)
 - bridged source
 - monitored non-blocking
 
@@ -114,8 +138,8 @@ Important current state:
 
 ### Yandex Direct
 
-- collector: `/Users/nicko/ReportingDash/fetch_yandex_direct_canonical.py`
-- cron enabled
+- production entrypoint: `/opt/reportingdash/collectors/yandex_direct/current/fetch_yandex_direct_canonical_api.py`
+- systemd main and retry timers enabled (2026-09-23)
 - monitored non-blocking
 - working source, but account bridge is still imperfect
 
@@ -212,8 +236,8 @@ Important current state:
   - Promopages campaign ids can be attached through `media_plan_bindings`
   - bound rows participate in awareness `plan_vs_fact`, `channel_timeseries`, and KPI totals
   - unbound Promopages remains isolated in dedicated section
-- daily cron status:
-  - enabled on VPS at `06:36`
+- daily scheduler status (2026-09-23):
+  - systemd timer enabled, observed next run `04:46` UTC; all 4 Collection accounts disabled
   - log file:
     - `/root/reportingdash-canonical/logs/yandex-promopages-canonical-cron.log`
 
