@@ -123,6 +123,9 @@ step. In addition to the lint cleanup, CI now fetches full Git history: the
 template attestation points to a source commit before HEAD. A temporary
 depth-one clone reproduced the missing-commit failure; fetching complete history
 resolved it. The YAML was parsed and verification steps remain present.
+The isolated SEO build exposed another cleanup omission: its `.next-medroche`
+output was not ignored like Zaruku's output. Git and ESLint now consistently
+ignore app-local `.next-*` generated directories; actual source remains checked.
 
 Evidence is retained in the root repository's
 `outputs/main-reconciliation-20260923/`. Repeated read-only server inspection
