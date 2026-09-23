@@ -1,11 +1,13 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import {
-  getDefaultAbbottCounterIds,
   getDefaultZarukuCounterIds,
-  loadAbbottBiData,
   type AbbottDashboardAudience,
 } from "@/lib/abbott-bi";
+import {
+  abbottDashboardLoaderDependencies,
+  loadAbbottDashboardDataWithDependencies,
+} from "@/lib/abbott-dashboard-loader";
 import {
   ABBOTT_BUSINESS_TIME_ZONE,
   businessCalendarIsoDate,
@@ -2950,6 +2952,17 @@ export async function loadDashboardData(
     throw new Error("Dashboard not found");
   }
 
+  const dashboardType = dashboard.dashboard_type;
+  if (dashboardType === "abbott_bi") {
+    if (audience !== "manager" && audience !== "embed") {
+      throw new Error("Abbott trusted audience is required");
+    }
+    return loadAbbottDashboardDataWithDependencies(request, requestedId, audience, {
+      ...abbottDashboardLoaderDependencies,
+      findDashboard: async () => dashboard,
+    });
+  }
+
   const config = parseJson(dashboard.config);
   const multibrandConfig = normalizeMultibrandConfig(config.multibrand);
   const requestedBrandId = new URL(request.url).searchParams.get("brand");
@@ -2963,7 +2976,6 @@ export async function loadDashboardData(
   const aiSummaryOverride = aiSummaryAuthoring
     ? buildDashboardAiSummaryFromOverrideText(aiSummaryAuthoring.override_text, aiSummaryAuthoring.updated_at)
     : null;
-  const dashboardType = dashboard.dashboard_type;
   const spendSource =
     String(config.spend_source ?? "platform_actual") === "media_plan_derived"
       ? "media_plan_derived"
@@ -2983,12 +2995,9 @@ export async function loadDashboardData(
   const metrikaAccountIds = resolveDashboardMetrikaAccountIds(sourceRows);
   const sectionFieldOverrides = getSectionFieldOverrides(config);
 
-  if (dashboardType === "abbott_bi" || dashboardType === "zaruku_bi") {
-    if (dashboardType === "abbott_bi" && audience !== "manager" && audience !== "embed") {
-      throw new Error("Abbott trusted audience is required");
-    }
+  if (dashboardType === "zaruku_bi") {
     const counterIds = resolveAbbottCounterIds(sourceRows);
-    const defaultCounterIds = dashboardType === "zaruku_bi" ? getDefaultZarukuCounterIds() : getDefaultAbbottCounterIds();
+    const defaultCounterIds = getDefaultZarukuCounterIds();
     const effectiveCounterIds = counterIds.length > 0 ? counterIds : defaultCounterIds;
     const serverTiming: DashboardServerTiming = {};
     const businessTimeZone =
@@ -2996,20 +3005,17 @@ export async function loadDashboardData(
         ? config.business_timezone.trim()
         : ABBOTT_BUSINESS_TIME_ZONE;
     const businessToday = businessCalendarIsoDate(new Date(), businessTimeZone);
-    const portalPayload =
-      dashboardType === "zaruku_bi"
-        ? {
-            zaruku_seo: await loadZarukuSeoData(
-              effectiveCounterIds,
-              range.from,
-              range.to,
-              {
-                today: businessToday,
-                recordTiming: (name, durationMs) => { serverTiming[name] = durationMs; },
-              },
-            ),
-          }
-        : { abbott_bi: await loadAbbottBiData(dashboard.id, effectiveCounterIds, range.from, range.to, audience) };
+    const portalPayload = {
+      zaruku_seo: await loadZarukuSeoData(
+        effectiveCounterIds,
+        range.from,
+        range.to,
+        {
+          today: businessToday,
+          recordTiming: (name, durationMs) => { serverTiming[name] = durationMs; },
+        },
+      ),
+    };
 
     const response: DashboardData = {
       dashboard: {

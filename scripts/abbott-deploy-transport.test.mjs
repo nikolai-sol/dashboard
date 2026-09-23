@@ -1,0 +1,156 @@
+import test from'node:test';import assert from'node:assert/strict';import{EventEmitter}from'node:events';import{PassThrough}from'node:stream';import{spawn,spawnSync,execFileSync}from'node:child_process';import{createHash}from'node:crypto';import fs from'node:fs';
+const api=()=>import('./abbott-deploy-transport.mjs').catch(()=>({}));
+const source=()=>Buffer.from('export async function run(){return {status:"COMMITTED",record:null,diagnostic:{stage:"complete",reason:"none"}}}');
+const payload=()=>Buffer.from('{"action":"inspect"}');
+const record={id:'a'.repeat(32),previousId:null,scope:'abbott',sourceSha:'b'.repeat(40),manifestDigest:'c'.repeat(64)};
+test('remote status diagnostic pairs are mandatory, hash-bound and never complete for REFUSED',async()=>{
+ const m=await api(),d='d'.repeat(64),phases=['preflight_current','preflight_browser','preflight_nginx','preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche','lock','prepare','activation_precheck','activation_stop','activation_start','candidate_health','pointer','compensation','unknown'];
+ for(const stage of phases){const diagnostic={stage,reason:stage.startsWith('preflight_neighbor_')||stage==='preflight_nginx'?'unknown':'failed'},wire=m.encodeAbbottDeployResult('REFUSED',null,d,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,d),{status:'REFUSED',record:null,diagnostic});assert.match(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),new RegExp(`stage=${stage} reason=${diagnostic.reason}`));}
+ for(const [status,diagnostic]of [['COMMITTED',{stage:'complete',reason:'none'}],['RESTORED',{stage:'compensation',reason:'restored'}],['REVIEW_REQUIRED',{stage:'compensation',reason:'review_required'}]]){const wire=m.encodeAbbottDeployResult(status,null,d,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,d),{status,record:null,diagnostic});}
+ for(const diagnostic of [undefined,{stage:'complete',reason:'none'},{stage:'private-token',reason:'failed'},{stage:'lock',reason:'private-token'},{stage:'lock',reason:'failed',secret:'private-token'}])assert.throws(()=>m.encodeAbbottDeployResult('REFUSED',null,d,diagnostic));
+ const good=m.encodeAbbottDeployResult('REFUSED',null,d,{stage:'lock',reason:'failed'});
+ assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic:{stage:'complete',reason:'none'}}),'ABBOTT_DEPLOY_REFUSED stage=unknown reason=failed\n');
+ for(const status of ['COMMITTED','RESTORED','REVIEW_REQUIRED'])assert.throws(()=>m.encodeAbbottDeployResult(status,null,d,{stage:'prepare',reason:'failed'}));
+ for(const bad of [good.replace('lock','prepare'),good.replace('"reason":"failed"','"reason":"failed","reason":"failed"'),good.replace('"record":null','"record":null,"secret":"private-token"'),`ABBOTT_DEPLOY_RESULT ${d} null\nABBOTT_DEPLOY_ACK REFUSED ${d} none\n`])assert.equal(m.parseAbbottDeployResult(bad,d),null);
+});
+test('neighbor subreasons are exact status-paired closed wire values',async()=>{
+ const m=await api(),digest='d'.repeat(64);
+ for(const stage of ['preflight_neighbor_combined','preflight_neighbor_zaruku','preflight_neighbor_medroche'])for(const reason of ['pid_absent','start_mismatch','uid_gid','cwd','release_record','executable','cmdline','listener','proc_metadata','unknown']){
+  const diagnostic={stage,reason},wire=m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,digest),{status:'REFUSED',record:null,diagnostic});assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),`ABBOTT_DEPLOY_REFUSED stage=${stage} reason=${reason}\n`);
+  assert.equal(m.parseAbbottDeployResult(wire.replace(`"reason":"${reason}"`,'"reason":"private-token"'),digest),null);
+  assert.throws(()=>m.encodeAbbottDeployResult('COMMITTED',record,digest,diagnostic));assert.throws(()=>m.encodeAbbottDeployResult('REFUSED',null,digest,{stage:'prepare',reason}));
+ }
+});
+test('Nginx diagnostics require exact REFUSED status-paired wire and redact forged fields',async()=>{
+ const m=await api(),digest='d'.repeat(64),stage='preflight_nginx';
+ for(const reason of ['metadata','utf8','syntax','tls_count','include','nested_server','variable_routing','regex_location','unsupported_directive','existing_abbott_route','existing_3004','snapshot_drift','unknown']){
+  const diagnostic={stage,reason},wire=m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,digest),{status:'REFUSED',record:null,diagnostic});assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic,stderr:'private-token',stdout:'https://private/?key=secret'}),`ABBOTT_DEPLOY_REFUSED stage=${stage} reason=${reason}\n`);
+  for(const status of ['COMMITTED','RESTORED','REVIEW_REQUIRED'])assert.throws(()=>m.encodeAbbottDeployResult(status,null,digest,diagnostic));
+  for(const bad of [wire.replace('"reason":"'+reason+'"','"reason":"private-token"'),wire.replace('"reason":"'+reason+'"','"reason":"'+reason+'","reason":"'+reason+'"'),wire.replace('"record":null','"record":null,"secret":"private-token"'),wire.replace(/\n$/,' private-token\n')])assert.equal(m.parseAbbottDeployResult(bad,digest),null);
+ }
+ for(const reason of ['failed','private-token','metadata\nprivate-token']){const diagnostic={stage,reason};assert.throws(()=>m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic));assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),'ABBOTT_DEPLOY_REFUSED stage=unknown reason=failed\n');}
+});
+test('unsupported directive names are a finite REFUSED-only wire allowlist, never arbitrary names',async()=>{
+ const m=await api(),digest='d'.repeat(64),stage='preflight_nginx';
+ for(const name of ['location','proxy_pass','return','add_header','root','alias','index','try_files','error_page','proxy_redirect','proxy_cache','ssl_ecdh_curve','ssl_conf_command','client_body_buffer_size','charset','gzip_vary','if','other']){const reason='unsupported_'+name,diagnostic={stage,reason},wire=m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,digest),{status:'REFUSED',record:null,diagnostic});assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic,stderr:'private-token'}),`ABBOTT_DEPLOY_REFUSED stage=${stage} reason=${reason}\n`);for(const status of ['COMMITTED','RESTORED','REVIEW_REQUIRED'])assert.throws(()=>m.encodeAbbottDeployResult(status,null,digest,diagnostic));}
+ for(const reason of ['unsupported_private_token','unsupported_root_private_token','unsupported_ROOT','unsupported_root\nprivate-token']){const diagnostic={stage,reason};assert.throws(()=>m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic));assert.doesNotMatch(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),/private|ROOT/);}
+});
+function fixture(){const child=new EventEmitter();Object.assign(child,{pid:90001,exitCode:null,signalCode:null,stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough()});let identity='Tue Sep 15 10:00:00 2026';const calls=[],timers=[],cleared=[],sent=[],evidence=[];child.stdin.on('data',b=>sent.push(Buffer.from(b).toString()));
+ const platform={spawn(...args){calls.push(args);return child;},identity:()=>identity,kill(pid,sig){calls.push([pid,sig]);if(sig==='SIGKILL')close(null,sig);},setTimeout(fn,ms){timers.push({fn,ms});return fn;},clearTimeout(fn){cleared.push(fn);}};
+ function close(code=0,sig=null){identity=null;child.exitCode=code;child.signalCode=sig;child.emit('exit',code,sig);child.emit('close',code,sig);}
+ return{child,platform,calls,timers,cleared,sent,evidence,close,replace(){identity='Wed Sep 16 10:00:00 2026';},options:{platform,onEvidence:r=>evidence.push(r)}};
+}
+test('Abbott transport waits for READY plus owned identity before bounded source/payload/RUN',async()=>{
+ const m=await api();assert.equal(typeof m.runAbbottDeployTransport,'function');const f=fixture(),s=source(),p=payload(),result=m.runAbbottDeployTransport(s,p,f.options);
+ assert.equal(f.sent.length,0);assert.ok(f.timers.length>=4);assert.ok(f.evidence.some(r=>r.start));f.child.stdout.write('ABBOTT_DEPLOY_RE');assert.equal(f.sent.length,0);f.child.stdout.write('ADY\n');
+ await new Promise(setImmediate);assert.match(f.sent.join(''),/^ABBOTT_DEPLOY_SOURCE /);assert.match(f.sent.join(''),/ABBOTT_DEPLOY_PAYLOAD /);assert.equal(f.sent.join('').split('RUN\n').length,2);
+ f.child.stdout.write(m.encodeAbbottDeployResult('COMMITTED',record,m.deploymentDigest(s,p),{stage:'complete',reason:'none'}));f.close();const r=await result;assert.equal(r.status,'COMMITTED');assert.deepEqual(r.record,record);assert.equal(r.remoteAcknowledged,true);assert.equal(r.sshExitVerified,true);assert.equal(f.evidence.at(-1).exitVerified,true);
+ const [bin,args,opts]=f.calls[0];assert.equal(bin,'/usr/bin/ssh');for(const value of['LogLevel=ERROR','ProxyCommand=none','ProxyJump=none','IdentityAgent=none','ControlMaster=no','ControlPath=none','StrictHostKeyChecking=yes','HostName=5.35.85.218','User=root'])assert.ok(args.includes(value));assert.deepEqual(opts,{cwd:'/',env:{PATH:'/usr/bin:/bin'},stdio:['pipe','pipe','pipe']});assert.ok(!args.join().includes(s.toString()));
+});
+test('only exact paired bounded records/ACKs are accepted; secret fields never escape',async()=>{
+ const m=await api();assert.equal(typeof m.parseAbbottDeployResult,'function');const digest='d'.repeat(64),good=m.encodeAbbottDeployResult('COMMITTED',record,digest,{stage:'complete',reason:'none'});
+ assert.equal(m.parseAbbottDeployResult(good,digest).status,'COMMITTED');
+ for(const bad of[good+good,good.split('\n').reverse().join('\n'),good.replace(record.id,'e'.repeat(32)),good.replace(digest,'e'.repeat(64)),good+'private token',good.replace('COMMITTED','private'),good.replace('"scope":"abbott"','"scope":"abbott","secret":"private"'),good.replace('"previousId":null','"previousId":"private"'),'private'.repeat(2000)])assert.equal(m.parseAbbottDeployResult(bad,digest),null);
+ for(const badRecord of[{...record,extra:'private'},{...record,id:'private'},{...record,sourceSha:'private'},{...record,manifestDigest:'private'}])assert.throws(()=>m.encodeAbbottDeployResult('COMMITTED',badRecord,digest,{stage:'complete',reason:'none'}),e=>!e.message.includes('private'));
+});
+for(const mode of['stderr','forged','duplicate_ready','wrong_digest','missing_ack','nonzero','signal'])test(`transport refuses ${mode} without raw output`,async()=>{
+ const m=await api();assert.equal(typeof m.runAbbottDeployTransport,'function');const f=fixture(),s=source(),p=payload(),result=m.runAbbottDeployTransport(s,p,f.options);
+ if(mode==='duplicate_ready')f.child.stdout.write('ABBOTT_DEPLOY_READY\nABBOTT_DEPLOY_READY\n');else f.child.stdout.write('ABBOTT_DEPLOY_READY\n');
+ await new Promise(setImmediate);if(mode==='stderr')f.child.stderr.write('private token /host/path');if(mode==='forged')f.child.stdout.write('private token');
+ if(!['missing_ack','forged'].includes(mode))f.child.stdout.write(m.encodeAbbottDeployResult('COMMITTED',record,mode==='wrong_digest'?'e'.repeat(64):m.deploymentDigest(s,p),{stage:'complete',reason:'none'}));
+ f.close(mode==='nonzero'?255:0,mode==='signal'?'SIGTERM':null);const r=await result;assert.equal(r.remoteAcknowledged,false);assert.equal(r.status,'UNACKNOWLEDGED');assert.equal(r.record,null);assert.doesNotMatch(JSON.stringify(r),/private|token|\/host/);
+});
+for(const mode of['identity_error','identity_missing','setup_error','pid_reuse','hung','lost_ack'])test(`post-spawn ${mode} retains cleanup budgets and never guesses exit`,async()=>{
+ const m=await api();assert.equal(typeof m.runAbbottDeployTransport,'function');const f=fixture();if(mode==='identity_error')f.platform.identity=()=>{throw Error('private');};if(mode==='identity_missing')f.platform.identity=()=>null;
+ const signal=mode==='setup_error'?{aborted:false,addEventListener(){throw Error('private');},removeEventListener(){}}:undefined;
+ const result=m.runAbbottDeployTransport(source(),payload(),{...f.options,signal});if(mode==='pid_reuse')f.replace();f.child.stdout.write('ABBOTT_DEPLOY_READY\n');if(['hung','lost_ack'].includes(mode)){await new Promise(setImmediate);assert.ok(f.sent.join('').endsWith('RUN\n'));}
+ assert.ok(f.child.listenerCount('close'));assert.ok(f.child.stdout.listenerCount('data'));assert.ok(f.child.stderr.listenerCount('data'));assert.ok(f.timers.length>=4);
+ for(const t of f.timers.slice())t.fn();const r=await result;assert.equal(r.status,'UNACKNOWLEDGED');assert.equal(r.remoteAcknowledged,false);
+ if(['identity_error','identity_missing','pid_reuse'].includes(mode)){assert.equal(r.sshExitVerified,false);assert.equal(f.calls.filter(c=>typeof c[0]==='number').length,0);assert.equal(f.cleared.length,0);}else assert.equal(r.sshExitVerified,true);
+ if(['identity_error','identity_missing','setup_error'].includes(mode))assert.equal(f.sent.length,0);
+ f.close();assert.ok(f.cleared.length>=4);
+});
+test('signal sends ABORT without closing control early and waits for compensated ACK plus exit',async()=>{
+ const m=await api();assert.equal(typeof m.runAbbottDeployTransport,'function');const f=fixture(),s=source(),p=payload(),abort=new AbortController();let settled=false;
+ const pending=m.runAbbottDeployTransport(s,p,{...f.options,signal:abort.signal}).then(r=>{settled=true;return r;});f.child.stdout.write('ABBOTT_DEPLOY_READY\n');await new Promise(setImmediate);abort.abort();await Promise.resolve();assert.equal(settled,false);assert.ok(f.sent.join('').endsWith('RUN\nABORT\n'));assert.equal(f.child.stdin.writableEnded,false);
+ f.child.stdout.write(m.encodeAbbottDeployResult('RESTORED',null,m.deploymentDigest(s,p),{stage:'compensation',reason:'restored'}));await Promise.resolve();assert.equal(settled,false);f.close();const r=await pending;assert.equal(r.status,'RESTORED');assert.equal(r.remoteAcknowledged,true);
+});
+
+for(const mode of ['timeout_restored','timeout_review','timeout_refused','signal_restored','clean_committed','timeout_committed','signal_committed','forged_ack','cleanup_unverified','evidence_unverified','evidence_failure','secret_stderr','nonzero'])test(`real transport/session terminal precedence ${mode}`,async()=>{
+ const m=await api(),{runAbbottDeployWithEvidence}=await import('./abbott-deploy-session.mjs'),f=fixture(),s=source(),p=payload(),digest=m.deploymentDigest(s,p),abort=new AbortController();let last,removed=false,raw,settled=false;
+ const evidence={record(r){last={...r};},finish(){removed=true;if(mode==='evidence_failure')throw Error('private-token');return{identityCaptured:Boolean(last?.pid&&last?.start),exitObserved:last?.exit??false,exitVerified:mode!=='evidence_unverified'&&Boolean(last?.exitVerified)};}};
+ const pending=runAbbottDeployWithEvidence(s,p,{signal:abort.signal,evidence,transport:async(a,b,o)=>{raw=await m.runAbbottDeployTransport(a,b,{...o,platform:f.platform});return raw;}}).then(r=>{settled=true;return r;});
+ f.child.stdout.write('ABBOTT_DEPLOY_READY\n');await new Promise(setImmediate);assert.ok(f.sent.join('').endsWith('RUN\n'));
+ if(mode!=='clean_committed'&&!mode.startsWith('signal'))f.timers.find(t=>t.ms===240000).fn();
+ if(mode.startsWith('signal'))abort.abort();
+ const status=mode.endsWith('committed')?'COMMITTED':mode==='timeout_review'?'REVIEW_REQUIRED':mode==='timeout_refused'?'REFUSED':'RESTORED';
+ const diagnostic=status==='COMMITTED'?{stage:'complete',reason:'none'}:status==='REVIEW_REQUIRED'?{stage:'compensation',reason:'review_required'}:status==='REFUSED'?{stage:'activation_precheck',reason:'failed'}:{stage:'compensation',reason:'restored'};
+ const wire=m.encodeAbbottDeployResult(status,status==='COMMITTED'?record:null,mode==='forged_ack'?'f'.repeat(64):digest,diagnostic);
+ if(mode==='secret_stderr')f.child.stderr.write('private-token https://private/?key=secret');
+ f.child.stdout.write(wire);await Promise.resolve();assert.equal(settled,false,'ACK alone cannot establish cleanup');
+ if(mode==='cleanup_unverified')f.platform.identity=()=> 'Tue Sep 15 10:00:00 2026';
+ f.close(mode==='nonzero'?255:0);const result=await pending;
+ const accepted=['timeout_restored','timeout_review','timeout_refused','signal_restored','clean_committed'].includes(mode);
+ assert.equal(result.status,accepted?status:'UNACKNOWLEDGED');
+ if(accepted){assert.deepEqual(result.diagnostic,diagnostic);assert.deepEqual(raw.diagnostic,diagnostic);assert.equal(raw.remoteAcknowledged,true);assert.equal(raw.sshExitVerified,true);}
+ else if(!['evidence_unverified','evidence_failure'].includes(mode))assert.equal(raw.remoteAcknowledged,false);
+ assert.equal(removed,true);assert.ok(s.every(x=>x===0));assert.ok(p.every(x=>x===0));assert.doesNotMatch(JSON.stringify(result)+m.formatAbbottDeployResult(result),/private-token|https|key=|secret/);assert.ok(f.cleared.length>=4);
+});
+test('early result before RUN, callback write errors and abort during upload never authorize mutation success',async()=>{
+ const m=await api();for(const mode of['early_result','callback_error','abort_upload']){const f=fixture(),s=source(),p=payload(),abort=new AbortController(),write=f.child.stdin.write.bind(f.child.stdin);let calls=0;
+  if(mode==='callback_error')f.child.stdin.write=(b,...args)=>{if(++calls===2)throw Error('private');return write(b,...args);};
+  const result=m.runAbbottDeployTransport(s,p,{...f.options,signal:abort.signal});f.child.stdout.write('ABBOTT_DEPLOY_READY\n');
+  if(mode==='early_result')f.child.stdout.write(m.encodeAbbottDeployResult('COMMITTED',record,m.deploymentDigest(s,p),{stage:'complete',reason:'none'}));if(mode==='abort_upload')abort.abort();await new Promise(setImmediate);f.close();const r=await result;assert.equal(r.remoteAcknowledged,false);assert.equal(f.sent.join('').includes('RUN\n'),false);assert.doesNotMatch(JSON.stringify(r),/private/);
+ }
+});
+test('wire records refuse non-string scalar coercion and duplicate JSON fields',async()=>{
+ const m=await api(),digest='d'.repeat(64);for(const field of['id','sourceSha','manifestDigest'])assert.throws(()=>m.encodeAbbottDeployResult('COMMITTED',{...record,[field]:[record[field]]},digest,{stage:'complete',reason:'none'}));
+ const good=m.encodeAbbottDeployResult('COMMITTED',record,digest,{stage:'complete',reason:'none'});assert.equal(m.parseAbbottDeployResult(good.replace('"scope":"abbott"','"scope":"abbott","scope":"abbott"'),digest),null);
+});
+test('bounds and pre-abort refuse before SSH, and late output is zeroed after a verified close',async()=>{
+ const m=await api(),f=fixture(),abort=new AbortController();abort.abort();for(const [s,p,signal]of[[Buffer.alloc(0),payload()],[Buffer.alloc(1048577),payload()],[source(),Buffer.alloc(0)],[source(),payload(),abort.signal]])assert.equal((await m.runAbbottDeployTransport(s,p,{...f.options,signal})).status,'REFUSED');assert.equal(f.calls.length,0);
+ const s=source(),p=payload(),pending=m.runAbbottDeployTransport(s,p,f.options);f.child.stdout.write('ABBOTT_DEPLOY_READY\n');await new Promise(setImmediate);f.close();await pending;const b=Buffer.from('private token');f.child.stdout.write(b);assert.ok(b.every(x=>x===0));
+});
+test('all public diagnostics remain closed even with arbitrary secret-bearing inputs',async()=>{
+ const m=await api();for(const input of[{status:'private',diagnostic:{stage:'private',reason:'private'}},{status:'COMMITTED',record:{secret:'private'},diagnostic:{stage:'complete',reason:'none'},stdout:'private',stderr:'private',pid:12345}])assert.doesNotMatch(m.formatAbbottDeployResult(input),/private|12345|stdout|stderr|record/);
+ for(const stage of m.DEPLOY_STAGES)for(const reason of m.DEPLOY_REASONS)assert.match(m.formatAbbottDeployResult({status:'REFUSED',diagnostic:{stage,reason}}),/^ABBOTT_DEPLOY_REFUSED stage=[a-z_]+ reason=[a-z0-9_]+\n$/);
+});
+test('fixed deploy driver selects acknowledged transport only for Abbott and awaits every transfer',()=>{
+ const text=fs.readFileSync(new URL('./abbott-deploy-runtime.mjs',import.meta.url),'utf8');assert.match(text,/runAbbottDeployWithEvidence/);assert.match(text,/authority\.scope\s*===?\s*'abbott'/);assert.match(text,/await transfer\(\{ action: 'inspect'/);assert.match(text,/await transfer\(\{ action,/);
+});
+test('actual Abbott CLI refusal is one closed line; exact capsule parses before dispatch',async()=>{
+ const result=spawnSync(process.execPath,['scripts/abbott-deploy-runtime.mjs','deploy/abbott/release.json','deploy'],{cwd:new URL('..',import.meta.url),env:{APP_NAME:'private'},encoding:'utf8',timeout:3000});assert.equal(result.status,1);assert.match(result.stderr,/^ABBOTT_DEPLOY_REFUSED stage=unknown reason=failed\n$/);assert.equal(result.stdout,'');
+ const m=await import('./abbott-deploy-runtime.mjs');assert.equal(typeof m.buildAbbottDeployCapsule,'function');const {RUNTIME_MANIFESTS}=await import('../packages/runtime-contract/src/manifest.mjs');const {deriveBrowserContract}=await import('./abbott-browser-prerequisite.mjs');
+ const bytes=m.buildAbbottDeployCapsule(fs.readFileSync(new URL('./abbott-runtime-release-remote.mjs',import.meta.url)),fs.readFileSync(new URL('./abbott-browser-prerequisite.mjs',import.meta.url)),deriveBrowserContract(),RUNTIME_MANIFESTS.abbott,JSON.parse(fs.readFileSync(new URL('../deploy/abbott/environment.json',import.meta.url))));assert.ok(bytes.length<=1048576);execFileSync(process.execPath,['--check','--input-type=module'],{input:bytes,env:{},stdio:['pipe','pipe','pipe'],timeout:3000});bytes.fill(0);
+});
+async function loader(mode,command){const m=await api();assert.equal(typeof m.ABBOTT_DEPLOY_LOADER,'string');const child=spawn(command?'/bin/sh':process.execPath,command?['-c',command.replace('/usr/bin/node',process.execPath)]:['--input-type=module','-e',m.ABBOTT_DEPLOY_LOADER],{env:{},stdio:['pipe','pipe','pipe','pipe']});const s=Buffer.from(mode==='success'?'export async function run(){return {status:"COMMITTED",record:null,diagnostic:{stage:"complete",reason:"none"}}}':mode==='import_error'?'private invalid syntax':mode==='crash'?'export async function run(){throw Error("private token")}':`import fs from'node:fs';export async function run(signal){fs.writeSync(3,'started');await new Promise(r=>signal.aborted?r():signal.addEventListener('abort',r,{once:true}));await new Promise(r=>setTimeout(r,10));return {status:${JSON.stringify(mode==='failure'?'REVIEW_REQUIRED':'RESTORED')},record:null,diagnostic:{stage:'compensation',reason:${JSON.stringify(mode==='failure'?'review_required':'restored')}}}}`),p=payload(),out=[],err=[];let ready=false,expired=false;
+ child.stdout.on('data',b=>{out.push(Buffer.from(b));if(!ready&&Buffer.concat(out).toString()==='ABBOTT_DEPLOY_READY\n'){ready=true;if(mode==='oversized'){child.stdin.end('ABBOTT_DEPLOY_SOURCE 1048577 '+'a'.repeat(64)+'\n');return;}if(mode==='truncated'){child.stdin.end('ABBOTT_DEPLOY_SOURCE 100 '+'a'.repeat(64)+'\nshort');return;}child.stdin.write(`ABBOTT_DEPLOY_SOURCE ${s.length} ${createHash('sha256').update(s).digest('hex')}\n`);child.stdin.write(s);child.stdin.write(`ABBOTT_DEPLOY_PAYLOAD ${p.length} ${createHash('sha256').update(p).digest('hex')}\n`);child.stdin.write(p);child.stdin.write('RUN\n');}});child.stderr.on('data',b=>err.push(b));child.stdin.on('error',()=>{});child.stdio[3].once('data',()=>{if(mode==='eof')child.stdin.end();else if(mode==='signal')child.kill('SIGTERM');else child.stdin.write(mode==='duplicate'?'RUN\n':'ABORT\n');});
+ const deadline=setTimeout(()=>{expired=true;child.kill('SIGKILL');},3000);await new Promise(r=>child.once('close',r));clearTimeout(deadline);assert.equal(expired,false);assert.equal(Buffer.concat(err).length,0);assert.throws(()=>process.kill(child.pid,0));const result=m.parseAbbottDeployResult(Buffer.concat(out).toString().slice('ABBOTT_DEPLOY_READY\n'.length),m.deploymentDigest(s,p));s.fill(0);p.fill(0);return result;
+}
+test('actual loader pre-entry import failure is closed unknown refusal, never source text',async()=>{assert.deepEqual(await loader('import_error'),{status:'REFUSED',record:null,diagnostic:{stage:'unknown',reason:'failed'}});});
+test('actual loader compensates ABORT/EOF/signal and emits paired ACK only after completion',async()=>{assert.equal((await loader('success')).status,'COMMITTED');for(const mode of['abort','eof','signal'])assert.equal((await loader(mode)).status,'RESTORED');assert.equal((await loader('failure')).status,'REVIEW_REQUIRED');});
+test('exact shell command preserves loader framing; malformed/reused frames never acknowledge success',async()=>{
+ const m=await api(),f=fixture(),result=m.runAbbottDeployTransport(source(),payload(),f.options),command=f.calls[0][1].at(-1);f.close();await result;assert.equal((await loader('success',command)).status,'COMMITTED');for(const mode of['oversized','truncated','crash'])assert.equal(await loader(mode),null,mode);assert.equal((await loader('duplicate')).status,'REFUSED');
+});
+
+async function controlFragment({suffix,split=false,afterStart=false,eof=false,review=false,run=true}){
+ const m=await api(),s=Buffer.from(`import fs from'node:fs';export async function run(signal){fs.writeSync(3,'started\\n');await new Promise(r=>{if(signal.aborted)r();else{const t=setTimeout(r,80);signal.addEventListener('abort',()=>{clearTimeout(t);r()},{once:true});}});if(signal.aborted){fs.writeSync(3,'settling\\n');await new Promise(r=>{const input=fs.createReadStream(null,{fd:4,autoClose:false});input.once('data',()=>{input.destroy();r();});});fs.writeSync(3,'settled\\n');return{status:${JSON.stringify(review?'REVIEW_REQUIRED':'RESTORED')},record:null,diagnostic:{stage:'compensation',reason:${JSON.stringify(review?'review_required':'restored')}}};}return{status:'COMMITTED',record:null,diagnostic:{stage:'complete',reason:'none'}};}`),p=payload();
+ const child=spawn(process.execPath,['--input-type=module','-e',m.ABBOTT_DEPLOY_LOADER],{env:{},stdio:['pipe','pipe','pipe','pipe','pipe']}),out=[],errors=[];let ready=false,sent=false,markers='',expired=false,cleanupSeen=false,sendComplete=Promise.resolve();
+ child.stdin.on('error',()=>{});child.stdio[4].on('error',()=>{});
+ const send=async()=>{if(sent)return;sent=true;const parts=split?[...Buffer.from(suffix)].map(b=>Buffer.from([b])):[Buffer.from(suffix)];for(const b of parts){if(b.length)child.stdin.write(b);if(split)await new Promise(r=>setTimeout(r,2));}if(eof)child.stdin.end();};
+ child.stdout.on('data',b=>{out.push(Buffer.from(b));if(!ready&&Buffer.concat(out).toString()==='ABBOTT_DEPLOY_READY\n'){ready=true;const frame=Buffer.concat([Buffer.from(`ABBOTT_DEPLOY_SOURCE ${s.length} ${createHash('sha256').update(s).digest('hex')}\n`),s,Buffer.from(`ABBOTT_DEPLOY_PAYLOAD ${p.length} ${createHash('sha256').update(p).digest('hex')}\n`),p,Buffer.from(run?'RUN\n':'')]);if(afterStart)child.stdin.write(frame);else if(split){child.stdin.write(frame);sendComplete=send();}else{child.stdin.write(Buffer.concat([frame,Buffer.from(suffix)]));sent=true;if(eof)child.stdin.end();}}});
+ child.stderr.on('data',b=>errors.push(Buffer.from(b)));child.stdio[3].on('data',b=>{markers+=b.toString();if(afterStart&&markers.includes('started\n')&&!sent)sendComplete=send();if(markers.includes('settling\n')&&!cleanupSeen){cleanupSeen=true;assert.equal(Buffer.concat(out).toString(),'ABBOTT_DEPLOY_READY\n','ACK must wait for the held compensation');void sendComplete.then(()=>setTimeout(()=>child.stdio[4].write('release'),10));}});
+ const timer=setTimeout(()=>{expired=true;child.kill('SIGKILL');},2500);await new Promise(r=>child.once('close',r));clearTimeout(timer);assert.equal(expired,false);assert.equal(Buffer.concat(errors).length,0);assert.throws(()=>process.kill(child.pid,0));if(cleanupSeen)assert.ok(markers.includes('settled\n'));const result=m.parseAbbottDeployResult(Buffer.concat(out).toString().slice('ABBOTT_DEPLOY_READY\n'.length),m.deploymentDigest(s,p));s.fill(0);p.fill(0);return result;
+}
+for(const suffix of['x','xx','xxx','xxxx','xxxxx','A','AB','ABO','ABOR','ABORT','R','RU','RUN','RUN\n',' ','\n','\0','ABORT\nx'])for(const split of[false,true])test(`real loader refuses trailing control ${Buffer.from(suffix).toString('hex')} split=${split} before successful ACK`,async()=>{
+ const result=await controlFragment({suffix,split});assert.equal(result?.status,'REFUSED');assert.equal(result.record,null);
+});
+for(const suffix of['x','A','AB','ABO','ABOR','ABORT','R','RU','RUN','RUN\n','\0'])test(`real loader aborts active work for trailing ${Buffer.from(suffix).toString('hex')} and EOF without premature ACK`,async()=>{
+ const result=await controlFragment({suffix,afterStart:true,eof:true});assert.equal(result?.status,'REFUSED');
+});
+test('exact RUN remains successful; clean EOF and full split ABORT preserve settled compensation',async()=>{
+ assert.equal((await controlFragment({suffix:''})).status,'COMMITTED');assert.equal((await controlFragment({suffix:'',afterStart:true,eof:true})).status,'RESTORED');assert.equal((await controlFragment({suffix:'ABORT\n',afterStart:true,split:true})).status,'RESTORED');
+});
+test('malformed trailing bytes preserve verified review outcome only after held cleanup',async()=>{assert.equal((await controlFragment({suffix:'x',afterStart:true,review:true})).status,'REVIEW_REQUIRED');});
+for(const suffix of['R','RU','RUN','A','AB','ABO','ABOR','ABORT'])test(`EOF refuses incomplete first control ${suffix.length} ${suffix[0]} without dispatch`,async()=>{assert.equal((await controlFragment({suffix,run:false,eof:true}))?.status,'REFUSED');});
+test('malformed include shape has one strict nginx refusal diagnostic',async()=>{const m=await api(),digest='d'.repeat(64),diagnostic={stage:'preflight_nginx',reason:'include'},wire=m.encodeAbbottDeployResult('REFUSED',null,digest,diagnostic);assert.deepEqual(m.parseAbbottDeployResult(wire,digest)?.diagnostic,diagnostic);assert.equal(m.formatAbbottDeployResult({status:'REFUSED',diagnostic}),`ABBOTT_DEPLOY_REFUSED stage=preflight_nginx reason=include\n`);for(const status of ['COMMITTED','RESTORED','REVIEW_REQUIRED'])assert.throws(()=>m.encodeAbbottDeployResult(status,null,digest,diagnostic));for(const forged of ['include_forged','include_private']){assert.equal(m.parseAbbottDeployResult(wire.replaceAll('include',forged),digest),null);assert.doesNotMatch(m.formatAbbottDeployResult({status:'REFUSED',diagnostic:{...diagnostic,reason:forged}}),/private/);}});

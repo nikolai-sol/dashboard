@@ -45,6 +45,8 @@
 # misc
 .DS_Store
 *.pem
+/.superpowers/sdd/.abbott-deploy-evidence/
+/.superpowers/sdd/.abbott-recovery-evidence/
 
 # debug
 npm-debug.log*
@@ -62,3 +64,4 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+!apps/abbott/next-env.d.ts

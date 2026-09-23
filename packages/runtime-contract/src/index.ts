@@ -4,6 +4,19 @@ export type DashboardIdentity = { clientId: string; dashboardType: string; siteS
 
 export { RUNTIME_MANIFESTS } from "./manifest.mjs";
 
+const ABBOTT_PATHS = new Set([
+  "/dashboard/18", "/dashboard/18/", "/dashboard/abbott", "/dashboard/abbott/",
+  "/api/dashboard/18", "/api/dashboard/18/pdf", "/api/dashboard/18/excel",
+  "/api/dashboard/18/abbott-admin-users", "/api/dashboard/abbott",
+  "/api/dashboard/abbott/pdf", "/api/dashboard/abbott/excel",
+  "/api/dashboard/abbott/abbott-admin-users",
+]);
+
+export function normalizeAbbottIdentifier(identifier: string): "abbott" | null {
+  const value = identifier.trim().toLowerCase();
+  return value === "18" || value === "abbott" ? "abbott" : null;
+}
+
 export function resolveDashboardFamily(identity: DashboardIdentity): DashboardFamily {
   const clientId = identity.clientId.trim().toLowerCase();
   if (clientId === "zaruku" || identity.dashboardType === "zaruku_bi") return "zaruku";
@@ -27,9 +40,8 @@ export function runtimeOwnsPath(scope: DashboardRuntimeScope, pathname: string, 
       || pathname === `/_next-${siteSlug}` || pathname.startsWith(`/_next-${siteSlug}/`)
       || pathname === "/api/health";
   }
+  if (ABBOTT_PATHS.has(pathname)) return scope === "abbott";
   if (pathname === "/dashboard/zaruku" || pathname.startsWith("/dashboard/zaruku/")) return scope === "zaruku";
   if (pathname === "/api/dashboard/zaruku" || pathname.startsWith("/api/dashboard/zaruku/")) return scope === "zaruku";
-  if (pathname === "/dashboard/abbott" || pathname.startsWith("/dashboard/abbott/")) return scope === "abbott";
-  if (pathname === "/api/dashboard/abbott" || pathname.startsWith("/api/dashboard/abbott/")) return scope === "abbott";
   return scope === "advertising";
 }

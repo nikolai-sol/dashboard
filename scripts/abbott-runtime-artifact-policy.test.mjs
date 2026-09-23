@@ -1,0 +1,1046 @@
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import fs, { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test, { mock } from "node:test";
+import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+
+import {
+  assertRuntimeArtifact as assertSealedArtifact,
+  createTrustedRuntimeManifest,
+  stampRuntimeArtifact,
+} from "./abbott-runtime-artifact-policy.mjs";
+import * as runtimePolicy from "./abbott-runtime-artifact-policy.mjs";
+
+const SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567";
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
+const NEXT_ROOT = "apps/abbott/.next-abbott";
+function fixtureAuthority(root) {
+  const entries = [];
+  const visit = (directory) => {
+    for (const name of fs.readdirSync(directory)) {
+      const absolute = path.join(directory, name), stat = fs.lstatSync(absolute);
+      if (stat.isDirectory()) visit(absolute);
+      else if (stat.isFile()) {
+        const relative = path.relative(root, absolute).split(path.sep).join("/");
+        if (relative === ".env" || stat.size > 32 * 1024 * 1024) continue;
+        const bytes = readFileSync(absolute);
+        entries.push({ path: relative, type: "file", mode: stat.mode & 0o777, size: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"), required: !relative.startsWith(`${NEXT_ROOT}/static/`) });
+      }
+    }
+  };
+  visit(root);
+  const sha = fs.existsSync(path.join(root, ".release-source-sha")) ? readFileSync(path.join(root, ".release-source-sha"), "utf8").trim() : SOURCE_SHA;
+  const manifest = { version: 1, scope: "abbott", sourceSha: /^[a-f0-9]{40}$/.test(sha) ? sha : SOURCE_SHA,
+    next: { name: "next", version: "16.1.6" }, runtimeContract: { name: "@reportingdash/runtime-contract", version: "0.1.0" },
+    dynamic: [], files: entries.sort((a,b) => a.path.localeCompare(b.path, "en")) };
+  const file = `${root}.trusted.json`, data = `${JSON.stringify(manifest)}\n`;
+  fs.writeFileSync(file, data, { mode: 0o600 });
+  fs.writeFileSync(`${file}.sha256`, `${createHash("sha256").update(data).digest("hex")}\n`, { mode: 0o600 });
+  return file;
+}
+// Older scope fixtures deliberately trust their synthetic inputs to exercise the
+// content policy. Trust-root cases below hold the external baseline immutable.
+function inspectRuntimeArtifact(root, scope) { return runtimePolicy.inspectRuntimeArtifact(root, scope, fixtureAuthority(root)); }
+function assertRuntimeArtifact(root, scope) { return assertSealedArtifact(root, scope, fixtureAuthority(root)); }
+const EXPECTED_ROUTES = {
+  "/_global-error/page": "app/_global-error/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/dashboard/[id]/abbott-admin-users/route": "app/api/dashboard/[id]/abbott-admin-users/route.js",
+  "/api/dashboard/[id]/excel/route": "app/api/dashboard/[id]/excel/route.js",
+  "/api/dashboard/[id]/pdf/route": "app/api/dashboard/[id]/pdf/route.js",
+  "/api/dashboard/[id]/route": "app/api/dashboard/[id]/route.js",
+  "/api/health/route": "app/api/health/route.js",
+  "/dashboard/[id]/page": "app/dashboard/[id]/page.js",
+};
+const DYNAMIC_ROUTES = [
+  ["/api/dashboard/[id]", "^/api/dashboard/([^/]+?)(?:/)?$", "^/api/dashboard/(?<nxtPid>[^/]+?)(?:/)?$"],
+  ["/api/dashboard/[id]/abbott-admin-users", "^/api/dashboard/([^/]+?)/abbott\\-admin\\-users(?:/)?$", "^/api/dashboard/(?<nxtPid>[^/]+?)/abbott\\-admin\\-users(?:/)?$"],
+  ["/api/dashboard/[id]/excel", "^/api/dashboard/([^/]+?)/excel(?:/)?$", "^/api/dashboard/(?<nxtPid>[^/]+?)/excel(?:/)?$"],
+  ["/api/dashboard/[id]/pdf", "^/api/dashboard/([^/]+?)/pdf(?:/)?$", "^/api/dashboard/(?<nxtPid>[^/]+?)/pdf(?:/)?$"],
+  ["/dashboard/[id]", "^/dashboard/([^/]+?)(?:/)?$", "^/dashboard/(?<nxtPid>[^/]+?)(?:/)?$"],
+].map(([page, regex, namedRegex]) => ({ page, regex, routeKeys: { nxtPid: "nxtPid" }, namedRegex }));
+const FIXTURE_CONFIG = {
+  output: "standalone",
+  distDir: ".next-abbott",
+  assetPrefix: "/_next-abbott",
+  basePath: "",
+  env: {},
+  outputFileTracingIncludes: { "/*": ["./src/schemas/yandex_metrika.yaml"] },
+  outputFileTracingExcludes: { "/*": ["./src/**/*.test.ts", "./src/**/*.test.tsx", "./src/**/*fixture*.ts"] },
+};
+const FIXTURE_SERVER = `const path = require('path')
+const dir = path.join(__dirname)
+process.env.NODE_ENV = 'production'
+process.chdir(__dirname)
+const currentPort = parseInt(process.env.PORT, 10) || 3000
+const hostname = process.env.HOSTNAME || '0.0.0.0'
+let keepAliveTimeout = parseInt(process.env.KEEP_ALIVE_TIMEOUT, 10)
+const nextConfig = ${JSON.stringify({ ...FIXTURE_CONFIG, distDir: "./.next-abbott" })}
+process.env.__NEXT_PRIVATE_STANDALONE_CONFIG = JSON.stringify(nextConfig)
+require('next')
+const { startServer } = require('next/dist/server/lib/start-server')
+if (
+  Number.isNaN(keepAliveTimeout) ||
+  !Number.isFinite(keepAliveTimeout) ||
+  keepAliveTimeout < 0
+) {
+  keepAliveTimeout = undefined
+}
+startServer({
+  dir,
+  isDev: false,
+  config: nextConfig,
+  hostname,
+  port: currentPort,
+  allowRetry: false,
+  keepAliveTimeout,
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});`;
+
+function write(root, relativePath, contents = "fixture") {
+  const absolutePath = path.join(root, relativePath);
+  mkdirSync(path.dirname(absolutePath), { recursive: true });
+  writeFileSync(absolutePath, contents);
+}
+
+function createArtifact() {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-artifact-"));
+  write(root, ".release-source-sha", `${SOURCE_SHA}\n`);
+  write(root, ".release-runtime-scope", "abbott\n");
+  write(root, "apps/abbott/server.js", FIXTURE_SERVER);
+  write(root, "apps/abbott/src/schemas/yandex_metrika.yaml", readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml")));
+  const rootPackage = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "package.json")));
+  for (const key of ["scripts", "workspaces", "devDependencies"]) delete rootPackage[key];
+  write(root, "package.json", JSON.stringify(rootPackage));
+  for (const filename of ["apps/abbott/package.json", "node_modules/next/package.json"]) {
+    write(root, filename, readFileSync(path.join(REPOSITORY_ROOT, filename)));
+  }
+  write(root, `${NEXT_ROOT}/package.json`, '{"type":"commonjs"}');
+  const routes = Object.keys(EXPECTED_ROUTES).map((route) => route.replace(/\/(page|route)$/, ""));
+  const staticRoutes = routes.filter((route) => !route.includes("[id]")).sort();
+  const authorities = {
+    "build-manifest.json": { pages: { "/_app": [] }, rootMainFilesTree: {}, devFiles: [] },
+    "server/middleware-manifest.json": { version: 3, middleware: {}, functions: {}, sortedMiddleware: [] },
+    "server/pages-manifest.json": { "/404": "pages/404.html", "/500": "pages/500.html" },
+    "server/functions-config-manifest.json": { version: 1, functions: { "/api/health": {} } },
+    "server/server-reference-manifest.json": { node: {}, edge: {} },
+    "react-loadable-manifest.json": {},
+    "server/next-font-manifest.json": { pages: {}, app: {}, appUsingSizeAdjust: false, pagesUsingSizeAdjust: false },
+    "app-path-routes-manifest.json": Object.fromEntries(Object.keys(EXPECTED_ROUTES).map((route, i) => [route, routes[i]])),
+    "routes-manifest.json": { version: 3, appType: "app", basePath: "", headers: [], dynamicRoutes: DYNAMIC_ROUTES, dataRoutes: [],
+      redirects: [{ source: "/:path+/", destination: "/:path+", internal: true, priority: true, statusCode: 308, regex: "^(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))/$" }],
+      rewrites: { beforeFiles: [{ source: "/_next-abbott/_next/:path+", destination: "/_next/:path+", regex: "^/_next-abbott/_next(?:/((?:[^/]+?)(?:/(?:[^/]+?))*))(?:/)?$" }], afterFiles: [], fallback: [] },
+      staticRoutes: staticRoutes.map((page) => ({ page, regex: `^${page.replace(/-/g, "\\-")}(?:/)?$`, routeKeys: {}, namedRegex: `^${page.replace(/-/g, "\\-")}(?:/)?$` })),
+    },
+    "prerender-manifest.json": { version: 4, routes: Object.fromEntries(["/_global-error", "/_not-found"].map((route) => [route, { srcRoute: route, dataRoute: `${route}.rsc` }])), dynamicRoutes: {}, notFoundRoutes: [] },
+    "required-server-files.json": { version: 1, relativeAppDir: "apps/abbott", config: FIXTURE_CONFIG, files: [".next-abbott/server/app-paths-manifest.json"] },
+  };
+  for (const [filename, content] of Object.entries(authorities)) write(root, `${NEXT_ROOT}/${filename}`, JSON.stringify(content));
+  for (const name of ["middleware-build-manifest", "middleware-react-loadable-manifest", "next-font-manifest", "server-reference-manifest"]) {
+    write(root, `${NEXT_ROOT}/server/${name}.js`, "// generated manifest\n");
+  }
+  write(root, `${NEXT_ROOT}/BUILD_ID`, "fixture-build");
+  write(
+    root,
+    "apps/abbott/.next-abbott/server/app-paths-manifest.json",
+    `${JSON.stringify(EXPECTED_ROUTES, null, 2)}\n`,
+  );
+  for (const target of Object.values(EXPECTED_ROUTES)) {
+    write(root, `apps/abbott/.next-abbott/server/${target}`, "// safe compiled route\n");
+    const trace = `${NEXT_ROOT}/server/${target}.nft.json`;
+    write(root, trace, JSON.stringify({ version: 1, files: [path.posix.relative(path.posix.dirname(trace), `${NEXT_ROOT}/server/chunks/safe.js`)] }));
+  }
+  write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: ["../../../node_modules/next/package.json"] }));
+  write(
+    root,
+    "apps/abbott/.next-abbott/server/chunks/safe.js",
+    "const administration = { privateState: false, sourceApiCalls: 0 };\n",
+  );
+  return root;
+}
+
+function withArtifact(run) {
+  const root = createArtifact();
+  try {
+    run(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("closure: realistic sealed build rejects untraced executable additions", async (t) => {
+  const realRoot = path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott/standalone");
+  assert.ok(fs.existsSync(realRoot), "build the Abbott workspace before its real-artifact closure fixtures");
+  const serverPath = path.join(realRoot, "apps/abbott/server.js");
+  const serverSource = readFileSync(serverPath, "utf8");
+  assert.match(serverSource, /process\.chdir\(__dirname\)/);
+  const serverCwd = path.dirname(serverPath);
+  const runtimeLookup = JSON.parse(execFileSync(process.execPath, ["-e", `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    process.chdir(${JSON.stringify(serverCwd)});
+    const schema = path.resolve(process.cwd(), "src/schemas/yandex_metrika.yaml");
+    process.stdout.write(JSON.stringify({ cwd: process.cwd(), schema, exists: fs.existsSync(schema) }));
+  `], { encoding: "utf8" }));
+  assert.equal(runtimeLookup.cwd, serverCwd);
+  assert.equal(runtimeLookup.schema, path.join(serverCwd, "src/schemas/yandex_metrika.yaml"));
+  assert.equal(runtimeLookup.exists, true);
+  assert.equal(fs.existsSync(path.join(realRoot, "src/schemas/yandex_metrika.yaml")), false);
+  assert.deepEqual(fs.readdirSync(path.join(serverCwd, "src/schemas")), ["yandex_metrika.yaml"]);
+  assert.equal(
+    readFileSync(path.join(serverCwd, "src/schemas/yandex_metrika.yaml"), "utf8"),
+    readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml"), "utf8"),
+  );
+  const appSourceFiles = [];
+  const collectAppSource = (directory) => {
+    for (const name of fs.readdirSync(directory)) {
+      const absolute = path.join(directory, name);
+      if (fs.lstatSync(absolute).isDirectory()) collectAppSource(absolute);
+      else appSourceFiles.push(path.relative(serverCwd, absolute).split(path.sep).join("/"));
+    }
+  };
+  collectAppSource(path.join(serverCwd, "src"));
+  assert.ok(appSourceFiles.every((name) => !/\.test\.[cm]?[jt]sx?$/.test(name)), appSourceFiles.join("\n"));
+  const trustedManifest = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott/trusted-runtime-manifest.json"), "utf8"));
+  assert.ok(trustedManifest.files.every(({ path: name }) => !/\.test\.[cm]?[jt]sx?$/.test(name)));
+  assert.deepEqual(
+    trustedManifest.files.filter(({ path: name }) => name.includes("/schemas/")).map(({ path: name }) => name),
+    ["apps/abbott/src/schemas/yandex_metrika.yaml"],
+  );
+  for (const name of ["node_modules/google-ads-admin/index.js", `${NEXT_ROOT}/server/app/foreign-helper.js`,
+    "packages/runtime-contract/advertising-admin.js", `${NEXT_ROOT}/server/chunks/untraced.js`]) {
+    await t.test(name, () => {
+      const root = mkdtempSync(path.join(tmpdir(), "abbott-real-closure-"));
+      try {
+        fs.cpSync(realRoot, root, { recursive: true, dereference: false });
+        // Next omits its server trace from standalone; the revised seal preserves it.
+        write(root, `${NEXT_ROOT}/next-server.js.nft.json`, readFileSync(path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott/next-server.js.nft.json")));
+        assert.deepEqual(inspectRuntimeArtifact(root, "abbott"), []);
+        write(root, name, "module.exports = {};\n");
+        assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(name)), name);
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+});
+
+test("Abbott Next tracing emits the app-local canonical schema and excludes test material", () => {
+  const config = require(path.join(REPOSITORY_ROOT, "apps/abbott/next.config.js"));
+  assert.deepEqual(config.outputFileTracingIncludes, {
+    "/*": ["./src/schemas/yandex_metrika.yaml"],
+  });
+  assert.deepEqual(config.outputFileTracingExcludes, {
+    "/*": ["./src/**/*.test.ts", "./src/**/*.test.tsx", "./src/**/*fixture*.ts"],
+  });
+  assert.deepEqual(
+    readFileSync(path.join(REPOSITORY_ROOT, "apps/abbott/src/schemas/yandex_metrika.yaml")),
+    readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml")),
+  );
+});
+
+test("trust root: artifact cannot authorize its own new or modified files", async (t) => {
+  for (const kind of ["trace", "static", "package"]) await t.test(kind, () => {
+    const root = mkdtempSync(path.join(tmpdir(), "abbott-trust-red-"));
+    try {
+      fs.cpSync(path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott/standalone"), root, { recursive: true });
+      const authority = fixtureAuthority(root);
+      // The fixed verifier will consume this external baseline, never restamp it.
+      assert.deepEqual(runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority), []);
+      if (kind === "trace") {
+        const trace = `${NEXT_ROOT}/server/app/api/health/route.js.nft.json`;
+        const value = JSON.parse(readFileSync(path.join(root, trace)));
+        value.files.push("../../foreign-helper.js");
+        write(root, trace, JSON.stringify(value));
+        write(root, `${NEXT_ROOT}/server/app/foreign-helper.js`, "module.exports = {};\n");
+      } else if (kind === "static") {
+        const manifest = `${NEXT_ROOT}/build-manifest.json`;
+        const value = JSON.parse(readFileSync(path.join(root, manifest)));
+        value.rootMainFiles.push("static/chunks/foreign-owned.js");
+        write(root, manifest, JSON.stringify(value));
+        write(root, `${NEXT_ROOT}/static/chunks/foreign-owned.js`, "module.exports = {};\n");
+      } else {
+        const name = "node_modules/next/dist/shared/lib/constants.js";
+        fs.appendFileSync(path.join(root, name), "\n// modified dependency bytes\n");
+      }
+      assert.notDeepEqual(runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(`${root}.trusted.json`, { force: true });
+      rmSync(`${root}.trusted.json.sha256`, { force: true });
+    }
+  });
+});
+
+test("trust root: manifested binary PNG and WOFF2 use hashes, not UTF-8 decoding", () => withArtifact((root) => {
+  const font = "static/media/test.woff2", png = "static/media/test.png";
+  const manifest = JSON.parse(readFileSync(path.join(root, `${NEXT_ROOT}/server/next-font-manifest.json`)));
+  manifest.app = { "/dashboard/abbott": [font, png] };
+  write(root, `${NEXT_ROOT}/server/next-font-manifest.json`, JSON.stringify(manifest));
+  write(root, `${NEXT_ROOT}/${font}`, readFileSync(path.join(REPOSITORY_ROOT, "node_modules/next/dist/next-devtools/server/font/geist-latin.woff2")));
+  write(root, `${NEXT_ROOT}/${png}`, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF2kAAAAASUVORK5CYII=", "base64"));
+  const authority = fixtureAuthority(root);
+  assert.deepEqual(runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority), []);
+  fs.appendFileSync(path.join(root, `${NEXT_ROOT}/${font}`), "tamper");
+  assert.ok(runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority).some((item) => item.includes(font)));
+  const image = readFileSync(path.join(root, `${NEXT_ROOT}/${png}`));
+  image[image.length - 1] ^= 1;
+  write(root, `${NEXT_ROOT}/${png}`, image);
+  assert.ok(runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority).some((item) => item.includes(png)));
+}));
+
+test("trust root: rejects absent, internal, altered or incorrectly bound authority", async (t) => {
+  for (const kind of ["missing", "inside", "tampered", "stale", "scope", "sha", "version", "contract", "symlink", "hardlink", "mode"]) {
+    await t.test(kind, () => withArtifact((root) => {
+      let authority = fixtureAuthority(root);
+      if (kind === "missing") authority = undefined;
+      else if (kind === "inside") {
+        write(root, "trusted.json", readFileSync(authority));
+        write(root, "trusted.json.sha256", readFileSync(`${authority}.sha256`));
+        authority = path.join(root, "trusted.json");
+      } else if (kind === "tampered") fs.appendFileSync(authority, " ");
+      else if (kind === "symlink") { fs.renameSync(authority, `${authority}.original`); symlinkSync(`${authority}.original`, authority); }
+      else if (kind === "hardlink") fs.linkSync(authority, `${authority}.link`);
+      else if (kind === "mode") fs.chmodSync(authority, 0o666);
+      else {
+        const value = JSON.parse(readFileSync(authority));
+        if (kind === "scope") value.scope = "zaruku";
+        if (kind === "sha") value.sourceSha = "a".repeat(40);
+        if (kind === "version") value.next.version = "99.0.0";
+        if (kind === "contract") value.runtimeContract.version = "99.0.0";
+        if (kind === "stale") value.files.find((entry) => entry.path.endsWith("/BUILD_ID")).sha256 = "a".repeat(64);
+        const data = JSON.stringify(value);
+        fs.writeFileSync(authority, data);
+        fs.writeFileSync(`${authority}.sha256`, `${createHash("sha256").update(data).digest("hex")}\n`);
+      }
+      assert.notDeepEqual(runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority), [], kind);
+    }));
+  }
+});
+
+test("trust root: a symlinked external metadata directory is rejected", () => withArtifact((root) => {
+  const authority = fixtureAuthority(root), directory = `${root}.authority-dir`, alias = `${root}.authority-link`;
+  fs.mkdirSync(directory);
+  fs.renameSync(authority, path.join(directory, "manifest.json"));
+  fs.renameSync(`${authority}.sha256`, path.join(directory, "manifest.json.sha256"));
+  symlinkSync(directory, alias);
+  try { assert.notDeepEqual(runtimePolicy.inspectRuntimeArtifact(root, "abbott", path.join(alias, "manifest.json")), []); }
+  finally { rmSync(alias); rmSync(directory, { recursive: true, force: true }); }
+}));
+
+test("trust root: packaged runtime environments are rejected", () => withArtifact((root) => {
+  const authority = fixtureAuthority(root);
+  const manifest = JSON.parse(readFileSync(authority));
+  assert.equal(manifest.files.some((entry) => entry.path === ".env"), false);
+  write(root, ".env", "DB_HOST=127.0.0.1\nDB_PASSWORD=test-value\n");
+  const violations = runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority);
+  assert.ok(violations.some((entry) => entry.includes(".env")));
+  assert.ok(violations.every((entry) => !entry.includes("test-value")));
+}));
+
+test("closure: rejects missing, escaping, cyclic and oversized traces", async (t) => {
+  for (const [name, entry] of [
+    ["missing", "missing.js"], ["outside", "../../../../outside.js"],
+    ["absolute", "/private/tmp/outside.js"], ["windows", "C:\\outside.js"],
+    ["cycle", "next-server.js.nft.json"],
+  ]) await t.test(name, () => withArtifact((root) => {
+    write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: [entry] }));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => /trace/.test(item)), name);
+  }));
+  await t.test("excessive trace entries", () => withArtifact((root) => {
+    write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: Array(20001).fill("../../../package.json") }));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => /trace/.test(item)));
+  }));
+  await t.test("missing route trace", () => withArtifact((root) => {
+    rmSync(path.join(root, `${NEXT_ROOT}/server/app/api/health/route.js.nft.json`));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("route.js.nft.json")));
+  }));
+});
+
+test("closure: package identity and version must match reviewed dependencies", async (t) => {
+  for (const [key, value] of [["version", "99.0.0"], ["name", "foreign-runtime"]]) await t.test(`Next ${key}`, () => withArtifact((root) => {
+    const filename = "node_modules/next/package.json";
+    const pkg = JSON.parse(readFileSync(path.join(root, filename)));
+    pkg[key] = value;
+    write(root, filename, JSON.stringify(pkg));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => /package identity/.test(item)));
+  }));
+  await t.test("runtime contract", () => withArtifact((root) => {
+    const filename = "packages/runtime-contract/package.json";
+    write(root, filename, JSON.stringify({ name: "foreign-contract", version: "0.1.0" }));
+    write(root, `${NEXT_ROOT}/next-server.js.nft.json`, JSON.stringify({ version: 1, files: ["../../../node_modules/next/package.json", `../../../${filename}`] }));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => /package identity/.test(item)));
+  }));
+});
+
+test("closure: only manifested browser assets may supplement the traced files", () => withArtifact((root) => {
+  const manifest = JSON.parse(readFileSync(path.join(root, `${NEXT_ROOT}/build-manifest.json`)));
+  manifest.rootMainFiles = ["static/chunks/owned.js"];
+  write(root, `${NEXT_ROOT}/build-manifest.json`, JSON.stringify(manifest));
+  write(root, `${NEXT_ROOT}/static/chunks/owned.js`, "// traced browser chunk\n");
+  assert.deepEqual(inspectRuntimeArtifact(root, "abbott"), []);
+  write(root, `${NEXT_ROOT}/static/chunks/foreign.js`, "// unowned browser chunk\n");
+  assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("static/chunks/foreign.js")));
+}));
+
+test("trusted manifest maps encoded dynamic-route chunk URLs to physical static files", () => {
+  const buildRoot = path.join(REPOSITORY_ROOT, "apps/abbott/.next-abbott");
+  const artifactRoot = path.join(buildRoot, "standalone");
+  const authorityParent = mkdtempSync(path.join(tmpdir(), "abbott-dynamic-static-"));
+  const authority = path.join(authorityParent, "trusted-runtime-manifest.json");
+  try {
+    const sourceSha = readFileSync(path.join(artifactRoot, ".release-source-sha"), "utf8").trim();
+    createTrustedRuntimeManifest(artifactRoot, "abbott", sourceSha, authority);
+    const manifest = JSON.parse(readFileSync(authority, "utf8"));
+    const clientReference = readFileSync(path.join(buildRoot, "server/app/dashboard/[id]/page_client-reference-manifest.js"), "utf8");
+    const encoded = /static\/chunks\/app\/dashboard\/%5Bid%5D\/[\w.-]+\.js/.exec(clientReference)?.[0];
+    assert.ok(encoded, "dynamic page client chunk must be present in the route authority");
+    const physical = `${NEXT_ROOT}/${encoded.replaceAll("%5B", "[").replaceAll("%5D", "]")}`;
+    assert.ok(manifest.files.some((entry) => entry.path === physical), `missing ${physical}`);
+  } finally {
+    rmSync(authorityParent, { recursive: true, force: true });
+  }
+});
+
+test("accepts the complete Abbott standalone route set and required static schema only", () => {
+  withArtifact((root) => {
+    assert.deepEqual(inspectRuntimeArtifact(root, "abbott"), []);
+    assert.doesNotThrow(() => assertRuntimeArtifact(root, "abbott"));
+  });
+});
+
+test("requires exactly the Abbott Yandex Metrika static schema", async (t) => {
+  await t.test("required schema is absent", () => withArtifact((root) => {
+    rmSync(path.join(root, "apps/abbott/src/schemas/yandex_metrika.yaml"));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("apps/abbott/src/schemas/yandex_metrika.yaml")));
+  }));
+  await t.test("unrelated advertising schema is present", () => withArtifact((root) => {
+    write(root, "apps/abbott/src/schemas/google.yaml", "platform: google\n");
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("apps/abbott/src/schemas/google.yaml")));
+  }));
+  await t.test("obsolete standalone-root schema is present", () => withArtifact((root) => {
+    write(root, "src/schemas/yandex_metrika.yaml", "platform: yandex_metrika\n");
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("src/schemas/yandex_metrika.yaml")));
+  }));
+});
+
+test("rejects viewer credential forms and test-named secrets without echoing values", async (t) => {
+  const cases = {
+    bare_jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhYmJvdHQtdmlld2VyIn0.dmlld2VyLXNpZ25hdHVyZS1zZW5zaXRpdmU",
+    json_access_token: '{"access_token":"json-policy-sensitive-value"}',
+    string_access_token: "'access_token': 'string-policy-sensitive-value'",
+    embedded_access_token: '"access_token=embedded-policy-sensitive-value"',
+    query_access_token: "https://dashboard.invalid/view?access_token=query-policy-sensitive-value",
+    joined_access_token: "https://dashboard.invalid/view?a=1&access_token=joined-policy-sensitive-value",
+    query_embed_key: "https://dashboard.invalid/view?embed_key=query-embed-policy-sensitive-value",
+    joined_embed_key: "https://dashboard.invalid/view?a=1&embed_key=joined-embed-policy-sensitive-value",
+    test_file: "METRIKA_TOKEN=test-policy-sensitive-value",
+  };
+  for (const [name, contents] of Object.entries(cases)) await t.test(name, () => withArtifact((root) => {
+    const filename = name === "test_file"
+      ? "apps/abbott/src/anything.test.ts"
+      : `${NEXT_ROOT}/server/chunks/${name}.js`;
+    write(root, filename, contents);
+    const violations = inspectRuntimeArtifact(root, "abbott");
+    assert.ok(violations.some((item) => item.includes(filename) && /credential|content marker/.test(item)), violations.join("\n"));
+    assert.ok(violations.every((item) => !item.includes("sensitive-value")));
+  }));
+});
+
+test("trusted verification still content-scans an injected test-named secret", () => {
+  const root = createArtifact();
+  const authority = fixtureAuthority(root);
+  try {
+    const filename = "apps/abbott/src/injected.test.ts";
+    write(root, filename, "METRIKA_TOKEN=trusted-tamper-sensitive-value\n");
+    const violations = runtimePolicy.inspectRuntimeArtifact(root, "abbott", authority);
+    assert.ok(violations.some((item) => item.includes(`trusted file mismatch ${filename}`)));
+    assert.ok(violations.some((item) => item.includes(`forbidden content marker metrika_token: ${filename}`)));
+    assert.ok(violations.every((item) => !item.includes("trusted-tamper-sensitive-value")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(authority, { force: true });
+    rmSync(`${authority}.sha256`, { force: true });
+  }
+});
+
+test("prepare rejects every requested trace rewrite without modifying an outside sentinel", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-prepare-ancestor-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "abbott-prepare-outside-"));
+  const trace = `${NEXT_ROOT}/server/app/api/health/route.js.nft.json`;
+  const traceParent = path.dirname(path.join(root, trace));
+  const sentinel = path.join(outside, "route.js.nft.json");
+  const sentinelBytes = Buffer.from('{"version":1,"files":["outside-sentinel"]}\n');
+  try {
+    write(root, trace, '{"version":1,"files":[]}\n');
+    writeFileSync(sentinel, sentinelBytes);
+    rmSync(traceParent, { recursive: true, force: true });
+    symlinkSync(outside, traceParent);
+    const before = createHash("sha256").update(readFileSync(sentinel)).digest("hex");
+    assert.throws(
+      () => runtimePolicy.prepareRuntimeArtifactFiles(root, new Map([[trace, Buffer.from('{"version":1,"files":["replacement"]}\n')]])),
+      /build emitted forbidden test trace material/,
+    );
+    const afterBytes = readFileSync(sentinel);
+    assert.equal(createHash("sha256").update(afterBytes).digest("hex"), before);
+    assert.deepEqual(afterBytes, sentinelBytes);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("prepare never unlinks through a parent swapped at the deletion boundary", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-prepare-delete-root-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "abbott-prepare-delete-outside-"));
+  const parent = path.join(root, "apps/abbott/src/lib");
+  const heldParent = `${parent}-inside`;
+  const victim = path.join(parent, "victim.test.ts");
+  const sentinel = path.join(outside, "victim.test.ts");
+  const originalBytes = Buffer.from("original-test-material\n");
+  const sentinelBytes = Buffer.from("outside-delete-sensitive-value\n");
+  let swapped = false;
+  write(root, "apps/abbott/src/schemas/yandex_metrika.yaml", readFileSync(path.join(REPOSITORY_ROOT, "src/schemas/yandex_metrika.yaml")));
+  write(root, "apps/abbott/src/lib/victim.test.ts", originalBytes);
+  writeFileSync(sentinel, sentinelBytes);
+  const originalUnlink = fs.unlinkSync;
+  const boundary = mock.method(fs, "unlinkSync", (target, ...args) => {
+    if (target === victim) {
+      fs.renameSync(parent, heldParent);
+      symlinkSync(outside, parent);
+      swapped = true;
+    }
+    return originalUnlink(target, ...args);
+  });
+  let error;
+  try {
+    try { runtimePolicy.prepareRuntimeArtifactFiles(root, new Map()); }
+    catch (caught) { error = caught; }
+  } finally { boundary.mock.restore(); }
+  try {
+    assert.ok(error instanceof Error);
+    assert.doesNotMatch(String(error), /outside-delete-sensitive-value/);
+    assert.equal(swapped, false, "mutation-free prepare must never reach unlink");
+    assert.deepEqual(readFileSync(victim), originalBytes);
+    assert.deepEqual(readFileSync(sentinel), sentinelBytes);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("prepare never creates a schema through a parent swapped at the exclusive-create boundary", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "abbott-prepare-schema-root-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "abbott-prepare-schema-outside-"));
+  const parent = path.join(root, "apps/abbott/src/schemas");
+  const heldParent = `${parent}-inside`;
+  const schema = path.join(parent, "yandex_metrika.yaml");
+  const outsideSchema = path.join(outside, "yandex_metrika.yaml");
+  mkdirSync(parent, { recursive: true });
+  const originalOpen = fs.openSync;
+  let swapped = false;
+  const boundary = mock.method(fs, "openSync", (target, ...args) => {
+    if (target === schema) {
+      fs.renameSync(parent, heldParent);
+      symlinkSync(outside, parent);
+      swapped = true;
+    }
+    return originalOpen(target, ...args);
+  });
+  let error;
+  try {
+    try { runtimePolicy.prepareRuntimeArtifactFiles(root, new Map()); }
+    catch (caught) { error = caught; }
+  } finally { boundary.mock.restore(); }
+  try {
+    assert.ok(error instanceof Error);
+    assert.doesNotMatch(String(error), /sensitive|credential|token/i);
+    assert.equal(swapped, false, "mutation-free prepare must never reach exclusive create");
+    assert.equal(fs.existsSync(schema), false);
+    assert.equal(fs.existsSync(outsideSchema), false);
+    assert.deepEqual(fs.readdirSync(parent), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test("successful prepare validation leaves every artifact byte unchanged", () => withArtifact((root) => {
+  const snapshot = () => {
+    const entries = [];
+    const visit = (directory) => {
+      for (const name of fs.readdirSync(directory).sort()) {
+        const absolute = path.join(directory, name);
+        const stat = fs.lstatSync(absolute);
+        if (stat.isDirectory()) visit(absolute);
+        else entries.push([
+          path.relative(root, absolute).split(path.sep).join("/"),
+          createHash("sha256").update(readFileSync(absolute)).digest("hex"),
+        ]);
+      }
+    };
+    visit(root);
+    return entries;
+  };
+  const before = snapshot();
+  runtimePolicy.prepareRuntimeArtifactFiles(root, new Map());
+  assert.deepEqual(snapshot(), before);
+}));
+
+test("credential matching permits dotted identifiers and empty access-token placeholders", () => withArtifact((root) => {
+  const filename = `${NEXT_ROOT}/server/chunks/safe.js`;
+  write(root, filename, 'const safe = ["long.application.namespace.withSegments", {"access_token":""}, "?access_token="];\n');
+  assert.deepEqual(inspectRuntimeArtifact(root, "abbott"), []);
+}));
+
+test("rejects every prohibited cross-domain marker in artifact contents", async (t) => {
+  const forbidden = [
+    "server/app/dashboard/zaruku",
+    "server/app/api/dashboard/zaruku",
+    "advertising-binding-read-model",
+    "api-metrika.yandex.net",
+    "googleads.googleapis.com",
+    "server/app/admin",
+  ];
+
+  for (const [index, marker] of forbidden.entries()) {
+    await t.test(marker, () => {
+      withArtifact((root) => {
+        write(root, `apps/abbott/.next-abbott/server/chunks/forbidden-${index}.js`, marker);
+        assert.ok(
+          inspectRuntimeArtifact(root, "abbott").some((violation) => violation.includes(`forbidden-${index}.js`)),
+        );
+      });
+    });
+  }
+});
+
+test("rejects prohibited route paths even when their files contain no marker", () => {
+  withArtifact((root) => {
+    write(root, "apps/abbott/.next-abbott/server/app/dashboard/zaruku/page.js", "export default 1");
+    write(root, "apps/abbott/.next-abbott/server/app/admin/page.js", "export default 1");
+    const violations = inspectRuntimeArtifact(root, "abbott");
+    assert.ok(violations.some((violation) => violation.includes("server/app/dashboard/zaruku/page.js")));
+    assert.ok(violations.some((violation) => violation.includes("server/app/admin/page.js")));
+  });
+});
+
+test("rejects unowned bindings, source API clients, and combined middleware", async (t) => {
+  for (const [index, marker] of [
+    "advertising-binding-read-model",
+    "api-metrika.yandex.net",
+    "api.webmaster.yandex.net",
+    "googleads.googleapis.com",
+    "METRIKA_TOKEN",
+    "YANDEX_DIRECT_TOKEN",
+  ].entries()) {
+    await t.test(marker, () => {
+      withArtifact((root) => {
+        write(root, `apps/abbott/.next-abbott/server/chunks/unowned-${index}.js`, marker);
+        assert.ok(
+          inspectRuntimeArtifact(root, "abbott").some((violation) => violation.includes(`unowned-${index}.js`)),
+        );
+      });
+    });
+  }
+
+  await t.test("combined middleware", () => {
+    withArtifact((root) => {
+      write(root, "apps/abbott/.next-abbott/server/middleware.js", "export default 1");
+      assert.ok(
+        inspectRuntimeArtifact(root, "abbott").some((violation) => violation.includes("server/middleware.js")),
+      );
+    });
+  });
+});
+
+test("requires exact release metadata and the Abbott standalone server", async (t) => {
+  for (const relativePath of [".release-source-sha", ".release-runtime-scope", "apps/abbott/server.js"]) {
+    await t.test(`missing ${relativePath}`, () => {
+      withArtifact((root) => {
+        rmSync(path.join(root, relativePath));
+        assert.ok(inspectRuntimeArtifact(root, "abbott").some((violation) => violation.includes(relativePath)));
+      });
+    });
+  }
+
+  await t.test("invalid SHA and wrong scope", () => {
+    withArtifact((root) => {
+      write(root, ".release-source-sha", "not-a-git-sha\n");
+      write(root, ".release-runtime-scope", "combined\n");
+      const violations = inspectRuntimeArtifact(root, "abbott");
+      assert.ok(violations.some((violation) => violation.includes(".release-source-sha")));
+      assert.ok(violations.some((violation) => violation.includes(".release-runtime-scope")));
+    });
+  });
+});
+
+test("rejects missing and unexpected application routes", async (t) => {
+  await t.test("missing owned route", () => {
+    withArtifact((root) => {
+      const routes = { ...EXPECTED_ROUTES };
+      delete routes["/api/dashboard/[id]/pdf/route"];
+      write(
+        root,
+        "apps/abbott/.next-abbott/server/app-paths-manifest.json",
+        `${JSON.stringify(routes)}\n`,
+      );
+      assert.ok(
+        inspectRuntimeArtifact(root, "abbott").some((violation) =>
+          violation.includes("missing route /api/dashboard/[id]/pdf/route")),
+      );
+    });
+  });
+
+  await t.test("unexpected foreign route", () => {
+    withArtifact((root) => {
+      write(
+        root,
+        "apps/abbott/.next-abbott/server/app-paths-manifest.json",
+        `${JSON.stringify({ ...EXPECTED_ROUTES, "/dashboard/client/page": "app/dashboard/client/page.js" })}\n`,
+      );
+      assert.ok(
+        inspectRuntimeArtifact(root, "abbott").some((violation) =>
+          violation.includes("unexpected route /dashboard/client/page")),
+      );
+    });
+  });
+
+  await t.test("unmanifested foreign route file", () => {
+    withArtifact((root) => {
+      write(root, "apps/abbott/.next-abbott/server/app/dashboard/client/page.js", "export default 1");
+      assert.ok(
+        inspectRuntimeArtifact(root, "abbott").some((violation) =>
+          violation.includes("unexpected compiled route app/dashboard/client/page.js")),
+      );
+    });
+  });
+});
+
+test("rejects source workbooks and unapproved .env variants", () => {
+  withArtifact((root) => {
+    write(root, "uploads/source.xlsx", "not followed or parsed");
+    write(root, ".env.production", "ABBOTT_SECRET=hidden\n");
+    write(root, "apps/abbott/.env", "NESTED_SECRET=hidden\n");
+    const violations = inspectRuntimeArtifact(root, "abbott");
+    assert.ok(violations.some((violation) => violation.includes("uploads/source.xlsx")));
+    assert.ok(violations.some((violation) => violation.includes(".env.production")));
+    assert.ok(violations.some((violation) => violation.includes("apps/abbott/.env")));
+  });
+});
+
+test("rejects private JSON and delimited source exports structurally", () => {
+  withArtifact((root) => {
+    write(root, "exports/users.json", `${JSON.stringify([{ visit_id: "v1", user_id: "u1" }])}\n`);
+    write(root, "exports/visits.csv", "client_id,visit_id,start_url,end_url\n1,2,/a,/b\n");
+    write(root, "exports/events.tsv", "protected_visit_id\tevent_sequence\tnormalized_path\n1\t2\t/a\n");
+    const violations = inspectRuntimeArtifact(root, "abbott");
+    assert.ok(violations.some((violation) => violation.includes("exports/users.json")));
+    assert.ok(violations.some((violation) => violation.includes("exports/visits.csv")));
+    assert.ok(violations.some((violation) => violation.includes("exports/events.tsv")));
+  });
+});
+
+test("rejects escaping symlinks without scanning their targets", () => {
+  withArtifact((root) => {
+    const outside = mkdtempSync(path.join(tmpdir(), "abbott-outside-"));
+    try {
+      write(outside, "secret.txt", "ABBOTT_PRIVATE_DB_PASSWORD");
+      symlinkSync(path.join(outside, "secret.txt"), path.join(root, "outside-secret"));
+      const violations = inspectRuntimeArtifact(root, "abbott");
+      assert.ok(violations.some((violation) => violation.includes("outside-secret")));
+      assert.ok(violations.some((violation) => violation.includes("symlink forbidden")));
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test("rejects unnecessary contained symlinks", () => {
+  withArtifact((root) => {
+    write(root, "node_modules/example/index.js", "export default 1");
+    symlinkSync("example", path.join(root, "node_modules/example-link"));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("example-link")));
+  });
+});
+
+test("review: every root environment form is rejected without exposing values", async (t) => {
+  const cases = {
+    ABBOTT_PRIVATE_DB_HOST: "ABBOTT_PRIVATE_DB_HOST=sensitive\n",
+    ABBOTT_PRIVATE_DB_USER: "ABBOTT_PRIVATE_DB_USER=sensitive\n",
+    ABBOTT_PRIVATE_DB_PASSWORD: "ABBOTT_PRIVATE_DB_PASSWORD=sensitive\n",
+    collector: "COLLECTOR_TOKEN=sensitive\n",
+    webmaster: "YANDEX_WEBMASTER_OAUTH_TOKEN=sensitive\n",
+    google: "GOOGLE_ADS_REFRESH_TOKEN=sensitive\n",
+    advertising: "ADVERTISING_DB_PASSWORD=sensitive\n",
+    admin: "DASHBOARD_ADMIN_PASSWORD=sensitive\n",
+    ai: "AI_SUMMARY_API_KEY=sensitive\n",
+    database_alias: "MYSQL_DB_STAT=sensitive\n",
+    malformed: "DB_HOST localhost\n",
+    duplicate: "DB_HOST=one\nDB_HOST=two\n",
+    bom: Buffer.from("\ufeffDB_HOST=localhost\n"),
+    utf16: Buffer.from("ABBOTT_PRIVATE_DB_HOST=sensitive\n", "utf16le"),
+    invalid_utf8: Buffer.from([0x44, 0x42, 0x5f, 0x48, 0x4f, 0x53, 0x54, 0x3d, 0xff, 0x0a]),
+    unterminated_quote: 'DB_PASSWORD="sensitive\n',
+    oversized: `DB_PASSWORD=${"x".repeat(65536)}\n`,
+  };
+  for (const [name, contents] of Object.entries(cases)) await t.test(name, () => {
+    withArtifact((root) => {
+      write(root, ".env", contents);
+      const violations = inspectRuntimeArtifact(root, "abbott");
+      assert.ok(violations.some((item) => item.includes(".env")), name);
+      assert.ok(violations.every((item) => !item.includes("sensitive")));
+    });
+  });
+});
+
+test("review: rejects alternate app roots and foreign executable trees", async (t) => {
+  for (const filename of ["apps/advertising/server.js", "apps/advertising/.next/server/app/secret/route.js",
+    "server.js", "other/.next/server/app/secret/route.js", `${NEXT_ROOT}/server/edge-chunks/secret.js`,
+    `${NEXT_ROOT}/server/pages/secret.js`]) await t.test(filename, () => withArtifact((root) => {
+    write(root, filename, "module.exports = {};\n");
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(filename)));
+  }));
+});
+
+test("review: rejects unowned Next route authority", async (t) => {
+  const fixtures = {
+    "server/middleware-manifest.json": { version: 3, middleware: { "/secret": { files: ["edge.js"] } }, functions: {}, sortedMiddleware: ["/secret"] },
+    "server/functions-config-manifest.json": { version: 1, functions: { "/secret": {} } },
+    "server/pages-manifest.json": { "/404": "pages/404.html", "/500": "pages/500.html", "/secret": "pages/secret.js" },
+    "app-path-routes-manifest.json": { ...Object.fromEntries(Object.keys(EXPECTED_ROUTES).map((route) => [route, route.replace(/\/(page|route)$/, "")])), "/secret/route": "/secret" },
+    "routes-manifest.json": { version: 3, redirects: [{ source: "/secret", destination: "/admin", statusCode: 307 }], rewrites: { beforeFiles: [], afterFiles: [], fallback: [] } },
+  };
+  for (const [filename, contents] of Object.entries(fixtures)) await t.test(filename, () => withArtifact((root) => {
+    write(root, `${NEXT_ROOT}/${filename}`, JSON.stringify(contents));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(filename)));
+  }));
+  await t.test("unexpected rewrite", () => withArtifact((root) => {
+    write(root, `${NEXT_ROOT}/routes-manifest.json`, JSON.stringify({ version: 3, redirects: [], rewrites: [{ source: "/secret", destination: "https://example.invalid" }] }));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("routes-manifest.json")));
+  }));
+});
+
+test("review: rejects opaque archives, workbook families and encoded exports", async (t) => {
+  for (const suffix of ["zip", "tar", "tar.gz", "tgz", "gz", "tar.bz2", "tar.xz", "7z", "rar", "xlsm", "xlsb", "ods"]) {
+    await t.test(suffix, () => withArtifact((root) => {
+      write(root, `payload.${suffix}`, "opaque payload");
+      assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(`payload.${suffix}`)));
+    }));
+  }
+  for (const suffix of ["csv", "tsv"]) await t.test(`utf16 ${suffix}`, () => withArtifact((root) => {
+    write(root, `payload.${suffix}`, Buffer.from("visit_id,client_id,start_url,end_url\n1,2,/a,/b\n", "utf16le"));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(`payload.${suffix}`)));
+  }));
+  await t.test("renamed ZIP magic", () => withArtifact((root) => {
+    write(root, "payload.data", Buffer.from([0x50, 0x4b, 3, 4, 0, 0]));
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("payload.data")));
+  }));
+});
+
+test("review: rejects comment-only and fake standalone servers", async (t) => {
+  for (const content of ["// isolated standalone\n", "require('next'); console.log('ready');\n"]) {
+    await t.test(content.split(";")[0], () => withArtifact((root) => {
+      write(root, "apps/abbott/server.js", content);
+      assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("server.js")));
+    }));
+  }
+});
+
+test("review: path policy applies to contained symlinks", async (t) => {
+  for (const filename of [".env.production", "apps/advertising/server.js", `${NEXT_ROOT}/server/app/secret/route.js`]) {
+    await t.test(filename, () => withArtifact((root) => {
+      const link = path.join(root, filename);
+      mkdirSync(path.dirname(link), { recursive: true });
+      symlinkSync(path.join(root, ".release-source-sha"), link);
+      assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(filename)));
+    }));
+  }
+});
+
+test("review: replacing a checked file with a symlink before open fails closed", () => {
+  withArtifact((root) => {
+    const filename = path.join(root, `${NEXT_ROOT}/server/chunks/swap.js`);
+    write(root, `${NEXT_ROOT}/server/chunks/swap.js`, "safe\n");
+    const originalOpen = fs.openSync;
+    const replacement = mock.method(fs, "openSync", (target, ...args) => {
+      if (target === filename) {
+        rmSync(filename);
+        symlinkSync(path.join(root, ".release-source-sha"), filename);
+      }
+      return originalOpen(target, ...args);
+    });
+    try {
+      assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("swap.js")));
+    } finally { replacement.mock.restore(); }
+  });
+});
+
+test("review: rejects even a syntactically valid rendered environment without exposing values", () => withArtifact((root) => {
+  const values = {
+    DB_HOST: "127.0.0.1", DB_PORT: "3306", DB_USER: "abbott_reader", DB_PASSWORD: '"test # value"', DB_NAME: "report_bd",
+    MYSQL_HOST: "127.0.0.1", MYSQL_PORT: "3306", MYSQL_USER: "abbott_reader", MYSQL_PASSWORD: "'test value'", MYSQL_DB: "report_bd",
+    NODE_ENV: "production", HOSTNAME: "127.0.0.1", PORT: "3002", NEXT_PUBLIC_BASE_URL: "https://dashboards.test",
+    DASHBOARD_AUTH_SECRET: "test-secret", INTERNAL_BASE_URL: "http://127.0.0.1:3002", PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium",
+  };
+  write(root, ".env", `${Object.entries(values).map(([key, value]) => `${key}=${value}`).join("\n")}\n`);
+  const violations = inspectRuntimeArtifact(root, "abbott");
+  assert.ok(violations.some((item) => item.includes(".env")));
+  assert.ok(violations.every((item) => !item.includes("test-secret")));
+}));
+
+test("review: limits and encoding checks apply inside allowed directories", async (t) => {
+  for (const [filename, content] of [
+    ["archive.zip", "ordinary bytes"], ["workbook.xlsm", "ordinary bytes"],
+    ["export.csv", Buffer.from("visit_id,user_id\n1,2\n", "utf16le")],
+    ["oversized.js", "a".repeat(32 * 1024 * 1024 + 1)],
+    ["renamed.js", Buffer.from([0x50, 0x4b, 3, 4])],
+  ]) await t.test(filename, () => withArtifact((root) => {
+    const relative = `${NEXT_ROOT}/server/chunks/${filename}`;
+    write(root, relative, content);
+    assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(relative)));
+  }));
+});
+
+test("review: denies arbitrary app executables and instrumentation", async (t) => {
+  for (const filename of ["apps/abbott/secret-server.js", `${NEXT_ROOT}/server/instrumentation.js`, `${NEXT_ROOT}/server/secret-server.js`]) {
+    await t.test(filename, () => withArtifact((root) => {
+      write(root, filename, "module.exports = {};\n");
+      assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes(filename)));
+    }));
+  }
+});
+
+test("review: bootstrap metadata must match the executable config", () => withArtifact((root) => {
+  const name = `${NEXT_ROOT}/required-server-files.json`;
+  const required = JSON.parse(readFileSync(path.join(root, name), "utf8"));
+  required.config.assetPrefix = "/foreign";
+  write(root, name, JSON.stringify(required));
+  assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("server.js")));
+}));
+
+test("review: server validation preserves whitespace inside executable string literals", () => withArtifact((root) => {
+  write(root, "apps/abbott/server.js", FIXTURE_SERVER.replace("require('next')", "require('n e x t')"));
+  assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("server.js")));
+}));
+
+test("review: build manifest cannot declare an extra page", () => withArtifact((root) => {
+  write(root, `${NEXT_ROOT}/build-manifest.json`, JSON.stringify({ pages: { "/_app": [], "/secret": [] }, rootMainFilesTree: {}, devFiles: [] }));
+  assert.ok(inspectRuntimeArtifact(root, "abbott").some((item) => item.includes("build-manifest.json")));
+}));
+
+test("review: boot checker validates health and cannot accept a non-server fixture", async () => {
+  assert.equal(typeof runtimePolicy.verifyRuntimeArtifactBoot, "function");
+  const root = createArtifact();
+  try { await assert.rejects(runtimePolicy.verifyRuntimeArtifactBoot(root, "abbott", { timeoutMs: 1000, trustedManifestPath: fixtureAuthority(root) }), /boot|health/); }
+  finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("review: workspace provides an explicit post-seal loopback boot gate", () => {
+  const pkg = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "apps/abbott/package.json")));
+  assert.equal(pkg.scripts["verify:boot"], "node ../../scripts/abbott-runtime-artifact-policy.mjs --boot abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json");
+});
+
+test("stamps immutable scope and source metadata for a fresh build", () => {
+  const buildRoot = mkdtempSync(path.join(tmpdir(), "abbott-stamp-"));
+  const root = path.join(buildRoot, "standalone");
+  try {
+    write(root, "apps/abbott/server.js", "// standalone\n");
+    write(root, "package.json", readFileSync(path.join(REPOSITORY_ROOT, "package.json")));
+    mkdirSync(path.join(root, NEXT_ROOT), { recursive: true });
+    write(buildRoot, "next-server.js.nft.json", '{"version":1,"files":[]}');
+    stampRuntimeArtifact(root, "abbott", SOURCE_SHA, fixtureAuthority(root));
+    assert.equal(readFileSync(path.join(root, ".release-source-sha"), "utf8"), `${SOURCE_SHA}\n`);
+    assert.equal(readFileSync(path.join(root, ".release-runtime-scope"), "utf8"), "abbott\n");
+  } finally {
+    rmSync(buildRoot, { recursive: true, force: true });
+  }
+});
+
+test("stamping removes monorepo-only package metadata from the standalone root", () => {
+  const buildRoot = mkdtempSync(path.join(tmpdir(), "abbott-stamp-package-"));
+  const root = path.join(buildRoot, "standalone");
+  try {
+    write(root, "apps/abbott/server.js", "// standalone\n");
+    mkdirSync(path.join(root, NEXT_ROOT), { recursive: true });
+    write(buildRoot, "next-server.js.nft.json", '{"version":1,"files":[]}');
+    write(
+      root,
+      "package.json",
+      `${JSON.stringify({
+        name: "dashboard-next",
+        version: "0.1.0",
+        private: true,
+        workspaces: ["apps/*"],
+        scripts: { "test:abbott": "node abbott-private-store.test.ts" },
+        dependencies: { next: "16.1.6" },
+        devDependencies: { typescript: "^5" },
+      })}\n`,
+    );
+    stampRuntimeArtifact(root, "abbott", SOURCE_SHA, fixtureAuthority(root));
+    assert.deepEqual(JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")), {
+      name: "dashboard-next",
+      version: "0.1.0",
+      private: true,
+      dependencies: { next: "16.1.6" },
+    });
+  } finally {
+    rmSync(buildRoot, { recursive: true, force: true });
+  }
+});
+
+test("the Abbott artifact assertion entry point rejects foreign route files", () => {
+  withArtifact((root) => {
+    write(root, "apps/abbott/.next-abbott/server/app/zaruku/page.js", "export default 1");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "scripts/assert-abbott-artifact.mjs",
+        root,
+      ],
+      { cwd: REPOSITORY_ROOT, encoding: "utf8" },
+    );
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /server\/app\/zaruku\/page\.js/);
+  });
+});
+
+test("runtime policy CLI root diagnostics expose only a safe basename", async (t) => {
+  for (const kind of ["missing", "file"]) await t.test(kind, () => {
+    const parent = mkdtempSync(path.join(tmpdir(), "abbott-policy-sensitive-parent-"));
+    const root = path.join(parent, `${kind}-safe-basename`);
+    const manifest = path.join(parent, "authority.json");
+    try {
+      if (kind === "file") writeFileSync(root, "not a directory\n");
+      const result = spawnSync(process.execPath, [
+        "scripts/abbott-runtime-artifact-policy.mjs", "--verify", "abbott", root,
+        "--trusted-manifest", manifest,
+      ], { cwd: REPOSITORY_ROOT, encoding: "utf8" });
+      const output = `${result.stdout}\n${result.stderr}`;
+      assert.equal(result.status, 1);
+      assert.match(output, new RegExp(`${kind === "missing" ? "missing artifact root" : "artifact root must be a real directory"}`));
+      assert.match(output, new RegExp(`${kind}-safe-basename`));
+      assert.doesNotMatch(output, new RegExp(parent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+test("the Abbott workspace stamps then verifies its standalone artifact", () => {
+  const packageJson = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, "apps/abbott/package.json"), "utf8"));
+  assert.equal(
+    packageJson.scripts.build,
+    "next build --webpack && node ../../scripts/abbott-runtime-artifact-policy.mjs --prepare abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json && node ../../scripts/abbott-runtime-artifact-policy.mjs --stamp abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json",
+  );
+  assert.equal(
+    packageJson.scripts["verify:artifact"],
+    "node ../../scripts/assert-abbott-artifact.mjs .next-abbott/standalone && node ../../scripts/abbott-runtime-artifact-policy.mjs --verify abbott .next-abbott/standalone --trusted-manifest .next-abbott/trusted-runtime-manifest.json",
+  );
+});

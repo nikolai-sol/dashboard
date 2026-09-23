@@ -17,6 +17,8 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".next/**",
     "apps/**/.next-*/**",
+    ".superpowers/sdd/.abbott-deploy-evidence/**",
+    ".superpowers/sdd/.abbott-recovery-evidence/**",
     "out/**",
     "build/**",
     ".worktrees/**",
