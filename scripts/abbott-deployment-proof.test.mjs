@@ -6,6 +6,32 @@ const NGINX='/etc/nginx/conf.d/dashboard-next.conf',ROOT='/var/www/dashboard-abb
 const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e';
 const NGINX_TEXT='server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; location / { proxy_pass http://127.0.0.1:3001; } }\n';
 const FOREIGN_INCLUDE='/etc/nginx/snippets/foreign-project.conf';
+test('current combined proof is fixed to 3001 and retains identity without Nginx or other dashboard proofs',async()=>{
+ const m=await api(),f=fixture(),proof=m.createAbbottDeploymentProof(f.options);
+ assert.equal(typeof proof.currentCombinedSource,'function');
+ f.files.delete(NGINX);f.files.set('/var/www/dashboard-zaruku/.release-source-sha','wrong');
+ assert.equal(proof.currentCombinedSource(),undefined);proof.currentCombinedSource();
+ assert.ok(!f.opened.includes(NGINX));assert.ok(!f.opened.some(p=>p.startsWith('/proc/791065/')||p.startsWith('/proc/1870897/')));
+ f.files.set('/proc/3722244/stat',f.files.get('/proc/3722244/stat').replace('122353749','122353750'));
+ assert.throws(()=>proof.currentCombinedSource(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+ f.files.set('/proc/3722244/stat',f.files.get('/proc/3722244/stat').replace('122353750','122353749'));
+ assert.throws(()=>proof.currentCombinedSource());assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+});
+for(const kind of ['absent','duplicate','owner','cwd','sha','symlink','permission','boot','start','stamp-inode'])test('current combined proof refuses '+kind,async()=>{
+ const m=await api(),f=fixture(),proof=m.createAbbottDeploymentProof(f.options);assert.equal(typeof proof.currentCombinedSource,'function');
+ if(['boot','start','stamp-inode'].includes(kind))proof.currentCombinedSource();
+ if(kind==='absent')f.files.set('/proc/1/net/tcp','header\n');
+ if(kind==='duplicate')f.files.set('/proc/1/net/tcp',f.files.get('/proc/1/net/tcp')+f.files.get('/proc/3722244/net/tcp').split('\n')[1]+'\n');
+ if(kind==='owner')f.files.set('/proc/3722244/status','Uid:\t1\t1\t1\t1\nGid:\t0\t0\t0\t0\n');
+ if(kind==='cwd')f.links.set('/proc/3722244/cwd','/wrong');
+ if(kind==='sha')f.files.set('/var/www/dashboard/.release-source-sha','a'.repeat(40)+'\n');
+ if(kind==='symlink')f.links.set('/var/www/dashboard/.release-source-sha','/other');
+ if(kind==='permission')f.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40777});
+ if(kind==='boot')f.files.set('/proc/sys/kernel/random/boot_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n');
+ if(kind==='start')f.files.set('/proc/3722244/stat',f.files.get('/proc/3722244/stat').replace('122353749','122353750'));
+ if(kind==='stamp-inode')f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644,ino:99});
+ assert.throws(()=>proof.currentCombinedSource(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+});
 test('stored-current proof accepts sealed authority without trusting a dead PID',async()=>{
  const m=await api(),f=fixture();
  for(const key of [...f.files.keys()])if(key.startsWith(`/proc/${f.receipt.process.pid}/`))f.files.delete(key);
@@ -340,7 +366,10 @@ test('Nginx structural sanity refuses absent/multiple TLS, Abbott routes/markers
  const m=await api();for(const text of [NGINX_TEXT.replace('443 ssl','80'),NGINX_TEXT+NGINX_TEXT,NGINX_TEXT+'# ABBOTT BEGIN\n',NGINX_TEXT.replace('3001','3004'),NGINX_TEXT.replace('location /','location /dashboard/18'),NGINX_TEXT.replace('location /','location /_next-abbott'),NGINX_TEXT+'{',NGINX_TEXT+'\0',NGINX_TEXT.replace('dashboards.adreports.ru','other.example').replace('dashboards.adreports.ru','other.example')]){const f=fixture();f.files.set(NGINX,text);assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight());}
 });
 test('normal deployment perimeter contains no historical neighbor PID, release, boot or Nginx digest',()=>{
- const source=fs.readFileSync(new URL('./abbott-runtime-release-remote.mjs',import.meta.url),'utf8').split('// Based on')[0];
+ const whole=fs.readFileSync(new URL('./abbott-runtime-release-remote.mjs',import.meta.url),'utf8').split('// Based on')[0];
+ const begin=whole.indexOf('  function currentCombinedSource(){'),end=whole.indexOf('  function perimeter(){',begin);assert.ok(begin>0&&end>begin);
+ const current=whole.slice(begin,end),source=whole.slice(0,begin)+whole.slice(end);
+ assert.match(current,/8f389a28df1c4b741ec33b7538f0354b74f5a40e/);assert.doesNotMatch(whole.slice(end),/currentCombinedSource\(/);
  for(const value of ['3722244','791065','1870897','122353749','131477500','139126198','13d68b0b2c820ba5d223f254bc4eba6d0cf24418','8f389a28df1c4b741ec33b7538f0354b74f5a40e','af1948c8b9a0f70d8696afb9c8abc254408a5daa','1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c',BOOT])assert.ok(!source.includes(value));
  assert.match(source,/let boot,perimeterSnapshot/);assert.doesNotMatch(source,/snapshot.*(?:write|env|stdin)/i);
 });

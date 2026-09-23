@@ -80,13 +80,35 @@ test('captured child output is bounded, never inherited, and timed-out children 
 
 test('capsule uses the exact existing auth source and puts code only on SSH stdin',async()=>{
   const api=await moduleUnderTest();assert.equal(typeof api.buildIssuerCapsule,'function');
-  const sources={bootstrapSource:fs.readFileSync(new URL('./bootstrap-abbott-host.mjs',import.meta.url)),issuerSource:fs.readFileSync(new URL('./abbott-parity-issuer.mjs',import.meta.url)),authSource:fs.readFileSync(new URL('../src/lib/access-auth.ts',import.meta.url))};
+  const sources={bootstrapSource:fs.readFileSync(new URL('./bootstrap-abbott-host.mjs',import.meta.url)),workerSource:fs.readFileSync(new URL('./abbott-runtime-release-remote.mjs',import.meta.url)),issuerSource:fs.readFileSync(new URL('./abbott-parity-issuer.mjs',import.meta.url)),authSource:fs.readFileSync(new URL('../src/lib/access-auth.ts',import.meta.url))};
   const code=api.buildIssuerCapsule(sources);
   assert.ok(code.length<262144);assert.match(code.toString(),/runRemoteIssuer/);
   assert.ok(!code.toString().includes('synthetic-embed'));
   assert.throws(()=>api.buildIssuerCapsule({...sources,authSource:Buffer.from('wrong')}));
   assert.ok(!JSON.stringify(api.fixedSshInvocation('issuer')).includes(code.toString()));
   code.fill(0);
+});
+
+test('both bounded capsules use one retained current source reader, never the historical entrypoint',async()=>{
+  const api=await moduleUnderTest();
+  const bootstrapSource=Buffer.from(`export async function createCurrentAbbottSourceReader(){const m=await import('./abbott-runtime-release-remote.mjs');return m.reader();}export function readVerifiedAbbottSource(){throw Error('historical');}export function verifyAbbottBootstrapSource(){throw Error('historical');}`);
+  const workerSource=Buffer.from(`let factories=0;export function reader(){if(++factories!==1)throw Error('reset');let calls=0;const prove=()=>{if(++calls>2)throw Error('extra');return calls;};return {read:prove,verify:prove};}`);
+  for(const kind of ['issuer','assets']){
+    const source=Buffer.from(`export ${kind==='issuer'?'async ':''}function ${kind==='issuer'?'runRemoteIssuer':'runRemoteAssetAttestation'}(prove){if(prove()!==1||prove()!==2)throw Error('identity reset');process.stdout.write('current-only\\n');}`);
+    const input=kind==='issuer'?api.buildIssuerCapsule({bootstrapSource,workerSource,issuerSource:source,authSource:fs.readFileSync(new URL('../src/lib/access-auth.ts',import.meta.url))}):api.buildAssetCapsule({bootstrapSource,workerSource,attestationSource:source});
+    const r=await api.captureBoundedChild(process.execPath,['--input-type=module'],{input,timeout:2000,maxBytes:1024});
+    try{assert.equal(r.status,0);assert.equal(r.stdout.toString(),'current-only\n');assert.equal(r.stderr.length,0);}finally{input.fill(0);r.stdout.fill(0);r.stderr.fill(0);}
+  }
+  const real={bootstrapSource:fs.readFileSync(new URL('./bootstrap-abbott-host.mjs',import.meta.url)),workerSource:fs.readFileSync(new URL('./abbott-runtime-release-remote.mjs',import.meta.url)),attestationSource:fs.readFileSync(new URL('./abbott-asset-attestation.mjs',import.meta.url))};
+  assert.ok(api.buildAssetCapsule(real).length<=262144);
+  assert.throws(()=>api.buildAssetCapsule({...real,bootstrapSource:Buffer.from('export const x=1;')}));
+  assert.throws(()=>api.buildAssetCapsule({...real,workerSource:Buffer.alloc(262144)}));
+});
+
+test('capture fixes the accepted September 14 baseline without a caller override',()=>{
+  const source=fs.readFileSync(new URL('./verify-abbott-shadow.mjs',import.meta.url),'utf8');
+  assert.match(source,/const BASELINE = '\/Users\/nafanya\/Downloads\/Abbott-dashboard-visual-baseline-2026-09-14';/);
+  assert.doesNotMatch(source,/visual-baseline-2026-09-16/);
 });
 
 test('owned forward cleanup verifies real child exit and refuses start-identity drift',async()=>{
@@ -328,7 +350,7 @@ for(const timing of ['result','guard_finally','late_result']){
 test('real asset capsule labels import versus unbranded runtime failure and preserves known remote reasons',async()=>{
   const api=await moduleUnderTest(),secret='synthetic-secret https://invalid.test/?access_token=private';
   for(const kind of ['remote_import','remote_attestation','tree_hash']){
-    const input=api.buildAssetCapsule({bootstrapSource:kind==='remote_import'?Buffer.from(`throw Error(${JSON.stringify(secret)});`):Buffer.from('export const verifyAbbottBootstrapSource=()=>{};'),attestationSource:Buffer.from(kind==='remote_attestation'?`export function runRemoteAssetAttestation(){throw Error(${JSON.stringify(secret)});}`:`export function runRemoteAssetAttestation(){process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED reason=tree_hash\\n');process.exitCode=1;}`)});
+    const input=api.buildAssetCapsule({bootstrapSource:Buffer.from(`const worker=()=>import('./abbott-runtime-release-remote.mjs');${kind==='remote_import'?`throw Error(${JSON.stringify(secret)});`:'export const createCurrentAbbottSourceReader=async()=>({verify:()=>{}});'}`),workerSource:Buffer.from('export {};'),attestationSource:Buffer.from(kind==='remote_attestation'?`export function runRemoteAssetAttestation(){throw Error(${JSON.stringify(secret)});}`:`export function runRemoteAssetAttestation(){process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED reason=tree_hash\\n');process.exitCode=1;}`)});
     const r=await api.captureBoundedChild(process.execPath,['--input-type=module'],{input,timeout:2000,maxBytes:1024});
     try{assert.equal(r.status,1);assert.equal(r.stdout.length,0);assert.equal(r.stderr.toString(),`ABBOTT_ASSET_ATTESTATION_REFUSED reason=${kind}\n`);}finally{input.fill(0);r.stdout.fill(0);r.stderr.fill(0);}
   }
@@ -371,10 +393,10 @@ test('real CLI entrypoint can load smoke without an ESM top-level-await cycle',a
   const directory=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'abbott-entrypoint-test-'));
   const original=new URL('./verify-abbott-shadow.mjs',import.meta.url);
   const entry=path.join(directory,'verify-abbott-shadow.mjs'),smoke=path.join(directory,'smoke-abbott-runtime.mjs');
-  const relocate=(source,owner)=>source.replace(/(['"])(\.\/[^'"]+\.mjs)\1/g,(all,quote,relative)=>{
+  const relocate=(source,owner)=>source.replace(/(\b(?:from|import)\s*(?:\(\s*)?)(['"])(\.\/[^'"]+\.mjs)\2/g,(all,prefix,quote,relative)=>{
     const name=path.basename(relative),url=['verify-abbott-shadow.mjs','smoke-abbott-runtime.mjs'].includes(name)
       ?pathToFileURL(path.join(directory,name)):new URL(relative,owner);
-    return JSON.stringify(url.href);
+    return prefix+JSON.stringify(url.href);
   });
   try{
     const source=fs.readFileSync(original,'utf8');assert.ok(source.includes('platform = realPlatform'));

@@ -98,6 +98,46 @@ function fixture() {
   return { platform, events, resolve, metadata, setUser: value => { user = value; }, setGroup: value => { group = value; }, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
 }
 
+function currentFixture() {
+  const f=fixture(),io=f.platform.fs,pid=4242,proc='/proc/'+pid;
+  io.readSync=fs.readSync;io.readdirSync=p=>fs.readdirSync(f.resolve(p));
+  io.readlinkSync=p=>fs.readlinkSync(f.resolve(p));
+  for(const p of ['/proc/1/net','/proc/1/fd',`/proc/${HOST.sourcePid}/fd`,proc+'/net',proc+'/fd','/usr/bin'])fs.mkdirSync(f.resolve(p),{recursive:true,mode:0o755});
+  const put=(p,s,mode=0o600)=>fs.writeFileSync(f.resolve(p),s,{mode});
+  put('/proc/sys/kernel/random/boot_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n');
+  put(proc+'/stat',pid+' (node) '+['S',...Array(18).fill('0'),'98765'].join(' '));
+  put(proc+'/status','Uid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\n');put(proc+'/cmdline','next-server (v16.1.6)\0');put('/usr/bin/node','fixture-node',0o755);
+  fs.symlinkSync(f.resolve(HOST.sourceDir),f.resolve(proc+'/cwd'));fs.symlinkSync(f.resolve('/usr/bin/node'),f.resolve(proc+'/exe'));fs.symlinkSync('socket:[12345]',f.resolve(proc+'/fd/10'));
+  const tcp='header\n0: 0100007F:0BB9 00000000:0000 0A 0 0 0 0 0 12345\n';
+  for(const p of ['/proc/1',proc]){put(p+'/net/tcp',tcp);put(p+'/net/tcp6','header\n');}
+  return {...f,put,proc};
+}
+
+test('current source reader composes secure reads and retains one current identity across calls',async()=>{
+  assert.equal(typeof bootstrapModule.createCurrentAbbottSourceReader,'function');const f=currentFixture();
+  try{
+    const reader=await bootstrapModule.createCurrentAbbottSourceReader(f.platform);
+    assert.deepEqual(Object.keys(reader),['read','verify']);assert.equal(Object.isFrozen(reader),true);
+    assert.deepEqual(reader.read(),values);assert.deepEqual(reader.verify(),{status:'verified',allowlistedKeyCount:INPUT_KEYS.length});
+    f.put(f.proc+'/stat',fs.readFileSync(f.resolve(f.proc+'/stat'),'utf8').replace('98765','98766'));
+    assert.throws(()=>reader.read(),{message:'Abbott host bootstrap refused'});assert.deepEqual(f.events,[]);
+  }finally{f.cleanup();}
+});
+for(const phase of ['parse','last-env-read','next-call','source-drift','symlink','permission'])test('current source reader refuses whole-read or repeated-call drift: '+phase,async()=>{
+  assert.equal(typeof bootstrapModule.createCurrentAbbottSourceReader,'function');const f=currentFixture();
+  try{
+    const reader=await bootstrapModule.createCurrentAbbottSourceReader(f.platform),io=f.platform.fs;
+    const drift=()=>f.put('/proc/sys/kernel/random/boot_id','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\n');
+    if(phase==='parse'){const evaluate=f.platform.evaluateEnvironment;f.platform.evaluateEnvironment=bytes=>{drift();return evaluate(bytes);};}
+    if(phase==='last-env-read'){let reads=0;const read=io.readFileSync;io.readFileSync=(fd,...args)=>{const b=read(fd,...args);if(typeof fd==='number'&&b.toString().includes('private-source-canary')&&++reads===2)drift();return b;};}
+    if(phase==='next-call'){reader.verify();drift();}
+    if(phase==='source-drift'){const evaluate=f.platform.evaluateEnvironment;f.platform.evaluateEnvironment=bytes=>{f.put(HOST.sourceEnv,source()+'DB_PASSWORD=changed\n');return evaluate(bytes);};}
+    if(phase==='symlink'){fs.unlinkSync(f.resolve(HOST.sourceEnv));fs.symlinkSync(f.resolve(HOST.sourceStamp),f.resolve(HOST.sourceEnv));}
+    if(phase==='permission')fs.chmodSync(f.resolve(HOST.sourceEnv),0o644);
+    assert.throws(()=>reader.read(),{message:'Abbott host bootstrap refused'});assert.deepEqual(f.events,[]);
+  }finally{f.cleanup();}
+});
+
 test('copies only the existing Abbott input allowlist and preserves worker-generated runtime values', () => {
   assert.deepEqual(INPUT_KEYS, allowed.filter(key => !generated.includes(key)));
   const parsed = parseCombinedEnvironment(Buffer.from(source()), localEvaluator);
@@ -358,7 +398,7 @@ test('real host adapter uses only fixed account commands and verifies the pinned
       },
     };
     vm.createContext(context);
-    const moduleSource = fs.readFileSync(path.join(root, 'scripts/bootstrap-abbott-host.mjs'), 'utf8').replace(/^import .*;\n/gm, '').replaceAll('export const ', 'const ').replaceAll('export function ', 'function ').split('\nif (import.meta.url.startsWith')[0];
+    const moduleSource = fs.readFileSync(path.join(root, 'scripts/bootstrap-abbott-host.mjs'), 'utf8').replace(/^import .*;\n/gm, '').replaceAll('export const ', 'const ').replaceAll('export function ', 'function ').replaceAll('export async function ', 'async function ').split('\nif (import.meta.url.startsWith')[0];
     vm.runInContext(moduleSource + '\nthis.hostPlatform = realPlatform; this.bootstrap = bootstrapAbbottHost;', context);
     context.hostPlatform.directoryPath = f.platform.directoryPath;
     context.hostPlatform.evaluateEnvironment = localEvaluator;

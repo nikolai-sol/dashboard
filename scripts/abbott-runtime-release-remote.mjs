@@ -218,7 +218,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   const stat=file=>{try{return io.lstatSync(file);}catch(error){if(/^\/proc\/[1-9][0-9]*$/.test(file)&&error?.code==='ENOENT')reason('pid_absent');throw error;}};
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
   let record,storedIdentity;
-  let boot,perimeterSnapshot,invalid=false,reattestedProcess;
+  let boot,perimeterSnapshot,invalid=false,reattestedProcess,currentSourceSnapshot;
   const neighborPolicies=[['combined',0,0,'/var/www/dashboard',3001],['zaruku',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],['medroche',983,983,null,3003]];
   const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
   const stableProc=(a,b)=>['dev','ino','size','mode','uid','gid','nlink'].every(k=>a[k]===b[k]);
@@ -280,18 +280,18 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     identity();reason('executable');link(proc+'/exe',executable,uid,gid);if(!stable(binary,stat(executable)))fail();reason('proc_metadata');if(!stable(boundary,stat(proc)))fail();
     return{pid,start:observedStart,uid,gid,cwd,executable,command,binary:metadata(binary),directory:metadata(boundary),listener:listeners[0]};
   }
-  function listenerTable(){
+  function listenerTable(ports=[3001,3002,3003]){
     const result=[];for(const table of ['tcp','tcp6']){
       const text=read('/proc/1/net/'+table,2*1024*1024,{proc:true}),address=new RegExp('^[0-9A-F]{'+(table==='tcp'?8:32)+'}:[0-9A-F]{4}$');
       reason('listener');
       for(const line of text.trim().split('\n').slice(1)){const v=line.trim().split(/\s+/);if(v.length<10||!address.test(v[1])||!address.test(v[2])||! /^[0-9A-F]{2}$/.test(v[3])||! /^\d+$/.test(v[7])||! /^\d+$/.test(v[9]))fail();
-        const port=Number.parseInt(v[1].split(':')[1],16);if(v[3]==='0A'&&[3001,3002,3003].includes(port))result.push({port,table,address:v[1],uid:Number(v[7]),inode:v[9]});
+        const port=Number.parseInt(v[1].split(':')[1],16);if(v[3]==='0A'&&ports.includes(port))result.push({port,table,address:v[1],uid:Number(v[7]),inode:v[9]});
       }
     }
-    reason('listener');result.sort((a,b)=>a.port-b.port);if(result.length!==3||new Set(result.map(r=>r.inode)).size!==3||result.some((r,i)=>r.port!==3001+i||r.table!=='tcp'||r.address!=='0100007F:'+r.port.toString(16).toUpperCase().padStart(4,'0')||! /^[1-9][0-9]*$/.test(r.inode)))fail();return result;
+    reason('listener');result.sort((a,b)=>a.port-b.port);if(result.length!==ports.length||new Set(result.map(r=>r.inode)).size!==ports.length||result.some((r,i)=>r.port!==ports[i]||r.table!=='tcp'||r.address!=='0100007F:'+r.port.toString(16).toUpperCase().padStart(4,'0')||! /^[1-9][0-9]*$/.test(r.inode)))fail();return result;
   }
-  function discover(){
-    const listeners=listenerTable(),owners=new Map(listeners.map(r=>[r.inode,new Set()]));
+  function discover(ports=[3001,3002,3003]){
+    const listeners=listenerTable(ports),owners=new Map(listeners.map(r=>[r.inode,new Set()]));
     reason('proc_metadata');const entries=io.readdirSync('/proc');if(entries.length>8192)fail();const pids=entries.filter(n=>/^[1-9][0-9]{0,9}$/.test(n));if(pids.length>4096)fail();let total=0;
     for(const name of pids){const proc='/proc/'+name;try{
       const directory=stat(proc);if(!directory.isDirectory()||directory.isSymbolicLink()||io.realpathSync(proc)!==proc)fail();
@@ -300,8 +300,23 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       for(const n of names){const file=fd+'/'+n;try{const before=stat(file);if(!before.isSymbolicLink())fail();const target=io.readlinkSync(file);if(!stable(before,stat(file)))fail();const m=/^socket:\[([1-9][0-9]*)\]$/.exec(target);if(m&&owners.has(m[1]))owners.get(m[1]).add(Number(name));}catch(error){if(error?.code!=='ENOENT')throw error;}}
       if(!stable(directory,stat(proc)))fail();
     }catch(error){if(error?.code!=='ENOENT')throw error;}}
-    if(!isDeepStrictEqual(listenerTable(),listeners))fail();
+    if(!isDeepStrictEqual(listenerTable(ports),listeners))fail();
     return listeners.map(r=>{phase('preflight_neighbor_'+neighborPolicies.find(p=>p[4]===r.port)[0],'listener');const ids=[...owners.get(r.inode)];if(ids.length!==1)fail();return{...r,pid:ids[0]};});
+  }
+  function currentCombinedSource(){
+    phase('preflight_neighbor_combined');if(getuid()!==0||hostname()!=='ybjqbzojln')fail();
+    const observedBoot=read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim();
+    if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(observedBoot))fail();
+    const cwd='/var/www/dashboard',file=cwd+'/.release-source-sha',owner={path:cwd,uid:501,gid:0};
+    ancestry(file,0,0,owner);const directory=stat(cwd);
+    if(!directory.isDirectory()||directory.isSymbolicLink()||directory.uid!==501||directory.gid!==0||directory.mode&0o022||io.realpathSync(cwd)!==cwd)fail();
+    const stamp=read(file,128,{uid:501,gid:0,mode:0o644,ancestorOwned:owner}),stampMetadata=metadata(stat(file));
+    if(stamp!=='8f389a28df1c4b741ec33b7538f0354b74f5a40e\n')fail();
+    const [listener]=discover([3001]);if(listener.uid!==0)fail();
+    const process=kernel([listener.pid,null,0,0,cwd,3001],cwd+'/server.js');
+    if(process.listener[2]!==listener.inode||!stable(directory,stat(cwd))||read(file,128,{uid:501,gid:0,mode:0o644,ancestorOwned:owner})!==stamp||!isDeepStrictEqual(stampMetadata,metadata(stat(file)))||read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim()!==observedBoot)fail();
+    const snapshot={boot:observedBoot,listener,process,stamp,stampMetadata,directory:metadata(directory)};
+    if(currentSourceSnapshot&&!isDeepStrictEqual(snapshot,currentSourceSnapshot))fail();currentSourceSnapshot??=snapshot;
   }
   function perimeter(){
     phase('preflight_current');if(getuid()!==0||hostname()!=='ybjqbzojln')fail();
@@ -378,7 +393,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   }
   // A concurrent change cannot be forgiven by a later reversion during rollback.
   const closed=fn=>(...args)=>{try{if(invalid)fail();return fn(...args);}catch{invalid=true;fail();}};
-  return{storedCurrent:closed(storedCurrent),preflight:closed(preflight),perimeter:closed(perimeter)};
+  return{storedCurrent:closed(storedCurrent),preflight:closed(preflight),perimeter:closed(perimeter),currentCombinedSource:closed(currentCombinedSource)};
 }
 
 // Based on af1948c's immutable installer; transport binds this closure to the

@@ -270,6 +270,33 @@ export function verifyAbbottBootstrapSource(platform = realPlatform) {
   finally { for (const key of Object.keys(values)) delete values[key]; }
 }
 
+// Verification-only proof: retain one current listener identity for the entire
+// capsule, including both issuer reads or both immutable asset-tree checks.
+export async function createCurrentAbbottSourceReader(platform = realPlatform) {
+  const { createAbbottDeploymentProof } = await import('./abbott-runtime-release-remote.mjs');
+  const proof = createAbbottDeploymentProof({ io: platform.fs, hostname: platform.hostname, getuid: platform.uid });
+  let invalid = false;
+  const read = () => {
+    let values;
+    try {
+      if (invalid) refuse();
+      values = readVerifiedAbbottSource({ ...platform, verifySourceProcess: () => proof.currentCombinedSource() });
+      proof.currentCombinedSource();
+      return values;
+    } catch {
+      invalid = true;
+      if (values) for (const key of Object.keys(values)) delete values[key];
+      refuse();
+    }
+  };
+  const verify = () => {
+    const values = read();
+    try { return { status: 'verified', allowlistedKeyCount: Object.keys(values).length }; }
+    finally { for (const key of Object.keys(values)) delete values[key]; }
+  };
+  return Object.freeze({ read, verify });
+}
+
 export function runBootstrap(platform, args, environment, emit) {
   try {
     if (args.length || Object.keys(environment).length) refuse();

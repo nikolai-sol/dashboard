@@ -14,7 +14,7 @@ import { ASSET_ATTESTATION_REASONS } from './abbott-asset-attestation.mjs';
 const ROOT = fs.realpathSync(path.resolve(import.meta.dirname, '..'));
 const REVIEWED_INTEGRATION = '05afbed92c9d84f0a556960a53ed8ebf9af43e8e';
 const OUTPUT = '/Users/nafanya/Downloads/Abbott-dashboard-cutover-evidence-2026-09-14';
-const BASELINE = '/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026-09-16';
+const BASELINE = '/Users/nafanya/Downloads/Abbott-dashboard-visual-baseline-2026-09-14';
 const AUTH_HASH = '71fad58b4eb66b2cd5dd29b7c463043c5cc8a04d839e597a14e0d9a2fae8e64f';
 const refuse = () => { throw new Error('ABBOTT_VERIFICATION_REFUSED'); };
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -39,17 +39,24 @@ export function fixedSshInvocation(kind) {
   return { binary: '/usr/bin/ssh', args };
 }
 
-export function buildIssuerCapsule({ bootstrapSource, issuerSource, authSource }) {
+function currentBootstrapSource(bootstrapSource,workerSource) {
+  if(!Buffer.isBuffer(bootstrapSource)||!Buffer.isBuffer(workerSource)||!workerSource.length)refuse();
+  const text=bootstrapSource.toString(),needle="'./abbott-runtime-release-remote.mjs'";
+  if(text.split(needle).length!==2)refuse();
+  return Buffer.from(text.replace(needle,JSON.stringify('data:text/javascript;base64,'+workerSource.toString('base64'))));
+}
+
+export function buildIssuerCapsule({ bootstrapSource, workerSource, issuerSource, authSource }) {
   if (createHash('sha256').update(authSource).digest('hex') !== AUTH_HASH) refuse();
   const moduleUrl = source => 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
-  const code = `try { const proof=await import(${JSON.stringify(moduleUrl(bootstrapSource))}); const issuer=await import(${JSON.stringify(moduleUrl(issuerSource))}); await issuer.runRemoteIssuer(proof.readVerifiedAbbottSource); } catch { process.stderr.write('ABBOTT_ISSUER_REFUSED\\n');process.exitCode=1; }\n`;
+  const code = `try { const proof=await import(${JSON.stringify(moduleUrl(currentBootstrapSource(bootstrapSource,workerSource)))}); const issuer=await import(${JSON.stringify(moduleUrl(issuerSource))}); const source=await proof.createCurrentAbbottSourceReader(); await issuer.runRemoteIssuer(source.read); } catch { process.stderr.write('ABBOTT_ISSUER_REFUSED\\n');process.exitCode=1; }\n`;
   if (Buffer.byteLength(code) > 262144) refuse();
   return Buffer.from(code);
 }
 
-export function buildAssetCapsule({bootstrapSource,attestationSource}) {
+export function buildAssetCapsule({bootstrapSource,workerSource,attestationSource}) {
   const url=bytes=>'data:text/javascript;base64,'+Buffer.from(bytes).toString('base64');
-  const code=`let imported=false;try{const proof=await import(${JSON.stringify(url(bootstrapSource))});const assets=await import(${JSON.stringify(url(attestationSource))});imported=true;assets.runRemoteAssetAttestation(proof.verifyAbbottBootstrapSource);}catch{process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED reason='+(imported?'remote_attestation':'remote_import')+'\\n');process.exitCode=1;}\n`;
+  const code=`let imported=false;try{const proof=await import(${JSON.stringify(url(currentBootstrapSource(bootstrapSource,workerSource)))});const assets=await import(${JSON.stringify(url(attestationSource))});imported=true;const source=await proof.createCurrentAbbottSourceReader();assets.runRemoteAssetAttestation(source.verify);}catch{process.stderr.write('ABBOTT_ASSET_ATTESTATION_REFUSED reason='+(imported?'remote_attestation':'remote_import')+'\\n');process.exitCode=1;}\n`;
   if(Buffer.byteLength(code)>262144)refuse();return Buffer.from(code);
 }
 
@@ -79,10 +86,10 @@ function productionCapsule(kind='issuer') {
   if (fs.realpathSync(gitDir) !== gitDir || fs.readFileSync(path.join(gitDir,'gitdir'),'utf8').trim() !== marker || git('rev-parse','--absolute-git-dir').toString().trim() !== gitDir) refuse();
   git('merge-base','--is-ancestor',REVIEWED_INTEGRATION,'HEAD');
   if (git('status', '--porcelain=v1').length || git('rev-parse', '--show-toplevel').toString().trim() !== ROOT) refuse();
-  const bootstrapSource=git('show','HEAD:scripts/bootstrap-abbott-host.mjs');
-  if(kind==='assets')return buildAssetCapsule({bootstrapSource,attestationSource:git('show','HEAD:scripts/abbott-asset-attestation.mjs')});
+  const bootstrapSource=git('show','HEAD:scripts/bootstrap-abbott-host.mjs'),workerSource=git('show','HEAD:scripts/abbott-runtime-release-remote.mjs');
+  if(kind==='assets')return buildAssetCapsule({bootstrapSource,workerSource,attestationSource:git('show','HEAD:scripts/abbott-asset-attestation.mjs')});
   if(kind!=='issuer')refuse();
-  return buildIssuerCapsule({ bootstrapSource, issuerSource: git('show', 'HEAD:scripts/abbott-parity-issuer.mjs'), authSource: git('show', `${HOST.sourceSha}:src/lib/access-auth.ts`) });
+  return buildIssuerCapsule({ bootstrapSource, workerSource, issuerSource: git('show', 'HEAD:scripts/abbott-parity-issuer.mjs'), authSource: git('show', `${HOST.sourceSha}:src/lib/access-auth.ts`) });
 }
 
 function processStart(pid) {
