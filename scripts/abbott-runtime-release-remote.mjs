@@ -21,9 +21,9 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     const refuse=code=>{nginxReason(code);const error=Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');rejected.set(error,code);throw error;};
     nginxReason('syntax');
     if(!onInventory&&/abbott/i.test(text)||/[\0\x01-\x08\x0b\x0c\x0e-\x1f]/.test(text))refuse(/abbott/i.test(text)?'existing_abbott_route':'syntax');
-    const tokens=[],literalTokens=new WeakSet(),ambiguousGaps=new Set();let word='',quote=null,started=false,wordStart=0;
+    const tokens=[],literalTokens=new WeakSet(),nodeTokens=new WeakMap(),ambiguousGaps=new Set();let word='',quote=null,started=false,wordStart=0;
     // Preserve raw provenance before token normalization; routing cannot trust dropped escapes.
-    const flush=end=>{if(started){const token={word};if(lexical){const raw=text.slice(wordStart,end),boundary=i=>i<0||i===text.length||/[ \t\r\n{};]/.test(text[i]);if(boundary(wordStart-1)&&boundary(end)&&!raw.includes('\\')&&[word,'"'+word+'"',"'"+word+"'"].includes(raw))literalTokens.add(token);}tokens.push(token);word='';started=false;}if(tokens.length>32768)fail();};
+    const flush=end=>{if(started){const token={word,start:wordStart,end};if(lexical){const raw=text.slice(wordStart,end),boundary=i=>i<0||i===text.length||/[ \t\r\n{};]/.test(text[i]);if(boundary(wordStart-1)&&boundary(end)&&!raw.includes('\\')&&[word,'"'+word+'"',"'"+word+"'"].includes(raw))literalTokens.add(token);}tokens.push(token);word='';started=false;}if(tokens.length>32768)fail();};
     for(let i=0;i<text.length;i++){if(!started)wordStart=i;const c=text[i];if(quote){if(c==='\\'){if(++i>=text.length)fail();word+=text[i];}else if(c===quote)quote=null;else word+=c;continue;}
       if(c==='"'||c==="'"){quote=c;started=true;continue;}if(c==='#'){flush(i);while(i<text.length&&text[i]!=='\n')i++;continue;}
       if(c==='\\'){if(++i>=text.length)fail();word+=text[i];started=true;continue;}
@@ -31,10 +31,10 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
       if(/\s/.test(c)){flush(i);if(lexical&&!/[ \t\r\n]/.test(c))ambiguousGaps.add(tokens.length);continue;}if('{};'.includes(c)){flush(i);tokens.push({syntax:c});}else{word+=c;started=true;}
     }flush(text.length);if(quote)fail();
     const nodes=[],stack=[nodes],literalNodes=new WeakSet();let directive=[],literal=true;
-    for(const [tokenIndex,token] of tokens.entries()){if(lexical&&ambiguousGaps.has(tokenIndex))literal=false;if(token.syntax==='{'||token.syntax===';'){if(!directive.length||!directive[0])fail();const node={name:directive[0],args:directive.slice(1),block:token.syntax==='{',children:[]};if(lexical&&literal)literalNodes.add(node);stack.at(-1).push(node);directive=[];literal=true;if(node.block){stack.push(node.children);if(stack.length>32)fail();}}
-      else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else{directive.push(token.word);if(lexical&&!literalTokens.has(token))literal=false;}
+    for(const [tokenIndex,token] of tokens.entries()){if(lexical&&ambiguousGaps.has(tokenIndex))literal=false;if(token.syntax==='{'||token.syntax===';'){if(!directive.length||!directive[0].word)fail();const words=directive.map(token=>token.word),node={name:words[0],args:words.slice(1),block:token.syntax==='{',children:[]};nodeTokens.set(node,directive.slice());if(lexical&&literal)literalNodes.add(node);stack.at(-1).push(node);directive=[];literal=true;if(node.block){stack.push(node.children);if(stack.length>32)fail();}}
+      else if(token.syntax==='}'){if(directive.length||stack.length===1)fail();stack.pop();}else{directive.push(token);if(lexical&&!literalTokens.has(token))literal=false;}
     }if(stack.length!==1||directive.length)fail();
-    if(onInventory)return onInventory(nodes,literalNodes);
+    if(onInventory)return onInventory(nodes,literalNodes,nodeTokens);
     // conf.d is already in the HTTP context. A nested server cannot supply TLS authority.
     // Names are diagnostic vocabulary only, never an acceptance allowlist.
     const unsupportedName=(n,selected=false)=>selected&&['location','proxy_pass','return','add_header','root','alias','index','try_files','error_page','proxy_redirect','proxy_cache','ssl_ecdh_curve','ssl_conf_command','client_body_buffer_size','charset','gzip_vary','if'].includes(n.name)?'unsupported_'+n.name:'unsupported_other';
@@ -109,6 +109,10 @@ function analyzeAbbottNginxText(text,nginxReason,onUnsupported,onFirstRejection=
     }};visit(nodes);
   }
 
+const ABBOTT_NGINX_EXACT_ROUTES=Object.freeze(['/dashboard/18','/dashboard/18/','/dashboard/abbott','/dashboard/abbott/','/api/dashboard/18','/api/dashboard/18/pdf','/api/dashboard/18/excel','/api/dashboard/18/abbott-admin-users','/api/dashboard/abbott','/api/dashboard/abbott/pdf','/api/dashboard/abbott/excel','/api/dashboard/abbott/abbott-admin-users']);
+const ABBOTT_NGINX_ROUTE_IDENTITIES=Object.freeze([...ABBOTT_NGINX_EXACT_ROUTES.map(route=>'= '+route),'^~ /_next-abbott/'].sort());
+const ABBOTT_NGINX_ROUTE_DIRECTIVES=Object.freeze([['proxy_pass','http://127.0.0.1:3004'],['proxy_set_header','Host','$host'],['proxy_set_header','X-Real-IP','$remote_addr'],['proxy_set_header','X-Forwarded-For','$proxy_add_x_forwarded_for'],['proxy_set_header','X-Forwarded-Proto','$scheme']].map(Object.freeze));
+
 export function validateAbbottNginxText(text,note=()=>{}){analyzeAbbottNginxText(text,note,null);}
 export function validateAbbottNginxOwnershipText(text,note=()=>{}){
   const refuse=reason=>{note(reason);throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
@@ -117,9 +121,9 @@ export function validateAbbottNginxOwnershipText(text,note=()=>{}){
     return analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes)=>{
       note('tls_count');
       const target=selectAbbottNginxTls(nodes,()=>refuse('tls_count'));
-      const exact=new Set(['/dashboard/18','/dashboard/18/','/dashboard/abbott','/dashboard/abbott/','/api/dashboard/18','/api/dashboard/18/pdf','/api/dashboard/18/excel','/api/dashboard/18/abbott-admin-users','/api/dashboard/abbott','/api/dashboard/abbott/pdf','/api/dashboard/abbott/excel','/api/dashboard/abbott/abbott-admin-users']);
-      const expected=new Set([...exact].map(route=>'= '+route).concat('^~ /_next-abbott/'));
-      const directions=[['proxy_pass','http://127.0.0.1:3004'],['proxy_set_header','Host','$host'],['proxy_set_header','X-Real-IP','$remote_addr'],['proxy_set_header','X-Forwarded-For','$proxy_add_x_forwarded_for'],['proxy_set_header','X-Forwarded-Proto','$scheme']];
+      const exact=new Set(ABBOTT_NGINX_EXACT_ROUTES);
+      const expected=new Set(ABBOTT_NGINX_ROUTE_IDENTITIES);
+      const directions=ABBOTT_NGINX_ROUTE_DIRECTIVES;
       const owned=new Set();let port=null;
       const abbottPath=value=>{const lower=value.toLowerCase(),parts=lower.split('/').filter(Boolean);return lower.includes('_next-abbott')||parts.some((part,index)=>part==='dashboard'&&(parts[index+1]==='abbott'||Number(parts[index+1])===18));};
       const port3004=value=>/(?:^|:)0*3004(?:$|\D)/.test(value);
@@ -138,6 +142,46 @@ export function validateAbbottNginxOwnershipText(text,note=()=>{}){
       return {port,locations:owned.size};
     });
   }catch(error){if(error?.message==='ABBOTT_DEPLOY_PREFLIGHT_REFUSED')throw error;refuse('syntax');}
+}
+// Pure planning only: no target file reads, authority, transport or writer.
+function planAbbottNginxPortSwitchOneWay(text,fromPort,toPort){
+  const fail=()=>{throw Error('ABBOTT_NGINX_ROUTE_PLAN_REFUSED');};
+  const state=validateAbbottNginxOwnershipText(text);
+  if(state.locations!==13||state.port!==fromPort)fail();
+  const spans=analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes,nodeTokens)=>{
+    const target=selectAbbottNginxTls(nodes,fail),found=[];
+    if(target.name!=='server'||!target.block||target.args.length||!literalNodes.has(target))fail();
+    const walk=(list,parent=null)=>{for(const node of list){
+      if(node.name==='server'&&node.block&&(parent!==null||node.args.length||!literalNodes.has(node)))fail();
+      if(['listen','server_name'].includes(node.name)&&(parent?.name!=='server'||node.block||!literalNodes.has(node)))fail();
+      const route=node.name==='location'&&node.args.join(' ');
+      if(parent===target&&ABBOTT_NGINX_ROUTE_IDENTITIES.includes(route)){
+        const token=nodeTokens.get(node.children[0])?.[1],raw=token&&text.slice(token.start,token.end);
+        if(raw!=='http://127.0.0.1:'+fromPort)fail();
+        const start=token.end-4,end=token.end;
+        found.push({route,start,end,byteStart:Buffer.byteLength(text.slice(0,start)),byteEnd:Buffer.byteLength(text.slice(0,end)),from:String(fromPort),to:String(toPort)});
+        continue; // The ownership validator already proved all five child directives.
+      }
+      if([node.name,...node.args].some(value=>/abbott/i.test(value)||/dashboard.*\b18\b/i.test(value)||/(?:^|:)0*3004(?:$|\D)/.test(value)))fail();
+      walk(node.children,node);
+    }};walk(nodes);return found;
+  }).sort((a,b)=>a.byteStart-b.byteStart);
+  if(spans.length!==13||new Set(spans.map(s=>s.route)).size!==13||spans.some((s,i)=>s.byteEnd-s.byteStart!==4||i&&spans[i-1].byteEnd>s.byteStart))fail();
+  let candidate=text;
+  for(const span of spans.slice().reverse())candidate=candidate.slice(0,span.start)+span.to+candidate.slice(span.end);
+  const replacements=Object.freeze(spans.map(({start,end,...span})=>Object.freeze(span)));
+  const sha256=value=>createHash('sha256').update(value).digest('hex'),masked=Buffer.from(text,'utf8');
+  for(const {byteStart,byteEnd}of replacements)masked.fill(0,byteStart,byteEnd);
+  const nonOwnedSha256=sha256(masked);masked.fill(0);
+  return Object.freeze({candidate,predecessorSha256:sha256(text),candidateSha256:sha256(candidate),nonOwnedSha256,routeIdentities:ABBOTT_NGINX_ROUTE_IDENTITIES,replacements});
+}
+export function planAbbottNginxPortSwitch(text,fromPort,toPort){
+  try{
+    if(typeof text!=='string'||Buffer.byteLength(text)>1048576||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text)||!((fromPort===3001&&toPort===3004)||(fromPort===3004&&toPort===3001)))throw Error();
+    const plan=planAbbottNginxPortSwitchOneWay(text,fromPort,toPort),reverse=planAbbottNginxPortSwitchOneWay(plan.candidate,toPort,fromPort);
+    if(reverse.candidate!==text||reverse.nonOwnedSha256!==plan.nonOwnedSha256)throw Error();
+    return plan;
+  }catch{throw Error('ABBOTT_NGINX_ROUTE_PLAN_REFUSED');}
 }
 function validateAbbottColdNginxText(text,note=()=>{}){
   const state=validateAbbottNginxOwnershipText(text,note);
