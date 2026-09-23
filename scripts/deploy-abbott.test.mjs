@@ -13,11 +13,11 @@ const root = path.resolve(import.meta.dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const modulePath = new URL('./abbott-deploy-runtime.mjs', import.meta.url);
 
-test('cold local authority has one fixed closed schema and an intentionally unarmed record',async()=>{
+test('cold local authority has one fixed closed schema and the exact authorized successor binding',async()=>{
  const m=await import(modulePath),off={version:1,scope:'abbott',armed:false,expectedCurrent:null},current={id:'a'.repeat(32),sourceSha:'b'.repeat(40),manifestDigest:'c'.repeat(64)},on={...off,armed:true,expectedCurrent:current};
  assert.deepEqual(m.validateColdCurrentAuthority(off),off);assert.deepEqual(m.validateColdCurrentAuthority(on),on);
  for(const value of [null,{}, {...off,extra:1},{...off,version:2},{...off,scope:'zaruku'},{...off,armed:'false'},{...off,expectedCurrent:current},{...on,expectedCurrent:null},...['id','sourceSha','manifestDigest'].map(k=>({...on,expectedCurrent:{...current,[k]:'F'.repeat(current[k].length)}})),{...on,expectedCurrent:{...current,path:'/tmp'}}])assert.throws(()=>m.validateColdCurrentAuthority(value));
- assert.deepEqual(JSON.parse(read('deploy/abbott/cold-current.json')),off);
+ assert.deepEqual(JSON.parse(read('deploy/abbott/cold-current.json')),{version:1,scope:'abbott',armed:true,expectedCurrent:{id:'1fdaecbdad47430a9d1375566abad001',sourceSha:'dfd6267a742d1c7d88ccac636b89661df9b96f9f',manifestDigest:'586533387dca0928c75d6e9807503e918d316507b6f1ec128e087e075211690e'}});
  const args=[path.join(root,'deploy/abbott/release.json'),'cold-restore-current'];
  assert.equal(m.validateInvocation(args,{}).action,'cold-restore-current');
  for(const key of ['COLD_CURRENT_PATH','COLD_CURRENT_AUTHORITY','EXPECTED_CURRENT_ID','EXPECTED_CURRENT_SOURCE_SHA','EXPECTED_CURRENT_MANIFEST_DIGEST'])assert.throws(()=>m.validateInvocation(args,{[key]:'injected'}),/override/);
@@ -51,10 +51,27 @@ test('cold local armed dispatch sends exact current authority without live inspe
  assert.deepEqual(f.calls.at(-1),['log','ABBOTT_DEPLOY_COMMITTED stage=complete reason=none']);
  for(const options of [{changed:true},{badResult:true}]){const bad=coldDriver(authority,options);await assert.rejects(bad.run());assert.equal(bad.calls.some(c=>c[0]==='log'),false);if(options.changed)assert.equal(bad.calls.some(c=>c[0]==='request'),false);}
 });
-test('cold fixed wrapper rejects arguments and emits one sanitized unarmed refusal',()=>{
+test('cold fixed wrapper rejects arguments and delegates only inside an inert private fixture',()=>{
  const wrapper=path.join(root,'scripts/restore-abbott-current.sh');assert.ok(fs.existsSync(wrapper));
  const argument=spawnSync('/bin/bash',[wrapper,'force'],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8'});assert.equal(argument.status,1);assert.match(argument.stderr,/accepts no arguments/);
- const result=spawnSync('/bin/bash',[wrapper],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8'});assert.equal(result.status,1);assert.equal(result.stdout,'');assert.match(result.stderr,/^ABBOTT_DEPLOY_REFUSED stage=unknown reason=failed\n$/);
+ const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'abbott-cold-wrapper-'));
+ try{
+  assert.equal(fs.statSync(fixture).mode&0o077,0);
+  const scripts=path.join(fixture,'scripts'),fixtureWrapper=path.join(scripts,'restore-abbott-current.sh'),stub=path.join(scripts,'abbott-deploy-runtime.sh'),record=stub+'.args';
+  fs.mkdirSync(scripts,{mode:0o700});fs.mkdirSync(path.join(fixture,'deploy/abbott'),{recursive:true,mode:0o700});
+  fs.writeFileSync(fixtureWrapper,fs.readFileSync(wrapper),{mode:0o700});
+  fs.writeFileSync(path.join(fixture,'deploy/abbott/release.json'),'{}\n',{mode:0o600});
+  for(const status of [0,7]){
+   // This inert sibling records arguments only. It never loads the real driver.
+   fs.writeFileSync(stub,`#!/bin/bash\nprintf '%s\\n' "$@" > "$0.args"\nprintf 'fixture result\\n'\nprintf 'fixture diagnostic\\n' >&2\nexit ${status}\n`,{mode:0o700});
+   const rejected=spawnSync('/bin/bash',[fixtureWrapper,'force'],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8'});assert.equal(rejected.status,1);assert.match(rejected.stderr,/accepts no arguments/);assert.equal(fs.existsSync(record),false);
+   const result=spawnSync('/bin/bash',[fixtureWrapper],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8'});
+   assert.equal(result.status,status);assert.equal(result.stdout,'fixture result\n');assert.equal(result.stderr,'fixture diagnostic\n');
+   assert.deepEqual(fs.readFileSync(record,'utf8').split('\n'),[fs.realpathSync(scripts)+'/../deploy/abbott/release.json','cold-restore-current','']);
+   fs.unlinkSync(record);
+  }
+ }finally{fs.rmSync(fixture,{recursive:true,force:true});}
+ assert.equal(fs.existsSync(fixture),false);
  assert.equal(JSON.parse(read('package.json')).scripts['restore:abbott:current'],'bash scripts/restore-abbott-current.sh');
 });
 

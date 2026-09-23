@@ -1,1 +1,1 @@
-{"version":1,"scope":"abbott","armed":false,"expectedCurrent":null}
+{"version":1,"scope":"abbott","armed":true,"expectedCurrent":{"id":"1fdaecbdad47430a9d1375566abad001","sourceSha":"dfd6267a742d1c7d88ccac636b89661df9b96f9f","manifestDigest":"586533387dca0928c75d6e9807503e918d316507b6f1ec128e087e075211690e"}}
