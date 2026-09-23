@@ -114,27 +114,34 @@ export function validateAbbottNginxOwnershipText(text,note=()=>{}){
   const refuse=reason=>{note(reason);throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');};
   note('syntax');
   try{
-    analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes)=>{
+    return analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes)=>{
       note('tls_count');
       const target=selectAbbottNginxTls(nodes,()=>refuse('tls_count'));
       const exact=new Set(['/dashboard/18','/dashboard/18/','/dashboard/abbott','/dashboard/abbott/','/api/dashboard/18','/api/dashboard/18/pdf','/api/dashboard/18/excel','/api/dashboard/18/abbott-admin-users','/api/dashboard/abbott','/api/dashboard/abbott/pdf','/api/dashboard/abbott/excel','/api/dashboard/abbott/abbott-admin-users']);
       const expected=new Set([...exact].map(route=>'= '+route).concat('^~ /_next-abbott/'));
       const directions=[['proxy_pass','http://127.0.0.1:3004'],['proxy_set_header','Host','$host'],['proxy_set_header','X-Real-IP','$remote_addr'],['proxy_set_header','X-Forwarded-For','$proxy_add_x_forwarded_for'],['proxy_set_header','X-Forwarded-Proto','$scheme']];
-      const owned=new Set();
+      const owned=new Set();let port=null;
       const abbottPath=value=>{const lower=value.toLowerCase(),parts=lower.split('/').filter(Boolean);return lower.includes('_next-abbott')||parts.some((part,index)=>part==='dashboard'&&(parts[index+1]==='abbott'||Number(parts[index+1])===18));};
       const port3004=value=>/(?:^|:)0*3004(?:$|\D)/.test(value);
       const locationIdentity=node=>node.name==='location'&&node.block&&literalNodes.has(node)&&(node.args.length===2&&node.args[0]==='='&&exact.has(node.args[1])?'= '+node.args[1]:node.args.length===2&&node.args[0]==='^~'&&node.args[1]==='/_next-abbott/'?'^~ /_next-abbott/':null);
       const validateOwned=node=>{
         const identity=locationIdentity(node);if(!identity||owned.has(identity)||node.children.length!==directions.length)refuse('existing_abbott_route');
-        for(let index=0;index<directions.length;index++){const child=node.children[index],wanted=directions[index];if(child.block||child.name!==wanted[0]||!literalNodes.has(child)||child.args.length!==wanted.length-1||child.args.some((value,i)=>value!==wanted[i+1]))refuse('existing_abbott_route');}
+        const upstream=node.children[0].args[0],observed=upstream==='http://127.0.0.1:3001'?3001:upstream==='http://127.0.0.1:3004'?3004:null;
+        if(observed===null||port!==null&&port!==observed)refuse('existing_abbott_route');port=observed;
+        for(let index=0;index<directions.length;index++){const child=node.children[index],wanted=index===0?['proxy_pass','http://127.0.0.1:'+port]:directions[index];if(child.block||child.name!==wanted[0]||!literalNodes.has(child)||child.args.length!==wanted.length-1||child.args.some((value,i)=>value!==wanted[i+1]))refuse('existing_abbott_route');}
         owned.add(identity);
       };
       const walk=(list,directTargetChildren=false)=>{for(const node of list){const identity=directTargetChildren&&locationIdentity(node);if(identity){validateOwned(node);continue;}const values=[node.name,...node.args];if(values.some(abbottPath)||values.some(port3004))refuse(values.some(abbottPath)?'existing_abbott_route':'existing_3004');walk(node.children,node===target);}};
       walk(nodes);
       if(owned.size&& (owned.size!==expected.size||[...expected].some(identity=>!owned.has(identity))))refuse('existing_abbott_route');
       note('metadata');
+      return {port,locations:owned.size};
     });
   }catch(error){if(error?.message==='ABBOTT_DEPLOY_PREFLIGHT_REFUSED')throw error;refuse('syntax');}
+}
+function validateAbbottColdNginxText(text,note=()=>{}){
+  const state=validateAbbottNginxOwnershipText(text,note);
+  if(state.locations!==13||state.port!==3001){note('existing_abbott_route');throw Error('ABBOTT_DEPLOY_PREFLIGHT_REFUSED');}
 }
 export function canonicalAbbottIncludePaths(paths){return Array.isArray(paths)&&paths.length<=8&&paths.every((v,i)=>typeof v==='string'&&v.length<=256&&/^\/etc\/(?:nginx|letsencrypt)\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(v)&&!v.split('/').some(s=>s==='.'||s==='..')&&(i===0||paths[i-1]<v));}
 export function inventoryAbbottNginxIncludes(text){try{if(typeof text!=='string'||Buffer.byteLength(text)>1048576)throw Error();return analyzeAbbottNginxText(text,()=>{},null,null,(nodes,literalNodes)=>{
@@ -674,7 +681,7 @@ async function verifyStagedArtifact(artifact, manifest, boot) {
   }
 }
 
-let abbottDeploymentProtection;
+let abbottDeploymentProtection,abbottColdProtection;
 const realPlatform = {
   startupState() {
     // Fixed root PM2 home; never print definitions, which can contain secrets.
@@ -698,6 +705,16 @@ const realPlatform = {
     }
     const fd=fs.openSync('/root/.pm2',fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);
     try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  },
+  async coldPreflight(expected,notePhase) {
+    if(scope!=='abbott'||!browserPrerequisite)fail('Abbott cold preflight unavailable');
+    abbottColdProtection??=createAbbottDeploymentProof({notePhase,validateNginx:validateAbbottColdNginxText,
+      verifyActive:record=>{if(!isDeepStrictEqual(current(),record))fail('Abbott active checkpoint drift');},
+      verifyBrowser:()=>browserPrerequisite.verifyBrowserInstallation({contract:browserPrerequisite.contract,gid:984,checkExecutable:executable=>{
+        const s=fs.lstatSync(executable);return s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.uid===0&&s.gid===984&&(s.mode&0o7777)===0o750&&fs.realpathSync(executable)===executable;
+      }}),
+    });
+    const result=abbottColdProtection.storedCurrent(expected);abbottDeploymentProtection=abbottColdProtection;return result;
   },
   async deploymentPreflight(notePhase) {
     if(scope!=='abbott'||!browserPrerequisite)fail('Abbott deployment preflight unavailable');
@@ -1010,6 +1027,7 @@ function createStartupGuard(platform,phase) {
     for(let pass=0;pass<2;pass++){
       lock.prove();if(!compensating)guard();check();
       journal(phases.before[pass]);
+      await checkpoint(compensating);
       await platform.saveStartup();
       lock.prove();const state=check();assertSavedRegistration(state.saved,proof,account);
       if(!isDeepStrictEqual(state.live,state.saved))fail('PM2 startup readback mismatch');
@@ -1176,11 +1194,130 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
   }finally{originalPointer?.fill(0);}
 }
 
+function validateColdRequest(request) {
+  if (!request || Object.keys(request).sort().join(',') !== 'action,expectedCurrent'
+      || request.action !== 'cold-restore-current') fail('Invalid cold request');
+  const value = request.expectedCurrent;
+  if (!value || Object.keys(value).sort().join(',') !== 'id,manifestDigest,sourceSha'
+      || typeof value.id !== 'string' || !ID.test(value.id)
+      || typeof value.sourceSha !== 'string' || !SHA.test(value.sourceSha)
+      || typeof value.manifestDigest !== 'string' || !DIGEST.test(value.manifestDigest)) {
+    fail('Invalid cold current authority');
+  }
+  return value;
+}
+async function coldRestoreCurrent(request,platform,guard,terminal) {
+  const supplied=validateColdRequest(request);
+  const expectedCurrent={id:supplied.id,sourceSha:supplied.sourceSha,manifestDigest:supplied.manifestDigest};
+  if(scope!=='abbott'||process.getuid()!==DEPLOY_UID)fail('Invalid cold runtime authority');
+  const phase=(value,reason='failed')=>{if(terminal){terminal.phase=value;terminal.reason=reason;}};
+  phase('preflight_current');
+  const record=current();
+  if(!record||!isDeepStrictEqual(expectedCurrent,{id:record.id,sourceSha:record.sourceSha,manifestDigest:record.manifestDigest}))fail('Cold current authority mismatch');
+  const stored=await platform.coldPreflight(expectedCurrent,phase);
+  if(!isDeepStrictEqual(stored.record,record))fail('Cold stored proof mismatch');
+  const account=platform.account();
+  if(!Number.isInteger(account.uid)||account.uid<=0||account.uid===DEPLOY_UID||!Number.isInteger(account.gid)||account.gid<=0||platform===realPlatform&&(account.uid!==982||account.gid!==984))fail('Cold runtime account mismatch');
+  const startup=createStartupGuard(platform,phase);
+  const absent=async()=>{
+    if(platform.registration()!==null||processProof(platform,account)!==null)fail('Cold runtime is not absent');
+    await platform.assertNoListener();
+  };
+  const absentStartup=()=>{
+    const state=startup.check();if(state.backup===null)fail('Cold startup backup missing');
+    for(const rows of [state.live,state.saved,state.backup])assertSavedRegistration(rows,null,account);
+  };
+  await absent();absentStartup();
+  const directory=directoryIdentity();
+  const environmentDigest=()=>{
+    const file=`${APP}/.env`;owned(file);const s=fs.lstatSync(file);
+    if(s.gid!==account.gid||(s.mode&0o7777)!==0o640)fail('Cold environment metadata mismatch');
+    const bytes=stableRead(file);try{return hash(bytes);}finally{bytes.fill(0);}
+  };
+  const envDigest=environmentDigest();
+  const sealFile=file=>{
+    const s=fs.lstatSync(file,{throwIfNoEntry:false});if(!s)return null;
+    owned(file);const bytes=stableRead(file);
+    try{return {metadata:Object.fromEntries(['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].map(k=>[k,s[k]])),digest:hash(bytes)};}finally{bytes.fill(0);}
+  };
+  const sealed=()=>{
+    const names=fs.readdirSync(CONTROL);if(names.length>256)fail('Cold control inventory overflow');
+    const files=[CURRENT,`${CONTROL}/${record.id}/record.json`,`${CONTROL}/${record.id}/trusted-runtime-manifest.json`,`${CONTROL}/${record.id}/deploy/abbott/start.cjs`,`${BASE}/.dashboard-abbott-launcher.cjs`,...names.filter(n=>/^ownership-[a-f0-9-]{36}\.json$/.test(n)).sort().map(n=>CONTROL+'/'+n)];
+    return files.map(file=>[file,sealFile(file)]);
+  };
+  const authoritySeal=sealed();
+  let lock,journal,journalPath,startAttempted=false,captured=null;
+  const authorityCheck=async()=>{
+    if(!isDeepStrictEqual(current(),record)||!isDeepStrictEqual(directoryIdentity(),directory)||environmentDigest()!==envDigest||!isDeepStrictEqual(sealed(),authoritySeal))fail('Cold stored authority drift');
+    const proof=await platform.coldPreflight(expectedCurrent,phase);
+    if(!isDeepStrictEqual(proof.record,record))fail('Cold stored proof drift');
+    platform.assertDeploymentPerimeter();
+  };
+  try{
+    guard();phase('lock');lock=createOwnedAbbottLock();
+    await authorityCheck();await absent();absentStartup();guard();lock.prove();
+    journalPath=`${CONTROL}/cold-current-${lock.owner}.json`;
+    journal=createAbbottJournal(lock,journalPath,{action:'cold-restore-current',expectedCurrent,directory});
+    journal('prepared');
+    const ownedProcess=createOwnedAbbottProcess(record,platform,account,lock);
+    const checkpoint=async(compensating=false)=>{
+      await new Promise(resolve=>setTimeout(resolve,0));if(!compensating)guard();lock.prove();
+      await authorityCheck();startup.check();
+      if(compensating)await absent();else if(startAttempted)captured=ownedProcess.capture(true);else await absent();
+    };
+    try{
+      await checkpoint();absentStartup();phase('activation_start');journal('starting');
+      await checkpoint();absentStartup();guard();
+      startAttempted=true;if(terminal)terminal.status='UNACKNOWLEDGED';
+      let failed=false;try{await platform.startFresh(`${CONTROL}/${record.id}`);}catch{failed=true;}finally{captured=ownedProcess.capture(false);}
+      if(failed||!captured.proof)fail('Cold runtime start failed');
+      captured=ownedProcess.capture(true);journal('started');await checkpoint();
+      phase('candidate_health');await platform.health(captured.proof);await checkpoint();journal('healthy');
+      await startup.persist({proof:captured.proof,account,lock,guard,checkpoint,journal,phases:{before:['persisting_primary','persisting_backup'],after:['primary_persisted','backup_persisted']}});
+      await checkpoint();
+      const live=await platform.deploymentPreflight(phase);
+      if(!isDeepStrictEqual(live,captured.proof))fail('Cold live preflight mismatch');
+      await checkpoint();journal('committed');return record;
+    }catch{
+      if(!startAttempted)throw Error('Cold pre-start refusal');
+      phase('compensation');
+      try{
+        lock.prove();journal('compensating_stop');
+        captured=ownedProcess.capture(false);
+        if(captured.registration)await ownedProcess.remove(captured.registration,captured.proof);else await absent();
+        // Remove only owned processes even if source/env drift later requires review.
+        await checkpoint(true);
+        await startup.persist({proof:null,account,lock,guard,checkpoint,journal,compensating:true,phases:{before:['compensating_primary','compensating_backup']}});
+        await checkpoint(true);absentStartup();journal('restored_absent');
+        if(terminal)terminal.status='RESTORED';
+      }catch{
+        lock.preserve();
+        try{journal('review_required');if(terminal)terminal.status='REVIEW_REQUIRED';}catch{}
+      }
+      fail('Cold runtime restoration failed');
+    }
+  }catch(error){
+    if(!startAttempted&&journalPath){
+      // Only this attempt's verified journal can be removed before start.
+      lock.prove();
+      for(const file of [journalPath+'.next',journalPath])if(fs.existsSync(file)){
+        owned(file);const stat=fs.lstatSync(file),value=JSON.parse(stableRead(file,true));
+        if(stat.gid!==0||(stat.mode&0o7777)!==0o600||value.owner!==lock.owner||value.action!=='cold-restore-current'||!COLD_PHASES.has(value.state)||!isDeepStrictEqual(value.expectedCurrent,expectedCurrent))fail('Cold journal ownership drift');
+        fs.unlinkSync(file);
+      }
+    }
+    throw error;
+  }finally{
+    if(lock)try{lock.release();}catch(error){phase('lock');if(terminal)terminal.status='UNACKNOWLEDGED';throw error;}
+  }
+}
+
 async function transact(request, platform = realPlatform, stagedGuard, terminal) {
   // The worker is supplied by the exact clean release source, never by remote disk.
   const guard = stagedGuard ?? (() => {});
   const phase=(value,reason='failed')=>{if(terminal){terminal.phase=value;terminal.reason=reason;}};
   guard();
+  if(request?.action==='cold-restore-current')return coldRestoreCurrent(request,platform,guard,terminal);
   let preflightProcess;
   if(scope==='abbott'){
     phase('preflight_current');preflightProcess=await platform.deploymentPreflight(phase);
@@ -1323,7 +1460,7 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
 }
 
 async function transactAcknowledged(request,signal,platform=realPlatform){
-  if(scope!=='abbott'||!['inspect','deploy','rollback'].includes(request?.action))return{status:'REFUSED',record:null,diagnostic:{stage:'unknown',reason:'failed'}};
+  if(scope!=='abbott'||!['inspect','deploy','rollback','cold-restore-current'].includes(request?.action))return{status:'REFUSED',record:null,diagnostic:{stage:'unknown',reason:'failed'}};
   // Only the transaction's own state transitions can certify compensation.
   // An exception message from a command or injected platform is never authority.
   const terminal={status:'REFUSED',phase:'unknown',reason:'failed'},guard=()=>{if(signal?.aborted)fail('Abbott activation cancelled');};

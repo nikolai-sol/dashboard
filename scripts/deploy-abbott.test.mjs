@@ -346,7 +346,8 @@ function fixture(authority=RUNTIME_MANIFESTS.abbott) {
   const platform = {
     startupState: () => clone({live:definitions(), saved, backup}),
     async saveStartup() { events.push(['save']); backup=clone(saved);saved=definitions(); },
-    deploymentPreflight() {},
+    deploymentPreflight() {return platform.snapshot();},
+    coldPreflight(expected) {const record=context.installer.inspectActiveRuntime();assert.deepEqual({id:record.id,sourceSha:record.sourceSha,manifestDigest:record.manifestDigest},{...expected});return {record};},
     assertDeploymentPerimeter() {},
     account: () => ({ uid: 1001, gid: 1001 }),
     browser: () => '/var/lib/dashboard-abbott/browser-cache-chrome/chrome/linux-146.0.7680.76/chrome-linux64/chrome',
@@ -428,12 +429,129 @@ function fixture(authority=RUNTIME_MANIFESTS.abbott) {
     return { scope: 'abbott', sourceSha, manifest, manifestDigest: createHash('sha256').update(manifest).digest('hex'), control: [], files: entries.map(entry => ({ path: entry.path, mode: entry.mode, data: Buffer.from(values[entry.path]).toString('base64') })) };
   }
   return { installer: context.installer, platform, events, map, io, context, payload,
+    makeCold:()=>{processRow=null;listening=false;saved=clone(neighbors);backup=clone(neighbors);},
     saved:()=>clone(saved), backup:()=>clone(backup),
     neighbors:rows=>{neighbors=clone(rows);saved=clone(rows);backup=clone(rows);},
     mutateNeighbors:fn=>fn(neighbors), mutateSaved:fn=>fn(saved), mutateBackup:fn=>fn(backup),
     restart:({fallback=false}={})=>{const rows=(fallback?backup:saved).filter(r=>r.name==='dashboard-abbott');assert.ok(rows.length<=1);bootId='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';processRow=rows.length?{name:'dashboard-abbott',pid:++serial,pm_id:serial,pm2_env:{...clone(rows[0]),status:'online'}}:null;listening=Boolean(processRow);},
     exitProcess:()=>{processRow=null;listening=false;}, mutateRow: fn=>fn(processRow), nextStartup: value => { nextStartup = value; }, failHealth: () => { healthFailure = true; }, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) };
 }
+
+const coldRequest=r=>({action:'cold-restore-current',expectedCurrent:{id:r.id,sourceSha:r.sourceSha,manifestDigest:r.manifestDigest}});
+for(const mode of ['cancel','environment'])test(`cold start journal rechecks ${mode} before process creation`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);f.makeCold();f.events.length=0;
+  const abort=new AbortController(),rename=f.io.renameSync;
+  f.io.renameSync=(a,b)=>{const result=rename(a,b);if(b.includes('/cold-current-')&&JSON.parse(fs.readFileSync(f.map(b),'utf8')).state==='starting'){if(mode==='cancel')abort.abort();else fs.appendFileSync(f.map('/var/www/dashboard-abbott/.env'),'\n');}return result;};
+  const result=await f.installer.transactAcknowledged(coldRequest(old),abort.signal,f.platform);
+  assert.equal(result.status,'REFUSED');assert.equal(f.events.filter(e=>['fresh','save','stop','delete'].includes(e[0])).length,0);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+ }finally{f.cleanup();}
+});
+test('cold current restores exact stored release and both startup copies',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40)),binding:{sourceSha:'a'.repeat(40),runId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}},f.platform);
+  f.makeCold();f.events.length=0;
+  const receiptPath=f.map('/var/www/.dashboard-abbott-control/ownership-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.json'),receipt=fs.readFileSync(receiptPath);
+  const pointer=fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json')),env=fs.readFileSync(f.map('/var/www/dashboard-abbott/.env'));
+  const result=await f.installer.transactAcknowledged(coldRequest(old),new AbortController().signal,f.platform);
+  assert.equal(result.status,'COMMITTED');assert.equal(result.record.id,old.id);
+  assert.deepEqual(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/current.json')),pointer);assert.deepEqual(fs.readFileSync(f.map('/var/www/dashboard-abbott/.env')),env);
+  assert.equal(f.events.filter(e=>e[0]==='save').length,2);
+  assert.deepEqual(fs.readFileSync(receiptPath),receipt);
+  assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+  for(const fallback of [false,true]){f.restart({fallback});assert.equal(f.platform.snapshot().registration.releaseId,old.id);}
+ }finally{f.cleanup();}
+});
+test('failed cold health compensates to absent Abbott, not a healthy predecessor',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);f.makeCold();f.failHealth();
+  const result=await f.installer.transactAcknowledged(coldRequest(old),new AbortController().signal,f.platform);
+  assert.equal(result.status,'RESTORED');assert.equal(result.record,null);
+  for(const fallback of [false,true]){f.restart({fallback});assert.equal(f.platform.snapshot(),null);}
+  assert.equal(f.installer.inspectActiveRuntime().id,old.id);
+ }finally{f.cleanup();}
+});
+
+for(const mode of ['extra','force','action','id','sourceSha','manifestDigest','missing_current','live','saved','backup','missing_backup','listener','tree','receipt','browser','account','lock','neighbor'])test(`cold refusal before start: ${mode}`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),definition=f.saved()[0];
+  if(mode!=='live')f.makeCold();f.events.length=0;
+  const request=coldRequest(old),pointer=f.map('/var/www/.dashboard-abbott-control/current.json'),env=f.map('/var/www/dashboard-abbott/.env'),tree=f.map('/var/www/dashboard-abbott/apps/abbott/server.js'),lock=f.map('/var/www/.dashboard-abbott-deploy.lock');
+  if(mode==='extra')request.payload={};if(mode==='force')request.force=true;if(mode==='action')request.action='cold-restore-other';
+  if(['id','sourceSha','manifestDigest'].includes(mode))request.expectedCurrent[mode]='f'.repeat(request.expectedCurrent[mode].length);
+  if(mode==='missing_current')fs.unlinkSync(pointer);
+  if(mode==='saved')f.mutateSaved(rows=>rows.push(definition));if(mode==='backup')f.mutateBackup(rows=>rows.push(definition));
+  if(mode==='missing_backup'){const state=f.platform.startupState;f.platform.startupState=()=>({...state(),backup:null});}
+  if(mode==='listener')f.platform.assertNoListener=async()=>{throw Error('occupied');};
+  if(mode==='tree')fs.appendFileSync(tree,'corrupt');
+  if(['receipt','browser'].includes(mode))f.platform.coldPreflight=()=>{throw Error('synthetic external proof refusal');};
+  if(mode==='account')f.platform.account=()=>({uid:0,gid:0});
+  if(mode==='lock'){fs.mkdirSync(lock,{mode:0o700});fs.writeFileSync(path.join(lock,'owner'),'foreign');}
+  if(mode==='neighbor')f.mutateSaved(rows=>rows.push({name:'foreign',env:{secret:'synthetic'}}));
+  const before={pointer:fs.existsSync(pointer)?fs.readFileSync(pointer):null,env:fs.readFileSync(env),tree:fs.readFileSync(tree),saved:f.saved(),backup:f.backup()};
+  const result=await f.installer.transactAcknowledged(request,new AbortController().signal,f.platform);
+  assert.equal(result.status,'REFUSED');assert.equal(result.record,null);
+  assert.equal(f.events.filter(e=>['fresh','start','stop','delete','save'].includes(e[0])).length,0);
+  assert.deepEqual(f.saved(),before.saved);assert.deepEqual(f.backup(),before.backup);
+  assert.deepEqual(fs.existsSync(pointer)?fs.readFileSync(pointer):null,before.pointer);assert.deepEqual(fs.readFileSync(env),before.env);assert.deepEqual(fs.readFileSync(tree),before.tree);
+  assert.equal(fs.existsSync(lock),mode==='lock');if(mode==='lock')assert.equal(fs.readFileSync(path.join(lock,'owner'),'utf8'),'foreign');
+ }finally{f.cleanup();}
+});
+
+for(const mode of ['partial','partial_foreign','health','save_before','save_after','second_save','readback','backup_readback','persistent_save','cancel_health','cancel_save1','cancel_save2','neighbor_env','neighbor_policy','replacement','env','pointer','receipt','journal_before_save','journal_prepared_failure'])test(`cold failure compensation: ${mode}`,async()=>{
+ const f=fixture();try{
+  const neighbors=[{name:'neighbor',env:{VALUE:'before'},autorestart:true}];f.neighbors(neighbors);
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);f.makeCold();f.events.length=0;
+  const abort=new AbortController(),pointer=f.map('/var/www/.dashboard-abbott-control/current.json'),env=f.map('/var/www/dashboard-abbott/.env'),tree=f.map('/var/www/dashboard-abbott/apps/abbott/server.js');
+  const receipt=f.map('/var/www/.dashboard-abbott-control/ownership-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json');fs.writeFileSync(receipt,'synthetic receipt',{mode:0o600});
+  const before={pointer:fs.readFileSync(pointer),env:fs.readFileSync(env),tree:fs.readFileSync(tree),receipt:fs.readFileSync(receipt)};
+  const health=f.platform.health,save=f.platform.saveStartup,rename=f.io.renameSync;let saveCalls=0,changed=false;
+  if(mode==='partial')f.nextStartup('early:error match');if(mode==='partial_foreign')f.nextStartup('early:error mismatch');if(mode==='health')f.failHealth();
+  f.platform.health=async proof=>{
+   await health(proof);
+   if(mode==='cancel_health')abort.abort();
+   if(mode==='replacement'){f.mutateRow(row=>{row.pid+=100;});throw Error('replaced');}
+   if(mode==='neighbor_env'||mode==='neighbor_policy'){f.mutateNeighbors(rows=>{if(mode==='neighbor_env')rows[0].env.VALUE='after';else rows[0].autorestart=false;});changed=true;}
+   if(['env','pointer','receipt'].includes(mode)){fs.appendFileSync({env,pointer,receipt}[mode],'\n');changed=true;}
+  };
+  f.platform.saveStartup=async()=>{
+   saveCalls++;
+   if(mode==='persistent_save'||mode==='save_before'&&saveCalls===1||mode==='second_save'&&saveCalls===2)throw Error('save failed');
+   await save();
+   if(mode==='save_after'&&saveCalls===1)throw Error('save wrote then failed');
+   if(mode==='readback'&&saveCalls===1)f.mutateSaved(rows=>{rows.find(r=>r.name==='dashboard-abbott').PORT=9999;});
+   if(mode==='backup_readback'&&saveCalls===2)f.mutateBackup(rows=>{rows.find(r=>r.name==='dashboard-abbott').PORT=9999;});
+   if(mode==='cancel_save1'&&saveCalls===1||mode==='cancel_save2'&&saveCalls===2)abort.abort();
+  };
+  f.io.renameSync=(a,b)=>{
+   if(!changed&&b.includes('/cold-current-')){
+    const j=JSON.parse(fs.readFileSync(f.map(a),'utf8'));
+    if(mode==='journal_prepared_failure'&&j.state==='prepared'){changed=true;throw Error('before journal publish');}
+    if(mode==='journal_before_save'&&j.state==='persisting_primary'){changed=true;fs.appendFileSync(env,'\n');}
+   }
+   return rename(a,b);
+  };
+  const result=await f.installer.transactAcknowledged(coldRequest(old),abort.signal,f.platform);
+  const review=['partial_foreign','persistent_save','neighbor_env','neighbor_policy','replacement','env','pointer','receipt','journal_before_save'].includes(mode);
+  assert.equal(result.status,mode==='journal_prepared_failure'?'REFUSED':review?'REVIEW_REQUIRED':'RESTORED');assert.equal(result.record,null);
+  assert.equal(f.events.filter(e=>e[0]==='fresh').length,mode==='journal_prepared_failure'?0:1);
+  const foreign=['partial_foreign','replacement'].includes(mode);
+  assert.equal(f.events.filter(e=>e[0]==='stop').length,mode==='journal_prepared_failure'||foreign?0:1);
+  assert.equal(f.events.filter(e=>e[0]==='delete').length,mode==='journal_prepared_failure'||foreign?0:1);
+  assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),review);
+  if(!foreign)assert.equal(f.platform.registration(),null);
+  const expectedSaves=({save_before:2,save_after:3,second_save:3,readback:3,backup_readback:4,cancel_save1:3,cancel_save2:4})[mode]??(review||mode==='journal_prepared_failure'?0:2);
+  assert.equal(f.events.filter(e=>e[0]==='save').length,expectedSaves);
+  for(const rows of [f.saved(),f.backup()]){assert.equal(rows.some(r=>r.name==='dashboard-abbott'),false);assert.deepEqual(rows,neighbors);}
+  for(const key of ['pointer','env','tree','receipt']){
+   const expected=mode===key||mode==='journal_before_save'&&key==='env'?Buffer.concat([before[key],Buffer.from('\n')]):before[key];
+   assert.deepEqual(fs.readFileSync({pointer,env,tree,receipt}[key]),expected);
+  }
+  const files=fs.readdirSync(f.map('/var/www/.dashboard-abbott-control')).filter(n=>n.startsWith('cold-current-'));
+  if(mode==='journal_prepared_failure')assert.deepEqual(files,[]);
+  for(const file of files){const journal=JSON.parse(fs.readFileSync(f.map('/var/www/.dashboard-abbott-control/'+file),'utf8'));assert.deepEqual(Object.keys(journal).sort(),['action','directory','expectedCurrent','owner','state','version']);assert.doesNotMatch(JSON.stringify(journal),/DB_PASSWORD|envDigest|synthetic/);}
+ }finally{f.cleanup();}
+});
 
 test('healthy first deployment survives restart from primary and backup startup lists',async()=>{
  const f=fixture();try{
@@ -830,7 +948,8 @@ test('forged predecessor binding after fresh start requires review, not candidat
     assert.equal(fs.readFileSync(f.map(`/var/www/dashboard-abbott-backups/${old.id}/.release-source-sha`), 'utf8').trim(), old.sourceSha);
     assert.throws(() => f.installer.inspectActiveRuntime(), /external authority/);
     assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')), true);
-    await assert.rejects(f.installer.transact({ action: 'rollback', expectedActiveSha: old.sourceSha }, f.platform), /lock/);
+    // The now-real fixture preflight detects this forged process before the lock check.
+    await assert.rejects(f.installer.transact({ action: 'rollback', expectedActiveSha: old.sourceSha }, f.platform), /Runtime source identity mismatch/);
     assert.equal(f.events.filter(event => event[0] === 'start').length, 2);
     assert.equal(f.events.filter(event => event[0] === 'stop').length, 1);
   } finally { f.cleanup(); }

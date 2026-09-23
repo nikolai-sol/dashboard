@@ -1,4 +1,5 @@
 import test from'node:test';import assert from'node:assert/strict';import fs from'node:fs';import{createHash}from'node:crypto';
+import vm from'node:vm';import path from'node:path';
 const api=()=>import('./abbott-runtime-release-remote.mjs');
 const ID='1fdaecbdad47430a9d1375566abad001',SHA='dfd6267a742d1c7d88ccac636b89661df9b96f9f',HASH='586533387dca0928c75d6e9807503e918d316507b6f1ec128e087e075211690e';
 const NGINX='/etc/nginx/conf.d/dashboard-next.conf',ROOT='/var/www/dashboard-abbott',CONTROL='/var/www/.dashboard-abbott-control';
@@ -83,6 +84,28 @@ test('Abbott ownership validator accepts only the complete direct cutover fragme
  const nested=NGINX_TEXT.replace('location / { proxy_pass http://127.0.0.1:3001; }','if ($request_method = GET) { '+fragment+' } location / { proxy_pass http://127.0.0.1:3001; }');
  assert.throws(()=>m.validateAbbottNginxOwnershipText(nested),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
  assert.throws(()=>m.validateAbbottNginxOwnershipText(cutover.replace('127.0.0.1:3004','127.0.0.1:3005')),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+});
+test('Abbott ownership proof accepts complete uniform routes on 3001 and 3004 only',async()=>{
+ const m=await api(),fragment=fs.readFileSync(new URL('../deploy/abbott/nginx-routes.conf',import.meta.url),'utf8');
+ for(const port of [3001,3004]){
+  const text=NGINX_TEXT.replace('location / {',fragment.replaceAll('127.0.0.1:3004','127.0.0.1:'+port)+'\nlocation / {');
+  assert.deepEqual(m.validateAbbottNginxOwnershipText(text),{port,locations:13});
+  const f=fixture();f.files.set(NGINX,text);f.options.validateNginx=m.validateAbbottNginxOwnershipText;
+  assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());
+  assert.throws(()=>m.validateAbbottNginxOwnershipText(text.replace('127.0.0.1:'+port,'127.0.0.1:'+(port===3001?3004:3001))));
+  assert.throws(()=>m.validateAbbottNginxOwnershipText(text.replace('location = /dashboard/18/','location = /dashboard/18')));
+ }
+});
+test('cold stored proof requires all thirteen routes on 3001 and rejects 3004 or missing routes',async()=>{
+ const m=await api(),fragment=fs.readFileSync(new URL('../deploy/abbott/nginx-routes.conf',import.meta.url),'utf8');
+ const parser=fs.readFileSync(new URL('./abbott-runtime-release-remote.mjs',import.meta.url),'utf8').split('export function createAbbottDeploymentProof')[0].replace(/^import .*;\n/gm,'').replaceAll('export function ','function ');
+ const context={path};vm.runInNewContext(parser+'\nthis.validate=validateAbbottColdNginxText;',context);
+ for(const port of [3001,3004,null]){
+  const f=fixture();f.options.validateNginx=context.validate;
+  if(port)f.files.set(NGINX,NGINX_TEXT.replace('location / {',fragment.replaceAll('127.0.0.1:3004','127.0.0.1:'+port)+'\nlocation / {'));
+  const proof=m.createAbbottDeploymentProof(f.options),check=()=>proof.storedCurrent({id:ID,sourceSha:SHA,manifestDigest:HASH});
+  if(port===3001)assert.doesNotThrow(check);else assert.throws(check,{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
+ }
 });
 function fixture(){
  const med='/var/www/dashboard-medroche-releases/13d68b0b2c820ba5d223f254bc4eba6d0cf24418/standalone';
