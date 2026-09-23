@@ -5,6 +5,31 @@ const NGINX='/etc/nginx/conf.d/dashboard-next.conf',ROOT='/var/www/dashboard-abb
 const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e';
 const NGINX_TEXT='server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; location / { proxy_pass http://127.0.0.1:3001; } }\n';
 const FOREIGN_INCLUDE='/etc/nginx/snippets/foreign-project.conf';
+test('stored-current proof accepts sealed authority without trusting a dead PID',async()=>{
+ const m=await api(),f=fixture();
+ for(const key of [...f.files.keys()])if(key.startsWith(`/proc/${f.receipt.process.pid}/`))f.files.delete(key);
+ const proof=m.createAbbottDeploymentProof(f.options);
+ assert.equal(proof.storedCurrent({id:ID,sourceSha:SHA,manifestDigest:HASH}).record.id,ID);
+ assert.throws(()=>proof.preflight());assert.equal(f.fds.size,0);
+});
+test('stored-current proof rejects wrong authority and corrupt sealed evidence',async()=>{
+ const m=await api();
+ for(const mode of ['id','sourceSha','manifestDigest','missing','duplicate','receipt','tree','browser','directory','launcher','account']){
+  const f=fixture(),expected={id:ID,sourceSha:SHA,manifestDigest:HASH};
+  if(Object.hasOwn(expected,mode))expected[mode]='f'.repeat(expected[mode].length);
+  if(mode==='missing')f.options.io.readdirSync=p=>p===CONTROL?[]:p==='/proc'?['1',...f.processes.map(r=>String(r[0]))]:p==='/proc/1/fd'?[]:p.endsWith('/fd')?['10']:[];
+  if(mode==='duplicate'){const readdir=f.options.io.readdirSync;f.options.io.readdirSync=p=>p===CONTROL?[...readdir(p),f.receiptPath.split('/').at(-1)]:readdir(p);}
+  if(mode==='receipt'){f.receipt.process.registration.releaseId='f'.repeat(32);f.files.set(f.receiptPath,JSON.stringify(f.receipt));}
+  if(mode==='tree')f.options.verifyActive=()=>{throw Error('corrupt tree');};
+  if(mode==='browser')f.options.verifyBrowser=()=>{throw Error('corrupt browser');};
+  if(mode==='directory')f.metadata.set(ROOT,{ino:99});
+  if(mode==='launcher')f.files.set('/var/www/.dashboard-abbott-launcher.cjs','wrong');
+  if(mode==='account')f.files.set('/etc/passwd','');
+  const proof=m.createAbbottDeploymentProof(f.options);
+  assert.throws(()=>proof.storedCurrent(expected),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},mode);
+  assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
+ }
+});
 test('successor and rollback proof use the protected current record rather than historical release pins',async()=>{
  const m=await api();for(const previousId of [ID,null]){
   const f=fixture(),id='c'.repeat(32),sha='e'.repeat(40);
@@ -196,7 +221,7 @@ test('proof is filesystem-only and real Abbott path wires it before any account/
  assert.doesNotMatch(proof,/\b(?:execFileSync|spawn|fetch|createServer)\s*\(|\.(?:connect|writeFileSync|mkdirSync|renameSync|unlinkSync|chmodSync)\s*\(|\.pm2/);
  const transaction=source.slice(source.indexOf('async function transact(request'),source.indexOf('async function transactAcknowledged'));
  assert.ok(transaction.indexOf("if(scope==='abbott')")<transaction.indexOf('platform.deploymentPreflight(phase)'));
- for(const operation of ['platform.account()','fs.mkdirSync(LOCK','platform.browser(account)'])assert.ok(transaction.indexOf('platform.deploymentPreflight(phase)')<transaction.indexOf(operation));
+ for(const operation of ['platform.account()','createOwnedAbbottLock()','platform.browser(account)'])assert.ok(transaction.indexOf('platform.deploymentPreflight(phase)')<transaction.indexOf(operation));
  const wired=source.slice(source.indexOf('let abbottDeploymentProtection'),source.indexOf('  browser(account)'));
  assert.match(wired,/createAbbottDeploymentProof/);assert.match(wired,/validateNginx:\s*validateAbbottNginxOwnershipText/);assert.match(wired,/verifyActive:record=>.*current\(\)/);assert.match(wired,/verifyBrowser:.*verifyBrowserInstallation/);assert.doesNotMatch(wired,/execFileSync|spawn|fetch/);
 });

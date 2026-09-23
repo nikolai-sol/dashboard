@@ -166,7 +166,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
   const nginxReason=value=>{if(currentPhase==='preflight_nginx')notePhase(currentPhase,value);};
   const stat=file=>{try{return io.lstatSync(file);}catch(error){if(/^\/proc\/[1-9][0-9]*$/.test(file)&&error?.code==='ENOENT')reason('pid_absent');throw error;}};
   const root='/var/www/dashboard-abbott',control='/var/www/.dashboard-abbott-control';
-  let record;
+  let record,storedIdentity;
   let boot,perimeterSnapshot,invalid=false,reattestedProcess;
   const neighborPolicies=[['combined',0,0,'/var/www/dashboard',3001],['zaruku',984,991,'/var/www/dashboard-zaruku/apps/zaruku',3002],['medroche',983,983,null,3003]];
   const stable=(a,b)=>['dev','ino','size','mode','uid','gid','nlink','mtimeMs','ctimeMs'].every(k=>a[k]===b[k]);
@@ -280,7 +280,7 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       for(let i=0;i<neighbors.length;i++){phase('preflight_neighbor_'+neighbors[i].name,'unknown');if(!isDeepStrictEqual(neighbors[i],perimeterSnapshot.neighbors[i]))fail();}
     }else perimeterSnapshot=snapshot;
   }
-  function preflight(){
+  function storedCurrent(expected){
     phase('preflight_current');
     for(const [dir,mode]of [[control,0o700],['/var/www/dashboard-abbott-releases',0o711],['/var/www/dashboard-abbott-backups',0o711]]){
       ancestry(dir);const s=stat(dir);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==0||s.gid!==0||(s.mode&0o7777)!==mode||io.realpathSync(dir)!==dir)fail();
@@ -292,30 +292,42 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     const observed=json(control+'/current.json');
     if(!observed||Object.keys(observed).sort().join(',')!=='id,manifestDigest,previousId,scope,sourceSha'||observed.scope!=='abbott'||! /^[a-f0-9]{32}$/.test(observed.id)||! /^[a-f0-9]{40}$/.test(observed.sourceSha)||! /^[a-f0-9]{64}$/.test(observed.manifestDigest)||observed.previousId!==null&&! /^[a-f0-9]{32}$/.test(observed.previousId)||record&&!isDeepStrictEqual(observed,record))fail();
     record??=observed;
+    if(expected&&(!isDeepStrictEqual(expected,{id:record.id,sourceSha:record.sourceSha,manifestDigest:record.manifestDigest})))fail();
     if(!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record)||read(root+'/.release-source-sha',128)!==record.sourceSha+'\n'||read(root+'/.release-runtime-scope',64)!=='abbott\n')fail();
     if(digest(Buffer.from(read(control+'/'+record.id+'/trusted-runtime-manifest.json',2*1024*1024,{mode:0o600})))!==record.manifestDigest)fail();
     const launcher='/var/www/.dashboard-abbott-launcher.cjs';if(read(launcher,65536)!==read(control+'/'+record.id+'/deploy/abbott/start.cjs',65536))fail();
     const names=io.readdirSync(control);if(names.length>256)fail();const receipts=names.filter(n=>/^ownership-[a-f0-9-]{36}\.json$/.test(n)).map(n=>json(control+'/'+n)).filter(r=>r.record?.id===record.id);
     if(receipts.length!==1)fail();const r=receipts[0],dir=stat(root);let p=r.process;
     if(Object.keys(r).sort().join(',')!=='binding,directory,process,record,transaction,version'||r.version!==1||!isDeepStrictEqual(r.record,record)||!isDeepStrictEqual(r.directory,{dev:String(dir.dev),ino:String(dir.ino)})||r.binding?.sourceSha!==record.sourceSha||Object.keys(r.binding).sort().join(',')!=='runId,sourceSha'||! /^[a-f0-9-]{36}$/.test(r.binding.runId)||! /^[a-f0-9-]{36}$/.test(r.transaction))fail();
-    if(!p||Object.keys(p).sort().join(',')!=='appName,bootId,cwd,gid,pid,pmId,registration,script,sourceSha,startTime,uid'||p.appName!=='dashboard-abbott'||! /^[a-f0-9-]{36}$/.test(p.bootId)||!reattestProcess&&p.bootId!==boot||p.uid!==982||p.gid!==984||p.sourceSha!==record.sourceSha||p.cwd!==root+'/apps/abbott'||p.script!==launcher||!Number.isSafeInteger(p.pid)||p.pid<=0||!Number.isSafeInteger(p.pmId)||p.pmId<0||!/^\d{1,20}$/.test(p.startTime))fail();
+    if(!p||Object.keys(p).sort().join(',')!=='appName,bootId,cwd,gid,pid,pmId,registration,script,sourceSha,startTime,uid'||p.appName!=='dashboard-abbott'||! /^[a-f0-9-]{36}$/.test(p.bootId)||p.uid!==982||p.gid!==984||p.sourceSha!==record.sourceSha||p.cwd!==root+'/apps/abbott'||p.script!==launcher||!Number.isSafeInteger(p.pid)||p.pid<=0||!Number.isSafeInteger(p.pmId)||p.pmId<0||!/^\d{1,20}$/.test(p.startTime))fail();
     const reg=p.registration;if(!reg||!['dashboard-abbott',982].includes(reg.uid)||!['dashboard-abbott',984].includes(reg.gid)||!isDeepStrictEqual(reg,{appName:'dashboard-abbott',pmId:p.pmId,exec:'/usr/bin/env',cwd:p.cwd,args:['-i','PATH=/usr/local/bin:/usr/bin:/bin','/usr/bin/node',launcher],uid:reg.uid,gid:reg.gid,releaseId:record.id,sourceSha:record.sourceSha}))fail();
+    if(!dir.isDirectory()||dir.isSymbolicLink()||dir.uid!==0||dir.mode&0o022||io.realpathSync(root)!==root)fail();
+    const identity={receipt:r,directory:metadata(dir)};
+    if(storedIdentity&&!isDeepStrictEqual(identity,storedIdentity))fail();storedIdentity??=identity;
+    verifyActive(record);
+    phase('preflight_browser');
+    const stamp='/var/lib/dashboard-abbott/browser-cache-chrome/stamp.json',before=read(stamp,1048576,{gid:984,mode:0o640});
+    if(verifyBrowser().archiveSha256!=='2fc582be0fd0cffdd2d598a56c68f4a7f6b5bca4eb8d506c01b154eec649c4bd'||read(stamp,1048576,{gid:984,mode:0o640})!==before)fail();
+    perimeter();phase('preflight_current');
+    if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record))fail();
+    return {record,receiptProcess:p,directory:r.directory};
+  }
+  function preflight(){
+    let {record,receiptProcess:p}=storedCurrent();
+    const launcher='/var/www/.dashboard-abbott-launcher.cjs';
+    if(!reattestProcess&&p.bootId!==boot)fail();
     if(reattestProcess){
       const live=reattestProcess(record,p),durable=value=>{const {pid,pmId,startTime,bootId,registration,...rest}=value;const {pmId:registrationId,...launch}=registration;return{...rest,registration:launch};};
       if(!live||live.bootId!==boot||!Number.isSafeInteger(live.pid)||live.pid<=0||!Number.isSafeInteger(live.pmId)||live.pmId<0||live.registration?.pmId!==live.pmId||!/^\d{1,20}$/.test(live.startTime)||!isDeepStrictEqual(durable(live),durable(p))||reattestedProcess&&!isDeepStrictEqual(live,reattestedProcess))fail();
       reattestedProcess=live;p=live;
     }
     kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
-    verifyActive(record);
-    phase('preflight_browser');
-    const stamp='/var/lib/dashboard-abbott/browser-cache-chrome/stamp.json',before=read(stamp,1048576,{gid:984,mode:0o640});
-    if(verifyBrowser().archiveSha256!=='2fc582be0fd0cffdd2d598a56c68f4a7f6b5bca4eb8d506c01b154eec649c4bd'||read(stamp,1048576,{gid:984,mode:0o640})!==before)fail();
     perimeter();phase('preflight_current');kernel([p.pid,p.startTime,982,984,p.cwd,3004],launcher);
     if(!isDeepStrictEqual(json(control+'/current.json'),record)||!isDeepStrictEqual(json(control+'/'+record.id+'/record.json'),record))fail();
   }
   // A concurrent change cannot be forgiven by a later reversion during rollback.
-  const closed=fn=>()=>{try{if(invalid)fail();return fn();}catch{invalid=true;fail();}};
-  return{preflight:closed(preflight),perimeter:closed(perimeter)};
+  const closed=fn=>(...args)=>{try{if(invalid)fail();return fn(...args);}catch{invalid=true;fail();}};
+  return{storedCurrent:closed(storedCurrent),preflight:closed(preflight),perimeter:closed(perimeter)};
 }
 
 // Based on af1948c's immutable installer; transport binds this closure to the
@@ -961,9 +973,92 @@ function materialize(payload, id, old, platform, account, browserExecutable) {
   return { record, stage };
 }
 
+function createOwnedAbbottLock() {
+  owned(BASE,true);
+  const owner=randomUUID();let preserved=false;
+  try{fs.mkdirSync(LOCK,{mode:0o700});}catch{fail('runtime deployment lock is already held or unsafe');}
+  createFile(`${LOCK}/owner`,owner);
+  const prove=()=>{owned(LOCK,true);const s=fs.lstatSync(LOCK);if(s.gid!==0||(s.mode&0o7777)!==0o700||stableRead(`${LOCK}/owner`,true).toString()!==owner||fs.readdirSync(LOCK).join()!=='owner')fail('Activation lock drift');};
+  return {owner,prove,preserve:()=>{preserved=true;},release:()=>{prove();if(!preserved){fs.unlinkSync(`${LOCK}/owner`);fs.rmdirSync(LOCK);}}};
+}
+const ACTIVATION_PHASES=new Set(['prepared','predecessor_removed','candidate_active','candidate_started','candidate_persisting','candidate_persisted','restoration_persisting','restoration_persisted','committed','restored','review_required']);
+const COLD_PHASES=new Set(['prepared','starting','started','healthy','persisting_primary','primary_persisted','persisting_backup','backup_persisted','committed','compensating_stop','compensating_primary','compensating_backup','restored_absent','review_required']);
+function createAbbottJournal(lock,pathname,initial) {
+  const phases=initial.action==='cold-restore-current'?COLD_PHASES:ACTIVATION_PHASES;
+  return state=>{
+    if(!phases.has(state))fail('Invalid transaction journal phase');
+    lock.prove();const next=pathname+'.next';
+    if(fs.lstatSync(next,{throwIfNoEntry:false}))fail('Activation path collision');
+    if(fs.existsSync(pathname)){owned(pathname);const s=fs.lstatSync(pathname);if(s.gid!==0||(s.mode&0o7777)!==0o600)fail('Activation journal drift');const prior=JSON.parse(stableRead(pathname,true));if(prior.owner!==lock.owner||!phases.has(prior.state)||!isDeepStrictEqual({...prior,state:undefined},{...initial,version:1,owner:lock.owner,state:undefined}))fail('Activation journal drift');}
+    durableFile(next,{...initial,version:1,owner:lock.owner,state});fs.renameSync(next,pathname);
+    const fd=fs.openSync(path.dirname(pathname),fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+  };
+}
+function createStartupGuard(platform,phase) {
+  let neighborDefinitions;
+  const check=()=>{
+    const state=startupSnapshot(platform),neighbors=startupNeighbors(state.saved);
+    if(!isDeepStrictEqual(startupNeighbors(state.live),neighbors)||state.backup!==null&&!isDeepStrictEqual(startupNeighbors(state.backup),neighbors)||neighborDefinitions&&!isDeepStrictEqual(neighbors,neighborDefinitions)){
+      phase('persistence','neighbor_saved_drift');fail('Unrelated PM2 startup definitions require reconciliation');
+    }
+    neighborDefinitions??=neighbors;return state;
+  };
+  const persist=async({proof,account,lock,guard,checkpoint,journal,phases,compensating=false})=>{
+    if(!compensating)phase('persistence');
+    // Two supported saves make both the primary and PM2's fallback coherent.
+    // Recheck before each write; never restore a stale whole-host dump.
+    for(let pass=0;pass<2;pass++){
+      lock.prove();if(!compensating)guard();check();
+      journal(phases.before[pass]);
+      await platform.saveStartup();
+      lock.prove();const state=check();assertSavedRegistration(state.saved,proof,account);
+      if(!isDeepStrictEqual(state.live,state.saved))fail('PM2 startup readback mismatch');
+      if(pass===1){if(state.backup===null)fail('PM2 startup backup missing');assertSavedRegistration(state.backup,proof,account);if(!isDeepStrictEqual(state.saved,state.backup))fail('PM2 startup backup mismatch');}
+      await checkpoint(compensating);
+      if(phases.after?.[pass])journal(phases.after[pass]);
+    }
+    if(phases.complete)journal(phases.complete);
+  };
+  return {check,persist};
+}
+function createOwnedAbbottProcess(record,platform,account,lock) {
+  let ownedRegistration=null,ownedProcess=null;
+  const noRegistration=async()=>{if(platform.registration()!==null)fail('Abbott registration remains');await platform.assertNoListener();};
+  const remove=async(registration,proof,beforeStop)=>{
+    // Pointer drift forbids layout compensation, but cannot keep an otherwise
+    // exactly owned candidate serving. Process identity remains mandatory.
+    lock.prove();
+    await stopRegistration(registration,proof,platform,account,lock.prove,beforeStop);
+    if(proof)platform.exited(proof);
+    const stopped=platform.registration(registration.pmId);
+    if(stopped!==null){
+      if(!isDeepStrictEqual(stopped.registration,registration)||stopped.pid!==0||stopped.status!=='stopped')fail('Abbott deletion ownership changed');
+      lock.prove();
+      if(!isDeepStrictEqual(platform.registration(registration.pmId),stopped))fail('Abbott deletion ownership changed');
+      await platform.delete(registration.pmId);
+    }
+    await noRegistration();if(proof)platform.exited(proof);
+  };
+  const capture=(requireOnline=false)=>{
+    const candidate=platform.registration();if(candidate===null){if(requireOnline)fail('Candidate registration disappeared');return {registration:ownedRegistration,proof:ownedProcess};}
+    validateRuntimeRegistration(candidate.registration,account);
+    if(candidate.registration.releaseId!==record.id||candidate.registration.sourceSha!==record.sourceSha||ownedRegistration&&!isDeepStrictEqual(candidate.registration,ownedRegistration))fail('New deployment registration was not established');
+    ownedRegistration=candidate.registration;
+    if(Number.isSafeInteger(candidate.pid)&&candidate.pid>0){
+      const proof=processProof(platform,account);
+      if(!proof||proof.pid!==candidate.pid||!isDeepStrictEqual(proof.registration,ownedRegistration)||ownedProcess&&!isDeepStrictEqual(proof,ownedProcess))fail('New deployment process was not established');
+      ownedProcess=proof;
+      if(requireOnline&&candidate.status!=='online')fail('New deployment process is not online');
+    }else if(requireOnline||candidate.pid!==0||!['errored','waiting restart','launching','stopping','stopped'].includes(candidate.status))fail('New deployment inactive identity mismatch');
+    return {registration:ownedRegistration,proof:ownedProcess};
+  };
+  return {capture,remove};
+}
+
 // Abbott changes registration rather than asking PM2 to merge retained env.
 // Every destructive command is addressed by a freshly re-proven registration.
-async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,preserveLock,terminal}) {
+async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,lock,platform,account,guard,preserveLock,terminal}) {
+  const {owner}=lock;
   const phase=(value,reason='failed')=>{if(terminal){terminal.phase=value;terminal.reason=reason;}};
   phase('activation_precheck');
   const perimeter=()=>{const previous=terminal?.phase,reason=terminal?.reason;platform.assertDeploymentPerimeter();phase(previous,reason);};
@@ -974,16 +1069,9 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
   const sameDir=(p,d)=>{if(!isDeepStrictEqual(dir(p),d))fail('Activation directory identity changed');};
   const candidateDirectory=dir(stage),oldDirectory=old?dir(APP):null;
   const originalPointer=old?stableRead(CURRENT,true):null,oldEnv=old?hash(stableRead(`${APP}/.env`)):null;
-  let neighborDefinitions;
-  const checkStartupNeighbors=()=>{
-    const state=startupSnapshot(platform),neighbors=startupNeighbors(state.saved);
-    if(!isDeepStrictEqual(startupNeighbors(state.live),neighbors)||state.backup!==null&&!isDeepStrictEqual(startupNeighbors(state.backup),neighbors)||neighborDefinitions&&!isDeepStrictEqual(neighbors,neighborDefinitions)){
-      phase('persistence','neighbor_saved_drift');fail('Unrelated PM2 startup definitions require reconciliation');
-    }
-    neighborDefinitions??=neighbors;return state;
-  };
+  const startup=createStartupGuard(platform,phase),checkStartupNeighbors=startup.check;
   let mutated=false,oldMoved=false,candidateMoved=false,startAttempted=false,ownedRegistration=null,ownedProcess=null,pointerPublished=false;
-  const lockProof=()=>{owned(LOCK,true);const s=fs.lstatSync(LOCK);if(s.gid!==0||(s.mode&0o7777)!==0o700||stableRead(`${LOCK}/owner`,true).toString()!==owner||fs.readdirSync(LOCK).join()!=='owner')fail('Activation lock drift');};
+  const lockProof=lock.prove;
   const pointerProof=()=>{
     if(pointerPublished){if(!stableRead(CURRENT,true).equals(Buffer.from(JSON.stringify(record))))fail('Activation pointer drift');}
     else if(originalPointer){if(!stableRead(CURRENT,true).equals(originalPointer))fail('Activation pointer drift');}
@@ -993,56 +1081,18 @@ async function activateAbbott({request,record,stage,envDigest,old,beforeProcess,
     sameDir(p,d);if(!isDeepStrictEqual(readRecord(r.id),r))fail('Activation record drift');attestTree(p,r);
     const s=fs.lstatSync(`${p}/.env`);if(!s.isFile()||s.nlink!==1||s.uid!==0||s.gid!==account.gid||(s.mode&0o7777)!==0o640||hash(stableRead(`${p}/.env`))!==digest)fail('Activation environment drift');
   };
-  const journal=state=>{
-    lockProof();const next=journalPath+'.next';absent(next);
-    if(fs.existsSync(journalPath)){owned(journalPath);const s=fs.lstatSync(journalPath);if(s.gid!==0||(s.mode&0o7777)!==0o600)fail('Activation journal drift');const prior=JSON.parse(stableRead(journalPath,true));if(prior.owner!==owner)fail('Activation journal drift');}
-    durableFile(next,{version:1,owner,state,predecessor:old, candidate:record,stage,oldDirectory,candidateDirectory});fs.renameSync(next,journalPath);
-  };
-  const persist=async(proof,compensating=false)=>{
-    if(!compensating)phase('persistence');
-    // Two supported saves make both the primary and PM2's fallback coherent.
-    // Recheck before each write; never restore a stale whole-host dump.
-    for(let pass=0;pass<2;pass++){
-      lockProof();if(!compensating)guard();checkStartupNeighbors();
-      journal(compensating?'restoration_persisting':'candidate_persisting');
-      await platform.saveStartup();
-      const state=checkStartupNeighbors();assertSavedRegistration(state.saved,proof,account);
-      if(!isDeepStrictEqual(state.live,state.saved))fail('PM2 startup readback mismatch');
-      if(pass===1){if(state.backup===null)fail('PM2 startup backup missing');assertSavedRegistration(state.backup,proof,account);if(!isDeepStrictEqual(state.saved,state.backup))fail('PM2 startup backup mismatch');}
-      if(!compensating)await checkpoint();
-    }
-    journal(compensating?'restoration_persisted':'candidate_persisted');
-  };
+  const journal=createAbbottJournal(lock,journalPath,{predecessor:old,candidate:record,stage,oldDirectory,candidateDirectory});
+  const persist=(proof,compensating=false)=>startup.persist({proof,account,lock,guard,
+    checkpoint:async compensation=>{if(!compensation)await checkpoint();},
+    journal,compensating,phases:{before:[compensating?'restoration_persisting':'candidate_persisting',compensating?'restoration_persisting':'candidate_persisting'],complete:compensating?'restoration_persisted':'candidate_persisted'}});
   const checkpoint=async()=>{await new Promise(resolve=>setTimeout(resolve,0));guard();lockProof();pointerProof();};
   const noRegistration=async()=>{if(platform.registration()!==null)fail('Abbott registration remains');await platform.assertNoListener();};
-  const remove=async(registration,proof,checkPerimeter=false)=>{
-    // Pointer drift forbids layout compensation, but cannot keep an otherwise
-    // exactly owned candidate serving. Process identity remains mandatory.
-    lockProof();
-    await stopRegistration(registration,proof,platform,account,lockProof,checkPerimeter?()=>{
-      perimeter();provePredecessor();
-    }:undefined);
-    if(proof)platform.exited(proof);
-    const stopped=platform.registration(registration.pmId);
-    if(stopped!==null){
-      if(!isDeepStrictEqual(stopped.registration,registration)||stopped.pid!==0||stopped.status!=='stopped')fail('Abbott deletion ownership changed');
-      lockProof();
-      if(!isDeepStrictEqual(platform.registration(registration.pmId),stopped))fail('Abbott deletion ownership changed');
-      await platform.delete(registration.pmId);
-    }
-    await noRegistration();if(proof)platform.exited(proof);
-  };
+  const ownedProcessGuard=createOwnedAbbottProcess(record,platform,account,lock);
+  const remove=(registration,proof,checkPerimeter=false)=>ownedProcessGuard.remove(registration,proof,checkPerimeter?()=>{perimeter();provePredecessor();}:undefined);
   const capture=(requireOnline=false)=>{
-    const candidate=platform.registration();if(candidate===null){if(requireOnline)fail('Candidate registration disappeared');return;}
-    validateRuntimeRegistration(candidate.registration,account);
-    if(candidate.registration.releaseId!==record.id||candidate.registration.sourceSha!==record.sourceSha||ownedRegistration&&!isDeepStrictEqual(candidate.registration,ownedRegistration))fail('New deployment registration was not established');
-    ownedRegistration=candidate.registration;
-    if(Number.isSafeInteger(candidate.pid)&&candidate.pid>0){
-      const proof=processProof(platform,account);
-      if(!proof||proof.pid!==candidate.pid||!isDeepStrictEqual(proof.registration,ownedRegistration)||beforeProcess&&proof.pid===beforeProcess.pid||ownedProcess&&!isDeepStrictEqual(proof,ownedProcess))fail('New deployment process was not established');
-      ownedProcess=proof;
-      if(requireOnline&&candidate.status!=='online')fail('New deployment process is not online');
-    }else if(requireOnline||candidate.pid!==0||!['errored','waiting restart','launching','stopping','stopped'].includes(candidate.status))fail('New deployment inactive identity mismatch');
+    const captured=ownedProcessGuard.capture(requireOnline);
+    ownedRegistration=captured.registration;ownedProcess=captured.proof;
+    if(beforeProcess&&ownedProcess?.pid===beforeProcess.pid)fail('New deployment process was not established');
   };
   const before=async()=>{
     lockProof();pointerProof();tree(stage,record,candidateDirectory,envDigest);
@@ -1146,11 +1196,7 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
   if (!Number.isInteger(account.uid) || account.uid <= 0 || account.uid === DEPLOY_UID || !Number.isInteger(account.gid) || account.gid <= 0) fail('Dedicated runtime account and write separation required');
   phase('preflight_browser');const browserExecutable=scope==='abbott'&&['deploy','rollback'].includes(request.action)?platform.browser(account):undefined;
   phase('lock');
-  owned(BASE, true);
-  const owner = randomUUID();
-  let preserveLock=false;
-  try { fs.mkdirSync(LOCK, { mode: 0o700 }); } catch { fail('runtime deployment lock is already held or unsafe'); }
-  createFile(`${LOCK}/owner`, owner);
+  const lock=createOwnedAbbottLock(),{owner}=lock;
   try {
     phase('prepare');
     for (const dir of [RELEASES, BACKUPS, CONTROL]) ensureDirectory(dir, HOST_DIRECTORY_MODES[dir]);
@@ -1194,7 +1240,7 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
     if (old) attestTree(APP, old);
     const oldBackup = old ? `${BACKUPS}/${old.id}` : null;
     if (oldBackup && fs.lstatSync(oldBackup, { throwIfNoEntry: false })) fail('Predecessor backup collision');
-    if(scope==='abbott')return await activateAbbott({request,record,stage,envDigest,old,beforeProcess,owner,platform,account,guard,terminal,preserveLock:()=>{preserveLock=true;}});
+    if(scope==='abbott')return await activateAbbott({request,record,stage,envDigest,old,beforeProcess,lock,platform,account,guard,terminal,preserveLock:lock.preserve});
     let oldMoved = false, candidateMoved = false, startAttempted = false, ownedRegistration = null, ownedProcess = null;
     try {
       if (old) { fs.renameSync(APP, oldBackup); oldMoved = true; }
@@ -1271,9 +1317,7 @@ async function transact(request, platform = realPlatform, stagedGuard, terminal)
     }
   } finally {
     try{
-    owned(LOCK, true);
-    if (stableRead(`${LOCK}/owner`, true).toString() !== owner || fs.readdirSync(LOCK).join() !== 'owner') fail('runtime lock ownership changed; preserved for recovery');
-    if(!preserveLock){fs.unlinkSync(`${LOCK}/owner`); fs.rmdirSync(LOCK);}
+    lock.release();
     }catch(error){phase('lock');if(terminal)terminal.status='UNACKNOWLEDGED';throw error;}
   }
 }
