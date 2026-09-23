@@ -82,7 +82,7 @@ only `node:` built-ins in app-local CommonJS Next configs; the rule remains on.
 Auth, UI text, period selection, publication validation and data reads are kept.
 The existing source-attestation mechanism required the MedRoche profile,
 registry and release descriptor to name the reconciled template commit
-`a5332eb5`. This updates repository build inputs only; the running profile and
+`b5328b16` (including the Node 20 test-loader correction). This updates repository build inputs only; the running profile and
 `release/medroche` branch are unchanged.
 
 ## Explicitly unfinished: Abbott separation
@@ -127,13 +127,22 @@ The isolated SEO build exposed another cleanup omission: its `.next-medroche`
 output was not ignored like Zaruku's output. Git and ESLint now consistently
 ignore app-local `.next-*` generated directories; actual source remains checked.
 
+The first reconciled-main CI run (`35832432101`) passed the complete Verify app
+step on Ubuntu Node 20, then exposed a test-runner portability issue: the second
+SEO test command loaded `.mjs` modules that transitively import TypeScript,
+without `tsx`. Node 22 accepted this locally. The failure was reproduced using
+Node 20.20.2; the command now uses the already-installed `tsx` loader. The source
+attestation was advanced through the same existing three-file mechanism.
+
 Evidence is retained in the root repository's
 `outputs/main-reconciliation-20260923/`. Repeated read-only server inspection
 confirmed the original three process identities and ports; no production
 application was restarted or replaced. No external API or database write was
-needed. The verified source is ready to fast-forward main without deployment.
+needed. Main was fast-forwarded and pushed without deployment. Remote CI validation
+is tracked separately in the retained integration result.
 
-Done: source/runtime audit and fully verified integration candidate. Accepted: owner
+Done: source/runtime audit and main integration; remote CI follow-up is recorded
+in the retained result. Accepted: owner
 authorized main cleanup and preserving separated dashboard ownership; final
 result acceptance is pending. Reusable learning: compare feature trees before
 treating divergent ancestry as missing functionality, and distinguish prepared

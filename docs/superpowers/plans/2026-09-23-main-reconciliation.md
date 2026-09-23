@@ -45,5 +45,5 @@
 - [x] Document published/integrated Zaruku and site-SEO work separately from pending Abbott extraction/cutover.
 - [x] Correct stale broad claims that all 189 main commits are missing media functionality: production feature content already matches main.
 - [x] Obtain independent final review of merge resolution, plan patch placement, and runtime preservation (no must-fix findings; 93 targeted tests passed).
-- [ ] Refresh origin; fast-forward clean local main and push normally only if no concurrent change invalidates review. No force-push, reset, branch deletion, or deployment.
+- [x] Refresh origin; fast-forward clean local main and push normally only if no concurrent change invalidates review. No force-push, reset, branch deletion, or deployment.
 - [ ] Report source cleanup separately from production status and the outstanding Abbott boundary.
