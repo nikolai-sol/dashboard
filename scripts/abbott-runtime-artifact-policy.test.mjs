@@ -19,6 +19,20 @@ const SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567";
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const NEXT_ROOT = "apps/abbott/.next-abbott";
+
+test("cutover runbook requires an externally approved immutable release SHA", () => {
+  const runbook = readFileSync(path.join(REPOSITORY_ROOT, "docs/runbooks/abbott-runtime-cutover.md"), "utf8");
+  const historicalArtifactSha = "5c7fedbb6db746bc01039e16edf02fb438c16402";
+
+  assert.match(runbook, new RegExp(historicalArtifactSha));
+  assert.doesNotMatch(runbook, new RegExp(`^CODE_SHA=${historicalArtifactSha}$`, "m"));
+  assert.ok(runbook.includes(': "${APPROVED_RELEASE_SHA:?Set APPROVED_RELEASE_SHA to the final reviewed immutable source SHA}"'));
+  assert.ok(runbook.includes('test "${#APPROVED_RELEASE_SHA}" -eq 40'));
+  assert.ok(runbook.includes("tr -d '0-9a-f'"));
+  assert.ok(runbook.includes('test "$(git rev-parse HEAD)" = "$APPROVED_RELEASE_SHA"'));
+  assert.ok(runbook.includes('cut -f1)" = "$APPROVED_RELEASE_SHA"'));
+});
+
 function fixtureAuthority(root) {
   const entries = [];
   const visit = (directory) => {

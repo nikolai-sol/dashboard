@@ -15,12 +15,13 @@ was unchanged by the recovery work.
   listener, or live/saved PM2 registration. Media/combined, Zaruku, and MedRoche
   remain on `3001`, `3002`, and `3003` respectively.
 
-The reviewed application-code/artifact candidate is
-`5c7fedbb6db746bc01039e16edf02fb438c16402` (`CODE_SHA`). Boundary-test
-correction `bb753d599b4bc60bae47a05adcbe2d6c314f508e` is test-only. The later
-runbook commit is documentation-only. The existing rebuilt artifact attests
-`CODE_SHA`, not either later commit; a release at a later reviewed SHA must be
-rebuilt and re-attested by the mechanism below.
+The existing rebuilt artifact is historical rehearsal evidence for
+`5c7fedbb6db746bc01039e16edf02fb438c16402` (`HISTORICAL_ARTIFACT_SHA`). The
+boundary correction `bb753d599b4bc60bae47a05adcbe2d6c314f508e` and source-test
+correction `b9f7a1ffacde25444b7e8675d04afea90a42ac9c` are later test-only commits.
+That artifact does not attest either correction or this runbook. A future
+release must use a separately approved immutable SHA containing all reviewed
+fixes, then rebuild and re-attest by the mechanism below.
 
 Abbott still depends on canonical MySQL and the shared password-login endpoint
 `/api/dashboard-auth/login` on `3001`. This proposal does not make login
@@ -40,8 +41,8 @@ Freigabekriterien) through separate review before using the deploy command:
    command does this safely. The historical `recover-abbott-activation.mjs` is
    pinned to a different incident/boot/process and is not a cold-recovery tool.
 2. The deploy source gate requires the active production SHA to be an ancestor
-   of the candidate. `dfd6267a…` is not an ancestor of `CODE_SHA`; only the
-   approved base `8f389a28…` is. This needs an explicit reviewed lineage
+   of the candidate. `dfd6267a…` is not an ancestor of the reviewed candidate;
+   only the approved base `8f389a28…` is. This needs an explicit reviewed lineage
    resolution. Do not weaken/bypass the gate or change remote refs in order to
    make the command pass.
 
@@ -52,15 +53,18 @@ Route application needs a separately reviewed exact operator before cutover.
 
 ## Build and artifact authority
 
-After both blockers are resolved, perform the following from a clean checkout
-whose `HEAD` is the specifically approved release SHA. For the presently tested
-candidate that SHA is `CODE_SHA`, not the documentation-only commit.
+After both blockers are resolved, an approver must provide the final immutable
+release SHA containing all reviewed fixes. Do not infer it from the current
+`HEAD`, this document, or the historical artifact. Perform the following from a
+clean checkout at that exact approved SHA:
 
 ```sh
-CODE_SHA=5c7fedbb6db746bc01039e16edf02fb438c16402
-test "$(git rev-parse HEAD)" = "$CODE_SHA"
+: "${APPROVED_RELEASE_SHA:?Set APPROVED_RELEASE_SHA to the final reviewed immutable source SHA}"
+test "${#APPROVED_RELEASE_SHA}" -eq 40
+test -z "$(printf '%s' "$APPROVED_RELEASE_SHA" | tr -d '0-9a-f')"
+test "$(git rev-parse HEAD)" = "$APPROVED_RELEASE_SHA"
 test -z "$(git status --porcelain=v1)"
-test "$(git ls-remote --heads origin refs/heads/release/abbott | cut -f1)" = "$CODE_SHA"
+test "$(git ls-remote --heads origin refs/heads/release/abbott | cut -f1)" = "$APPROVED_RELEASE_SHA"
 npm ci
 npm run test:abbott-runtime
 npm run test:abbott-contract
@@ -168,11 +172,13 @@ production recovery or completed Abbott separation.
 
 ## Local evidence already obtained
 
-- Task 2 persistence fixtures: 523/523 passed at `CODE_SHA`. The reviewer found
+- Task 2 persistence fixtures: 523/523 passed at `HISTORICAL_ARTIFACT_SHA`. The
+  reviewer found
   no blocking issue; the minor note is that both cancellation timing cases call
   the save boundary, while a separate no-write failure test already exists.
 - A disposable PM2 home proved start → `save --force` → owned daemon stop →
-  resurrect for the exact `CODE_SHA` standalone process on loopback `3404`.
+  resurrect for the exact `HISTORICAL_ARTIFACT_SHA` standalone process on
+  loopback `3404`.
   PID changed and HTTP remained reachable; health returned 503 both times
   because no local canonical DB was supplied. This is process persistence PASS,
   database health NOT RUN. All owned PM2/process/socket/temp resources were
