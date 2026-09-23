@@ -861,8 +861,9 @@ function startupDefinitions(rows) {
   });
   return definitions.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
-function startupSnapshot(platform) {
+function startupSnapshot(platform,validateState) {
   const state=platform.startupState();
+  validateState?.(state);
   return {live:startupDefinitions(state.live),saved:startupDefinitions(state.saved),backup:state.backup===null?null:startupDefinitions(state.backup)};
 }
 function startupNeighbors(state) {
@@ -1013,10 +1014,10 @@ function createAbbottJournal(lock,pathname,initial) {
     const fd=fs.openSync(path.dirname(pathname),fs.constants.O_RDONLY|fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
   };
 }
-function createStartupGuard(platform,phase) {
+function createStartupGuard(platform,phase,validateState) {
   let neighborDefinitions;
   const check=()=>{
-    const state=startupSnapshot(platform),neighbors=startupNeighbors(state.saved);
+    const state=startupSnapshot(platform,validateState),neighbors=startupNeighbors(state.saved);
     if(!isDeepStrictEqual(startupNeighbors(state.live),neighbors)||state.backup!==null&&!isDeepStrictEqual(startupNeighbors(state.backup),neighbors)||neighborDefinitions&&!isDeepStrictEqual(neighbors,neighborDefinitions)){
       phase('persistence','neighbor_saved_drift');fail('Unrelated PM2 startup definitions require reconciliation');
     }
@@ -1220,7 +1221,9 @@ async function coldRestoreCurrent(request,platform,guard,terminal) {
   if(!isDeepStrictEqual(stored.record,record))fail('Cold stored proof mismatch');
   const account=platform.account();
   if(!Number.isInteger(account.uid)||account.uid<=0||account.uid===DEPLOY_UID||!Number.isInteger(account.gid)||account.gid<=0||platform===realPlatform&&(account.uid!==982||account.gid!==984))fail('Cold runtime account mismatch');
-  const startup=createStartupGuard(platform,phase);
+  const startup=createStartupGuard(platform,phase,state=>{
+    if(!state||['live','saved','backup'].some(key=>!Array.isArray(state[key])))fail('Cold startup inventory incomplete');
+  });
   const absent=async()=>{
     if(platform.registration()!==null||processProof(platform,account)!==null)fail('Cold runtime is not absent');
     await platform.assertNoListener();

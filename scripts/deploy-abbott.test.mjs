@@ -529,7 +529,7 @@ test('failed cold health compensates to absent Abbott, not a healthy predecessor
  }finally{f.cleanup();}
 });
 
-for(const mode of ['extra','force','action','id','sourceSha','manifestDigest','missing_current','live','saved','backup','missing_backup','listener','tree','receipt','browser','account','lock','neighbor'])test(`cold refusal before start: ${mode}`,async()=>{
+for(const mode of ['extra','force','action','id','sourceSha','manifestDigest','missing_current','live','saved','backup','missing_backup','missing_primary','missing_live','listener','tree','receipt','browser','account','lock','neighbor'])test(`cold refusal before start: ${mode}`,async()=>{
  const f=fixture();try{
   const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform),definition=f.saved()[0];
   if(mode!=='live')f.makeCold();f.events.length=0;
@@ -539,6 +539,7 @@ for(const mode of ['extra','force','action','id','sourceSha','manifestDigest','m
   if(mode==='missing_current')fs.unlinkSync(pointer);
   if(mode==='saved')f.mutateSaved(rows=>rows.push(definition));if(mode==='backup')f.mutateBackup(rows=>rows.push(definition));
   if(mode==='missing_backup'){const state=f.platform.startupState;f.platform.startupState=()=>({...state(),backup:null});}
+  if(mode==='missing_primary'||mode==='missing_live'){const state=f.platform.startupState,key=mode==='missing_primary'?'saved':'live',decode=vm.runInContext('value=>JSON.parse(value)',f.context);f.platform.startupState=()=>decode(JSON.stringify({...state(),[key]:null}));}
   if(mode==='listener')f.platform.assertNoListener=async()=>{throw Error('occupied');};
   if(mode==='tree')fs.appendFileSync(tree,'corrupt');
   if(['receipt','browser'].includes(mode))f.platform.coldPreflight=()=>{throw Error('synthetic external proof refusal');};
@@ -552,6 +553,24 @@ for(const mode of ['extra','force','action','id','sourceSha','manifestDigest','m
   assert.deepEqual(f.saved(),before.saved);assert.deepEqual(f.backup(),before.backup);
   assert.deepEqual(fs.existsSync(pointer)?fs.readFileSync(pointer):null,before.pointer);assert.deepEqual(fs.readFileSync(env),before.env);assert.deepEqual(fs.readFileSync(tree),before.tree);
   assert.equal(fs.existsSync(lock),mode==='lock');if(mode==='lock')assert.equal(fs.readFileSync(path.join(lock,'owner'),'utf8'),'foreign');
+ }finally{f.cleanup();}
+});
+
+for(const field of ['live','saved'])for(const boundary of ['under_lock','after_health'])test(`cold raw ${field} must remain available ${boundary}`,async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);f.makeCold();f.events.length=0;
+  const pointer=f.map('/var/www/.dashboard-abbott-control/current.json'),env=f.map('/var/www/dashboard-abbott/.env'),tree=f.map('/var/www/dashboard-abbott/apps/abbott/server.js');
+  const before={pointer:fs.readFileSync(pointer),env:fs.readFileSync(env),tree:fs.readFileSync(tree),saved:f.saved(),backup:f.backup()};
+  const state=f.platform.startupState,health=f.platform.health,decode=vm.runInContext('value=>JSON.parse(value)',f.context);let calls=0,unavailable=false;
+  f.platform.health=async proof=>{await health(proof);unavailable=true;};
+  f.platform.startupState=()=>{const raw=state();calls++;return decode(JSON.stringify(boundary==='under_lock'&&calls===2||boundary==='after_health'&&unavailable?{...raw,[field]:null}:raw));};
+  const result=await f.installer.transactAcknowledged(coldRequest(old),new AbortController().signal,f.platform);
+  assert.equal(result.status,boundary==='under_lock'?'REFUSED':'REVIEW_REQUIRED');assert.equal(result.record,null);
+  if(boundary==='under_lock'){assert.equal(calls,2);assert.equal(f.events.filter(e=>['fresh','start','stop','delete','save'].includes(e[0])).length,0);}
+  else{assert.equal(f.events.filter(e=>e[0]==='fresh').length,1);assert.equal(f.events.filter(e=>e[0]==='stop').length,1);assert.equal(f.events.filter(e=>e[0]==='delete').length,1);assert.equal(f.events.filter(e=>e[0]==='save').length,0);}
+  assert.equal(f.platform.registration(),null);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),boundary==='after_health');
+  for(const key of ['pointer','env','tree'])assert.deepEqual(fs.readFileSync({pointer,env,tree}[key]),before[key]);
+  assert.deepEqual(f.saved(),before.saved);assert.deepEqual(f.backup(),before.backup);
  }finally{f.cleanup();}
 });
 
