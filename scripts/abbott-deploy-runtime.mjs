@@ -23,6 +23,7 @@ export const FORBIDDEN_ENV = Object.freeze([
   'DEPLOY_REMOTE', 'DEPLOY_BASE_BRANCH', 'DEPLOY_ACTIVE_RELEASE_READER', 'DASHBOARD_DEPLOY_LOCK_DIR',
   'SSH_BIN', 'DEPLOY_SSH_BIN', 'GIT_SSH', 'GIT_SSH_COMMAND', 'RSYNC_RSH', 'REMOTE_ENV_PATH',
   'TRUSTED_MANIFEST', 'TRUSTED_MANIFEST_PATH', 'NODE_OPTIONS', 'NODE_PATH', 'BASH_ENV', 'ENV',
+  'COLD_CURRENT_PATH', 'COLD_CURRENT_AUTHORITY', 'EXPECTED_CURRENT_ID', 'EXPECTED_CURRENT_SOURCE_SHA', 'EXPECTED_CURRENT_MANIFEST_DIGEST',
 ]);
 
 function regular(filename) {
@@ -40,8 +41,19 @@ export function validateAuthority(filename) {
 
 export function validateInvocation(args, environment) {
   for (const key of Object.keys(environment)) if (FORBIDDEN_ENV.includes(key) || key.startsWith('GIT_') && key !== 'GIT_PAGER') fail('Fixed runtime authority override rejected');
-  if (args.length !== 2 || !['deploy', 'rollback'].includes(args[1])) fail('Invalid fixed runtime invocation');
+  if (args.length !== 2 || !['deploy', 'rollback', 'cold-restore-current'].includes(args[1])) fail('Invalid fixed runtime invocation');
   return { authority: validateAuthority(args[0]), action: args[1] };
+}
+
+export function validateColdCurrentAuthority(value) {
+  if(!value||Object.keys(value).sort().join(',')!=='armed,expectedCurrent,scope,version'||value.version!==1||value.scope!=='abbott'||typeof value.armed!=='boolean')fail('Invalid fixed cold authority');
+  if(!value.armed){if(value.expectedCurrent!==null)fail('Invalid unarmed cold authority');return value;}
+  const expected=value.expectedCurrent;
+  if(!expected||Object.keys(expected).sort().join(',')!=='id,manifestDigest,sourceSha'||typeof expected.id!=='string'||! /^[a-f0-9]{32}$/.test(expected.id)||typeof expected.sourceSha!=='string'||!SOURCE.test(expected.sourceSha)||typeof expected.manifestDigest!=='string'||! /^[a-f0-9]{64}$/.test(expected.manifestDigest))fail('Invalid fixed cold current');
+  return value;
+}
+function readColdCurrentAuthority() {
+  return validateColdCurrentAuthority(JSON.parse(regular(path.join(ROOT,'deploy/abbott/cold-current.json'))));
 }
 
 function repositoryFor(authority) {
@@ -193,6 +205,20 @@ async function main() {
   if (process.getuid() === 0 || process.geteuid() === 0) fail('Local runtime authority requires an unprivileged account');
   const repository = repositoryFor(authority);
   if (git('status', '--porcelain', '--untracked-files=normal')) fail('Runtime source must be clean');
+  if(action==='cold-restore-current'){
+    const cold=readColdCurrentAuthority();
+    if(!cold.armed)fail('Cold current authority is unarmed');
+    const expectedCurrent=cold.expectedCurrent,approved=approvedSource(repository);
+    const candidate=verifySource(authority,repository,expectedCurrent.sourceSha,approved);
+    const transfer=prepareTransport(authority);
+    validateAuthority(process.argv[2]);
+    if(!isDeepStrictEqual(readColdCurrentAuthority(),cold)||approvedSource(repository)!==candidate)fail('Cold release authority changed');
+    verifySource(authority,repository,expectedCurrent.sourceSha,candidate);
+    const result=await transfer({action,expectedCurrent});
+    if(!result||result.scope!=='abbott'||result.id!==expectedCurrent.id||result.sourceSha!==expectedCurrent.sourceSha||result.manifestDigest!==expectedCurrent.manifestDigest)fail('Cold restoration attestation mismatch');
+    console.log('ABBOTT_DEPLOY_COMMITTED stage=complete reason=none');
+    return;
+  }
   const approved = approvedSource(repository);
   const candidate = verifySource(authority, repository, undefined, approved);
   const transfer = prepareTransport(authority);

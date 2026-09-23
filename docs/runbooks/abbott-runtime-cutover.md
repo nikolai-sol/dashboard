@@ -37,19 +37,71 @@ Freigabekriterien) through separate review before using the deploy command:
    saved state, and backup saved state. Production has no such registration.
    A reviewed cold-restoration operation must attest the stored `dfd6267a…`
    tree/current record, restore only Abbott on `3004`, persist both startup
-   copies without changing neighbors, and prove health. No current repository
-   command does this safely. The historical `recover-abbott-activation.mjs` is
+   copies without changing neighbors, and prove health. The fixed command below
+   is intentionally unarmed and has only local fixture evidence. The historical `recover-abbott-activation.mjs` is
    pinned to a different incident/boot/process and is not a cold-recovery tool.
 2. The deploy source gate requires the active production SHA to be an ancestor
-   of the candidate. `dfd6267a…` is not an ancestor of the reviewed candidate;
-   only the approved base `8f389a28…` is. This needs an explicit reviewed lineage
-   resolution. Do not weaken/bypass the gate or change remote refs in order to
-   make the command pass.
+   of the candidate. The historical candidate lacked `dfd6267a…` ancestry.
+   Local reconciliation base `a56354f88ede3ae59f70a0c46fcda7ae4aab5977`
+   includes both genuine lineages. Final candidate review, exact-SHA build and
+   external release-ref approval remain separate gates. Do not weaken/bypass
+   ancestry checks or infer remote approval from a local merge.
 
 The current source also has no reviewed current Nginx mutation entrypoint.
 Validate the committed 12 route locations plus one asset location, but do not
 reuse the obsolete chronological runbook's composite-`server_name` editor.
 Route application needs a separately reviewed exact operator before cutover.
+
+## Explicit sealed-current cold restoration
+
+The no-argument command is `npm run restore:abbott:current`. Its fixed authority
+file is `deploy/abbott/cold-current.json`, intentionally committed as:
+
+```json
+{"version":1,"scope":"abbott","armed":false,"expectedCurrent":null}
+```
+
+Unarmed invocation refuses locally before remote release-ref discovery or SSH
+preparation. It has no authority-path, release, port, force or environment
+override. Arming requires fresh separately authorized host evidence and a
+reviewed successor commit binding the independently attested current `id`,
+`sourceSha` and `manifestDigest`. The operator must also obtain exact external
+tool-SHA/release-ref approval and an explicit quiet window. Historical PID/boot
+identity and historical `.env` digests are not arming credentials. The local
+tool must still be clean, exactly match the approved fixed release ref, and
+contain the current source as a genuine ancestor.
+
+Cold restoration reuses the sealed current release, original ownership receipt,
+launcher and existing environment. It does not deploy new source, generate
+credentials or switch traffic. It requires Abbott absent from live PM2 and
+both valid saved copies, no port-3004 listener, coherent neighbor definitions,
+and all thirteen existing Abbott routes on 3001. Normal deployment separately
+accepts a complete uniform route set on 3001 or 3004 (or its existing no-owned-
+route case); mixed or partial sets are refused. Its healthy-current requirement
+is unchanged.
+
+The cold worker owns the existing deployment lock, records durable start,
+health, primary-save, backup-save and compensation phases, starts the exact
+sealed launcher, checks database health, saves twice and verifies both startup
+copies. Success additionally requires ordinary live deployment preflight and
+unchanged current pointer, source/tree, receipt, environment and perimeter.
+Environment consistency uses a private transaction-local digest, never written
+to the journal or used to authorize secret changes. There is no automatic
+resume after an uncatchable interruption; retained evidence requires review.
+
+The existing acknowledged result protocol has these cold meanings:
+
+| Result | Cold meaning |
+| --- | --- |
+| `ABBOTT_DEPLOY_COMMITTED stage=complete reason=none` | Sealed current restored and persisted, after owned lock release. This means cold success only when invoked through the cold wrapper; it is not candidate deployment. |
+| `ABBOTT_DEPLOY_RESTORED stage=compensation reason=restored` | Failed attempt compensated back to absent Abbott and absent startup registration. Exit is nonzero; this is not a healthy predecessor restoration. |
+| `REFUSED` | No process or startup mutation; only owned pre-start resources may have been created and cleaned. |
+| `REVIEW_REQUIRED` | Compensation or identity is uncertain; preserve the owned lock and journal for separately reviewed recovery. |
+| `UNACKNOWLEDGED` | Transport or lock outcome is uncertain. Do not infer success or automatically repeat the operation. |
+
+Local fixture tests do not perform production restoration, deployment, route
+cutover or real database health checks. These remain separately authorized
+operational steps.
 
 ## Build and artifact authority
 

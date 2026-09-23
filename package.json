@@ -44,7 +44,8 @@
     "deploy:zaruku": "bash scripts/deploy-zaruku.sh",
     "deploy:zaruku:rollback": "bash scripts/rollback-zaruku.sh",
     "deploy:abbott": "bash scripts/deploy-abbott.sh",
-    "deploy:abbott:rollback": "bash scripts/rollback-abbott.sh"
+    "deploy:abbott:rollback": "bash scripts/rollback-abbott.sh",
+    "restore:abbott:current": "bash scripts/restore-abbott-current.sh"
   },
   "dependencies": {
     "@base-ui/react": "^1.2.0",

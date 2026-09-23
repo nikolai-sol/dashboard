@@ -13,6 +13,51 @@ const root = path.resolve(import.meta.dirname, '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const modulePath = new URL('./abbott-deploy-runtime.mjs', import.meta.url);
 
+test('cold local authority has one fixed closed schema and an intentionally unarmed record',async()=>{
+ const m=await import(modulePath),off={version:1,scope:'abbott',armed:false,expectedCurrent:null},current={id:'a'.repeat(32),sourceSha:'b'.repeat(40),manifestDigest:'c'.repeat(64)},on={...off,armed:true,expectedCurrent:current};
+ assert.deepEqual(m.validateColdCurrentAuthority(off),off);assert.deepEqual(m.validateColdCurrentAuthority(on),on);
+ for(const value of [null,{}, {...off,extra:1},{...off,version:2},{...off,scope:'zaruku'},{...off,armed:'false'},{...off,expectedCurrent:current},{...on,expectedCurrent:null},...['id','sourceSha','manifestDigest'].map(k=>({...on,expectedCurrent:{...current,[k]:'F'.repeat(current[k].length)}})),{...on,expectedCurrent:{...current,path:'/tmp'}}])assert.throws(()=>m.validateColdCurrentAuthority(value));
+ assert.deepEqual(JSON.parse(read('deploy/abbott/cold-current.json')),off);
+ const args=[path.join(root,'deploy/abbott/release.json'),'cold-restore-current'];
+ assert.equal(m.validateInvocation(args,{}).action,'cold-restore-current');
+ for(const key of ['COLD_CURRENT_PATH','COLD_CURRENT_AUTHORITY','EXPECTED_CURRENT_ID','EXPECTED_CURRENT_SOURCE_SHA','EXPECTED_CURRENT_MANIFEST_DIGEST'])assert.throws(()=>m.validateInvocation(args,{[key]:'injected'}),/override/);
+ for(const action of ['cold-restore-other','force'])assert.throws(()=>m.validateInvocation([args[0],action],{}));
+});
+function coldDriver(value,{changed=false,badResult=false}={}){
+ const calls=[],paths=[],context={fs,path,os,createHash,randomUUID,isDeepStrictEqual,Buffer,RUNTIME_MANIFESTS,calls,paths,cold:value,changed,badResult,process:{argv:['node','driver',path.join(root,'deploy/abbott/release.json'),'cold-restore-current'],env:{},getuid:()=>501,geteuid:()=>501},console:{log:value=>calls.push(['log',value])},testRoot:root};
+ const source=read('scripts/abbott-deploy-runtime.mjs').replace(/^import .*;\n/gm,'').replaceAll('export function ','function ').replaceAll('export const ','const ').replace("const ROOT = path.resolve(import.meta.dirname, '..');",'const ROOT=testRoot;').split('\nif (process.argv[1]')[0];
+ vm.createContext(context);vm.runInContext(source+`
+ validateInvocation=()=>({authority:RUNTIME_MANIFESTS.abbott,action:'cold-restore-current'});
+ repositoryFor=()=>({version:1,url:'git@github.com:nikolai-sol/dashboard.git',ref:'refs/heads/release/abbott',base:'d'.repeat(40)});
+ git=()=>'';let reads=0;
+ regular=filename=>{paths.push(filename);if(filename!==path.join(ROOT,'deploy/abbott/cold-current.json'))throw Error('not fixed cold path');reads++;return Buffer.from(JSON.stringify(changed&&reads>1?{...cold,expectedCurrent:{...cold.expectedCurrent,id:'f'.repeat(32)}}:cold));};
+ approvedSource=()=>{calls.push(['approved']);return 'e'.repeat(40);};
+ verifySource=(a,r,active,approved)=>{calls.push(['verify',active,approved]);return approved;};
+ validateAuthority=()=>RUNTIME_MANIFESTS.abbott;
+ prepareTransport=()=>{calls.push(['transport']);return async request=>{calls.push(['request',JSON.parse(JSON.stringify(request))]);return {...cold.expectedCurrent,id:badResult?'f'.repeat(32):cold.expectedCurrent.id,scope:'abbott'};};};
+ build=preparePayload=()=>{throw Error('forbidden cold build');};this.run=main;`,context);
+ return {run:context.run,calls,paths};
+}
+test('cold local unarmed refusal occurs before approved ref or SSH preparation',async()=>{
+ const f=coldDriver({version:1,scope:'abbott',armed:false,expectedCurrent:null});
+ await assert.rejects(f.run(),/unarmed/);assert.deepEqual(f.calls,[]);assert.deepEqual(f.paths,[path.join(root,'deploy/abbott/cold-current.json')]);
+});
+test('cold local armed dispatch sends exact current authority without live inspect or build',async()=>{
+ const authority={version:1,scope:'abbott',armed:true,expectedCurrent:{id:'a'.repeat(32),sourceSha:'b'.repeat(40),manifestDigest:'c'.repeat(64)}};
+ const f=coldDriver(authority);await f.run();
+ const requests=f.calls.filter(c=>c[0]==='request');assert.equal(requests.length,1);assert.deepEqual(JSON.parse(JSON.stringify(requests[0][1])),{action:'cold-restore-current',expectedCurrent:authority.expectedCurrent});
+ assert.equal(f.calls.filter(c=>c[0]==='approved').length,2);assert.ok(f.calls.filter(c=>c[0]==='verify').every(c=>c[1]===authority.expectedCurrent.sourceSha));
+ assert.ok(f.paths.length>=2);assert.ok(f.paths.every(p=>p===path.join(root,'deploy/abbott/cold-current.json')));
+ assert.deepEqual(f.calls.at(-1),['log','ABBOTT_DEPLOY_COMMITTED stage=complete reason=none']);
+ for(const options of [{changed:true},{badResult:true}]){const bad=coldDriver(authority,options);await assert.rejects(bad.run());assert.equal(bad.calls.some(c=>c[0]==='log'),false);if(options.changed)assert.equal(bad.calls.some(c=>c[0]==='request'),false);}
+});
+test('cold fixed wrapper rejects arguments and emits one sanitized unarmed refusal',()=>{
+ const wrapper=path.join(root,'scripts/restore-abbott-current.sh');assert.ok(fs.existsSync(wrapper));
+ const argument=spawnSync('/bin/bash',[wrapper,'force'],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8'});assert.equal(argument.status,1);assert.match(argument.stderr,/accepts no arguments/);
+ const result=spawnSync('/bin/bash',[wrapper],{env:{PATH:'/usr/bin:/bin'},encoding:'utf8'});assert.equal(result.status,1);assert.equal(result.stdout,'');assert.match(result.stderr,/^ABBOTT_DEPLOY_REFUSED stage=unknown reason=failed\n$/);
+ assert.equal(JSON.parse(read('package.json')).scripts['restore:abbott:current'],'bash scripts/restore-abbott-current.sh');
+});
+
 test('Abbott authority is exact and repository ref is pinned', async () => {
   assert.ok(fs.existsSync(path.join(root, 'deploy/abbott/release.json')), 'fixed Abbott manifest is missing');
   assert.deepEqual(JSON.parse(read('deploy/abbott/release.json')), RUNTIME_MANIFESTS.abbott);
@@ -438,6 +483,18 @@ function fixture(authority=RUNTIME_MANIFESTS.abbott) {
 }
 
 const coldRequest=r=>({action:'cold-restore-current',expectedCurrent:{id:r.id,sourceSha:r.sourceSha,manifestDigest:r.manifestDigest}});
+test('cold environment read wipes its buffer on stable-read attestation failure',async()=>{
+ const f=fixture();try{
+  const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);f.makeCold();f.events.length=0;
+  const open=f.io.openSync,read=f.io.readFileSync,stat=f.io.fstatSync;let targetFd,bytes;
+  f.io.openSync=(file,...args)=>{const fd=open(file,...args);if(file==='/var/www/dashboard-abbott/.env')targetFd=fd;return fd;};
+  f.io.readFileSync=(file,...args)=>{const value=read(file,...args);if(file===targetFd)bytes=value;return value;};
+  f.io.fstatSync=(fd,...args)=>{const value=stat(fd,...args);if(fd===targetFd)value.ino+=typeof value.ino==='bigint'?1n:1;return value;};
+  const result=await f.installer.transactAcknowledged(coldRequest(old),new AbortController().signal,f.platform);
+  assert.equal(result.status,'REFUSED');assert.ok(Buffer.isBuffer(bytes)&&bytes.length>0);assert.ok(bytes.every(b=>b===0));
+  assert.equal(f.events.filter(e=>['fresh','save','stop','delete'].includes(e[0])).length,0);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);
+ }finally{f.cleanup();}
+});
 for(const mode of ['cancel','environment'])test(`cold start journal rechecks ${mode} before process creation`,async()=>{
  const f=fixture();try{
   const old=await f.installer.transact({action:'deploy',expectedActiveSha:null,payload:f.payload('a'.repeat(40))},f.platform);f.makeCold();f.events.length=0;

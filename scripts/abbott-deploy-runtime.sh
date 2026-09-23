@@ -4,7 +4,8 @@ for forbidden in RUNTIME_SCOPE APP_NAME APP_PORT APP_DIR RELEASE_BRANCH DEPLOY_L
   RELEASES_DIR BACKUPS_DIR RELEASE_ID KEEP_BACKUPS VPS PUBLIC_APP_HOST TARGET_BACKUP \
   DEPLOY_REMOTE DEPLOY_BASE_BRANCH DEPLOY_ACTIVE_RELEASE_READER DASHBOARD_DEPLOY_LOCK_DIR \
   SSH_BIN DEPLOY_SSH_BIN GIT_SSH GIT_SSH_COMMAND RSYNC_RSH REMOTE_ENV_PATH \
-  TRUSTED_MANIFEST TRUSTED_MANIFEST_PATH NODE_OPTIONS NODE_PATH BASH_ENV ENV; do
+  TRUSTED_MANIFEST TRUSTED_MANIFEST_PATH NODE_OPTIONS NODE_PATH BASH_ENV ENV \
+  COLD_CURRENT_PATH COLD_CURRENT_AUTHORITY EXPECTED_CURRENT_ID EXPECTED_CURRENT_SOURCE_SHA EXPECTED_CURRENT_MANIFEST_DIGEST; do
   if [[ -n "${!forbidden+x}" ]]; then
     echo 'Refusing runtime authority override.' >&2
     exit 1
@@ -16,7 +17,7 @@ while IFS= read -r forbidden; do
     exit 1
   fi
 done < <(compgen -e)
-[[ "$#" -eq 2 && ( "$2" == deploy || "$2" == rollback ) ]] || { echo 'Invalid fixed runtime invocation.' >&2; exit 1; }
+[[ "$#" -eq 2 && ( "$2" == deploy || "$2" == rollback || "$2" == cold-restore-current ) ]] || { echo 'Invalid fixed runtime invocation.' >&2; exit 1; }
 SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # Select Node only from established system installation paths, never caller PATH.
 for node_bin in /opt/homebrew/bin/node /usr/local/bin/node /usr/bin/node; do

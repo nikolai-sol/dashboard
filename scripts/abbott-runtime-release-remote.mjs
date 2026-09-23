@@ -395,13 +395,15 @@ function stableRead(filename, privateFile = false) {
   const before = fs.lstatSync(filename, { bigint: true });
   if (!before.isFile() || before.nlink !== 1n || before.size > 536870912n || privateFile && (Number(before.mode) & 0o077)) fail('Unsafe authority file');
   const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  let content;
   try {
-    const content = fs.readFileSync(fd);
+    content = fs.readFileSync(fd);
     for (const after of [fs.fstatSync(fd, { bigint: true }), fs.lstatSync(filename, { bigint: true })]) {
       if (['dev', 'ino', 'size', 'mode', 'ctimeNs', 'mtimeNs'].some(key => before[key] !== after[key])) fail('Authority file changed');
     }
     return content;
-  } finally { fs.closeSync(fd); }
+  } catch(error) { content?.fill(0); throw error; }
+  finally { fs.closeSync(fd); }
 }
 
 function owned(filename, directory = false) {
