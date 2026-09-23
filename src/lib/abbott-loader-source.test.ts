@@ -85,7 +85,10 @@ test("comparison invocation preserves the trusted audience behaviorally", async 
 test("unused Zaruku BI export is removed while the live Zaruku SEO branch remains", async () => {
   const abbottModule = await import("./abbott-bi");
   const dashboardLoader = source("src/lib/dashboard-data-loader.ts");
+  const branchStart = dashboardLoader.indexOf('if (dashboardType === "zaruku_bi")');
+  const branchEnd = dashboardLoader.indexOf("\n  const platformStatsRaw", branchStart);
 
   assert.equal("loadZarukuBiData" in abbottModule, false);
-  assert.match(dashboardLoader, /dashboardType === "zaruku_bi"[\s\S]{0,500}loadZarukuSeoData/);
+  assert.ok(branchStart >= 0 && branchEnd > branchStart, "live Zaruku branch must remain bounded");
+  assert.match(dashboardLoader.slice(branchStart, branchEnd), /loadZarukuSeoData/);
 });
