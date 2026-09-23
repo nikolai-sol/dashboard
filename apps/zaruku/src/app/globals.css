@@ -1,1 +1,4 @@
 @import "../../../../src/app/globals.css";
+
+/* Shared dashboard components are outside this app's automatic scan root. */
+@source "../../../../src";

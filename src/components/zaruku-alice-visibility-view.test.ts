@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ZarukuAliceVisibilityQuery, ZarukuAliceVisibilitySnapshot } from "@/lib/types";
 import {
   aliceDetailState,
+  buildAliceHistoryChart,
   filterAliceQueries,
   monthlySovDelta,
   formatAliceMonthLabel,
@@ -85,6 +86,33 @@ test("month selection falls back to the newest available snapshot", () => {
   const august = snapshot("2026-08", rows);
   assert.equal(selectAliceSnapshot([july, august], "2026-06"), august);
   assert.equal(selectAliceSnapshot([july, august], "2026-07"), july);
+});
+
+test("Alice history keeps published values in chronological order and inserts a null point for a missing month", () => {
+  const chart = buildAliceHistoryChart([
+    { month: "2026-09", officialSovPct: 41.2345 },
+    { month: "2026-07", officialSovPct: 44 },
+  ]);
+
+  assert.deepEqual(chart.rows, [
+    { month: "2026-07", sov: 44 },
+    { month: "2026-08", sov: null },
+    { month: "2026-09", sov: 41.2345 },
+  ]);
+});
+
+test("Alice history uses compact month-count widths for one, two, three, and twelve months", () => {
+  const months = Array.from({ length: 12 }, (_, index) => ({
+    month: `2026-${String(index + 1).padStart(2, "0")}`,
+    officialSovPct: index + 0.1234,
+  }));
+
+  assert.equal(buildAliceHistoryChart(months.slice(0, 1)).width, 240);
+  assert.equal(buildAliceHistoryChart(months.slice(0, 2)).width, 240);
+  assert.equal(buildAliceHistoryChart(months.slice(0, 3)).width, 336);
+  assert.equal(buildAliceHistoryChart(months).width, 1_344);
+  assert.deepEqual(buildAliceHistoryChart(months).rows.map((row) => row.month), months.map((row) => row.month));
+  assert.deepEqual(buildAliceHistoryChart(months).rows.map((row) => row.sov), months.map((row) => row.officialSovPct));
 });
 
 test("summary-only snapshots do not expose ambiguous historical query totals", () => {

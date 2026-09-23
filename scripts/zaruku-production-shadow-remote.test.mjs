@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import vm from 'node:vm';
 import { createProductionAdapter, shadowTransportArguments } from './zaruku-production-shadow-remote.mjs';
 const sha='a'.repeat(40),digest='b'.repeat(64);
+test('generated SSH worker emits JSON followed by a real newline',()=>{
+  const command=shadowTransportArguments('preflight',{sourceSha:sha,runId:'00000000-0000-4000-8000-000000000000',context:{}},digest).at(-1);
+  const code=command.slice(command.indexOf("-e '")+4,-1).replaceAll("'\\''", "'");
+  const statement=code.match(/process\.stdout\.write\(JSON\.stringify\(result\).*?;/)[0];
+  let output='';vm.runInNewContext(statement,{result:{passed:true},process:{stdout:{write:value=>{output+=value;}}}});
+  assert.deepEqual(JSON.parse(output),{passed:true});assert.equal(output.at(-1),'\n');
+});
 
 function fixture(allocationTransform=value=>value){
   const calls=[],remote=[];

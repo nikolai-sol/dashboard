@@ -22,16 +22,20 @@ const refuse=(label='worker check')=>{throw new Error(`Zaruku shadow ${label} fa
 const same=(a,b)=>isDeepStrictEqual(a,b);
 const snapshot=stat=>({dev:String(stat.dev),ino:String(stat.ino),mode:stat.mode&0o777,uid:stat.uid,gid:stat.gid,nlink:stat.nlink,size:stat.size,mtime:stat.mtimeMs,ctime:stat.ctimeMs});
 
-function safeAncestors(filename,io=fs) {
+function safeAncestors(filename,io=fs,observeForeignSha=false) {
   for(let dir=path.dirname(filename);;dir=path.dirname(dir)){
     const stat=io.lstatSync(dir);
-    if(!stat.isDirectory()||stat.uid!==0||stat.gid!==0||stat.mode&0o022)refuse();
+    // The legacy deployment directory may retain its deployer's ownership.
+    // Its SHA is comparison data, never code or credential authority. All
+    // higher ancestors and the SHA file itself remain root-owned and pinned.
+    const legacyObservation=observeForeignSha&&filename==='/var/www/dashboard/.release-source-sha'&&dir==='/var/www/dashboard';
+    if(!stat.isDirectory()||!legacyObservation&&(stat.uid!==0||stat.gid!==0)||stat.mode&0o022)refuse();
     if(dir==='/')break;
   }
 }
 
-function readProtected(filename,mode,max=65536,io=fs) {
-  safeAncestors(filename,io);
+function readProtected(filename,mode,max=65536,io=fs,observeForeignSha=false) {
+  safeAncestors(filename,io,observeForeignSha);
   const fd=io.openSync(filename,io.constants.O_RDONLY|io.constants.O_NOFOLLOW);
   try {
     const before=io.fstatSync(fd);
@@ -72,7 +76,7 @@ export function inspectFixedInventory(io=fs) {
   const file=readProtected(AUTHORITY.otherRuntimeShas,0o600,4096,io);
   const entries=validateInventory(file.bytes);
   const foreignShas=entries.map(entry=>{
-    const value=readProtected(entry.path,undefined,41,io);
+    const value=readProtected(entry.path,undefined,41,io,true);
     if(!/^[a-f0-9]{40}\n$/.test(value.bytes.toString()))refuse('inventory');
     return {name:entry.name,sha:value.bytes.toString().trim(),identity:Object.values(value.identity).map(String).join(':')};
   });
@@ -84,7 +88,7 @@ export function installFixedInventory(io=fs,identity={uid:process.getuid(),euid:
   if(identity.uid!==0||identity.euid!==0)refuse('inventory');
   safeAncestors(AUTHORITY.otherRuntimeShas,io);
   const bytes=Buffer.from(AUTHORITY.otherRuntimeShaEntries.map(row=>`${row.name}\t${row.path}\n`).join(''));
-  for(const entry of AUTHORITY.otherRuntimeShaEntries){const sha=readProtected(entry.path,undefined,41,io);if(!/^[a-f0-9]{40}\n$/.test(sha.bytes.toString()))refuse('inventory');}
+  for(const entry of AUTHORITY.otherRuntimeShaEntries){const sha=readProtected(entry.path,undefined,41,io,true);if(!/^[a-f0-9]{40}\n$/.test(sha.bytes.toString()))refuse('inventory');}
   if(io.lstatSync(AUTHORITY.otherRuntimeShas,{throwIfNoEntry:false}))return inspectFixedInventory(io);
   const parent=io.openSync(path.dirname(AUTHORITY.otherRuntimeShas),io.constants.O_RDONLY|io.constants.O_DIRECTORY|io.constants.O_NOFOLLOW);
   try {

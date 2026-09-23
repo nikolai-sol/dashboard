@@ -19,6 +19,13 @@ const api = await import('./deploy-runtime.mjs');
 const worker = await import('./runtime-release-remote.mjs');
 const dedicatedInput = { ZARUKU_DB_HOST: 'localhost', ZARUKU_DB_PORT: '3306', ZARUKU_DB_USER: 'zaruku_fixture', ZARUKU_DB_PASSWORD: 'fixture-password', ZARUKU_DB_NAME: 'report_bd', DASHBOARD_AUTH_SECRET: 'fixture-auth' };
 
+test('fixed Zaruku artifact transport compresses without changing host or security options', () => {
+  const invocation = read('scripts/deploy-runtime.mjs').match(/spawnSync\(SSH, (\[[^\n]+\]), \{ input,/);
+  assert.ok(invocation, 'fixed SSH invocation must remain inspectable');
+  const args = Array.from(vm.runInNewContext(invocation[1], { command: 'true' }));
+  assert.deepEqual(args, ['-C', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', 'true']);
+});
+
 test('child deploy binding requires an exact SHA and run ID with no substitutions', () => {
   const binding={sourceSha:sha,runId:'00000000-0000-4000-8000-000000000000'};
   assert.deepEqual(api.parseDeploymentBinding(Buffer.from(JSON.stringify(binding))),binding);

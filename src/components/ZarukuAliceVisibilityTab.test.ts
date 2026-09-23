@@ -72,6 +72,48 @@ test("renders the August official SoV separately from export coverage", () => {
   assert.doesNotMatch(markup, /javascript:alert/);
 });
 
+test("latest detail ignores a stale month hint and renders compact history without a month selector", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, {
+    data: { ...data([augustSnapshot, julySnapshot]), latestMonth: "2026-07" },
+    locale: "ru-RU",
+  }));
+
+  assert.doesNotMatch(markup, /<option[^>]*value="2026-0[78]"/);
+  assert.doesNotMatch(markup, />Месяц<select/);
+  assert.match(markup, /Последний загруженный месяц/);
+  assert.match(markup, /август 2026 г\./);
+  assert.match(markup, /43,91%/);
+  assert.match(markup, /overflow-x-auto/);
+  assert.match(markup, /width:240px/);
+});
+
+test("query table fixes column geometry and contains long query and link text", () => {
+  const longQuery = "оченьдлинныйнепрерывныйзапрос".repeat(12);
+  const longUrl = `https://onco-life.ru/${"very-long-path-segment/".repeat(12)}`;
+  const snapshot = {
+    ...augustSnapshot,
+    queries: [{
+      ...augustSnapshot.queries[0]!,
+      queryText: longQuery,
+      portalUrl: `https://zaruku.ru/${"long-portal-path/".repeat(12)}`,
+      sources: [{
+        ...augustSnapshot.queries[0]!.sources[1]!,
+        sourceUrl: longUrl,
+      }],
+    }],
+  };
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([snapshot]), locale: "ru-RU" }));
+
+  assert.match(markup, /<table class="zaruku-table table-fixed min-w-\[920px\]">/);
+  assert.match(markup, /<colgroup>/);
+  for (const width of [28, 8, 8, 22, 24, 10]) assert.match(markup, new RegExp(`style="width:${width}%"`));
+  assert.match(markup, /min-w-0 whitespace-normal \[overflow-wrap:anywhere\]/);
+  assert.match(markup, /class="block min-w-0 max-w-full truncate text-teal-700/);
+  assert.match(markup, new RegExp(`href="${longUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+  assert.match(markup, new RegExp(`title="${longUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+  assert.match(markup, /<thead class="zaruku-table-head">/);
+});
+
 test("July summary-only view keeps its official SoV and withholds query detail", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([julySnapshot]), locale: "ru-RU" }));
   assert.match(markup, /44,00%/);

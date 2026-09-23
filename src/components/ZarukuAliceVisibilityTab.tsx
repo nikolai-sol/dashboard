@@ -5,6 +5,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import ZarukuTableFrame from "@/components/ZarukuTableFrame";
 import {
   aliceDetailState,
+  buildAliceHistoryChart,
   filterAliceQueries,
   formatAliceMonthLabel,
   monthlySovDelta,
@@ -38,6 +39,14 @@ function formatPercentagePointDelta(value: number, locale: string) {
   return `${sign}${Math.abs(value).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} п. п.`;
 }
 
+function AliceMonthTick({ x = 0, y = 0, payload, locale }: { x?: number; y?: number; payload?: { value?: string }; locale: string }) {
+  const label = formatAliceMonthLabel(payload?.value ?? "", locale).replace(/ г\.$/, "");
+  const separator = label.lastIndexOf(" ");
+  const firstLine = separator > 0 ? label.slice(0, separator) : label;
+  const secondLine = separator > 0 ? label.slice(separator + 1) : null;
+  return <g transform={`translate(${x},${y})`}><text textAnchor="middle" fill={ZARUKU_CHART_PALETTE.axis} fontSize={12}><tspan x={0} dy="0.9em">{firstLine}</tspan>{secondLine ? <tspan x={0} dy="1.2em">{secondLine}</tspan> : null}</text></g>;
+}
+
 function shortUrl(value: string) {
   try {
     const parsed = new URL(value);
@@ -49,22 +58,22 @@ function shortUrl(value: string) {
 
 function ExternalLink({ value, children }: { value: string | null; children: string }) {
   const href = resolveSafeExternalUrl(value);
-  return href ? <a href={href} target="_blank" rel="noreferrer" title={href} className="max-w-full truncate text-teal-700 hover:text-teal-900 hover:underline">{children}</a> : <span className="max-w-full truncate text-slate-400">{children}</span>;
+  return href ? <a href={href} target="_blank" rel="noreferrer" title={href} className="block min-w-0 max-w-full truncate text-teal-700 hover:text-teal-900 hover:underline">{children}</a> : <span className="block min-w-0 max-w-full truncate text-slate-400">{children}</span>;
 }
 
 function PortalLink({ value }: { value: string | null }) {
   const href = resolveZarukuContentUrl(value);
-  return href ? <a href={href} target="_blank" rel="noreferrer" title={href} className="max-w-full truncate text-teal-700 hover:text-teal-900 hover:underline">{shortUrl(href)}</a> : <span className="text-slate-400">—</span>;
+  return href ? <a href={href} target="_blank" rel="noreferrer" title={href} className="block min-w-0 max-w-full truncate text-teal-700 hover:text-teal-900 hover:underline">{shortUrl(href)}</a> : <span className="block min-w-0 max-w-full truncate text-slate-400">—</span>;
 }
 
 function SourceList({ row, sourcesAvailable }: { row: ZarukuAliceVisibilityQuery; sourcesAvailable: boolean }) {
   if (!sourcesAvailable) return <p className="mt-2 text-xs font-normal text-amber-700">Источники временно недоступны.</p>;
   return (
-    <details className="mt-2 text-xs text-slate-500">
+    <details className="mt-2 min-w-0 max-w-full text-xs text-slate-500">
       <summary className="cursor-pointer text-slate-600 hover:text-slate-900">Все источники в ответе ({row.sourceCount})</summary>
-      <ol className="mt-2 space-y-1 pl-5 marker:text-slate-400">
-        {row.sources.map((source) => <li key={source.id} className="min-w-0">
-          <span className="mr-1 text-slate-400">{source.sourceRank}.</span>
+      <ol className="mt-2 min-w-0 max-w-full space-y-1 pl-5 marker:text-slate-400">
+        {row.sources.map((source) => <li key={source.id} className="flex min-w-0 max-w-full items-baseline gap-1">
+          <span className="shrink-0 text-slate-400">{source.sourceRank}.</span>
           {source.isPortal ? <PortalLink value={source.sourceUrl} /> : <ExternalLink value={source.sourceUrl}>{shortUrl(source.sourceUrl)}</ExternalLink>}
         </li>)}
       </ol>
@@ -96,11 +105,12 @@ function QueryTable({ snapshot, locale, sourcesAvailable }: { snapshot: ZarukuAl
           <label className="block shrink-0 text-xs font-medium text-slate-600">Присутствие Zaruku<select value={presence} onChange={(event) => setPresenceFilter(event.target.value as AlicePresenceFilter)} className="mt-1.5 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400"><option value="all">Все</option><option value="present">Есть</option><option value="absent">Нет</option></select></label>
         </div>
         <ZarukuTableFrame mode="operational" label="Запросы и позиция Zaruku">
-          <table className="zaruku-table min-w-[920px]">
-            <thead><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Запрос</th><th className="pb-2 font-medium">Zaruku</th><th className="pb-2 font-medium">Место</th><th className="pb-2 font-medium">Страница</th><th className="pb-2 font-medium">Первые источники</th><th className="pb-2 font-medium">Ответ Алисы</th></tr></thead>
+          <table className="zaruku-table table-fixed min-w-[920px]">
+            <colgroup>{[28, 8, 8, 22, 24, 10].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
+            <thead className="zaruku-table-head"><tr className="text-left text-xs uppercase text-slate-400"><th className="pb-2 font-medium">Запрос</th><th className="pb-2 font-medium">Zaruku</th><th className="pb-2 font-medium">Место</th><th className="pb-2 font-medium">Страница</th><th className="pb-2 font-medium">Первые источники</th><th className="pb-2 font-medium">Ответ Алисы</th></tr></thead>
             <tbody className="divide-y divide-slate-100">{paginated.rows.map((row) => {
               const competitors = sourcesAvailable ? row.sources.filter((source) => !source.isPortal).slice(0, 3) : [];
-              return <tr key={row.id} className="align-top"><td className="max-w-[280px] py-3 pr-4 font-medium leading-snug text-slate-700"><div>{row.queryText}</div><SourceList row={row} sourcesAvailable={sourcesAvailable} /></td><td className="whitespace-nowrap py-3 pr-4"><span className={row.portalPresent ? "rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700" : "rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600"}>{row.portalPresent ? "Есть" : "Нет"}</span></td><td className="whitespace-nowrap py-3 pr-4 tabular-nums text-slate-600">{formatNumber(row.portalPosition, locale)}</td><td className="max-w-[170px] py-3 pr-4"><PortalLink value={row.portalUrl} /></td><td className="max-w-[260px] py-3 pr-4"><div className="space-y-1">{sourcesAvailable ? competitors.length ? competitors.map((source) => <div key={source.id}><ExternalLink value={source.sourceUrl}>{shortUrl(source.sourceUrl)}</ExternalLink></div>) : <span className="text-slate-400">—</span> : <span className="text-amber-700">Источники временно недоступны.</span>}</div></td><td className="whitespace-nowrap py-3"><ExternalLink value={row.aliceAnswerUrl}>Открыть</ExternalLink></td></tr>;
+              return <tr key={row.id} className="align-top"><td className="min-w-0 whitespace-normal [overflow-wrap:anywhere] py-3 pr-4 font-medium leading-snug text-slate-700"><div>{row.queryText}</div><SourceList row={row} sourcesAvailable={sourcesAvailable} /></td><td className="whitespace-nowrap py-3 pr-4"><span className={row.portalPresent ? "rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700" : "rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600"}>{row.portalPresent ? "Есть" : "Нет"}</span></td><td className="whitespace-nowrap py-3 pr-4 tabular-nums text-slate-600">{formatNumber(row.portalPosition, locale)}</td><td className="min-w-0 py-3 pr-4"><PortalLink value={row.portalUrl} /></td><td className="min-w-0 py-3 pr-4"><div className="min-w-0 max-w-full space-y-1">{sourcesAvailable ? competitors.length ? competitors.map((source) => <div key={source.id} className="min-w-0 max-w-full"><ExternalLink value={source.sourceUrl}>{shortUrl(source.sourceUrl)}</ExternalLink></div>) : <span className="text-slate-400">—</span> : <span className="text-amber-700">Источники временно недоступны.</span>}</div></td><td className="min-w-0 whitespace-nowrap py-3"><ExternalLink value={row.aliceAnswerUrl}>Открыть</ExternalLink></td></tr>;
             })}</tbody>
           </table>
         </ZarukuTableFrame>
@@ -115,10 +125,9 @@ function CompetitorPanels({ snapshot, locale, detailsAvailable }: { snapshot: Za
 }
 
 export default function ZarukuAliceVisibilityTab({ data, locale = "ru-RU" }: Props) {
-  const [month, setMonth] = useState<string | null>(data.latestMonth);
-  const snapshot = selectAliceSnapshot(data.snapshots, month);
+  const snapshot = selectAliceSnapshot(data.snapshots, null);
   const detailState = aliceDetailState(snapshot);
-  const chartRows = useMemo(() => [...data.snapshots].sort((left, right) => left.month.localeCompare(right.month)).map((row) => ({ month: row.month, sov: row.officialSovPct })), [data.snapshots]);
+  const chart = useMemo(() => buildAliceHistoryChart(data.snapshots), [data.snapshots]);
   const delta = monthlySovDelta(data.snapshots, snapshot?.month ?? null);
 
   if (data.status === "unavailable") return <section className="card-surface zaruku-panel"><div className="zaruku-panel-body text-sm text-slate-500"><h3 className="text-base font-semibold text-slate-900">ИИ-видимость и конкуренты</h3><p role="status" className="mt-2">Данные ИИ-видимости сейчас недоступны. Попробуйте открыть вкладку позже.</p></div></section>;
@@ -134,5 +143,32 @@ export default function ZarukuAliceVisibilityTab({ data, locale = "ru-RU" }: Pro
 
   const sourceDetailsAvailable = data.status === "available";
 
-  return <div className="zaruku-section-stack"><section className="card-surface zaruku-panel"><header className="zaruku-panel-header"><div><h3 className="text-base font-semibold text-slate-900">ИИ-видимость и конкуренты</h3><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">Ручная месячная выгрузка из Яндекс Вебмастера. Официальная доля и строки выгрузки сохраняются раздельно.</p></div><label className="text-xs font-medium text-slate-600">Месяц<select value={snapshot.month} onChange={(event) => setMonth(event.target.value)} className="mt-1 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-slate-400">{[...data.snapshots].sort((left, right) => right.month.localeCompare(left.month)).map((item) => <option key={item.month} value={item.month}>{formatAliceMonthLabel(item.month, locale)}</option>)}</select></label></header><div className="zaruku-panel-body"><div className="h-52 min-w-0"><ResponsiveContainer width="100%" height={208} minWidth={0} minHeight={208}><LineChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ZARUKU_CHART_PALETTE.grid} /><XAxis dataKey="month" tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} /><YAxis tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} unit="%" /><Tooltip formatter={(value) => formatOfficialSov(typeof value === "number" ? value : null, locale)} /><Line type="monotone" dataKey="sov" name="Официальная доля" stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 5 }} /></LineChart></ResponsiveContainer></div><div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><KpiCard label="Официальная доля в Алисе AI" value={formatOfficialSov(snapshot.officialSovPct, locale)} note={delta == null ? "Первый опубликованный месяц" : `Δ ${formatPercentagePointDelta(delta, locale)}`} />{hasExampleCoverage ? <><KpiCard label="Запросов в выгрузке" value={formatNumber(snapshot.exportedQueryCount, locale)} /><KpiCard label="Zaruku присутствует" value={formatNumber(snapshot.portalPresentQueryCount, locale)} /><KpiCard label="Доля в примерах" value={formatPercent(snapshot.samplePresencePct, locale)} /></> : null}</div>{hasExampleCoverage ? <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-slate-600">Официальная доля рассчитана Яндексом: {formatOfficialSov(snapshot.officialSovPct, locale)} — это общий показатель видимости сайта. Доля в примерах рассчитана только по выгруженным строкам: {formatPercent(snapshot.samplePresencePct, locale)} среди {formatNumber(snapshot.exportedQueryCount, locale)} примеров.</p> : null}{data.status === "partial" ? <p role="status" className="mt-4 text-sm text-amber-700">Часть детализации по источникам и примерам временно недоступна. Запросы и показатели выше сохранены.</p> : null}{hasQueryDetail ? null : <p role="status" className="mt-4 text-sm text-slate-500">{detailMessage}</p>}</div></section>{hasQueryDetail ? <><QueryTable snapshot={snapshot} locale={locale} sourcesAvailable={sourceDetailsAvailable} /><CompetitorPanels snapshot={snapshot} locale={locale} detailsAvailable={sourceDetailsAvailable} /></> : null}</div>;
+  return <div className="zaruku-section-stack">
+    <section className="card-surface zaruku-panel">
+      <header className="zaruku-panel-header">
+        <div><h3 className="text-base font-semibold text-slate-900">ИИ-видимость и конкуренты</h3><p className="mt-1 max-w-3xl text-xs leading-relaxed text-slate-500">Ручная месячная выгрузка из Яндекс Вебмастера. Официальная доля и строки выгрузки сохраняются раздельно.</p></div>
+        <p className="text-xs leading-relaxed text-slate-500">Последний загруженный месяц<br /><span className="font-medium text-slate-700">{formatAliceMonthLabel(snapshot.month, locale)}</span></p>
+      </header>
+      <div className="zaruku-panel-body">
+        <div className="max-w-full overflow-x-auto" role="region" aria-label="История официальной доли в Алисе AI" tabIndex={0}>
+          <div className="h-56" style={{ width: chart.width }}>
+            <ResponsiveContainer width="100%" height={224} minWidth={0} minHeight={224}>
+              <LineChart data={chart.rows} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ZARUKU_CHART_PALETTE.grid} />
+                <XAxis dataKey="month" interval={0} minTickGap={0} padding={{ left: 28, right: 28 }} height={42} tick={<AliceMonthTick locale={locale} />} axisLine={false} tickLine={false} />
+                <YAxis width={48} domain={[0, "auto"]} tick={{ fontSize: 12, fill: ZARUKU_CHART_PALETTE.axis }} axisLine={false} tickLine={false} unit="%" />
+                <Tooltip labelFormatter={(value) => formatAliceMonthLabel(String(value), locale)} formatter={(value) => formatOfficialSov(typeof value === "number" ? value : null, locale)} />
+                <Line type="monotone" dataKey="sov" name="Официальная доля" connectNulls={false} stroke={ZARUKU_CHART_PALETTE.seo} strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><KpiCard label="Официальная доля в Алисе AI" value={formatOfficialSov(snapshot.officialSovPct, locale)} note={delta == null ? "Первый опубликованный месяц" : `Δ ${formatPercentagePointDelta(delta, locale)}`} />{hasExampleCoverage ? <><KpiCard label="Запросов в выгрузке" value={formatNumber(snapshot.exportedQueryCount, locale)} /><KpiCard label="Zaruku присутствует" value={formatNumber(snapshot.portalPresentQueryCount, locale)} /><KpiCard label="Доля в примерах" value={formatPercent(snapshot.samplePresencePct, locale)} /></> : null}</div>
+        {hasExampleCoverage ? <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-slate-600">Официальная доля рассчитана Яндексом: {formatOfficialSov(snapshot.officialSovPct, locale)} — это общий показатель видимости сайта. Доля в примерах рассчитана только по выгруженным строкам: {formatPercent(snapshot.samplePresencePct, locale)} среди {formatNumber(snapshot.exportedQueryCount, locale)} примеров.</p> : null}
+        {data.status === "partial" ? <p role="status" className="mt-4 text-sm text-amber-700">Часть детализации по источникам и примерам временно недоступна. Запросы и показатели выше сохранены.</p> : null}
+        {hasQueryDetail ? null : <p role="status" className="mt-4 text-sm text-slate-500">{detailMessage}</p>}
+      </div>
+    </section>
+    {hasQueryDetail ? <><QueryTable snapshot={snapshot} locale={locale} sourcesAvailable={sourceDetailsAvailable} /><CompetitorPanels snapshot={snapshot} locale={locale} detailsAvailable={sourceDetailsAvailable} /></> : null}
+  </div>;
 }

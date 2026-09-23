@@ -79,7 +79,7 @@ async function transfer(request) {
   const code = `const CONTROL_FILES=${JSON.stringify(CONTROL_FILES)};const inspect=(${receiveControlPayload.toString()});try{const fs=await import('node:fs');const crypto=await import('node:crypto');const bytes=fs.readFileSync(0);if(bytes.length>536870912||crypto.createHash('sha256').update(bytes).digest('hex')!==${JSON.stringify(digest)})throw new Error();const input=JSON.parse(bytes);const control=await inspect(Buffer.from(input.control,'base64'),input.controlDigest,undefined,true);const dispatcher=await import('file://'+control.destination.path+'/scripts/zaruku-shadow-dispatch.mjs');process.stdout.write(JSON.stringify(await dispatcher.dispatchStaged('release',input.request))+'\\n');}catch{process.stderr.write('Zaruku staged release refused\\n');process.exitCode=1;}`;
   const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
   const command = `/usr/bin/env -i /usr/bin/node --input-type=module -e ${quote(code)}`;
-  const result = spawnSync(SSH, ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', command], { input, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', maxBuffer: 1048576, timeout: 300000 });
+  const result = spawnSync(SSH, ['-C', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '--', 'beget', command], { input, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', maxBuffer: 1048576, timeout: 300000 });
   if (result.status !== 0 || result.signal || result.error || result.stderr) fail('Zaruku remote operation failed');
   return JSON.parse(result.stdout);
 }

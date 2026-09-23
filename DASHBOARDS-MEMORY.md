@@ -37,12 +37,17 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 
 ## Current dashboard architecture
 
-Isolated Zaruku remains a branch target. Its root document preserves the combined
+Zaruku is isolated in production since 2026-09-10: exact page/API/export routes
+and `/_next-zaruku/` use `dashboard-zaruku` on loopback port 3002; other routes
+remain on the shared 3001 application. Use the dedicated `deploy-zaruku.sh`
+release path, not the combined deploy. Public Zaruku URLs are unchanged.
+Its root document preserves the combined
 Inter and JetBrains Mono font setup, CSS variables, antialiasing, Russian language,
 and ReportingDash metadata. The release worker requires the dedicated credential
 file and `ZARUKU_DB_*` input contract documented in `OPS.md` and `AGENTS.md`;
-it does not reuse combined MySQL credentials. No production cutover or credential
-provisioning is implied by these local changes.
+it does not reuse combined MySQL credentials. Canonical data and source collection
+remain shared and account-scoped. The standalone stylesheet explicitly scans
+shared `src` components so workspace builds retain layout utilities.
 
 ### Abbott canonical/private release boundary
 
