@@ -48,7 +48,7 @@ const TAB_LABEL_PARTS = {
   general_materials: ["Общие материалы"],
 };
 const DESKTOP_VIEWPORT = Object.freeze({ width: 1440, height: 1000, deviceScaleFactor: 1 });
-const MOBILE_VIEWPORT = Object.freeze({ width: 390, height: 844, deviceScaleFactor: 800 / 390 });
+const MOBILE_VIEWPORT = Object.freeze({ width: 390, height: 844, deviceScaleFactor: 1 });
 const REQUIRED_BASELINE_FILES = [
   "01-users-summary-desktop.png",
   "02-user-actions-desktop.png",
@@ -440,6 +440,12 @@ export async function installCaptureClock(page) {
 }
 
 export async function captureViewportWidth(page,viewport) {
+  if(viewport?.width===MOBILE_VIEWPORT.width){
+    // Preserve native document overflow, not a raster width manufactured by DPR.
+    const {width,height}=await page.evaluate(()=>({width:Math.max(document.documentElement.scrollWidth,document.body?.scrollWidth??0),height:Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight??0)}));
+    if(!Number.isSafeInteger(width)||width<1||width>DESKTOP_VIEWPORT.width||!Number.isSafeInteger(height)||height<1||height>100000)throw new SafeStageError('CAPTURE_BROWSER_CAPTURE');
+    return Buffer.from(await page.screenshot({type:'png',fullPage:true}));
+  }
   const height=await page.evaluate(()=>Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight??0));
   if(!Number.isSafeInteger(height)||height<1||height>100000||!Number.isSafeInteger(viewport?.width)||viewport.width<1)throw new SafeStageError('CAPTURE_BROWSER_CAPTURE');
   return Buffer.from(await page.screenshot({type:'png',clip:{x:0,y:0,width:viewport.width,height},captureBeyondViewport:true}));

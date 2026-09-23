@@ -71,7 +71,7 @@ test('resource failures collapse status and browser type to closed categories',(
   assert.equal(captureTool.classifyResourceFailure('private-secret',418),'resource_other_4xx');
 });
 
-test('capture clock and screenshot keep the fixed baseline day and CSS viewport width',async()=>{
+test('capture clock and desktop screenshot keep the fixed baseline day and CSS viewport width',async()=>{
   let installed,screenshotOptions;
   const page={
     evaluateOnNewDocument:async(fn,value)=>{installed={fn,value};},
@@ -79,9 +79,33 @@ test('capture clock and screenshot keep the fixed baseline day and CSS viewport 
     screenshot:async options=>{screenshotOptions=options;return Buffer.from('png');},
   };
   await captureTool.installCaptureClock(page);
-  const bytes=await captureTool.captureViewportWidth(page,{width:390,height:844});
+  const bytes=await captureTool.captureViewportWidth(page,{width:1440,height:1000});
   assert.ok(Buffer.isBuffer(bytes));assert.equal(installed.value,'2026-09-14T12:00:00.000Z');
-  assert.deepEqual(screenshotOptions,{type:'png',clip:{x:0,y:0,width:390,height:5477},captureBeyondViewport:true});
+  assert.deepEqual(screenshotOptions,{type:'png',clip:{x:0,y:0,width:1440,height:5477},captureBeyondViewport:true});
+});
+
+test('mobile native full-page geometry preserves CSS overflow at DPR1 without resizing or clipping',async(t)=>{
+  const puppeteer=(await import('puppeteer')).default;
+  const browser=await puppeteer.launch({headless:true,timeout:10000,protocolTimeout:10000,args:['--disable-background-networking']});
+  try{
+    const page=await browser.newPage();await page.setRequestInterception(true);page.on('request',request=>request.abort());
+    const viewport=buildCapturePlan([]).find(item=>item.filename==='06-users-summary-mobile.png').viewport;
+    await page.setViewport(viewport);
+    for(const [width,height]of [[800,7192],[960,1234],[390,1000]]){
+      await page.setContent(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;padding:0}main{width:${width}px;height:${height}px;background:#eee}</style><main></main>`,{timeout:5000});
+      const bytes=await captureTool.captureViewportWidth(page,viewport);
+      assert.deepEqual(inspectPngDimensions(bytes),{width,height});
+      assert.deepEqual(await page.evaluate(()=>({width:innerWidth,height:innerHeight,dpr:devicePixelRatio})),{width:390,height:844,dpr:1});
+    }
+  }finally{const cleanup=await closeOwnedBrowser(browser);t.diagnostic(JSON.stringify({geometryFixtureBrowser:cleanup}));assert.equal(cleanup.exit_verified,true);}
+});
+
+test('mobile full-page capture refuses oversized or invalid document geometry before screenshot',async()=>{
+  for(const dimensions of [{width:1441,height:1000},{width:800,height:100001},{width:NaN,height:1000},{width:800,height:0}]){
+    let screenshots=0;
+    const page={evaluate:async()=>dimensions,screenshot:async()=>{screenshots++;return Buffer.from('png');}};
+    await assert.rejects(captureTool.captureViewportWidth(page,{width:390,height:844,deviceScaleFactor:1}));assert.equal(screenshots,0);
+  }
 });
 
 test("token capture blocks redirects and off-origin requests before credentials can escape", async () => {
@@ -193,7 +217,7 @@ test("capture plan always includes five desktop tabs and one CSS 390x844 mobile 
     { filename: "03-page-stats-desktop.png", tab: "page_stats", viewport: { width: 1440, height: 1000, deviceScaleFactor: 1 } },
     { filename: "04-returning-desktop.png", tab: "returning", viewport: { width: 1440, height: 1000, deviceScaleFactor: 1 } },
     { filename: "05-general-materials-desktop.png", tab: "general_materials", viewport: { width: 1440, height: 1000, deviceScaleFactor: 1 } },
-    { filename: "06-users-summary-mobile.png", tab: "users_summary", viewport: { width: 390, height: 844, deviceScaleFactor: 800 / 390 } },
+    { filename: "06-users-summary-mobile.png", tab: "users_summary", viewport: { width: 390, height: 844, deviceScaleFactor: 1 } },
   ]);
 });
 
@@ -203,13 +227,13 @@ test("capture URL contains only the fixed period and never authorization", () =>
   assert.doesNotMatch(url.href, /token|cookie|embed/i);
 });
 
-test("mobile capture records CSS 390x844 and preserved 800px raster width", () => {
+test("mobile capture records CSS 390x844 separately from native 800px overflow raster width", () => {
   const png = Buffer.alloc(24);
   Buffer.from("89504e470d0a1a0a0000000d49484452", "hex").copy(png);
   png.writeUInt32BE(800, 16);
   png.writeUInt32BE(7192, 20);
   assert.deepEqual(buildCaptureDimensions(
-    { width: 390, height: 844, deviceScaleFactor: 800 / 390 },
+    { width: 390, height: 844, deviceScaleFactor: 1 },
     png,
   ), {
     css: { width: 390, height: 844 },
