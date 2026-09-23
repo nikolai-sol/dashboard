@@ -2698,6 +2698,33 @@ function applyPlanBasedPlanVsFactSpend(rows: PlanVsFactItem[]): PlanVsFactItem[]
   });
 }
 
+export function projectPlanVsFactForPeriod(
+  rows: PlanVsFactItem[],
+  periodFrom: string,
+  periodTo: string,
+  configFrom?: string,
+  configTo?: string,
+): PlanVsFactItem[] {
+  return rows.map((row) => {
+    const plan = normalizeChannelPlan(row, periodFrom, periodTo, configFrom, configTo);
+    return {
+      ...row,
+      budget_plan: plan.spend,
+      impressions_plan: plan.impressions,
+      reach_plan: plan.reach,
+      clicks_plan: plan.clicks,
+      views_plan: plan.views,
+      conversions_plan: plan.conversions,
+      pacing: plan.spend > 0 ? row.budget_fact / plan.spend : 0,
+      frequency_plan: plan.frequency,
+      cpm_plan: plan.cpm,
+      cpc_plan: plan.cpc,
+      cpv_plan: plan.cpv,
+      cpa_plan: plan.cpa,
+    };
+  });
+}
+
 function buildPlatformBudgetFromPlanVsFact(
   rows: PlanVsFactItem[],
   budgetField: "budget_fact" | "budget_plan",
@@ -3492,6 +3519,13 @@ export async function loadDashboardData(
     const channelPerformance = canonicalBindingRead
       ? channelPerformanceBase
       : mergeManualChannelPerformance(channelPerformanceBase, manualChannels, boundManualChannelKeys);
+    const projectedPlanVsFact = projectPlanVsFactForPeriod(
+      planVsFact,
+      range.from,
+      range.to,
+      String(config.period_from ?? range.from),
+      String(config.period_to ?? range.to),
+    );
     const analyticsKpi = mergeAnalyticsKpi(analyticsKpiRaw);
     const analyticsTimeseries = mergeAnalyticsTimeseries(analyticsTimeseriesRaw);
     const trafficSources = mergeTrafficSources(trafficSourcesRaw);
@@ -3646,7 +3680,7 @@ export async function loadDashboardData(
       kpi,
       platforms: platformResults,
       timeseries: timeseriesResults,
-      plan_vs_fact: planVsFact,
+      plan_vs_fact: projectedPlanVsFact,
       channel_performance: channelPerformance,
       channel_timeseries: channelTimeseries,
       custom_tables: customTables.length > 0 ? customTables : undefined,
