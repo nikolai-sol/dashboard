@@ -52,3 +52,49 @@ test("source without selected accounts exposes no campaigns", async () => {
   assert.equal(calls, 0);
   assert.deepEqual(result, { campaigns: [], total: 0 });
 });
+
+test("dashboard source config preserves its account label and campaign id filter", async () => {
+  let received: { accountIds: string[]; campaignFilter?: { filter_type: string; filter_value: string | null } } | undefined;
+  const result = await loadCampaigns(0, "", "", [{
+    source_key: "between",
+    account_ids: ["gidrofuril"],
+    account_display_name: "Hudeu Prosto",
+    filters: [{ filter_type: "id_list", filter_value: "25072,25073" }],
+  }], {
+    getCampaignCatalog: async (_sourceKey, options) => {
+      received = options;
+      return [{
+        canonicalCampaignId: 35391,
+        sourceKey: "between",
+        platformAccountId: "gidrofuril",
+        accountName: "Between account gidrofuril",
+        platformCampaignId: "25072",
+        campaignName: "hudeu_prosto_programmatic",
+      }];
+    },
+  });
+  assert.deepEqual(received, {
+    accountIds: ["gidrofuril"],
+    campaignFilter: { filter_type: "id_list", filter_value: "25072,25073" },
+  });
+  assert.equal(result.campaigns[0].account_name, "Hudeu Prosto");
+});
+
+test("same source key keeps separate account labels and filters", async () => {
+  const calls: Array<{ accountIds: string[]; campaignFilter?: { filter_type: string; filter_value: string | null } }> = [];
+  const result = await loadCampaigns(0, "", "", [
+    { source_key: "between", account_ids: ["gidrofuril"], account_display_name: "Hudeu Prosto", filters: [{ filter_type: "id_list", filter_value: "25072" }] },
+    { source_key: "between", account_ids: ["other"], account_display_name: "Other Cabinet", filters: [{ filter_type: "id_list", filter_value: "35000" }] },
+  ], {
+    getCampaignCatalog: async (_sourceKey, options) => {
+      calls.push(options);
+      const accountId = options.accountIds[0];
+      return [{ canonicalCampaignId: accountId === "gidrofuril" ? 1 : 2, sourceKey: "between", platformAccountId: accountId, accountName: accountId, platformCampaignId: options.campaignFilter?.filter_value ?? "", campaignName: "campaign" }];
+    },
+  });
+  assert.deepEqual(calls, [
+    { accountIds: ["gidrofuril"], campaignFilter: { filter_type: "id_list", filter_value: "25072" } },
+    { accountIds: ["other"], campaignFilter: { filter_type: "id_list", filter_value: "35000" } },
+  ]);
+  assert.deepEqual(result.campaigns.map((item) => item.account_name), ["Hudeu Prosto", "Other Cabinet"]);
+});

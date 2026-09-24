@@ -3,17 +3,21 @@ import pool from "@/lib/db";
 import { loadDashboardWithSources } from "@/lib/admin-dashboards";
 import { getCampaignCatalog, type CanonicalCampaignCatalogItem } from "@/lib/canonical-adapter";
 import { resolveSourceKey } from "@/lib/source-mapping";
+import { dashboardSourceAccountLabel } from "@/lib/dashboard-source-display";
+import type { DashboardFilterInput } from "@/lib/admin-dashboards";
 
 type SourceSpec = {
   platform?: string;
   source_key?: string;
   account_ids?: string[];
+  account_display_name?: string;
+  filters?: DashboardFilterInput[];
 };
 
 type CampaignLoaderDependencies = {
   getCampaignCatalog: (
     sourceKey: string,
-    options: { accountIds: string[] },
+    options: { accountIds: string[]; campaignFilter?: DashboardFilterInput },
   ) => Promise<CanonicalCampaignCatalogItem[]>;
 };
 
@@ -29,6 +33,8 @@ export async function loadCampaigns(
   const resolvedSources: Array<{
     source_key: string;
     account_ids?: string[];
+    account_display_name?: string;
+    filters?: DashboardFilterInput[];
   }> = [];
 
   if (Number.isFinite(dashboardId) && dashboardId > 0) {
@@ -51,7 +57,7 @@ export async function loadCampaigns(
           const accountIds = configuredAccounts
             .map((item) => String(item ?? "").trim())
             .filter(Boolean);
-          resolvedSources.push({ source_key: sourceKey, account_ids: accountIds });
+          resolvedSources.push({ source_key: sourceKey, account_ids: accountIds, account_display_name: String(source.source_config?.account_display_name ?? '').trim() || undefined, filters: source.filters });
         });
     } finally {
       conn.release();
@@ -69,34 +75,35 @@ export async function loadCampaigns(
         const accountIds = Array.isArray(source.account_ids)
           ? source.account_ids.map((item) => String(item).trim()).filter(Boolean)
           : [];
-        resolvedSources.push({ source_key: sourceKey, account_ids: accountIds });
+        resolvedSources.push({ source_key: sourceKey, account_ids: accountIds, account_display_name: source.account_display_name, filters: source.filters });
       }
     });
   }
 
-  const dedupedSources = new Map<string, string[]>();
+  const dedupedSources = new Map<string, { sourceKey: string; accountIds: string[]; accountDisplayName?: string; filters?: DashboardFilterInput[] }>();
   for (const source of resolvedSources) {
     const accountIds = Array.isArray(source.account_ids)
       ? source.account_ids.map((item) => String(item).trim()).filter(Boolean)
       : [];
     if (accountIds.length === 0) continue;
-    const existing = dedupedSources.get(source.source_key) ?? [];
-    const merged = [...existing, ...accountIds];
-    dedupedSources.set(source.source_key, Array.from(new Set(merged)));
+    const key = JSON.stringify([source.source_key, accountIds, source.account_display_name ?? '', source.filters ?? []]);
+    dedupedSources.set(key, { sourceKey: source.source_key, accountIds, accountDisplayName: source.account_display_name, filters: source.filters });
   }
 
   const canonicalCampaigns = (
     await Promise.all(
-      Array.from(dedupedSources.entries()).map(async ([sourceKey, accountIds]) => {
-        const items = await dependencies.getCampaignCatalog(sourceKey, { accountIds });
+      Array.from(dedupedSources.values()).map(async (source) => {
+        if (!source.accountIds.length) return [];
+        const campaignFilter = source.filters?.find((filter) => filter.filter_type === 'id_list');
+        const items = await dependencies.getCampaignCatalog(source.sourceKey, { accountIds: source.accountIds, campaignFilter });
         return items.map((item) => ({
           canonical_campaign_id: item.canonicalCampaignId,
           source_key: item.sourceKey,
           platform_account_id: item.platformAccountId,
-          account_name: item.accountName,
+          account_name: dashboardSourceAccountLabel({ account_ids: source.accountIds, account_display_name: source.accountDisplayName }, item.platformAccountId, item.accountName),
           platform_campaign_id: item.platformCampaignId,
           campaign_name: item.campaignName,
-          display_label: `${item.campaignName} \u00b7 ${item.platformCampaignId} \u00b7 ${item.accountName}`,
+          display_label: `${item.campaignName} \u00b7 ${item.platformCampaignId} \u00b7 ${dashboardSourceAccountLabel({ account_ids: source.accountIds, account_display_name: source.accountDisplayName }, item.platformAccountId, item.accountName)}`,
         }));
       }),
     )

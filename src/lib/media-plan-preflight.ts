@@ -331,7 +331,8 @@ async function buildRowBindings(
 
     if (sourceType !== 'ads') continue;
     const accountIds = parseAccountIds(source.source_config?.account_ids);
-    const catalog = await getCampaignCatalog(sourceKey, { accountIds });
+    const campaignFilter = source.filters?.find((filter) => filter.filter_type === 'id_list');
+    const catalog = await getCampaignCatalog(sourceKey, { accountIds, campaignFilter });
     catalogByPlatform.set(source.platform, catalog.map((item) => ({
       id: item.platformCampaignId,
       name: item.campaignName,

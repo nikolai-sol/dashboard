@@ -4,9 +4,24 @@ import path from "node:path";
 import test from "node:test";
 import {
   buildCampaignOptions,
+  buildCampaignSourceRequest,
   selectedAccountIds,
   retainBindingsForRowSources,
 } from "./WizardStepBinding";
+
+test("campaign request preserves dashboard source label and filters", () => {
+  assert.deepEqual(buildCampaignSourceRequest({
+    platform: "between",
+    source_config: { account_ids: ["gidrofuril"], account_display_name: "Hudeu Prosto" },
+    filters: [{ filter_type: "id_list", filter_value: "25072,25073" }],
+  }), {
+    platform: "between",
+    source_key: "between",
+    account_ids: ["gidrofuril"],
+    account_display_name: "Hudeu Prosto",
+    filters: [{ filter_type: "id_list", filter_value: "25072,25073" }],
+  });
+});
 
 test("same campaign number from two accounts remains two choices", () => {
   const labels = buildCampaignOptions([

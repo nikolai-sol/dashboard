@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { DashboardFormData, DashboardSourceForm, PlatformMeta } from "@/lib/admin-ui-types";
+import { dashboardSourceAccountLabel } from "@/lib/dashboard-source-display";
 
 type WizardStep2Props = {
   data: DashboardFormData;
@@ -1451,7 +1452,7 @@ export default function WizardStep2({ data, platforms, onChange, dashboardId }: 
                           />
                           <span className="min-w-0">
                             <span className="block text-slate-900">
-                              {account.name}
+                              {dashboardSourceAccountLabel(source.source_config, account.id, account.name)}
                               {account.suggested ? (
                                 <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
                                   suggested

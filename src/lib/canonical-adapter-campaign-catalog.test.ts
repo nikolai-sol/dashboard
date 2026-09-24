@@ -72,6 +72,27 @@ test("catalog includes zero-activity campaigns and searches all identity labels"
   assert.doesNotMatch(capturedSql, /COALESCE\(f\.(spend|impressions)/);
 });
 
+test("catalog accepts the dashboard's existing id_list campaign filter", async (t) => {
+  const original = pool.query.bind(pool);
+  let capturedSql = "";
+  let capturedParams: unknown[] = [];
+  (pool as unknown as { query: typeof pool.query }).query = (async (sql: string, params: unknown[]) => {
+    capturedSql = sql;
+    capturedParams = params;
+    return [[], []] as never;
+  }) as unknown as typeof pool.query;
+  t.after(() => {
+    (pool as unknown as { query: typeof pool.query }).query = original;
+  });
+
+  await getCampaignCatalog("between", {
+    accountIds: ["gidrofuril"],
+    campaignFilter: { filter_type: "id_list", filter_value: "25072,25073" },
+  });
+  assert.match(capturedSql, /c\.platform_campaign_id IN \(\?,\?\)/);
+  assert.deepEqual(capturedParams, ["between", "gidrofuril", "25072", "25073"]);
+});
+
 test("account selector includes active successful-empty account with zero fact rows", async (t) => {
   const original = pool.execute.bind(pool);
   let capturedSql = "";

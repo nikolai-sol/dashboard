@@ -95,6 +95,16 @@ export function selectedAccountIds(config: Record<string, unknown> | null | unde
   return singular ? [singular] : [];
 }
 
+export function buildCampaignSourceRequest(source: { platform: string; source_config: Record<string, unknown> | null; filters?: Array<{ filter_type: string; filter_value: string | null }> }) {
+  return {
+    platform: source.platform,
+    source_key: resolveSourceKey(source.platform),
+    account_ids: selectedAccountIds(source.source_config),
+    account_display_name: String(source.source_config?.account_display_name ?? '').trim() || undefined,
+    filters: source.filters,
+  };
+}
+
 export function retainBindingsForRowSources(
   bindings: MediaPlanBindingForm[],
   lineKey: string,
@@ -265,13 +275,7 @@ export default function WizardStepBinding({ data, onChange, dashboardId }: Wizar
 
       setLoadingCampaigns(true);
       try {
-        const sources = bindingCampaignSources.map((source) => {
-          return {
-            platform: source.platform,
-            source_key: resolveSourceKey(source.platform),
-            account_ids: selectedAccountIds(source.source_config),
-          };
-        });
+        const sources = bindingCampaignSources.map(buildCampaignSourceRequest);
         const response = await fetch("/api/admin/campaigns/all", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

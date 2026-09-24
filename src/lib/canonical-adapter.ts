@@ -25,6 +25,7 @@ type SqlParam = string | number | boolean | Date | null;
 type CampaignCatalogOptions = {
   search?: string;
   accountIds?: string[];
+  campaignFilter?: { filter_type: 'name_pattern' | 'id_list' | 'all'; filter_value: string | null };
 };
 
 export type CanonicalCampaignCatalogItem = {
@@ -947,6 +948,18 @@ export async function getCampaignCatalog(
   if (normalizedAccountIds.length) {
     sql += ` AND c.platform_account_id IN (${normalizedAccountIds.map(() => '?').join(',')})`;
     params.push(...normalizedAccountIds);
+  }
+
+  const campaignFilter = options.campaignFilter;
+  if (campaignFilter?.filter_type === 'id_list') {
+    const campaignIds = String(campaignFilter.filter_value ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+    if (campaignIds.length) {
+      sql += ` AND c.platform_campaign_id IN (${campaignIds.map(() => '?').join(',')})`;
+      params.push(...campaignIds);
+    }
+  } else if (campaignFilter?.filter_type === 'name_pattern' && String(campaignFilter.filter_value ?? '').trim()) {
+    sql += ' AND c.campaign_name LIKE ?';
+    params.push(`%${String(campaignFilter.filter_value).trim()}%`);
   }
 
   const search = String(options.search ?? '').trim();
