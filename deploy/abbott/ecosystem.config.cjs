@@ -13,7 +13,7 @@ module.exports = {
     env: { NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: 3004 },
     max_restarts: 10,
     restart_delay: 3000,
-    max_memory_restart: '800M',
+    max_memory_restart: '2G',
     log_date_format: 'YYYY-MM-DD HH:mm:ss',
     error_file: '/var/log/dashboard-abbott-error.log',
     out_file: '/var/log/dashboard-abbott-out.log',

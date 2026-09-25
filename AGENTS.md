@@ -98,7 +98,7 @@ state until the migration, deploy, and backfill are accepted.
 
 - Dashboard `main` commit `833db89` reads exact pairs only from `canonical_fact_webmaster_query_pages_daily`; the confirmed filter accepts a GSC pair or an exact Webmaster pair and rejects SEO OS and `popular_complementary_indicator` URLs.
 - Migration `045` is applied and manual collector run `1715` succeeded for 15 priority pages over `2026-07-21..2026-07-27`, producing 105 coverage rows and 67 pair facts with zero bad rows.
-- Application commit `833db89` is not deployed while Abbott successor release `10` remains staging and release `8` remains active. The production UI therefore does not yet show the new `Яндекс:` links.
+- Historical July 29 observation: application commit `833db89` was not deployed while Abbott successor release `10` was staging and release `8` was active. This is not the current Abbott release authority; see the dated September 25 note below.
 - The proposed weekly `20 3 * * 1` UTC cron with priority limit 15 is not installed. Deployment, SEO smoke, and first scheduled-run verification remain required before cron activation or expansion toward 30 pages.
 
 `Geography` means visitor countries/cities from Metrika. It is not `GEO`: in `AI/GEO visibility`, GEO means Generative Engine Optimization.
@@ -149,27 +149,45 @@ then memory must be cleaned, not only appended to.
 
 ## Current production runtime
 
-### Runtime ownership verified 2026-09-23
+### Runtime ownership — September 24 cutover, verified September 25
 
 | Scope | Source and process | Actual serving boundary |
 | --- | --- | --- |
-| Media advertising | Root `src`, `dashboard-next`, `/var/www/dashboard`, port `3001` | Also still serves public Abbott; production SHA `8f389a28` |
+| Media advertising | Root `src`, `dashboard-next`, `/var/www/dashboard`, port `3001` | Media routes and shared password login; Abbott public routes no longer use this app |
 | Zaruku | `apps/zaruku`, `dashboard-zaruku`, `/var/www/dashboard-zaruku`, port `3002` | Exact Zaruku page/API/export routes and `/_next-zaruku/`; production SHA `af1948c8` |
 | Site SEO / MedRoche | `apps/site-seo`, `dashboard-medroche`, port `3003` | MedRoche page/API/asset routes; current target `/var/www/dashboard-medroche-releases/8fd6d122aca117b76d8bef5a145247cc232135fa/standalone` |
-| Abbott isolation candidate | Separate branch `codex/abbott-runtime-isolation` / `release/abbott`, intended port `3004` | Not cut over. On inspection no Abbott PM2 process or `3004` listener; public routes still point to `3001`. Stored candidate SHA `dfd6267a` is not proof of a running runtime. |
+| Abbott | `apps/abbott`, `dashboard-abbott`, `/var/www/dashboard-abbott/apps/abbott`, port `3004` | Public aliases `18`/`abbott`, APIs/exports/assets use the isolated app; source `dfd6267a742d1c7d88ccac636b89661df9b96f9f` |
+
+The September 23 no-listener/candidate-only Abbott observation is historical:
+all 13 public routes cut over on September 24. Shared password login remains
+on `3001`; canonical MySQL and collectors remain shared. Current canonical
+release is `49`; the September 21 append was repaired and verified September 25
+with all 1,335 January 1–September 24 coverage keys valid and other-date aggregate
+controls unchanged. This does not establish bytewise equality of every fact.
+
+On September 25 Abbott's PM2 RSS restart guard was verified at `2147483648`
+bytes (2 GiB), live and in both saved startup copies. The local Abbott source
+recipe now specifies `2G`; neighbor recipes remain `800M`. This is not a Node/V8
+heap setting or proof of annual-request efficiency. The deployed attested recipe
+was not edited; future deployment must include this source change rather than
+reset the guard. None of the local September 25 efficiency commits is deployed.
+
+Evidence in the root repository: `docs/operations/2026-09-24-abbott-runtime-cutover.md`,
+`docs/operations/2026-09-25-abbott-availability-incident.md`, and
+`outputs/abbott-incident-20260925/memory-native-completion.md`.
 
 The owner requires media changes not to interfere with Abbott, Zaruku, or site
 SEO. Keep domain code, build artifacts, deployment locks and runtime identities
-separate. Do not merge another dashboard's older release tree over main. Root
-media-only changes must not be deployed through the combined application while
-Abbott still depends on it without a separately reviewed Abbott-safe release;
-full independence requires completing Abbott's own integration and cutover.
+separate. Do not merge another dashboard's older release tree over main.
+Do not deploy Abbott through the combined media script. Its isolated runtime
+does not imply independent authentication, MySQL or source collectors.
 Do not move Abbott onto `3003`: MedRoche already owns that port.
 
 `main` is the source integration baseline, not a single production pointer.
 The September 23 reconciliation preserves published Zaruku work and the tested
-campaign-date plan patch; it does not deploy any runtime. Abbott isolation is
-unfinished work and remains separate. Details and branch disposition:
+campaign-date plan patch; it did not deploy any runtime. Its then-unfinished
+Abbott cutover status is historical, superseded by the September 24 evidence.
+Reconciliation details and branch disposition:
 `docs/operations/2026-09-23-main-reconciliation.md`.
 
 Media `period_from/period_to` always mean actual campaign dates. Preserve a
@@ -178,7 +196,7 @@ report subranges receive their share of those campaign days. The reusable
 normalizer fix is integrated in main; no Gidrofuril-specific backfill or live
 release is part of the owner's current priority.
 
-### Dashboard app
+### Media dashboard app
 
 - app: `dashboard-next`
 - deployed path on VPS: `/var/www/dashboard`
@@ -261,8 +279,8 @@ filesystem with about 49 GiB available. The open-file limit is 1024.
 - After approved cutover only: remove the duplicate `06:10` legacy `/metrika`, use Abbott canonical
   collection at `06:12`, deterministic health at `07:05`, and one summary at `07:10`.
 - Hermes creation is a separate deferred task; no Hermes automation is part of this rollout package.
-- Abbott UTM application release `20260729130916-d86cf45` was deployed on 2026-07-29 after migration `044`; local/public health, loopback isolation, manager June read, embed isolation, and public-asset 404 checks passed. Canonical release `8` remains active while successor release `10` backfills `2026-01-01..2026-07-28`; do not call the data cutover complete until `210` dates / `1050` coverage rows / `0` bad rows, comparison, validation, activation, and post-cutover smoke all pass.
-- The attested Abbott canonical runtime is server commit `b2f172190e22aaa0454a858e10689d146607df44`. Three unsafe external health-script symlinks were replaced by their byte-identical tracked regular files before the UTM runtime was committed; the runtime worktree and manifest then verified clean.
+- Historical July 29 UTM status: application release `20260729130916-d86cf45` was deployed after migration `044`; local/public health, loopback isolation, manager June read, embed isolation, and public-asset 404 checks passed. Canonical release `8` was active while successor `10` backfilled `2026-01-01..2026-07-28`; its gates were `210` dates / `1050` coverage rows / `0` bad rows, comparison, validation, activation, and smoke. Current release `49` is recorded above; do not reuse the old gate as current authority.
+- Historical July 29 attested Abbott canonical runtime: server commit `b2f172190e22aaa0454a858e10689d146607df44`. Three unsafe external health-script symlinks were replaced by their byte-identical tracked regular files before the UTM runtime was committed; the runtime worktree and manifest then verified clean.
 - On 2026-07-29 the clearer aggregate-only Abbott Telegram formatter was deployed only to `/root/reportingdash-canonical/send_canonical_telegram_report.py` at SHA-256 `bf0a3774761fcbae008e00261177d3fc113f55620fa6c07322eb4c38153a901e`, with rollback checkpoint `/root/reportingdash-private/abbott/checkpoints/20260729T143639Z-telegram-summary-clarity`. A read-only render check passed; no Telegram message, cron edit, database write, app deployment, release activation, or attested `/root/reportingdash-abbott-canonical` change occurred. The synchronized bootstrap closure is app commit `4e0b846e13f989aeaba39d2675369d464af400b0`; the dashboard was not redeployed because release `10` remained staging with zero July coverage dates.
 
 - On 2026-08-13 Abbott canonical release `37` was activated from batch `18` (`validate` 26/26 pass, rollback pointer release `35`); full operation log in `docs/2026-08-13-abbott-directions-and-disk-cleanup.md`. Three durable changes: `content.env` `ABBOTT_CONTENT_TAXONOMY_VERSION` moved `abbott.v1` → `abbott.v2` (release 35 was built on v2, so the provenance gate rejected every run with `BASELINE_PROVENANCE_EVENT_MISMATCH` and the pipeline could not start at all); classifier runtime `accfdad` treats `undetermined`/`unspecified` as an absent decision rather than a decision (`ready 111 → 304`, zero regressions); classifier runtime `80cf752` authorizes a prior reviewed `attach` against its selected entity (batch 12 holds 8 such events, so every later candidate failed with `PRIOR_ACCEPTED_EVENT_UNAUTHORIZED`). Revision `8fa251c` was reverted as wrong: `CORRECTION_PREDECESSOR_MISMATCH` demands an operator decision and must not be relaxed.
@@ -281,7 +299,8 @@ filesystem with about 49 GiB available. The open-file limit is 1024.
 Production since 2026-09-10: exact Zaruku page/API/export routes and
 `/_next-zaruku/` are served by `dashboard-zaruku` at `127.0.0.1:3002`,
 under `/var/www/dashboard-zaruku/apps/zaruku`. The public domain and URLs
-are unchanged; all other routes still use the shared app on 3001.
+are unchanged; media and shared login remain on 3001, while Abbott now uses 3004
+and site SEO/MedRoche uses 3003 as recorded above.
 Deploy Zaruku only with `scripts/deploy-zaruku.sh` from a clean app worktree
 on the reviewed `release/zaruku` lineage; never use the combined deploy for it.
 The application cutover release was `01069b16f708404460b811bd821cdb41aff963b8`.

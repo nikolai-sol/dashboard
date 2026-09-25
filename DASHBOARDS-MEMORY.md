@@ -15,18 +15,37 @@ If dashboard work changes materially, update this file in the same turn.
 ## Repos and runtime
 
 - Main dashboard repo: `dashboard-next`
-- Combined media/Abbott app path on VPS: `/var/www/dashboard`
+- Media app path on VPS: `/var/www/dashboard`
 - Public domain: `https://dashboards.adreports.ru`
 - Process manager: `PM2`
-- Combined media/Abbott bind on VPS: `127.0.0.1:3001`
+- Media and shared password login bind on VPS: `127.0.0.1:3001`
 - Zaruku separately serves from `apps/zaruku` on `127.0.0.1:3002`.
 - Site SEO/MedRoche separately serves from `apps/site-seo` on `127.0.0.1:3003`.
-- Abbott extraction is on a separate branch, intended for `3004`; as verified
-  September 23 it is not serving public traffic. The candidate directory does
-  not establish a successful cutover. Keep media-only deployment from replacing
-  Abbott's serving bundle without a separately reviewed release.
+- Abbott publicly serves from `/var/www/dashboard-abbott/apps/abbott` on
+  `127.0.0.1:3004` after the September 24 cutover. Source remains
+  `dfd6267a742d1c7d88ccac636b89661df9b96f9f`. The September 23 candidate-only
+  observation is historical. Do not deploy Abbott through the combined media script.
 
-Combined deployment (not a generic deploy for all dashboards):
+### Abbott current evidence — September 25, 2026
+
+All 13 Abbott public page/API/export/asset routes use the isolated app. Shared
+password login stays on 3001; canonical MySQL and collectors remain shared.
+Canonical release `49` is active. The September 21 append repair passed five
+scope checks, all 1,335 January 1–September 24 coverage keys, and total/per-source
+session integrity; other-date aggregate controls and source bindings were preserved.
+
+Abbott's live PM2 RSS restart threshold and both saved startup copies are
+`2147483648` bytes (2 GiB). The local source recipe now uses `2G`, with neighbor
+recipes unchanged; the deployed attested recipe was not edited. Future deployment
+must include the new source recipe, not reset the guard. This is not a V8 heap
+setting or proof that annual requests are efficient. Local September 25
+coverage/scoped-read/lazy-UI efficiency commits are **not deployed**.
+
+Evidence lives in the root repository: `docs/operations/2026-09-24-abbott-runtime-cutover.md`,
+`docs/operations/2026-09-25-abbott-availability-incident.md`, and
+`outputs/abbott-incident-20260925/memory-native-completion.md`.
+
+Media deployment (not a generic deploy for isolated dashboards):
 
 ```bash
 cd dashboard-next
@@ -46,13 +65,13 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 September 23 main reconciliation includes the actual published Zaruku release
 `af1948c8`, its completed cutover operator source/evidence, and reusable media
 campaign-date plan correction `772f3673`. Site SEO was already integrated at
-`8fd6d122`. No application was deployed by this reconciliation. Abbott isolation
-remains an explicitly unfinished separate branch, not a completed main feature.
+`8fd6d122`. No application was deployed by this reconciliation. Its then-unfinished
+Abbott isolation status is historical; the September 24 cutover is recorded above.
 See `docs/operations/2026-09-23-main-reconciliation.md` for exact boundaries.
 
 Zaruku is isolated in production since 2026-09-10: exact page/API/export routes
 and `/_next-zaruku/` use `dashboard-zaruku` on loopback port 3002; other routes
-remain on the shared 3001 application. Use the dedicated `deploy-zaruku.sh`
+use their recorded runtime boundaries above. Use the dedicated `deploy-zaruku.sh`
 release path, not the combined deploy. Public Zaruku URLs are unchanged.
 Its root document preserves the combined
 Inter and JetBrains Mono font setup, CSS variables, antialiasing, Russian language,
@@ -105,12 +124,12 @@ shared `src` components so workspace builds retain layout utilities.
 - Current cron remains collection `06:12`, health `07:05`, and one summary `07:10`. The summary includes session integrity; a mismatch is `CRITICAL`.
 - Logs cannot return the current day. Active releases remain append-only; late changes require a reviewed successor release/backfill.
 - Bitrix dump remains test-only; the live connector is deferred.
-- No deployment, secret installation, API call, database migration, cron edit, Telegram send, or Hermes schedule occurred.
+- Historical visit-level implementation note: it did not deploy, install secrets, call APIs, migrate databases, edit cron, send Telegram, or schedule Hermes. Later approved operations are separately dated above.
 - Visit rows now carry nullable exact `utm_source` from Logs field `ym:s:lastsignUTMSource`; migration `044_abbott_private_visit_utm_source.sql` and a fully backfilled successor release are required before production cutover.
 - Abbott manager frequency is calculated inside the selected period from distinct `client_id_hash` values in groups `1`, `2–3`, and `4+` visits. Visitors without a client hash are reported separately and excluded from the percentage denominator. Direction and repeat landing-page tables are aggregates; the embed projection receives none of the private visit detail.
 - The actions tab filters exact UTM values before pagination and labels null/blank values `Без UTM`. The external-transitions tab descriptor is hidden reversibly; its data contract and implementation remain intact.
 - Rollout gates compare total visits, distinct visit hashes, User ID/client-hash/direction coverage, and populated/null UTM counts; manager and embed smoke failures require rollback without restoring public PII assets.
-- Production status 2026-07-29: application release `20260729130916-d86cf45` and migration `044` are deployed and healthy. Active canonical release remains `8`; successor `10` is staging and collecting exact UTM visits through `2026-07-28`. Until release `10` passes `210` dates / `1050` coverage rows / `0` bad rows and is validated/activated, UTM values from the successor must not be presented as active production data.
+- Historical production status 2026-07-29: application release `20260729130916-d86cf45` and migration `044` were deployed and healthy. Canonical release `8` was active; successor `10` was staging with UTM visits through `2026-07-28`. Its activation gates were `210` dates / `1050` coverage rows / `0` bad rows and validation/activation. This is not current release authority; September 25 release `49` is recorded above.
 
 ### Shared data loader
 
@@ -421,7 +440,7 @@ Recent completed changes that should not be rediscovered:
     - Zaruku GSC read model exposes `summary`, `country_summary`, `queries`, `landing_pages`, `brand_split`, `search_appearance`, and `search_type_summary`. `landing_pages`, `brand_split`, country, and device panels are dashboard-side aggregations from the query table; Search appearance and result type panels are backed by their own daily canonical tables.
     - Zaruku SEO tab is organized from executive state to detailed diagnostics: executive summary, one unified query workspace, one unified landing-page workspace, semantic health, SEO OS trend, AI visibility, then expandable source diagnostics and post-click Metrika cuts.
     - Google and Yandex positions are separate sortable columns in the unified workspaces. Rows are joined only in the dashboard read model by exact normalized query or URL; no fuzzy relationship or persistent mapping is introduced.
-    - Exact Webmaster query→page links come only from `canonical_fact_webmaster_query_pages_daily`; they are attached by exact normalized query without changing Webmaster query totals. The confirmed filter accepts Google or exact Webmaster pairs, but never SEO OS target URLs, separate query/page totals, or `popular_complementary_indicator`. Migration `045` and manual run `1715` are live; application commit `833db89` and the weekly `03:20 UTC` cron remain undeployed until the Abbott successor-release gate and production SEO smoke pass.
+    - Exact Webmaster query→page links come only from `canonical_fact_webmaster_query_pages_daily`; they are attached by exact normalized query without changing Webmaster query totals. The confirmed filter accepts Google or exact Webmaster pairs, but never SEO OS target URLs, separate query/page totals, or `popular_complementary_indicator`. Historical July 29 rollout note: migration `045` and manual run `1715` were live; application commit `833db89` and the proposed weekly `03:20 UTC` cron awaited the then-current Abbott successor gate and production SEO smoke. This is not current Abbott release authority.
     - Google Search Console reads for Zaruku are scoped to `country = rus`. Zaruku Metrika report reads are scoped to Russia. The SEO tab has no Countries panel because the product scope is Russian traffic only.
     - Yandex Webmaster has no country dimension in the current canonical contract and is treated operationally as Russian data for the `zaruku.ru` host; the dashboard does not add a synthetic region filter.
     - SEO OS remains authoritative for tracked weekly Yandex positions and continues to be read-only from ReportingDash. Webmaster remains authoritative for its own impression/click/CTR/average-position coverage; these values are not substituted for SEO OS tracking.
