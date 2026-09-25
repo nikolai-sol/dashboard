@@ -99,6 +99,26 @@ test("route exports the configured Abbott GET handler", () => {
   assert.equal(typeof GET, "function");
 });
 
+test("invalid present view is private 400 before loading; absent view retains legacy request", async () => {
+  let calls = 0;
+  const handler = createAbbottJsonHandler({ authorize: async () => access(), load: async (request) => {
+    calls += 1;
+    assert.equal(new URL(request.url).searchParams.has("view"), false);
+    return loaded();
+  } });
+  for (const query of ["view=bad", "view=full&view=full", "view="]) {
+    const response = await handler(new Request(`https://example.test/api/dashboard/18?${query}`), { params: { id: "18" } });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "Invalid Abbott read request" });
+    assert.equal(response.headers.get("cache-control"), "private, no-store");
+  }
+  assert.equal(calls, 0);
+  const response = await handler(new Request("https://example.test/api/dashboard/18"), { params: { id: "18" } });
+  assert.equal(response.status, 200);
+  assert.equal(calls, 1);
+  assert.equal("read_contract" in (await response.json()).abbott_bi, false);
+});
+
 test("wrong identity returns 404 without leaking authorization state or loading", async () => {
   let authorizeCalls = 0;
   let loadCalls = 0;

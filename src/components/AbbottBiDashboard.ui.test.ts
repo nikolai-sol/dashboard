@@ -4,6 +4,14 @@ import { readFileSync } from "node:fs";
 
 const source = readFileSync(new URL("./AbbottBiDashboard.tsx", import.meta.url), "utf8");
 
+test("controlled lazy views retain navigation and conceal stale content while pending", () => {
+  assert.match(source, /activeView \?\? localActiveTab/);
+  assert.match(source, /data\.read_contract\.available_views\.includes\(tab\.id\)/);
+  assert.match(source, /onViewChange\?\.\(tab\.id\)/);
+  assert.match(source, /viewPending \?[^]*?role="status"/);
+  assert.match(source, /hidden=\{viewPending\}/);
+});
+
 test("admin user editor is rendered only at the bottom of the actions tab", () => {
   assert.match(source, /activeTab === "user_actions"[\s\S]*?<AbbottAdminUsersPanel/);
   assert.doesNotMatch(source, /users_summary:\s*\([\s\S]{0,1200}<AbbottAdminUsersPanel/);

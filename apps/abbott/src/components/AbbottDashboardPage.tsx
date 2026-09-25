@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import DashboardAccessGate from "@/components/DashboardAccessGate";
@@ -10,6 +10,8 @@ import AbbottBiDashboard from "@/components/AbbottBiDashboard";
 import AbbottDatePicker from "@/components/abbott/AbbottDatePicker";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
+import type { AbbottReadView } from "../../../../src/lib/abbott-read-request";
+import { beginAbbottViewRequest, buildAbbottViewUrl, classifyAbbottViewResponse, type AbbottViewIdentity } from "./abbott-view-request";
 import {
   ABBOTT_NO_COMPLETED_DAYS,
   clampAbbottCurrentPresetToCoverage,
@@ -43,6 +45,8 @@ async function getDashboardData(
   range?: { from: string; to: string },
   accessToken?: string,
   embedKey?: string,
+  view: AbbottReadView = "users_summary",
+  signal?: AbortSignal,
 ): Promise<{
   data: DashboardData | null;
   errorMessage: string | null;
@@ -51,19 +55,8 @@ async function getDashboardData(
   notFound: boolean;
 }> {
   try {
-    const params = new URLSearchParams();
-    if (range?.from && range?.to) {
-      params.set("from", range.from);
-      params.set("to", range.to);
-    }
-    if (accessToken) {
-      params.set("access_token", accessToken);
-    }
-    if (embedKey) {
-      params.set("embed_key", embedKey);
-    }
-    const query = params.toString();
-    const response = await fetch(`/api/dashboard/${dashboardId}${query ? `?${query}` : ""}`, { cache: "no-store" });
+    const url = buildAbbottViewUrl({ dashboardId, from: range?.from ?? "", to: range?.to ?? "", accessToken, embedKey, view });
+    const response = await fetch(url, { cache: "no-store", signal });
     if (response.status === 401) {
       const json = (await response.json().catch(() => null)) as
         | { dashboard?: DashboardAuthMeta }
@@ -95,7 +88,7 @@ async function getDashboardData(
     }
     return { data, errorMessage: null, authRequired: false, authMeta: null, notFound: false };
   } catch (error) {
-    console.warn("API unavailable, showing unavailable state:", error);
+    if (!signal?.aborted) console.warn("API unavailable, showing unavailable state");
     const message = error instanceof Error ? error.message : "Unknown API error";
     return {
       data: null,
@@ -165,6 +158,7 @@ function resolveInitialAbbottRange(from: string, to: string) {
 export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18" | "abbott" }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const searchQuery = searchParams.toString();
   const queryFrom = searchParams.get("from") ?? "";
   const queryTo = searchParams.get("to") ?? "";
   const initialAbbottRange = resolveInitialAbbottRange(queryFrom, queryTo);
@@ -206,17 +200,30 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
   const [abbottEmptyMessage, setAbbottEmptyMessage] = useState<string | null>(() =>
     !initialAbbottRange ? ABBOTT_NO_COMPLETED_DAYS : null,
   );
+  const dateFrom = dateRange.from;
+  const dateTo = dateRange.to;
+  const requestContext = JSON.stringify([dashboardId, dateFrom, dateTo, viewerAccessToken, viewerEmbedKey, isPdfMode]);
+  const [viewSelection, setViewSelection] = useState<{ context: string; view: Exclude<AbbottReadView, "full"> }>({ context: "", view: "users_summary" });
+  const activeView = viewSelection.context === requestContext ? viewSelection.view : "users_summary";
+  const requestedView = isPdfMode ? "full" : activeView;
+  const requestState = useRef({ generation: 0, controller: null as AbortController | null });
+  const accepted = useRef<(AbbottViewIdentity & { context: string }) | null>(null);
+  const [loadedRequest, setLoadedRequest] = useState<{ context: string; view: AbbottReadView } | null>(null);
+  const currentData = loadedRequest?.context === requestContext;
+  const viewPending = isLoading || !currentData || loadedRequest?.view !== requestedView;
+  const initialRangeFrom = initialAbbottRange?.from;
+  const initialRangeTo = initialAbbottRange?.to;
   useEffect(() => {
-    if (!queryFrom || !queryTo || !initialAbbottRange) return;
-    if (queryFrom === initialAbbottRange.from && queryTo === initialAbbottRange.to) return;
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("from", initialAbbottRange.from);
-    params.set("to", initialAbbottRange.to);
+    if (!queryFrom || !queryTo || !initialRangeFrom || !initialRangeTo) return;
+    if (queryFrom === initialRangeFrom && queryTo === initialRangeTo) return;
+    const params = new URLSearchParams(searchQuery);
+    params.set("from", initialRangeFrom);
+    params.set("to", initialRangeTo);
     router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
-  }, [dashboardId, initialAbbottRange, queryFrom, queryTo, router, searchParams]);
+  }, [dashboardId, initialRangeFrom, initialRangeTo, queryFrom, queryTo, router, searchQuery]);
 
   useEffect(() => {
-    let cancelled = false;
+    const request = beginAbbottViewRequest(requestState.current);
 
     async function load() {
       if (abbottEmptyMessage) {
@@ -227,12 +234,32 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
 
       const result = await getDashboardData(
         dashboardId,
-        dateRange.from && dateRange.to ? dateRange : undefined,
+        dateFrom && dateTo ? { from: dateFrom, to: dateTo } : undefined,
         viewerAccessToken || undefined,
         viewerEmbedKey || undefined,
+        requestedView,
+        request.signal,
       );
-      if (cancelled) {
+      if (!request.isCurrent()) {
         return;
+      }
+
+      if (result.data) {
+        const identity = classifyAbbottViewResponse(result.data, { from: dateFrom, to: dateTo, view: requestedView },
+          accepted.current?.context === requestContext ? accepted.current : undefined);
+        if (identity.kind === "restart") {
+          accepted.current = null;
+          setDashboard(null);
+          setLoadedRequest(null);
+          setViewSelection({ context: requestContext, view: "users_summary" });
+          return;
+        }
+        if (identity.kind === "invalid") {
+          result.data = null;
+          result.errorMessage = TECH_ISSUES_MESSAGE;
+        } else {
+          accepted.current = { context: requestContext, releaseId: identity.releaseId, audience: identity.audience };
+        }
       }
 
       if (result.authRequired) {
@@ -259,7 +286,7 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
       const abbottQuality = result.data?.abbott_bi?.data_quality;
       const coveredRange = abbottQuality?.status === "incomplete"
         ? clampAbbottCurrentPresetToCoverage(
-            dateRange,
+            { from: dateFrom, to: dateTo },
             abbottPreset,
             abbottQuality.blocking_gaps,
           )
@@ -267,7 +294,7 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
       if (coveredRange) {
         setDraftDateRange(coveredRange);
         setDateRange(coveredRange);
-        const params = new URLSearchParams(searchParams.toString());
+        const params = new URLSearchParams(searchQuery);
         params.set("from", coveredRange.from);
         params.set("to", coveredRange.to);
         router.replace(`/dashboard/${dashboardId}?${params.toString()}`, { scroll: false });
@@ -275,6 +302,7 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
       }
 
       setDashboard(result.data);
+      setLoadedRequest(result.data ? { context: requestContext, view: requestedView } : null);
 
       setApiError(result.errorMessage ? TECH_ISSUES_MESSAGE : null);
       setAuthRequired(false);
@@ -306,10 +334,8 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
 
     load();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [abbottEmptyMessage, abbottPreset, dashboardId, dateRange, reloadKey, router, searchParams, viewerAccessToken, viewerEmbedKey]);
+    return () => request.cancel();
+  }, [abbottEmptyMessage, abbottPreset, dashboardId, dateFrom, dateTo, reloadKey, router, searchQuery, viewerAccessToken, viewerEmbedKey, requestedView, requestContext]);
 
   const dashboardLanguage = dashboard?.dashboard.language ?? "en";
   const i18n = useMemo(() => getDashboardI18n(dashboardLanguage), [dashboardLanguage]);
@@ -499,7 +525,7 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
     );
   }
 
-  if (isLoading || !dashboard) {
+  if (!dashboard || !currentData) {
     return (
       <main
         data-dashboard-ready="false"
@@ -539,7 +565,7 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
   if (dashboardType === "abbott_bi" && abbottBiData) {
     return (
       <main
-        data-dashboard-ready={abbottEmptyMessage ? "false" : "true"}
+        data-dashboard-ready={abbottEmptyMessage || viewPending ? "false" : "true"}
         className={`mx-auto min-h-screen w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 ${isPdfMode ? "pdf-mode" : ""}`}
         style={isMobileMode ? ({ maxWidth: "430px" } as CSSProperties) : undefined}
       >
@@ -580,7 +606,11 @@ export default function AbbottDashboardPage({ dashboardId }: { dashboardId: "18"
           </section>
         ) : (
           <AbbottBiDashboard
+            key={dateFrom + ":" + dateTo + ":" + (accepted.current?.releaseId ?? "unavailable")}
             data={abbottBiData}
+            activeView={activeView}
+            viewPending={viewPending}
+            onViewChange={(view) => setViewSelection({ context: requestContext, view })}
             showUserIdAnalytics={showAbbottUserIdAnalytics}
             locale={locale}
             portalName="ABBOTT"

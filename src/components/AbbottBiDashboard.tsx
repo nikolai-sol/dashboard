@@ -57,6 +57,9 @@ type AbbottBiDashboardProps = {
   periodTo?: string;
   dashboardId?: string;
   onAdminUsersChanged?: () => void;
+  activeView?: TabId;
+  onViewChange?: (view: TabId) => void;
+  viewPending?: boolean;
 };
 
 type TabId =
@@ -864,8 +867,12 @@ export default function AbbottBiDashboard({
   periodTo,
   dashboardId = "abbott",
   onAdminUsersChanged = () => undefined,
+  activeView,
+  onViewChange,
+  viewPending = false,
 }: AbbottBiDashboardProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("users_summary");
+  const [localActiveTab, setActiveTab] = useState<TabId>("users_summary");
+  const activeTab = activeView ?? localActiveTab;
   const [selectedSessionJourneyId, setSelectedSessionJourneyId] = useState<number | null>(null);
   const [queryByTab, setQueryByTab] = useState<Record<TabId, string>>({
     users_summary: "",
@@ -927,6 +934,7 @@ export default function AbbottBiDashboard({
         if (!showUserIdAnalytics && (tab.id === "user_actions" || tab.id === "session_journeys" || tab.id === "time_buckets")) {
           return false;
         }
+        if (data.read_contract) return data.read_contract.available_views.includes(tab.id);
         if (tab.id === "bitrix_pages") return data.bitrix_pages.length > 0;
         if (tab.id === "session_journeys") return data.session_journeys.rows.length > 0;
         if (tab.id === "external_events") return data.external_events.length > 0 || data.external_clicks.length > 0;
@@ -2370,7 +2378,7 @@ export default function AbbottBiDashboard({
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => { setActiveTab(tab.id); onViewChange?.(tab.id); }}
                 className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
                   isActive
                     ? `${tabTheme.borderClass} ${tabTheme.textClass} bg-white shadow-sm`
@@ -2384,7 +2392,8 @@ export default function AbbottBiDashboard({
         </nav>
       </aside>
 
-      <div className="space-y-4">
+      {viewPending ? <p role="status" aria-live="polite" className="text-sm text-slate-500">Загрузка данных…</p> : null}
+      <div className="space-y-4" hidden={viewPending}>
         <div className={`card-surface relative z-[110] overflow-visible border p-5 ${theme.borderClass}`}>
           <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
             <div>

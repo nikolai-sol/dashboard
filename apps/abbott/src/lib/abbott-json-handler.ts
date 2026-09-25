@@ -2,6 +2,7 @@ import { normalizeAbbottIdentifier } from "@reportingdash/runtime-contract";
 import { NextResponse } from "next/server";
 import { projectAbbottDashboardData } from "../../../../src/lib/abbott-data-projection";
 import { InvalidDashboardDateRangeError } from "../../../../src/lib/dashboard-date-range";
+import { InvalidAbbottReadRequestError, parseAbbottReadRequest } from "../../../../src/lib/abbott-read-request";
 import { loadAbbottDashboardData } from "./abbott-dashboard-loader";
 import {
   authorizeAbbottRoute,
@@ -59,6 +60,7 @@ export function createAbbottJsonHandler(
         );
       }
 
+      if (new URL(request.url).searchParams.has("view")) parseAbbottReadRequest(request.url);
       const result = await load(request, id, access.audience);
       if (
         result.dashboard_id !== 18
@@ -80,6 +82,9 @@ export function createAbbottJsonHandler(
       );
       return privateJson({ ...projected, abbott_bi: embedAbbott });
     } catch (error) {
+      if (error instanceof InvalidAbbottReadRequestError) {
+        return privateJson({ error: "Invalid Abbott read request" }, { status: 400 });
+      }
       if (error instanceof InvalidDashboardDateRangeError) {
         return privateJson({ error: "Invalid date range" }, { status: 400 });
       }
