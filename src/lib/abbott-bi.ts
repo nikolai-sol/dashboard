@@ -8,10 +8,13 @@ import {
 import { abbottTitleLookupHash } from "@/lib/abbott-content-lookup";
 import { buildAbbottReturnFrequency, type AbbottFrequencyVisit } from "@/lib/abbott-return-frequency";
 import {
-  loadActiveAbbottReleaseBundleWithExecutor,
+  resolveAbbottReadReleaseWithExecutor,
+  loadAbbottReleaseBundleForReleaseWithExecutor,
+  loadAbbottLookupQualityForReleaseWithExecutor,
   withReadOnlyAbbottExecutor,
 } from "@/lib/abbott-private-store";
 import type {
+  AbbottActiveRelease,
   AbbottAggregatePrivateData,
   AbbottPrivateSessionJourneysData,
   ParsedAbbottWorkbook,
@@ -86,8 +89,18 @@ export interface AbbottBiQueryExecutor {
 export interface AbbottBiLoaderDependencies {
   aggregateExecutor: AbbottBiQueryExecutor;
   privateExecutor: AbbottBiQueryExecutor;
-  loadReleaseBundle(
+  resolveRelease(
     dashboardId: number,
+    audience: AbbottDashboardAudience,
+    from: string,
+    to: string,
+  ): Promise<AbbottActiveRelease>;
+  loadLookupQuality(
+    release: AbbottActiveRelease,
+    audience: AbbottDashboardAudience,
+  ): Promise<AbbottAggregatePrivateData["workbook"]["lookupQuality"]>;
+  loadReleaseBundle(
+    release: AbbottActiveRelease,
     audience: AbbottDashboardAudience,
     from: string,
     to: string,
@@ -1177,14 +1190,19 @@ export async function loadAbbottBiDataWithDependencies(
 
   let releaseId: number | null = null;
   try {
-    const releaseBundle = await dependencies.loadReleaseBundle(dashboardId, audience, from, to);
-    if (releaseBundle.audience !== audience || positiveInteger(releaseBundle.releaseId) === null) {
+    const release = await dependencies.resolveRelease(dashboardId, audience, from, to);
+    if (!Number.isSafeInteger(release.id) || positiveInteger(release.id) === null) {
       throw new Error("Abbott canonical data is unavailable");
     }
-    releaseId = releaseBundle.releaseId;
+    releaseId = release.id;
     const gaps = await coverageGaps(dependencies.aggregateExecutor, releaseId, counters, from, to);
     if (gaps.length > 0) {
-      return emptyAbbottData(counters, audience, from, to, releaseId, gaps, releaseBundle.workbook.lookupQuality);
+      const quality = await dependencies.loadLookupQuality(release, audience);
+      return emptyAbbottData(counters, audience, from, to, releaseId, gaps, quality);
+    }
+    const releaseBundle = await dependencies.loadReleaseBundle(release, audience, from, to);
+    if (releaseBundle.releaseId !== releaseId || releaseBundle.audience !== audience) {
+      throw new Error("Abbott canonical data is unavailable");
     }
 
     const [siteFacts, returningFacts, externalFacts, behaviorFacts, adminSettings] = await Promise.all([
@@ -1285,6 +1303,8 @@ export async function loadAbbottBiData(
     return loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, {
       aggregateExecutor: { query: async () => [] },
       privateExecutor: { query: async () => [] },
+      resolveRelease: async () => { throw new Error("Abbott trusted audience is required"); },
+      loadLookupQuality: async () => { throw new Error("Abbott trusted audience is required"); },
       loadReleaseBundle: async () => { throw new Error("Abbott trusted audience is required"); },
     });
   }
@@ -1292,13 +1312,17 @@ export async function loadAbbottBiData(
     loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, {
       aggregateExecutor: executor,
       privateExecutor: executor,
-      loadReleaseBundle: (releaseDashboardId, releaseAudience, releaseFrom, releaseTo) =>
-        loadActiveAbbottReleaseBundleWithExecutor(
+      resolveRelease: (releaseDashboardId, releaseAudience, releaseFrom, releaseTo) =>
+        resolveAbbottReadReleaseWithExecutor(
           executor,
           releaseDashboardId,
           releaseAudience,
           releaseFrom,
           releaseTo,
         ),
+      loadLookupQuality: (release, releaseAudience) =>
+        loadAbbottLookupQualityForReleaseWithExecutor(executor, release, releaseAudience),
+      loadReleaseBundle: (release, releaseAudience, releaseFrom, releaseTo) =>
+        loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, releaseAudience, releaseFrom, releaseTo),
     }));
 }

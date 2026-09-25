@@ -661,13 +661,13 @@ export async function loadActiveAbbottAggregateDataWithExecutor(
   };
 }
 
-export async function loadActiveAbbottReleaseBundleWithExecutor(
+export async function resolveAbbottReadReleaseWithExecutor(
   executor: AbbottPrivateQueryExecutor,
   dashboardId: number,
   audience: AbbottPrivateAudience,
   from: string,
   to: string,
-): Promise<AbbottReleaseBundle> {
+): Promise<AbbottActiveRelease> {
   if (audience !== "manager" && audience !== "embed") {
     throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
   }
@@ -675,7 +675,34 @@ export async function loadActiveAbbottReleaseBundleWithExecutor(
     throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
   }
   await requireActiveAbbottDashboard(executor, dashboardId);
-  const release = await resolveActiveAbbottRelease(executor);
+  return resolveActiveAbbottRelease(executor);
+}
+
+export async function loadAbbottLookupQualityForReleaseWithExecutor(
+  executor: AbbottPrivateQueryExecutor,
+  release: AbbottActiveRelease,
+  audience: AbbottPrivateAudience,
+): Promise<AbbottAggregateWorkbookData["lookupQuality"]> {
+  if ((audience !== "manager" && audience !== "embed") || !Number.isSafeInteger(release.id) || release.id <= 0) {
+    throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+  }
+  const workbook = audience === "manager"
+    ? await loadManagerWorkbookForRelease(executor, release)
+    : await loadAggregateWorkbook(executor, release);
+  return workbook.lookupQuality;
+}
+
+export async function loadAbbottReleaseBundleForReleaseWithExecutor(
+  executor: AbbottPrivateQueryExecutor,
+  release: AbbottActiveRelease,
+  audience: AbbottPrivateAudience,
+  from: string,
+  to: string,
+): Promise<AbbottReleaseBundle> {
+  if ((audience !== "manager" && audience !== "embed") || !isValidDateRange(from, to)
+      || !Number.isSafeInteger(release.id) || release.id <= 0) {
+    throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+  }
 
   if (audience === "manager") {
     const workbook = await loadManagerWorkbookForRelease(executor, release);
@@ -716,6 +743,17 @@ export async function loadActiveAbbottReleaseBundleWithExecutor(
       })),
     },
   };
+}
+
+export async function loadActiveAbbottReleaseBundleWithExecutor(
+  executor: AbbottPrivateQueryExecutor,
+  dashboardId: number,
+  audience: AbbottPrivateAudience,
+  from: string,
+  to: string,
+): Promise<AbbottReleaseBundle> {
+  const release = await resolveAbbottReadReleaseWithExecutor(executor, dashboardId, audience, from, to);
+  return loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, audience, from, to);
 }
 
 type AbbottPoolGlobal = typeof globalThis & {

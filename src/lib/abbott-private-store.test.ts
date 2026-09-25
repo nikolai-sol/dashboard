@@ -65,6 +65,57 @@ test("resolves only the active Abbott release and its referenced imported snapsh
   assert.doesNotMatch(executor.queries.map((query) => query.sql).join("\n"), /source_locator|private_archive_locator/i);
 });
 
+test("read authority resolves once before workbook-only diagnostics or bundle hydration", async () => {
+  assert.equal(typeof privateStore.resolveAbbottReadReleaseWithExecutor, "function");
+  for (const audience of ["manager", "embed"] as const) {
+    const executor = fakeExecutor(({ sql }) => {
+      if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+      if (sql.includes("portal_active_data_releases")) return [releaseRow];
+      if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+      if (sql.includes("AS ambiguous_groups")) return [{ ambiguous_groups: 7, collapsed_groups: 11 }];
+      return [];
+    });
+    const release = await privateStore.resolveAbbottReadReleaseWithExecutor(executor, 7, audience, "2026-06-01", "2026-06-30");
+    assert.equal(executor.queries.length, 3);
+    const quality = await privateStore.loadAbbottLookupQualityForReleaseWithExecutor(executor, release, audience);
+    assert.deepEqual(quality, { ambiguousGroups: 7, collapsedGroups: 11 });
+    assert.doesNotMatch(executor.queries.map(q => q.sql).join("\n"), /portal_bitrix|canonical_fact/);
+    if (audience === "embed") assert.doesNotMatch(executor.queries.map(q => q.sql).join("\n"), /report_bd_private/);
+    const bundle = await privateStore.loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, audience, "2026-06-01", "2026-06-30");
+    assert.equal(bundle.releaseId, release.id);
+    assert.equal(bundle.audience, audience);
+    assert.equal(executor.queries.filter(q => q.sql.includes("portal_active_data_releases")).length, 1);
+  }
+});
+
+test("invalid range and audience fail before release-resolution queries", async () => {
+  assert.equal(typeof privateStore.resolveAbbottReadReleaseWithExecutor, "function");
+  const executor = fakeExecutor(() => []);
+  await assert.rejects(() => privateStore.resolveAbbottReadReleaseWithExecutor(executor, 7, "manager", "bad", "2026-06-30"));
+  await assert.rejects(() => privateStore.resolveAbbottReadReleaseWithExecutor(executor, 7, "invalid" as "manager", "2026-06-01", "2026-06-30"));
+  assert.equal(executor.queries.length, 0);
+});
+
+test("read-only work failure rolls back and releases its existing audience connection", async () => {
+  const shared = globalThis as typeof globalThis & { __abbottPrivateMysqlPool?: unknown };
+  const previous = shared.__abbottPrivateMysqlPool;
+  const calls: string[] = [];
+  shared.__abbottPrivateMysqlPool = { getConnection: async () => ({
+    query: async (sql: string) => { calls.push(sql); },
+    beginTransaction: async () => { calls.push("begin"); },
+    commit: async () => { calls.push("commit"); },
+    rollback: async () => { calls.push("rollback"); },
+    release: () => { calls.push("release"); },
+  }) };
+  try {
+    await assert.rejects(() => privateStore.withReadOnlyAbbottExecutor("manager", async () => { throw Error("fixture failure"); }), /Abbott private data is unavailable/);
+    assert.deepEqual(calls, ["SET TRANSACTION READ ONLY", "begin", "rollback", "release"]);
+  } finally {
+    if (previous === undefined) delete shared.__abbottPrivateMysqlPool;
+    else shared.__abbottPrivateMysqlPool = previous;
+  }
+});
+
 test("release bundle pins one active release for all manager snapshot reads", async () => {
   let pointerReads = 0;
   const executor = fakeExecutor(({ sql }) => {

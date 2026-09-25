@@ -22,6 +22,8 @@ async function fixture(audience: AbbottDashboardAudience = "manager") {
   return loadAbbottBiDataWithDependencies(18, ["90602537"], "2026-01-01", "2026-01-13", audience, {
     aggregateExecutor: { query: async () => [] },
     privateExecutor: { query: async () => { throw new Error("Private facts must not be read"); } },
+    resolveRelease: async () => { throw new Error("Fixture has no active release"); },
+    loadLookupQuality: async () => { throw new Error("Fixture has no active release"); },
     loadReleaseBundle: async () => { throw new Error("Fixture has no active release"); },
   });
 }

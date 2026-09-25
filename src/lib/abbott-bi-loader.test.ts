@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import type {
+  AbbottActiveRelease,
   AbbottAggregatePrivateData,
   AbbottPrivateSessionJourneysData,
   ParsedAbbottWorkbook,
@@ -141,6 +142,16 @@ function aggregateRows(sql: string): readonly Record<string, unknown>[] {
   throw new Error(`Unexpected aggregate query: ${sql}`);
 }
 
+const activeRelease: AbbottActiveRelease = {
+  id: 41,
+  snapshots: {
+    workbookJson: { id: 11, sourceKind: "abbott_workbook_json", generatedAt: null, periodFrom: null, periodTo: null },
+    workbookCatalog: { id: 12, sourceKind: "abbott_workbook_catalog", generatedAt: null, periodFrom: null, periodTo: null },
+    bitrixPages: null,
+    bitrixJourneys: null,
+  },
+};
+
 function dependencies(
   aggregateExecutor: AbbottBiQueryExecutor,
   privateExecutor: AbbottBiQueryExecutor,
@@ -148,6 +159,10 @@ function dependencies(
   return {
     aggregateExecutor,
     privateExecutor,
+    async resolveRelease() { return activeRelease; },
+    async loadLookupQuality(_release, audience) {
+      return (audience === "manager" ? managerWorkbook : aggregateWorkbook).lookupQuality;
+    },
     async loadReleaseBundle(_dashboardId, audience) {
       return audience === "manager"
         ? {
@@ -211,9 +226,72 @@ test("incomplete canonical coverage fails closed without querying facts or priva
     { counter_id: "90602537", report_date: "2026-01-01", scope: "returning", status: "partial" },
   ]);
   assert.equal(result.page_stats.length, 0);
-  assert.equal(storeCalls, 1);
+  assert.equal(storeCalls, 0);
   assert.equal(privateDb.queries.length, 0);
   assert.equal(aggregate.queries.some((sql) => sql.includes("canonical_fact_metrika_site_analytics_daily")), false);
+});
+
+test("coverage precedes hydration and incomplete lookup diagnostics remain exact", async () => {
+  for (const audience of ["manager", "embed"] as const) {
+    for (const complete of [true, false]) {
+      const calls: string[] = [];
+      const aggregate = executor((sql) => {
+        calls.push(sql.includes("canonical_source_coverage_daily") ? "coverage" : "fact");
+        return !complete && sql.includes("canonical_source_coverage_daily") ? [] : aggregateRows(sql);
+      });
+      const deps = dependencies(aggregate, executor(() => { calls.push("private_fact"); return []; }));
+      const hydrate = deps.loadReleaseBundle;
+      deps.resolveRelease = async () => { calls.push("authority"); return activeRelease; };
+      deps.loadReleaseBundle = async (release, ...args) => {
+        assert.equal(release, activeRelease);
+        calls.push("bundle");
+        return hydrate(release, ...args);
+      };
+      deps.loadLookupQuality = async (release, trustedAudience) => {
+        assert.equal(release, activeRelease);
+        assert.equal(trustedAudience, audience);
+        calls.push("quality");
+        return { ambiguousGroups: 7, collapsedGroups: 11 };
+      };
+      const result = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", audience, deps);
+      if (complete) {
+        assert.equal(result.data_quality.status, "complete");
+        assert.deepEqual(calls.slice(0, 3), ["authority", "coverage", "bundle"]);
+      } else {
+        assert.deepEqual(calls, ["authority", "coverage", "quality"]);
+        assert.equal(result.data_quality.blocking_gaps.length, 5);
+        assert.deepEqual(result.data_quality.content_lookup, { ambiguous_groups: 7, collapsed_groups: 11 });
+      }
+    }
+  }
+});
+
+test("invalid request or release authority performs no coverage or hydration reads", async () => {
+  for (const [from, counter, id] of [["bad", "90602537", 41], ["2026-01-01", "wrong", 41], ["2026-01-01", "90602537", 0], ["2026-01-01", "90602537", Number.MAX_SAFE_INTEGER + 1]] as const) {
+    const db = executor(() => []);
+    const deps = dependencies(db, db);
+    let reads = 0;
+    deps.resolveRelease = async () => ({ ...activeRelease, id });
+    deps.loadReleaseBundle = async () => { reads++; throw Error("unexpected hydration"); };
+    deps.loadLookupQuality = async () => { reads++; throw Error("unexpected quality"); };
+    const result = await loadAbbottBiDataWithDependencies(7, [counter], from, "2026-01-01", "manager", deps);
+    assert.equal(result.data_quality.status, "incomplete");
+    assert.equal(db.queries.length, 0);
+    assert.equal(reads, 0);
+  }
+});
+
+test("mismatched hydrated release or audience stops before fact reads", async () => {
+  for (const mismatch of [{ releaseId: 42, audience: "embed" as const }, { releaseId: 41, audience: "manager" as const }]) {
+    const db = executor(aggregateRows);
+    const deps = dependencies(db, executor(() => { throw Error("private query"); }));
+    deps.loadReleaseBundle = async () => ({ ...mismatch, workbook: aggregateWorkbook, bitrixPages: missingBitrix, journeyTransitions: { source: missingBitrix.source, rows: [] } } as Awaited<ReturnType<typeof deps.loadReleaseBundle>>);
+    const result = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps);
+    assert.equal(result.data_quality.status, "incomplete");
+    assert.equal(result.data_quality.release_id, 41);
+    assert.equal(db.queries.length, 1);
+    assert.match(db.queries[0], /canonical_source_coverage_daily/);
+  }
 });
 
 test("embed uses aggregate store only and derives returning counts with decimal half-up", async () => {
