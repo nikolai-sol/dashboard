@@ -405,6 +405,7 @@ async function querySiteFacts(
   counterIds: string[],
   from: string,
   to: string,
+  summaryOnly = false,
 ): Promise<readonly SiteFactRow[]> {
   return (await executor.query(
     `SELECT analytics_scope,
@@ -419,7 +420,7 @@ async function querySiteFacts(
        AND source_key = ?
        AND analytics_account_id IN (${placeholders(counterIds)})
        AND counter_id IN (${placeholders(counterIds)})
-       AND analytics_scope IN ('other', 'traffic', 'page')
+       AND ${summaryOnly ? "analytics_scope = 'other'" : "analytics_scope IN ('other', 'traffic', 'page')"}
        AND report_date >= ?
        AND report_date <= ?
      ORDER BY analytics_scope, scope_hash`,
@@ -510,6 +511,82 @@ async function queryManagerAdminUserIds(
     userIds.add(userId);
   }
   return userIds;
+}
+
+// The validation/accumulator is shared with the full builder. Only client sets
+// move to MySQL; JS keeps ordered Number addition and first-row representatives.
+async function queryManagerSummary(
+  executor: AbbottBiQueryExecutor,
+  releaseId: number,
+  counterIds: string[],
+  from: string,
+  to: string,
+  workbook: ParsedAbbottWorkbook,
+  adminUserIds: ReadonlySet<string>,
+) {
+  const builder = createManagerBehavior(workbook, adminUserIds, { summary: true, actions: false, returning: false }, false);
+  const params = [releaseId, ...counterIds, from, to];
+  const where = `canonical_release_id = ? AND counter_id IN (${placeholders(counterIds)})
+    AND report_date >= ? AND report_date <= ?`;
+  let cursor: string[] = [];
+  for (;;) {
+    const rows = await executor.query(
+      `SELECT report_date, visit_id_hash, session_started_at, utm_source,
+              raw_user_id, raw_user_ids_json, client_id_hash, traffic_source,
+              pageviews, duration_seconds, is_bounce
+       FROM \`report_bd_private\`.\`canonical_fact_metrika_visits\`
+       WHERE ${where} ${cursor.length ? "AND (report_date, session_started_at, visit_id_hash) > (?, ?, ?)" : ""}
+       ORDER BY report_date, session_started_at, visit_id_hash LIMIT 1000`,
+      [...params, ...cursor],
+    );
+    if (rows.length > 1000) throw new Error("Abbott summary page is invalid");
+    builder.addRows(rows);
+    if (rows.length < 1000) break;
+    const last = rows[rows.length - 1];
+    const next = [last.report_date, last.session_started_at, last.visit_id_hash];
+    if (next.some(value => typeof value !== "string") || JSON.stringify(next) === JSON.stringify(cursor)) {
+      throw new Error("Abbott summary cursor is invalid");
+    }
+    cursor = next as string[];
+  }
+  // Validation above deliberately precedes JSON decoding/grouping here. JSON
+  // string values are decoded a second time, matching mysql2 + the JS builder.
+  const rows = await executor.query(
+    `/* abbott-summary-distinct */ WITH decoded AS (
+       SELECT raw_user_id, client_id_hash, traffic_source,
+         CASE WHEN JSON_TYPE(raw_user_ids_json) = 'STRING'
+           THEN CAST(JSON_UNQUOTE(raw_user_ids_json) AS JSON) ELSE raw_user_ids_json END AS ids
+       FROM \`report_bd_private\`.\`canonical_fact_metrika_visits\` WHERE ${where}
+     ), identities AS (
+       SELECT client_id_hash, traffic_source,
+         CASE WHEN ids IS NULL OR JSON_TYPE(ids) = 'NULL'
+           THEN IF(raw_user_id IS NULL OR OCTET_LENGTH(raw_user_id) = 0, JSON_ARRAY(), JSON_ARRAY(raw_user_id))
+           ELSE ids END AS ids FROM decoded
+     ), keyed AS (
+       SELECT client_id_hash, ids, CAST(CONCAT(IF(JSON_LENGTH(ids) > 0, '1', '0'), CHAR(10),
+         IF(JSON_LENGTH(ids) = 1, JSON_UNQUOTE(JSON_EXTRACT(ids, '$[0]')), ''), CHAR(10), traffic_source) AS BINARY) AS summary_key
+       FROM identities
+     ) SELECT HEX(summary_key) AS summary_key_hex,
+         COUNT(DISTINCT CAST(client_id_hash AS BINARY)) AS clients,
+         COUNT(DISTINCT CASE WHEN NOT JSON_OVERLAPS(ids, CAST(? AS JSON)) THEN CAST(client_id_hash AS BINARY) END) AS non_admin_clients
+       FROM keyed GROUP BY summary_key`,
+    [...params, JSON.stringify([...adminUserIds])],
+  );
+  const counts = new Map<string, number>();
+  const nonAdminCounts = new Map<string, number>();
+  for (const row of rows) {
+    const key = typeof row.summary_key_hex === "string" ? row.summary_key_hex.toLowerCase() : "";
+    const clients = Number(row.clients);
+    const nonAdminClients = Number(row.non_admin_clients);
+    if (!/^(?:[0-9a-f]{2})+$/.test(key) || counts.has(key)
+      || !Number.isSafeInteger(clients) || clients < 0
+      || !Number.isSafeInteger(nonAdminClients) || nonAdminClients < 0 || nonAdminClients > clients) {
+      throw new Error("Abbott summary counts are invalid");
+    }
+    counts.set(key, clients);
+    nonAdminCounts.set(key, nonAdminClients);
+  }
+  return builder.finish(counts, nonAdminCounts);
 }
 
 /**
@@ -920,19 +997,14 @@ function buildReturning(
     .sort((left, right) => right.visits - left.visits || left.url.localeCompare(right.url));
 }
 
-function buildManagerBehavior(
-  rows: readonly PrivateBehaviorRow[],
+function createManagerBehavior(
   workbook: ParsedAbbottWorkbook,
   adminUserIds: ReadonlySet<string>,
   outputs: { summary: boolean; actions: boolean; returning: boolean },
-): {
-  summaries: AbbottBiUserSummaryRow[];
-  summariesWithoutAdmins: AbbottBiUserSummaryRow[];
-  actions: AbbottBiUserActionRow[];
-  frequencyVisits: AbbottFrequencyVisit[];
-} {
+  trackClients = true,
+) {
   type ManagerSummary = AbbottBiUserSummaryRow & {
-    clientHashes: Set<string>;
+    clientHashes: Set<string> | null;
     pageviewsTotal: number;
     durationTotal: number;
     bouncedVisits: number;
@@ -965,7 +1037,7 @@ function buildManagerBehavior(
       page_depth: 0,
       avg_duration: 0,
       bounce_rate: 0,
-      clientHashes: new Set<string>(),
+      clientHashes: trackClients ? new Set<string>() : null,
       pageviewsTotal: 0,
       durationTotal: 0,
       bouncedVisits: 0,
@@ -974,19 +1046,25 @@ function buildManagerBehavior(
     summary.pageviewsTotal += input.pageviews;
     summary.durationTotal += input.duration;
     summary.bouncedVisits += input.isBounce ? 1 : 0;
-    if (input.clientHash !== null) summary.clientHashes.add(input.clientHash);
+    if (input.clientHash !== null) summary.clientHashes?.add(input.clientHash);
     target.set(key, summary);
   };
-  const finalizeSummaries = (target: Map<string, ManagerSummary>) =>
-    [...target.values()].map(({
+  const clientCount = (key: string, hashes: Set<string> | null, counts?: ReadonlyMap<string, number>) => {
+    if (hashes) return hashes.size;
+    const value = counts?.get(Buffer.from(key).toString("hex"));
+    if (value === undefined) throw new Error("Abbott summary counts are incomplete");
+    return value;
+  };
+  const finalizeSummaries = (target: Map<string, ManagerSummary>, counts?: ReadonlyMap<string, number>) =>
+    [...target.entries()].map(([key, {
       clientHashes,
       pageviewsTotal,
       durationTotal,
       bouncedVisits,
       ...row
-    }) => ({
+    }]) => ({
       ...row,
-      users: clientHashes.size,
+      users: clientCount(key, clientHashes, counts),
       page_depth: row.visits > 0 ? Number((pageviewsTotal / row.visits).toFixed(2)) : 0,
       avg_duration: row.visits > 0 ? Number((durationTotal / row.visits).toFixed(2)) : 0,
       bounce_rate: row.visits > 0 ? Number(((bouncedVisits / row.visits) * 100).toFixed(2)) : 0,
@@ -994,7 +1072,7 @@ function buildManagerBehavior(
       left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
     );
   const actions: AbbottBiUserActionRow[] = [];
-  rows.forEach((row) => {
+  const addRows = (rows: readonly PrivateBehaviorRow[]) => rows.forEach((row) => {
     const singularUserId = nullableText(row.raw_user_id);
     let parsedUserIds: unknown = row.raw_user_ids_json;
     if (typeof parsedUserIds === "string") {
@@ -1079,12 +1157,23 @@ function buildManagerBehavior(
       is_admin_user: isAdminUser,
     });
   });
-  return {
-    summaries: finalizeSummaries(summaries),
-    summariesWithoutAdmins: finalizeSummaries(summariesWithoutAdmins),
+  return { addRows, finish: (counts?: ReadonlyMap<string, number>, nonAdminCounts?: ReadonlyMap<string, number>) => ({
+    summaries: finalizeSummaries(summaries, counts),
+    summariesWithoutAdmins: finalizeSummaries(summariesWithoutAdmins, nonAdminCounts),
     actions,
     frequencyVisits,
-  };
+  }) };
+}
+
+function buildManagerBehavior(
+  rows: readonly PrivateBehaviorRow[],
+  workbook: ParsedAbbottWorkbook,
+  adminUserIds: ReadonlySet<string>,
+  outputs: { summary: boolean; actions: boolean; returning: boolean },
+) {
+  const builder = createManagerBehavior(workbook, adminUserIds, outputs);
+  builder.addRows(rows);
+  return builder.finish();
 }
 
 function mapJourneys(data: AbbottPrivateSessionJourneysData): AbbottBiSessionJourneysData {
@@ -1219,11 +1308,12 @@ export async function loadAbbottBiDataWithDependencies(
     const availableViews: AbbottReadView[] | undefined = releaseBundle.availableViews;
     if (readRequest && !availableViews) throw new Error("Abbott view availability is unavailable");
 
+    const boundedSummary = audience === "manager" && readRequest?.view === "users_summary";
     const [siteFacts, returningFacts, externalFacts, behaviorFacts, adminSettings] = await Promise.all([
-      needs.summary || needs.pages ? querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to) : Promise.resolve([]),
+      needs.summary || needs.pages ? querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to, boundedSummary) : Promise.resolve([]),
       needs.returning ? queryReturningFacts(dependencies.aggregateExecutor, releaseId, counters, from, to) : Promise.resolve([]),
       needs.external ? queryExternalClicks(dependencies.aggregateExecutor, releaseId, counters, from, to) : Promise.resolve([]),
-      audience === "manager" && (needs.summary || needs.actions || needs.returning)
+      audience === "manager" && !boundedSummary && (needs.summary || needs.actions || needs.returning)
         ? queryManagerBehavior(dependencies.privateExecutor, releaseId, counters, from, to)
         : Promise.resolve([]),
       audience === "manager" && (needs.summary || needs.actions)
@@ -1239,7 +1329,9 @@ export async function loadAbbottBiDataWithDependencies(
     const pageStats = needs.pages ? buildPageStats(siteFacts, releaseBundle.workbook) : [];
     const enrichedPageStats = periodActive ? enrichWithBitrix(pageStats, bitrixPages) : pageStats;
     const managerBehavior = releaseBundle.audience === "manager"
-      ? buildManagerBehavior(
+      ? boundedSummary
+        ? await queryManagerSummary(dependencies.privateExecutor, releaseId, counters, from, to, releaseBundle.workbook, adminSettings.ids)
+        : buildManagerBehavior(
           behaviorFacts,
           releaseBundle.workbook,
           adminSettings.ids,

@@ -877,7 +877,7 @@ export async function withReadOnlyAbbottExecutor<T>(
   let connection: PoolConnection | undefined;
   try {
     connection = await (await getAbbottPool(audience)).getConnection();
-    await connection.query("SET TRANSACTION READ ONLY");
+    await connection.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
     await connection.beginTransaction();
     const result = await work(connectionExecutor(connection));
     await connection.commit();

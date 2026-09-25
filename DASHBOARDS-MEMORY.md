@@ -41,6 +41,13 @@ must include the new source recipe, not reset the guard. This is not a V8 heap
 setting or proof that annual requests are efficient. Local September 25
 coverage/scoped-read/lazy-UI efficiency commits are **not deployed**.
 
+The local explicit manager `users_summary` optimization validates visits in
+chronological pages of at most 1,000 rows, preserves ordered JS sums, and uses
+SQL for period-distinct clients; the Abbott readonly helper pins transaction-local
+REPEATABLE READ. Summary traffic reads omit unrelated page facts. This still
+transfers O(n) narrow validation rows and retains result-group cardinality costs;
+full/default/export, actions and frequency remain unchanged. It is **not deployed**.
+
 Evidence lives in the root repository: `docs/operations/2026-09-24-abbott-runtime-cutover.md`,
 `docs/operations/2026-09-25-abbott-availability-incident.md`, and
 `outputs/abbott-incident-20260925/memory-native-completion.md`.

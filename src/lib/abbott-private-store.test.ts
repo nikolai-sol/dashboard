@@ -207,7 +207,10 @@ test("read-only work failure rolls back and releases its existing audience conne
   }) };
   try {
     await assert.rejects(() => privateStore.withReadOnlyAbbottExecutor("manager", async () => { throw Error("fixture failure"); }), /Abbott private data is unavailable/);
-    assert.deepEqual(calls, ["SET TRANSACTION READ ONLY", "begin", "rollback", "release"]);
+    assert.deepEqual(calls, ["SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY", "begin", "rollback", "release"]);
+    calls.length = 0;
+    assert.equal(await privateStore.withReadOnlyAbbottExecutor("manager", async () => 42), 42);
+    assert.deepEqual(calls, ["SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY", "begin", "commit", "release"]);
   } finally {
     if (previous === undefined) delete shared.__abbottPrivateMysqlPool;
     else shared.__abbottPrivateMysqlPool = previous;

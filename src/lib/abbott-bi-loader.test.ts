@@ -273,9 +273,17 @@ test("coverage precedes hydration and incomplete lookup diagnostics remain exact
 });
 
 test("scoped summary preserves summaries without constructing actions or frequency outputs", async () => {
-  const deps = dependencies(executor(aggregateRows), executor((sql) => sql.includes("canonical_fact_metrika_visits") ? [privateVisit()] : []));
+  const counts = [{ summary_key_hex: Buffer.from("1\n000123\nDirect").toString("hex"), clients: 1, non_admin_clients: 1 }];
+  const aggregate = executor(sql => {
+    const rows = aggregateRows(sql);
+    return sql.includes("analytics_scope = 'other'") ? rows.filter(row => row.analytics_scope === "other") : rows;
+  });
+  const deps = dependencies(aggregate, executor((sql) => sql.includes("abbott-summary-distinct") ? counts : sql.includes("canonical_fact_metrika_visits") ? [privateVisit()] : []));
   const full = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", deps);
+  assert(aggregate.queries.some(sql => sql.includes("analytics_scope IN ('other', 'traffic', 'page')")));
+  aggregate.queries.length = 0;
   const summary = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", deps, { view: "users_summary" });
+  assert(aggregate.queries.some(sql => sql.includes("analytics_scope = 'other'")));
   assert.deepEqual(summary.users_summary, full.users_summary);
   assert.deepEqual(summary.users_summary_without_admins, full.users_summary_without_admins);
   assert.deepEqual(summary.admin_user_filter, full.admin_user_filter);
@@ -288,10 +296,39 @@ test("scoped summary preserves summaries without constructing actions or frequen
   const summaryVisit = privateVisit();
   Object.defineProperty(summaryVisit, "start_url", { get() { assert.fail("summary must not construct frequency or action URL rows"); } });
   Object.defineProperty(summaryVisit, "end_url", { get() { assert.fail("summary must not construct action URL rows"); } });
-  const lazy = dependencies(executor(aggregateRows), executor(sql => sql.includes("canonical_fact_metrika_visits") ? [summaryVisit] : []));
+  const lazy = dependencies(executor(aggregateRows), executor(sql => sql.includes("abbott-summary-distinct") ? counts : sql.includes("canonical_fact_metrika_visits") ? [summaryVisit] : []));
   const result = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", lazy, { view: "users_summary" });
   assert.equal(result.data_quality.status, "complete");
   assert.deepEqual(result.users_summary, full.users_summary);
+});
+
+test("manager summary validates bounded chronological pages and obtains period clients from SQL", async () => {
+  const visits = Array.from({ length: 1001 }, (_, i) => privateVisit({ report_date: "2026-01-01", visit_id_hash: `v${String(i).padStart(4, "0")}` }));
+  let pages = 0;
+  let distinctQueries = 0;
+  const privateDb = executor((sql, params) => {
+    if (sql.includes("portal_abbott_admin_user_exclusions")) return [];
+    if (sql.includes("abbott-summary-distinct")) {
+      distinctQueries++;
+      assert.equal(pages, 2, "all validation finishes before grouping");
+      return [{ summary_key_hex: Buffer.from("1\n000123\nDirect").toString("hex"), clients: 1, non_admin_clients: 1 }];
+    }
+    assert.match(sql, /LIMIT 1000/);
+    assert.match(sql, /ORDER BY report_date, session_started_at, visit_id_hash/);
+    assert.doesNotMatch(sql, /start_url|end_url/);
+    pages++;
+    if (pages === 1) return visits.slice(0, 1000);
+    assert.match(sql, /\(report_date, session_started_at, visit_id_hash\) > \(\?, \?, \?\)/);
+    assert.deepEqual(params.slice(-3), ["2026-01-01", "2026-01-01 10:00:00", "v0999"]);
+    return visits.slice(1000);
+  });
+  const result = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", dependencies(executor(aggregateRows), privateDb), { view: "users_summary" });
+  assert.equal(result.data_quality.status, "complete");
+  assert.equal(pages, 2);
+  assert.equal(distinctQueries, 1);
+  assert.equal(result.users_summary[0].visits, 1001);
+  assert.equal(result.users_summary[0].users, 1);
+  assert.deepEqual(result.user_actions, []);
 });
 
 test("page views skip private visits/admin and returning retains both frequency and control", async () => {
