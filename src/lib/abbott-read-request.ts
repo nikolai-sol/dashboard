@@ -28,7 +28,7 @@ export function abbottReadNeeds(view: AbbottReadView = "full") {
     actions: full || view === "user_actions",
     returning: full || view === "returning",
     pages,
-    bitrix: pages,
+    bitrix: full || view === "page_stats" || view === "bitrix_pages",
     journeys: full || view === "session_journeys",
     external: full || view === "external_events",
     materials: full || view === "general_materials",

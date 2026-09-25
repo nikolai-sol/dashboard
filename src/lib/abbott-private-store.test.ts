@@ -128,6 +128,31 @@ test("scoped bundle availability matches full rows without hydrating hidden jour
   }
 });
 
+for (const view of ["general_materials", "time_buckets"] as const) {
+  test(`${view} uses bounded Bitrix availability without hydrating Bitrix facts`, async () => {
+    for (const audience of ["manager", "embed"] as const) {
+      const executor = fakeExecutor(({ sql }) => {
+        if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+        if (sql.includes("portal_active_data_releases")) return [releaseRow];
+        if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+        if (sql.includes("SELECT EXISTS")) return [{ present: 1 }];
+        return [];
+      });
+      const release = await privateStore.resolveAbbottReadReleaseWithExecutor(executor, 7, audience, "2026-06-30", "2026-06-30");
+      executor.queries.length = 0;
+      const bundle = await privateStore.loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, audience, "2026-06-30", "2026-06-30", { view });
+      const pageQueries = executor.queries.filter(q => q.sql.includes("portal_bitrix_page_facts"));
+      assert.equal(pageQueries.length, 1);
+      assert.match(pageQueries[0].sql, /SELECT EXISTS/);
+      assert.deepEqual(pageQueries[0].params, [release.id, 13, "2026-06-30", "2026-06-30"]);
+      assert.equal(bundle.availableViews?.includes("bitrix_pages"), true);
+      assert.deepEqual(bundle.bitrixPages.rows, []);
+      assert.equal(executor.queries.some(q => q.sql.includes("portal_bitrix") && !q.sql.includes("SELECT EXISTS")), false);
+      if (audience === "embed") assert.equal(executor.queries.some(q => q.sql.includes("report_bd_private")), false);
+    }
+  });
+}
+
 test("page-only bundle has no user-direction or journey hydration query", async () => {
   const executor = fakeExecutor(({ sql }) => {
     if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
