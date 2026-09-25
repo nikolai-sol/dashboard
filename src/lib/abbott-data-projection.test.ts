@@ -238,6 +238,26 @@ function fixture(): DashboardData {
   };
 }
 
+test("projection accepts frozen data and manager shares untouched subtrees only", () => {
+  const source = fixture();
+  const freeze = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    for (const nested of Object.values(value)) freeze(nested);
+    Object.freeze(value);
+  };
+  freeze(source);
+  const manager = projectAbbottDashboardData(source, "manager");
+  assert.equal(manager.dashboard, source.dashboard);
+  assert.equal(manager.kpi, source.kpi);
+  assert.equal(manager.abbott_bi?.users_summary, source.abbott_bi?.users_summary);
+  assert.notEqual(manager.abbott_bi?.user_actions, source.abbott_bi?.user_actions);
+  assert.notEqual(manager.abbott_bi?.session_journeys.rows, source.abbott_bi?.session_journeys.rows);
+  assert.equal(source.abbott_bi?.user_actions[0].start_url.includes("?"), true);
+  const embed = projectAbbottDashboardData(source, "embed");
+  assert.equal("user_actions" in embed.abbott_bi!, false);
+  assert.deepEqual(embed.abbott_bi?.session_journeys.rows, []);
+});
+
 function assertNoForbiddenKeys(value: unknown, forbiddenKeys: Set<string>, path = "root") {
   if (Array.isArray(value)) {
     value.forEach((item, index) => assertNoForbiddenKeys(item, forbiddenKeys, `${path}[${index}]`));

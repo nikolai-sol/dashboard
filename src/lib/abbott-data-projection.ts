@@ -25,15 +25,21 @@ function stripPathSummarySecrets(value: string): string {
     .join("");
 }
 
-function cloneValue<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((item) => cloneValue(item)) as T;
-  }
-  if (!value || typeof value !== "object") return value;
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [key, cloneValue(nested)]),
-  ) as T;
+function copyAbbottUrlContainers(data: NonNullable<DashboardData["abbott_bi"]>) {
+  const rows = <T extends object>(items: T[]): T[] => items.map(row => ({ ...row }));
+  return {
+    ...data,
+    user_actions: rows(data.user_actions),
+    page_stats: rows(data.page_stats),
+    bitrix_pages: rows(data.bitrix_pages),
+    session_journeys: { ...data.session_journeys, rows: rows(data.session_journeys.rows) },
+    external_events: rows(data.external_events),
+    external_clicks: rows(data.external_clicks),
+    time_buckets: { ...data.time_buckets, by_page: rows(data.time_buckets.by_page) },
+    returning: rows(data.returning),
+    return_frequency: { ...data.return_frequency, return_pages: rows(data.return_frequency.return_pages) },
+    general_materials: rows(data.general_materials),
+  };
 }
 
 function sanitizeKnownAbbottUrlFields(data: NonNullable<DashboardData["abbott_bi"]>) {
@@ -117,16 +123,14 @@ export function projectAbbottDashboardData(
     return data;
   }
 
-  const projected = cloneValue(data);
-  const sanitizedAbbott = projected.abbott_bi;
-  if (!sanitizedAbbott) return projected;
-  sanitizeKnownAbbottUrlFields(sanitizedAbbott);
   if (audience === "manager") {
-    return projected;
+    const sanitizedAbbott = copyAbbottUrlContainers(data.abbott_bi);
+    sanitizeKnownAbbottUrlFields(sanitizedAbbott);
+    return { ...data, abbott_bi: sanitizedAbbott };
   }
 
   const aggregateAbbott = Object.fromEntries(
-    Object.entries(sanitizedAbbott).filter(([key]) => ![
+    Object.entries(data.abbott_bi).filter(([key]) => ![
       "users_summary",
       "users_summary_without_admins",
       "user_actions",
@@ -146,9 +150,12 @@ export function projectAbbottDashboardData(
     user_directions: [],
     return_pages: [],
   };
+  // Drop private branches before copying/sanitizing retained URL-bearing rows.
+  const sanitizedAbbott = copyAbbottUrlContainers({ ...aggregateAbbott, user_actions: [] });
+  sanitizeKnownAbbottUrlFields(sanitizedAbbott);
 
   return removeForbiddenEmbedKeys({
-    ...projected,
-    abbott_bi: aggregateAbbott,
+    ...data,
+    abbott_bi: sanitizedAbbott,
   }) as DashboardData;
 }

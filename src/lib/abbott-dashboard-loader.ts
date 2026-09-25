@@ -4,6 +4,7 @@ import pool from "./db";
 import { getDefaultAbbottCounterIds, loadAbbottBiData, type AbbottDashboardAudience } from "./abbott-bi";
 import { ABBOTT_BUSINESS_TIME_ZONE, businessCalendarIsoDate } from "./abbott-date-range";
 import { resolveDashboardDateRange } from "./dashboard-date-range";
+import { parseAbbottReadRequest, type AbbottReadRequest } from "./abbott-read-request";
 import { normalizeDashboardLanguage } from "./dashboard-i18n";
 import {
   buildDashboardAiSummaryFromOverrideText,
@@ -49,6 +50,7 @@ export type AbbottDashboardLoaderDependencies = {
   findCounterIds(dashboardId: number): Promise<string[]>;
   loadBi(
     dashboardId: number, counterIds: string[], from: string, to: string, audience: AbbottDashboardAudience,
+    readRequest?: AbbottReadRequest,
   ): ReturnType<typeof loadAbbottBiData>;
 };
 
@@ -103,6 +105,8 @@ export async function loadAbbottDashboardDataWithDependencies(
   dependencies: AbbottDashboardLoaderDependencies,
 ): Promise<LoadedAbbottDashboardData> {
   if (audience !== "manager" && audience !== "embed") throw new Error("Abbott trusted audience is required");
+  const parsedReadRequest = parseAbbottReadRequest(request.url);
+  const readRequest = new URL(request.url).searchParams.has("view") ? parsedReadRequest : undefined;
   if (normalizeAbbottIdentifier(identifier) !== "abbott") throw new Error("Dashboard not found");
   const dashboard = await dependencies.findDashboard(identifier);
   if (!dashboard || dashboard.client_id.trim().toLowerCase() !== "abbott" || dashboard.dashboard_type !== "abbott_bi") {
@@ -123,7 +127,9 @@ export async function loadAbbottDashboardDataWithDependencies(
   const businessTimeZone = typeof config.business_timezone === "string" && config.business_timezone.trim()
     ? config.business_timezone.trim() : ABBOTT_BUSINESS_TIME_ZONE;
   businessCalendarIsoDate(new Date(), businessTimeZone);
-  const abbottBi = await dependencies.loadBi(dashboard.id, counterIds, range.from, range.to, audience);
+  const abbottBi = readRequest
+    ? await dependencies.loadBi(dashboard.id, counterIds, range.from, range.to, audience, readRequest)
+    : await dependencies.loadBi(dashboard.id, counterIds, range.from, range.to, audience);
   const response: DashboardData = {
     dashboard: {
       client_name: dashboard.client_name,

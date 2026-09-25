@@ -1,4 +1,5 @@
 import type { AbbottMnnValue } from "./types";
+import type { AbbottReadView } from "./abbott-read-request";
 
 export const ABBOTT_DATASET_KEY = "abbott" as const;
 
@@ -165,4 +166,6 @@ export interface AbbottEmbedReleaseBundle {
   };
 }
 
-export type AbbottReleaseBundle = AbbottManagerReleaseBundle | AbbottEmbedReleaseBundle;
+export type AbbottReleaseBundle = (AbbottManagerReleaseBundle | AbbottEmbedReleaseBundle) & {
+  availableViews?: AbbottReadView[];
+};

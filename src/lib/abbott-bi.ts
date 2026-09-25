@@ -7,6 +7,7 @@ import {
 } from "@/lib/abbott-page-url";
 import { abbottTitleLookupHash } from "@/lib/abbott-content-lookup";
 import { buildAbbottReturnFrequency, type AbbottFrequencyVisit } from "@/lib/abbott-return-frequency";
+import { abbottBaseAvailableViews, abbottReadNeeds, type AbbottReadRequest, type AbbottReadView } from "./abbott-read-request";
 import {
   resolveAbbottReadReleaseWithExecutor,
   loadAbbottReleaseBundleForReleaseWithExecutor,
@@ -98,12 +99,14 @@ export interface AbbottBiLoaderDependencies {
   loadLookupQuality(
     release: AbbottActiveRelease,
     audience: AbbottDashboardAudience,
+    readRequest?: AbbottReadRequest,
   ): Promise<AbbottAggregatePrivateData["workbook"]["lookupQuality"]>;
   loadReleaseBundle(
     release: AbbottActiveRelease,
     audience: AbbottDashboardAudience,
     from: string,
     to: string,
+    readRequest?: AbbottReadRequest,
   ): Promise<AbbottReleaseBundle>;
 }
 
@@ -921,6 +924,7 @@ function buildManagerBehavior(
   rows: readonly PrivateBehaviorRow[],
   workbook: ParsedAbbottWorkbook,
   adminUserIds: ReadonlySet<string>,
+  outputs: { summary: boolean; actions: boolean; returning: boolean },
 ): {
   summaries: AbbottBiUserSummaryRow[];
   summariesWithoutAdmins: AbbottBiUserSummaryRow[];
@@ -989,7 +993,8 @@ function buildManagerBehavior(
     })).sort((left, right) =>
       left.user_id.localeCompare(right.user_id) || left.traffic_source.localeCompare(right.traffic_source)
     );
-  const actions = rows.map((row) => {
+  const actions: AbbottBiUserActionRow[] = [];
+  rows.forEach((row) => {
     const singularUserId = nullableText(row.raw_user_id);
     let parsedUserIds: unknown = row.raw_user_ids_json;
     if (typeof parsedUserIds === "string") {
@@ -1049,16 +1054,18 @@ function buildManagerBehavior(
       duration,
       isBounce,
     };
-    addSummary(summaries, summaryInput);
-    if (!isAdminUser) addSummary(summariesWithoutAdmins, summaryInput);
-    frequencyVisits.push({
+    if (outputs.summary) {
+      addSummary(summaries, summaryInput);
+      if (!isAdminUser) addSummary(summariesWithoutAdmins, summaryInput);
+    }
+    if (outputs.returning) frequencyVisits.push({
       client_id_hash: clientHash,
       raw_user_ids: parsedUserIds as string[],
       visit_id_hash: visitIdHash,
       session_started_at: sessionStartedAt,
       start_url: text(row.start_url),
     });
-    return {
+    if (outputs.actions) actions.push({
       user_id: userId,
       has_user_id: hasUserId,
       traffic_source: trafficSource,
@@ -1070,7 +1077,7 @@ function buildManagerBehavior(
       page_depth: pageviews,
       avg_duration: duration,
       is_admin_user: isAdminUser,
-    };
+    });
   });
   return {
     summaries: finalizeSummaries(summaries),
@@ -1169,10 +1176,15 @@ export async function loadAbbottBiDataWithDependencies(
   to: string,
   audience: AbbottDashboardAudience | undefined,
   dependencies: AbbottBiLoaderDependencies,
+  readRequest?: AbbottReadRequest,
 ): Promise<AbbottCanonicalBiData> {
   if (audience !== "manager" && audience !== "embed") {
     throw new Error("Abbott trusted audience is required");
   }
+  const needs = abbottReadNeeds(readRequest?.view);
+  const withContract = (data: AbbottCanonicalBiData, availableViews = abbottBaseAvailableViews(audience)): AbbottCanonicalBiData => readRequest
+    ? { ...data, read_contract: { version: 1, view: readRequest.view, available_views: availableViews } }
+    : data;
   const counters = counterIds.length > 0 ? [...new Set(counterIds)] : [ABBOTT_COUNTER_ID];
   const requestDates = listDates(from, to);
   if (
@@ -1180,12 +1192,12 @@ export async function loadAbbottBiDataWithDependencies(
     requestDates.length === 0 || from < ABBOTT_CANONICAL_CUTOFF ||
     counters.length !== 1 || counters[0] !== ABBOTT_COUNTER_ID
   ) {
-    return emptyAbbottData(counters, audience, from, to, null, [{
+    return withContract(emptyAbbottData(counters, audience, from, to, null, [{
       counter_id: counters[0] ?? ABBOTT_COUNTER_ID,
       report_date: from,
       scope: "request",
       status: "invalid_request",
-    }]);
+    }]));
   }
 
   let releaseId: number | null = null;
@@ -1197,42 +1209,45 @@ export async function loadAbbottBiDataWithDependencies(
     releaseId = release.id;
     const gaps = await coverageGaps(dependencies.aggregateExecutor, releaseId, counters, from, to);
     if (gaps.length > 0) {
-      const quality = await dependencies.loadLookupQuality(release, audience);
-      return emptyAbbottData(counters, audience, from, to, releaseId, gaps, quality);
+      const quality = await dependencies.loadLookupQuality(release, audience, readRequest);
+      return withContract(emptyAbbottData(counters, audience, from, to, releaseId, gaps, quality));
     }
-    const releaseBundle = await dependencies.loadReleaseBundle(release, audience, from, to);
+    const releaseBundle = await dependencies.loadReleaseBundle(release, audience, from, to, readRequest);
     if (releaseBundle.releaseId !== releaseId || releaseBundle.audience !== audience) {
       throw new Error("Abbott canonical data is unavailable");
     }
+    const availableViews: AbbottReadView[] | undefined = releaseBundle.availableViews;
+    if (readRequest && !availableViews) throw new Error("Abbott view availability is unavailable");
 
     const [siteFacts, returningFacts, externalFacts, behaviorFacts, adminSettings] = await Promise.all([
-      querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
-      queryReturningFacts(dependencies.aggregateExecutor, releaseId, counters, from, to),
-      queryExternalClicks(dependencies.aggregateExecutor, releaseId, counters, from, to),
-      audience === "manager"
+      needs.summary || needs.pages ? querySiteFacts(dependencies.aggregateExecutor, releaseId, counters, from, to) : Promise.resolve([]),
+      needs.returning ? queryReturningFacts(dependencies.aggregateExecutor, releaseId, counters, from, to) : Promise.resolve([]),
+      needs.external ? queryExternalClicks(dependencies.aggregateExecutor, releaseId, counters, from, to) : Promise.resolve([]),
+      audience === "manager" && (needs.summary || needs.actions || needs.returning)
         ? queryManagerBehavior(dependencies.privateExecutor, releaseId, counters, from, to)
         : Promise.resolve([]),
-      audience === "manager"
+      audience === "manager" && (needs.summary || needs.actions)
         ? queryManagerAdminUserIds(dependencies.privateExecutor, dashboardId)
             .then((ids) => ({ available: true, ids }))
             .catch(() => ({ available: false, ids: new Set<string>() }))
         : Promise.resolve({ available: false, ids: new Set<string>() }),
     ]);
-    const trafficSummary = buildTrafficSummary(siteFacts);
+    const trafficSummary = needs.summary ? buildTrafficSummary(siteFacts) : [];
     const bitrixPages = mapBitrixPages(releaseBundle.bitrixPages, releaseBundle.workbook);
     const summary = bitrixSummary(releaseBundle.bitrixPages);
     const periodActive = isAbbottBitrixPeriodActive(from, to, summary);
-    const pageStats = buildPageStats(siteFacts, releaseBundle.workbook);
+    const pageStats = needs.pages ? buildPageStats(siteFacts, releaseBundle.workbook) : [];
     const enrichedPageStats = periodActive ? enrichWithBitrix(pageStats, bitrixPages) : pageStats;
-    const managerBehavior = audience === "manager"
+    const managerBehavior = releaseBundle.audience === "manager"
       ? buildManagerBehavior(
           behaviorFacts,
-          releaseBundle.workbook as ParsedAbbottWorkbook,
+          releaseBundle.workbook,
           adminSettings.ids,
+          needs,
         )
       : { summaries: [], summariesWithoutAdmins: [], actions: [], frequencyVisits: [] };
 
-    return {
+    return withContract({
       ...emptyAbbottData(counters, audience, from, to, releaseId, [], releaseBundle.workbook.lookupQuality),
       users_summary: managerBehavior.summaries,
       users_summary_without_admins: adminSettings.available
@@ -1254,10 +1269,10 @@ export async function loadAbbottBiDataWithDependencies(
       session_journeys: releaseBundle.audience === "manager"
         ? mapJourneys(releaseBundle.journeys)
         : emptyJourneys(),
-      external_events: releaseBundle.workbook.externalEvents,
+      external_events: needs.external ? releaseBundle.workbook.externalEvents : [],
       external_clicks: buildExternalClickRows(externalFacts, releaseBundle.workbook),
       returning: buildReturning(returningFacts, releaseBundle.workbook),
-      return_frequency: releaseBundle.audience === "manager"
+      return_frequency: releaseBundle.audience === "manager" && needs.returning
         ? buildAbbottReturnFrequency(
             managerBehavior.frequencyVisits,
             releaseBundle.workbook.userDirections,
@@ -1272,15 +1287,15 @@ export async function loadAbbottBiDataWithDependencies(
             user_directions: [],
             return_pages: [],
           },
-      general_materials: buildGeneralMaterials(enrichedPageStats, releaseBundle.workbook),
-    };
+      general_materials: needs.materials ? buildGeneralMaterials(enrichedPageStats, releaseBundle.workbook) : [],
+    }, availableViews);
   } catch {
-    return emptyAbbottData(counters, audience, from, to, releaseId, [{
+    return withContract(emptyAbbottData(counters, audience, from, to, releaseId, [{
       counter_id: ABBOTT_COUNTER_ID,
       report_date: from,
       scope: releaseId === null ? "release" : "request",
       status: "unavailable",
-    }]);
+    }]));
   }
 }
 
@@ -1298,6 +1313,7 @@ export async function loadAbbottBiData(
   from: string,
   to: string,
   audience?: AbbottDashboardAudience,
+  readRequest?: AbbottReadRequest,
 ): Promise<AbbottCanonicalBiData> {
   if (audience !== "manager" && audience !== "embed") {
     return loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, {
@@ -1306,7 +1322,7 @@ export async function loadAbbottBiData(
       resolveRelease: async () => { throw new Error("Abbott trusted audience is required"); },
       loadLookupQuality: async () => { throw new Error("Abbott trusted audience is required"); },
       loadReleaseBundle: async () => { throw new Error("Abbott trusted audience is required"); },
-    });
+    }, readRequest);
   }
   return withReadOnlyAbbottExecutor(audience, (executor) =>
     loadAbbottBiDataWithDependencies(dashboardId, counterIds, from, to, audience, {
@@ -1320,9 +1336,9 @@ export async function loadAbbottBiData(
           releaseFrom,
           releaseTo,
         ),
-      loadLookupQuality: (release, releaseAudience) =>
-        loadAbbottLookupQualityForReleaseWithExecutor(executor, release, releaseAudience),
-      loadReleaseBundle: (release, releaseAudience, releaseFrom, releaseTo) =>
-        loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, releaseAudience, releaseFrom, releaseTo),
-    }));
+      loadLookupQuality: (release, releaseAudience, selection) =>
+        loadAbbottLookupQualityForReleaseWithExecutor(executor, release, releaseAudience, selection),
+      loadReleaseBundle: (release, releaseAudience, releaseFrom, releaseTo, selection) =>
+        loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, releaseAudience, releaseFrom, releaseTo, selection),
+    }, readRequest));
 }

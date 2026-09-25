@@ -61,6 +61,20 @@ test("preserves the complete Abbott payload and wrapper defaults", async () => {
   assert.strictEqual(result.data.abbott_bi, bi);
 });
 
+test("forwards only an explicit closed read selector and rejects invalid selectors before dependencies", async () => {
+  const observed: unknown[] = [];
+  const deps = dependencies({ loadBi: async (_id, _counters, _from, _to, audience, selection) => {
+    observed.push(selection);
+    return fixture(audience);
+  } });
+  await loadAbbottDashboardDataWithDependencies(request, "18", "manager", deps);
+  await loadAbbottDashboardDataWithDependencies(new Request(request.url + "&view=full"), "18", "manager", deps);
+  await loadAbbottDashboardDataWithDependencies(new Request(request.url + "&view=page_stats"), "18", "manager", deps);
+  assert.deepEqual(observed, [undefined, { view: "full" }, { view: "page_stats" }]);
+  const forbidden = dependencies({ findDashboard: async () => { assert.fail("invalid selector must stop before DB work"); } });
+  await assert.rejects(() => loadAbbottDashboardDataWithDependencies(new Request(request.url + "&view=bad"), "18", "manager", forbidden), /Invalid Abbott read request/);
+});
+
 test("accepts Abbott aliases and forwards configured counters, dates and trusted audiences", async () => {
   for (const identifier of ["18", "abbott", " ABBOTT "]) {
     for (const audience of ["manager", "embed"] as const) {

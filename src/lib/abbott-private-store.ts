@@ -20,6 +20,7 @@ import {
   type ParsedBitrixAnalytics,
 } from "./abbott-private-types";
 import type { AbbottMnnValue } from "./types";
+import { abbottBaseAvailableViews, abbottReadNeeds, type AbbottReadRequest } from "./abbott-read-request";
 
 export type AbbottPrivateStoreErrorCode =
   | "INVALID_CONFIGURATION"
@@ -682,11 +683,13 @@ export async function loadAbbottLookupQualityForReleaseWithExecutor(
   executor: AbbottPrivateQueryExecutor,
   release: AbbottActiveRelease,
   audience: AbbottPrivateAudience,
+  readRequest?: AbbottReadRequest,
 ): Promise<AbbottAggregateWorkbookData["lookupQuality"]> {
   if ((audience !== "manager" && audience !== "embed") || !Number.isSafeInteger(release.id) || release.id <= 0) {
     throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
   }
-  const workbook = audience === "manager"
+  const needs = abbottReadNeeds(readRequest?.view);
+  const workbook = audience === "manager" && (needs.summary || needs.actions || needs.returning)
     ? await loadManagerWorkbookForRelease(executor, release)
     : await loadAggregateWorkbook(executor, release);
   return workbook.lookupQuality;
@@ -698,24 +701,61 @@ export async function loadAbbottReleaseBundleForReleaseWithExecutor(
   audience: AbbottPrivateAudience,
   from: string,
   to: string,
+  readRequest?: AbbottReadRequest,
 ): Promise<AbbottReleaseBundle> {
   if ((audience !== "manager" && audience !== "embed") || !isValidDateRange(from, to)
       || !Number.isSafeInteger(release.id) || release.id <= 0) {
     throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
   }
 
+  const needs = abbottReadNeeds(readRequest?.view);
+  const metadata = (snapshot: AbbottResolvedSnapshot | null) => sourceMetadata(
+    snapshot, snapshot && !snapshotOverlapsRange(snapshot, from, to) ? "out_of_period" : snapshot ? "test_dump" : "missing",
+  );
+  const managerWorkbook = audience === "manager" && (needs.summary || needs.actions || needs.returning);
+  const privateWorkbook = managerWorkbook
+    ? await loadManagerWorkbookForRelease(executor, release)
+    : null;
+  const workbook = privateWorkbook ?? await loadAggregateWorkbook(executor, release);
+  const bitrixPages = needs.bitrix
+    ? await loadBitrixPagesForRelease(executor, release, audience === "manager" ? "private" : "aggregate", from, to)
+    : { source: metadata(release.snapshots.bitrixPages), summary: null, rows: [] };
+  const availableViews = readRequest ? abbottBaseAvailableViews(audience) : undefined;
+  if (availableViews) {
+    const exists = async (snapshot: AbbottResolvedSnapshot | null, table: string) => {
+      if (!snapshot || !snapshotOverlapsRange(snapshot, from, to)) return false;
+      const rows = await queryRows(executor,
+        `SELECT EXISTS(SELECT 1 FROM ${table}
+         WHERE canonical_release_id = ? AND source_snapshot_id = ?
+           AND report_date >= ? AND report_date <= ? LIMIT 1) AS present`,
+        [release.id, snapshot.id, from, to]);
+      if (rows.length !== 1 || ![0, 1, "0", "1"].includes(rows[0].present as number | string)) {
+        throw storeError("PRIVATE_DATA_UNAVAILABLE", PRIVATE_UNAVAILABLE_MESSAGE);
+      }
+      return Number(rows[0].present) === 1;
+    };
+    const hasPages = needs.bitrix ? bitrixPages.rows.length > 0 : await exists(release.snapshots.bitrixPages,
+      audience === "manager" ? "`report_bd_private`.`portal_bitrix_page_facts`" : "`report_bd`.`portal_bitrix_page_facts`");
+    if (hasPages) availableViews.splice(availableViews.indexOf("returning"), 0, "bitrix_pages");
+    if (workbook.generalMaterials.length) availableViews.push("general_materials");
+    // Existence is over the exact loader grain/predicates; no private rows leave MySQL.
+    if (audience === "manager" && !needs.journeys && await exists(release.snapshots.bitrixJourneys, "`report_bd_private`.`portal_bitrix_journeys_private`")) {
+      availableViews.splice(availableViews.indexOf("returning"), 0, "session_journeys");
+    }
+  }
   if (audience === "manager") {
-    const workbook = await loadManagerWorkbookForRelease(executor, release);
-    const bitrixPages = await loadBitrixPagesForRelease(executor, release, "private", from, to);
-    const journeys = await loadManagerJourneysForRelease(executor, release, from, to);
-    return { releaseId: release.id, audience, workbook, bitrixPages, journeys };
+    const journeys = needs.journeys
+      ? await loadManagerJourneysForRelease(executor, release, from, to)
+      : { source: metadata(release.snapshots.bitrixJourneys), rows: [] };
+    if (availableViews && needs.journeys && journeys.rows.length) availableViews.splice(availableViews.indexOf("returning"), 0, "session_journeys");
+    return { releaseId: release.id, audience,
+      workbook: privateWorkbook ?? { ...workbook, userDirections: new Map() },
+      bitrixPages, journeys, ...(availableViews ? { availableViews } : {}) };
   }
 
-  const workbook = await loadAggregateWorkbook(executor, release);
-  const bitrixPages = await loadBitrixPagesForRelease(executor, release, "aggregate", from, to);
   const journeySnapshot = release.snapshots.bitrixJourneys;
   const journeyInRange = journeySnapshot ? snapshotOverlapsRange(journeySnapshot, from, to) : false;
-  const transitionRows = journeySnapshot && journeyInRange
+  const transitionRows = needs.journeys && journeySnapshot && journeyInRange
     ? await queryRows(
         executor,
         `SELECT report_date, from_path, to_path, transition_count
@@ -731,6 +771,7 @@ export async function loadAbbottReleaseBundleForReleaseWithExecutor(
     audience,
     workbook,
     bitrixPages,
+    ...(availableViews ? { availableViews } : {}),
     journeyTransitions: {
       source: journeySnapshot && !journeyInRange
         ? sourceMetadata(journeySnapshot, "out_of_period")

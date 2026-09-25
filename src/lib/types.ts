@@ -605,6 +605,11 @@ export interface AbbottBiSessionJourneysData {
 }
 
 export interface AbbottBiData {
+  read_contract?: {
+    version: 1;
+    view: import("./abbott-read-request").AbbottReadView;
+    available_views: import("./abbott-read-request").AbbottReadView[];
+  };
   data_quality?: {
     status: "complete" | "incomplete";
     blocking_gaps: Array<{ report_date: string }>;

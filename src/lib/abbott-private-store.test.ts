@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { ABBOTT_READ_VIEWS } from "./abbott-read-request";
 
 import {
   AbbottPrivateStoreError,
@@ -85,6 +86,78 @@ test("read authority resolves once before workbook-only diagnostics or bundle hy
     assert.equal(bundle.releaseId, release.id);
     assert.equal(bundle.audience, audience);
     assert.equal(executor.queries.filter(q => q.sql.includes("portal_active_data_releases")).length, 1);
+  }
+});
+
+test("scoped bundle availability matches full rows without hydrating hidden journeys", async () => {
+  for (const audience of ["manager", "embed"] as const) {
+    for (const populated of [false, true]) {
+      for (const inPeriod of [false, true]) {
+        const executor = fakeExecutor(({ sql }) => {
+          if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+          if (sql.includes("portal_active_data_releases")) return [releaseRow];
+          if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+          if (sql.includes("SELECT EXISTS")) return [{ present: Number(populated) }];
+          if (sql.includes("portal_general_materials")) return populated ? [{ material_title: "Material", normalized_url: "/page" }] : [];
+          if (sql.includes("portal_bitrix_page_facts")) return populated ? [{ normalized_path: "/page", report_date: "2026-06-30" }] : [];
+          if (sql.includes("portal_bitrix_journeys_private")) return populated ? [{ protected_visit_id: "visit", raw_user_id: null, report_date: "2026-06-30", event_sequence: 1, normalized_path: "/page" }] : [];
+          return [];
+        });
+        const from = inPeriod ? "2026-06-30" : "2026-07-01";
+        const release = await privateStore.resolveAbbottReadReleaseWithExecutor(executor, 7, audience, from, from);
+        const full = await privateStore.loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, audience, from, from);
+        executor.queries.length = 0;
+        const scoped = await privateStore.loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, audience, from, from, { view: "users_summary" });
+        const views = scoped.availableViews!;
+        assert.equal(views.includes("bitrix_pages"), full.bitrixPages.rows.length > 0);
+        assert.equal(views.includes("session_journeys"), full.audience === "manager" && full.journeys.rows.length > 0);
+        assert.equal(views.includes("general_materials"), full.workbook.generalMaterials.length > 0);
+        assert.equal(views.includes("external_events"), false);
+        assert.equal(views.includes("time_buckets"), false);
+        assert.deepEqual(scoped.bitrixPages.rows, []);
+        if (scoped.audience === "manager") assert.deepEqual(scoped.journeys.rows, []);
+        assert.equal(executor.queries.filter(q => /portal_bitrix/.test(q.sql) && !q.sql.includes("SELECT EXISTS")).length, 0);
+        for (const q of executor.queries.filter(q => q.sql.includes("SELECT EXISTS"))) {
+          assert.deepEqual(q.params, [release.id, q.sql.includes("journeys") ? 14 : 13, from, from]);
+          assert.match(q.sql, /canonical_release_id = \? AND source_snapshot_id = \?[\s\S]*report_date >= \? AND report_date <= \? LIMIT 1/);
+        }
+        if (!inPeriod) assert.equal(executor.queries.some(q => q.sql.includes("SELECT EXISTS")), false);
+        if (audience === "embed") assert.doesNotMatch(executor.queries.map(q => q.sql).join("\n"), /report_bd_private/);
+      }
+    }
+  }
+});
+
+test("page-only bundle has no user-direction or journey hydration query", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    if (sql.includes("SELECT EXISTS")) return [{ present: 0 }];
+    return [];
+  });
+  const release = await privateStore.resolveAbbottReadReleaseWithExecutor(executor, 7, "manager", "2026-06-30", "2026-06-30");
+  await privateStore.loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, "manager", "2026-06-30", "2026-06-30", { view: "page_stats" });
+  await privateStore.loadAbbottLookupQualityForReleaseWithExecutor(executor, release, "manager", { view: "page_stats" });
+  assert.doesNotMatch(executor.queries.map(q => q.sql).join("\n"), /portal_user_directions_private|SELECT report_date, raw_user_id|canonical_fact_metrika_visits|admin/);
+});
+
+test("every scoped embed store read keeps availability and hydration outside private schema", async () => {
+  const executor = fakeExecutor(({ sql }) => {
+    if (sql.includes("FROM `report_bd`.`dashboards`")) return [{ id: 7 }];
+    if (sql.includes("portal_active_data_releases")) return [releaseRow];
+    if (sql.includes("portal_dataset_snapshots")) return snapshotRows;
+    if (sql.includes("SELECT EXISTS")) return [{ present: 0 }];
+    return [];
+  });
+  const release = await privateStore.resolveAbbottReadReleaseWithExecutor(executor, 7, "embed", "2026-06-30", "2026-06-30");
+  for (const view of ABBOTT_READ_VIEWS) {
+    executor.queries.length = 0;
+    const scoped = await privateStore.loadAbbottReleaseBundleForReleaseWithExecutor(executor, release, "embed", "2026-06-30", "2026-06-30", { view });
+    assert.doesNotMatch(executor.queries.map(q => q.sql).join("\n"), /report_bd_private/);
+    assert.equal(scoped.availableViews?.includes("session_journeys"), false);
+    assert.equal(scoped.availableViews?.includes("user_actions"), false);
+    for (const q of executor.queries) assert.equal(q.params[0], release.id);
   }
 });
 

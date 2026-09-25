@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { abbottBaseAvailableViews } from "./abbott-read-request";
 
 import type {
   AbbottActiveRelease,
@@ -163,7 +164,10 @@ function dependencies(
     async loadLookupQuality(_release, audience) {
       return (audience === "manager" ? managerWorkbook : aggregateWorkbook).lookupQuality;
     },
-    async loadReleaseBundle(_dashboardId, audience) {
+    async loadReleaseBundle(_release, audience, _from, _to, readRequest) {
+      const availableViews = readRequest
+        ? { availableViews: abbottBaseAvailableViews(audience) }
+        : {};
       return audience === "manager"
         ? {
             releaseId: 41,
@@ -171,6 +175,7 @@ function dependencies(
             workbook: managerWorkbook,
             bitrixPages: missingBitrix,
             journeys: missingJourneys,
+            ...availableViews,
           }
         : {
             releaseId: 41,
@@ -178,6 +183,7 @@ function dependencies(
             workbook: aggregateWorkbook,
             bitrixPages: missingBitrix,
             journeyTransitions: { source: missingBitrix.source, rows: [] },
+            ...availableViews,
           };
     },
   };
@@ -263,6 +269,55 @@ test("coverage precedes hydration and incomplete lookup diagnostics remain exact
         assert.deepEqual(result.data_quality.content_lookup, { ambiguous_groups: 7, collapsed_groups: 11 });
       }
     }
+  }
+});
+
+test("scoped summary preserves summaries without constructing actions or frequency outputs", async () => {
+  const deps = dependencies(executor(aggregateRows), executor((sql) => sql.includes("canonical_fact_metrika_visits") ? [privateVisit()] : []));
+  const full = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", deps);
+  const summary = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", deps, { view: "users_summary" });
+  assert.deepEqual(summary.users_summary, full.users_summary);
+  assert.deepEqual(summary.users_summary_without_admins, full.users_summary_without_admins);
+  assert.deepEqual(summary.admin_user_filter, full.admin_user_filter);
+  assert.deepEqual(summary.traffic_summary, full.traffic_summary);
+  assert.deepEqual(summary.user_actions, []);
+  assert.deepEqual(summary.return_frequency.groups, []);
+  assert.deepEqual(summary.session_journeys.rows, []);
+  assert.equal(summary.read_contract?.view, "users_summary");
+  assert.equal("read_contract" in full, false);
+  const summaryVisit = privateVisit();
+  Object.defineProperty(summaryVisit, "start_url", { get() { assert.fail("summary must not construct frequency or action URL rows"); } });
+  Object.defineProperty(summaryVisit, "end_url", { get() { assert.fail("summary must not construct action URL rows"); } });
+  const lazy = dependencies(executor(aggregateRows), executor(sql => sql.includes("canonical_fact_metrika_visits") ? [summaryVisit] : []));
+  const result = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", lazy, { view: "users_summary" });
+  assert.equal(result.data_quality.status, "complete");
+  assert.deepEqual(result.users_summary, full.users_summary);
+});
+
+test("page views skip private visits/admin and returning retains both frequency and control", async () => {
+  const privateDb = executor(sql => sql.includes("canonical_fact_metrika_visits") ? [privateVisit()] : []);
+  const deps = dependencies(executor(aggregateRows), privateDb);
+  const page = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", deps, { view: "page_stats" });
+  assert.equal(page.data_quality.status, "complete");
+  assert.equal(privateDb.queries.length, 0);
+  assert.equal(page.page_stats.length, 1);
+  const returning = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", deps, { view: "returning" });
+  assert.equal(returning.returning.length, 1);
+  assert.equal(returning.return_frequency.identified_visitors, 1);
+  assert.deepEqual(returning.user_actions, []);
+  assert.deepEqual(returning.users_summary, []);
+});
+
+test("every embed selector remains aggregate-only and explicit full retains complete data", async () => {
+  const deps = dependencies(executor(aggregateRows), executor(() => { assert.fail("embed private query"); }));
+  const full = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps);
+  for (const view of ["full", "users_summary", "user_actions", "page_stats", "bitrix_pages", "session_journeys", "external_events", "time_buckets", "returning", "general_materials"] as const) {
+    const scoped = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "embed", deps, { view });
+    assert.equal(scoped.data_quality.status, "complete");
+    assert.equal(scoped.read_contract?.view, view);
+    assert.deepEqual(scoped.session_journeys.rows, []);
+    assert.deepEqual(scoped.time_buckets, full.time_buckets);
+    if (view === "full") { const { read_contract: _contract, ...compatibility } = scoped; assert.deepEqual(compatibility, full); }
   }
 });
 
