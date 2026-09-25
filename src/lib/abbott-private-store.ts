@@ -1,4 +1,5 @@
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
+import type { Connection as CoreConnection, Query } from "mysql2";
 
 import {
   ABBOTT_DATASET_KEY,
@@ -40,6 +41,8 @@ export class AbbottPrivateStoreError extends Error {
 
 export interface AbbottPrivateQueryExecutor {
   query(sql: string, params: readonly unknown[]): Promise<readonly Record<string, unknown>[]>;
+  /** Synchronous visitor; resolves only after the prepared command has drained. */
+  forEachRow?(sql: string, params: readonly unknown[], consume: (row: Record<string, unknown>) => void): Promise<void>;
 }
 
 export interface AbbottPrivateMutationExecutor extends AbbottPrivateQueryExecutor {
@@ -852,11 +855,65 @@ async function getAbbottPool(audience: AbbottPrivateAudience): Promise<Pool> {
   return created;
 }
 
-function connectionExecutor(connection: PoolConnection): AbbottPrivateQueryExecutor {
+function connectionExecutor(connection: PoolConnection, discard = () => connection.destroy()): AbbottPrivateQueryExecutor {
   return {
     async query(sql, params) {
       const [rows] = await connection.execute<RowDataPacket[]>(sql, params as never[]);
       return rows as unknown as readonly Record<string, unknown>[];
+    },
+    forEachRow(sql, params, consume) {
+      // mysql2's promise wrapper exposes its underlying core connection. The
+      // promise typings label it as another promise Connection; runtime uses
+      // the core prepared Execute command and the same binary row decoder.
+      const core = connection.connection as unknown as CoreConnection;
+      return new Promise<void>((resolve, reject) => {
+        let command: Query | undefined;
+        let settled = false, failed = false;
+        let failure: unknown;
+        const cleanup = () => {
+          core.removeListener("error", poison);
+          core.removeListener("end", connectionEnded);
+          command?.removeListener("result", row);
+          command?.removeListener("error", commandError);
+          command?.removeListener("end", end);
+        };
+        const poison = (error: unknown) => {
+          if (settled) return;
+          settled = true; cleanup();
+          try { discard(); } finally { reject(error); }
+        };
+        const connectionEnded = () => poison(new Error("Abbott private connection ended"));
+        const row = (value: RowDataPacket) => {
+          if (failed || settled) return;
+          try { consume(value); } catch (error) { failed = true; failure = error; }
+        };
+        const commandError = (error: unknown) => {
+          const packet = error as { errno?: unknown; sqlState?: unknown; fatal?: unknown } | null;
+          // Installed Packet.asError supplies these fields for a server error;
+          // Command.execute emits end immediately afterwards. Unknown decoder
+          // or transport failures cannot prove protocol drain: discard instead.
+          if (packet && packet.fatal !== true && typeof packet.errno === "number"
+            && Number.isInteger(packet.errno) && packet.errno > 0
+            && typeof packet.sqlState === "string" && /^[0-9A-Z]{5}$/.test(packet.sqlState)) {
+            if (!failed) { failed = true; failure = error; }
+          } else poison(error);
+        };
+        const end = () => {
+          if (settled) return;
+          settled = true; cleanup();
+          if (failed) reject(failure); else resolve();
+        };
+        core.on("error", poison);
+        core.on("end", connectionEnded);
+        try {
+          // No completion callback: mysql2 emits rows instead of retaining them
+          // in Execute._rows. The visitor is synchronous, with no queued batches.
+          command = core.execute(sql, params as never[]);
+          command.on("result", row);
+          command.on("error", commandError);
+          command.once("end", end);
+        } catch (error) { poison(error); }
+      });
     },
   };
 }
@@ -875,15 +932,20 @@ export async function withReadOnlyAbbottExecutor<T>(
   work: (executor: AbbottPrivateQueryExecutor) => Promise<T>,
 ): Promise<T> {
   let connection: PoolConnection | undefined;
+  let discarded = false;
   try {
     connection = await (await getAbbottPool(audience)).getConnection();
     await connection.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY");
     await connection.beginTransaction();
-    const result = await work(connectionExecutor(connection));
+    const result = await work(connectionExecutor(connection, () => {
+      discarded = true;
+      connection!.destroy();
+    }));
+    if (discarded) throw storeError("PRIVATE_DATA_UNAVAILABLE", "Abbott private data is unavailable");
     await connection.commit();
     return result;
   } catch (error) {
-    if (connection) {
+    if (connection && !discarded) {
       try {
         await connection.rollback();
       } catch {
@@ -892,7 +954,7 @@ export async function withReadOnlyAbbottExecutor<T>(
     }
     throw sanitizeFailure(error);
   } finally {
-    connection?.release();
+    if (!discarded) connection?.release();
   }
 }
 

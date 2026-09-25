@@ -85,6 +85,7 @@ export type AbbottCanonicalBiData = AbbottBiData & {
 
 export interface AbbottBiQueryExecutor {
   query(sql: string, params: readonly unknown[]): Promise<readonly Record<string, unknown>[]>;
+  forEachRow?(sql: string, params: readonly unknown[], consume: (row: Record<string, unknown>) => void): Promise<void>;
 }
 
 export interface AbbottBiLoaderDependencies {
@@ -529,7 +530,18 @@ async function queryManagerSummary(
   const where = `canonical_release_id = ? AND counter_id IN (${placeholders(counterIds)})
     AND report_date >= ? AND report_date <= ?`;
   let cursor: string[] = [];
-  for (;;) {
+  if (executor.forEachRow) {
+    await executor.forEachRow(
+      `SELECT report_date, visit_id_hash, session_started_at, utm_source,
+              raw_user_id, raw_user_ids_json, client_id_hash, traffic_source,
+              pageviews, duration_seconds, is_bounce
+       FROM \`report_bd_private\`.\`canonical_fact_metrika_visits\`
+       WHERE ${where} ORDER BY report_date, session_started_at, visit_id_hash`,
+      params, row => builder.addRows([row]),
+    );
+  } else for (;;) {
+    // Bounded compatibility for injected executors; production always supplies
+    // forEachRow. Never fall back to whole-period array hydration.
     const rows = await executor.query(
       `SELECT report_date, visit_id_hash, session_started_at, utm_source,
               raw_user_id, raw_user_ids_json, client_id_hash, traffic_source,

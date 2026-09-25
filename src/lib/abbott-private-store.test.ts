@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -216,6 +217,61 @@ test("read-only work failure rolls back and releases its existing audience conne
     else shared.__abbottPrivateMysqlPool = previous;
   }
 });
+
+for (const mode of ["success", "validation", "server", "decoder", "fatal", "transport"] as const) {
+  test(`prepared row consumer ${mode} drains or discards before transaction reuse`, async () => {
+    const shared = globalThis as typeof globalThis & { __abbottPrivateMysqlPool?: unknown };
+    const previous = shared.__abbottPrivateMysqlPool;
+    const calls: string[] = [];
+    const core = new EventEmitter();
+    const command = new EventEmitter();
+    let delivered = 0;
+    const sqlError = Object.assign(new Error("private SQL details"), { errno: 1146, sqlState: "42S02" });
+    Object.assign(core, { execute(sql: string, params: readonly unknown[]) {
+      assert.equal(sql, "fixture prepared SELECT"); assert.deepEqual(params, [41]);
+      assert.equal(core.listenerCount("error"), 1); assert.equal(core.listenerCount("end"), 1);
+      queueMicrotask(() => {
+        if (mode === "transport") { core.emit("error", Error("private transport details")); return; }
+        if (mode === "decoder" || mode === "fatal") {
+          command.emit("error", mode === "decoder" ? new SyntaxError("private JSON details") : Object.assign(sqlError, { fatal: true })); return;
+        }
+        if (mode === "server") command.emit("error", sqlError);
+        else for (let id = 1; id <= 3; id++) { delivered++; command.emit("result", { id }); }
+        assert(!calls.includes("commit") && !calls.includes("release"));
+        calls.push("drained"); command.emit("end");
+      });
+      return command;
+    } });
+    shared.__abbottPrivateMysqlPool = { getConnection: async () => ({
+      connection: core, query: async () => { calls.push("readonly"); }, beginTransaction: async () => { calls.push("begin"); },
+      commit: async () => { calls.push("commit"); }, rollback: async () => { calls.push("rollback"); },
+      release: () => { calls.push("release"); }, destroy: () => { calls.push("destroy"); core.emit("end"); },
+    }) };
+    try {
+      let visited = 0;
+      const work = privateStore.withReadOnlyAbbottExecutor("manager", async executor => {
+        assert.equal(typeof executor.forEachRow, "function");
+        try {
+          await executor.forEachRow!("fixture prepared SELECT", [41], () => { visited++; if (mode === "validation") throw Error("invalid visit"); });
+          return "complete";
+        } catch { return "incomplete"; }
+      });
+      if (["decoder", "fatal", "transport"].includes(mode)) {
+        await assert.rejects(work, /Abbott private data is unavailable/);
+        assert.deepEqual(calls, ["readonly", "begin", "destroy"]);
+      } else {
+        assert.equal(await work, mode === "success" ? "complete" : "incomplete");
+        assert.deepEqual(calls, ["readonly", "begin", "drained", "commit", "release"]);
+        if (mode !== "server") assert.equal(delivered, 3);
+        assert.equal(visited, mode === "server" ? 0 : mode === "validation" ? 1 : 3);
+      }
+      for (const emitter of [core, command]) assert.deepEqual(emitter.eventNames(), []);
+    } finally {
+      if (previous === undefined) delete shared.__abbottPrivateMysqlPool;
+      else shared.__abbottPrivateMysqlPool = previous;
+    }
+  });
+}
 
 test("release bundle pins one active release for all manager snapshot reads", async () => {
   let pointerReads = 0;

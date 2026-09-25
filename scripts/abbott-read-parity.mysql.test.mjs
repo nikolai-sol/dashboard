@@ -53,11 +53,17 @@ async function seed(rows, admins = []) {
     await writer.query(`INSERT INTO report_bd_private.canonical_fact_metrika_visits (${keys.join(',')}) VALUES ${batch.map(() => `(${keys.map(() => '?').join(',')})`).join(',')}`, batch.flatMap(row => keys.map(key => row[key])));
   }
 }
-async function load(view, afterPage) {
+async function load(view, afterPage, visitSql = sql => sql) {
   const queries = [], rowCounts = [];
   let sqlError;
   const result = await withReadOnlyAbbottExecutor('manager', async executor => {
-    const privateExecutor = { async query(sql, params) {
+    const privateExecutor = { async forEachRow(sql, params, consume) {
+      queries.push(sql);
+      try {
+        await executor.forEachRow(visitSql(sql), params, row => { rowCounts.push(1); consume(row); });
+        if (afterPage) await afterPage();
+      } catch (error) { sqlError = error; throw error; }
+    }, async query(sql, params) {
       queries.push(sql);
       try {
         const rows = await executor.query(sql, params); rowCounts.push(rows.length);
@@ -89,7 +95,7 @@ async function parity(rows, admins = [], expectedStatus = 'complete') {
   assert.deepEqual(scoped.result.traffic_summary, full.result.traffic_summary);
   assert.deepEqual(scoped.result.data_quality, full.result.data_quality);
   assert.deepEqual(scoped.result.admin_user_filter, full.result.admin_user_filter);
-  assert(scoped.queries.filter(sql => sql.includes('SELECT report_date')).every(sql => sql.includes('LIMIT 1000') && !/start_url|end_url/.test(sql)));
+  assert(scoped.queries.filter(sql => sql.includes('SELECT report_date')).every(sql => !/LIMIT|start_url|end_url/.test(sql)));
   return scoped;
 }
 
@@ -138,20 +144,21 @@ test('malformed identities including excluded admin visits fail identically befo
   }
 });
 
-test('1001 chronological visits cross page boundary and repeat clients across dates', async () => {
+test('1001 chronological visits use one prepared consumer and repeat clients across dates', async () => {
   const rows = Array.from({ length: 1001 }, (_, i) => visit({ visit_id_hash: `v${i.toString().padStart(4,'0')}`, report_date: i < 1000 ? from : to, session_started_at: `${i < 1000 ? from : to} 10:00:00`, client_id_hash: `client-${i % 17}` }));
   const scoped = await parity(rows);
-  assert.equal(scoped.queries.filter(sql => sql.includes('LIMIT 1000')).length, 2);
+  assert.equal(scoped.queries.length, 3);
+  assert.equal(scoped.queries.filter(sql => sql.includes('SELECT report_date')).length, 1);
   assert(scoped.rowCounts.every(n => n <= 1000));
   assert.equal(scoped.result.users_summary[0].users, 17);
   const invalidLast = rows.map((row, i) => i === 1000 ? { ...row, raw_user_ids_json: '["001","001"]' } : row);
   const invalid = await parity(invalidLast, ['001'], 'incomplete');
-  assert.equal(invalid.queries.filter(sql => sql.includes('LIMIT 1000')).length, 2);
+  assert.equal(invalid.queries.filter(sql => sql.includes('SELECT report_date')).length, 1);
   assert(!invalid.queries.some(sql => sql.includes('abbott-summary-distinct')));
   await parity([]);
 });
 
-test('transaction-local RR preserves snapshot across pages and distinct after concurrent insert', async () => {
+test('transaction-local RR preserves snapshot between row consumption and distinct after concurrent insert', async () => {
   await seed([visit()]);
   // A weaker connection default must not leak into this transaction. The
   // one-connection pool ensures the helper receives this exact connection.
@@ -169,6 +176,59 @@ test('transaction-local RR preserves snapshot across pages and distinct after co
   const fresh = await load('users_summary');
   assert.equal(fresh.result.users_summary[0].visits, 2);
   assert.equal(fresh.result.users_summary[0].users, 2);
+});
+
+test('real prepared driver drains validation and server errors without retaining rows or poisoning reuse', async () => {
+  await seed(Array.from({ length: 1001 }, (_, i) => visit({ visit_id_hash: `v${i.toString().padStart(4, '0')}` })));
+  const inspected = await pool.getConnection(), core = inspected.connection, original = core.execute;
+  let retainedRows, preparedWithoutCallback = false;
+  core.execute = function(sql, params, callback) {
+    const command = original.call(this, sql, params, callback);
+    if (sql.includes('fixture-drain')) {
+      preparedWithoutCallback = callback === undefined && command.onResult === undefined;
+      command.once('end', () => { retainedRows = command._rows.flat().length; });
+    }
+    return command;
+  };
+  inspected.release();
+  try {
+    await withReadOnlyAbbottExecutor('manager', async executor => {
+      const before = (await executor.query('SELECT CONNECTION_ID() AS id', []))[0].id;
+      let visited = 0;
+      await assert.rejects(executor.forEachRow('SELECT /* fixture-drain */ visit_id_hash FROM report_bd_private.canonical_fact_metrika_visits ORDER BY report_date,session_started_at,visit_id_hash', [], () => { visited++; throw Error('fixture invalid visit'); }), /fixture invalid visit/);
+      assert.equal(visited, 1);
+      assert.equal(retainedRows, 0); assert.equal(preparedWithoutCallback, true);
+      const after = (await executor.query('SELECT CONNECTION_ID() AS id', []))[0].id;
+      assert.equal(after, before);
+      // A real prepared-statement server error must finish before the next
+      // command, without turning the established incomplete path into fatal.
+      await assert.rejects(executor.forEachRow('SELECT * FROM report_bd_private.missing_fixture_table', [], () => assert.fail()), /doesn.t exist/);
+      assert.equal((await executor.query('SELECT CONNECTION_ID() AS id', []))[0].id, before);
+    });
+  } finally { core.execute = original; }
+  const unavailable = await load('users_summary', undefined, sql => sql.replace('visit_id_hash', 'missing_fixture_column'));
+  assert.equal(unavailable.result.data_quality.status, 'incomplete');
+  assert.equal(unavailable.sqlError.sqlState, '42S22');
+  assert.equal((await load('users_summary')).result.data_quality.status, 'complete');
+});
+
+test('owned transport loss discards exactly the failed connection before pool reuse', async () => {
+  await seed(Array.from({ length: 1001 }, (_, i) => visit({ visit_id_hash: `v${i.toString().padStart(4, '0')}` })));
+  const inspected = await pool.getConnection(), core = inspected.connection, priorId = core.threadId;
+  inspected.release();
+  let interrupted = false;
+  await assert.rejects(withReadOnlyAbbottExecutor('manager', async executor => {
+    await executor.forEachRow("SELECT REPEAT('x',10000) AS payload FROM report_bd_private.canonical_fact_metrika_visits", [], () => {
+      if (!interrupted) { interrupted = true; core.stream.destroy(Error('fixture owned transport interruption')); }
+    });
+  }), /Abbott private data is unavailable/);
+  assert.equal(interrupted, true);
+  const replacement = await pool.getConnection();
+  try {
+    assert.notEqual(replacement.connection.threadId, priorId);
+    assert.equal((await replacement.execute('SELECT 1 AS ok'))[0][0].ok, 1);
+    assert.equal(core._pool, null);
+  } finally { replacement.release(); }
 });
 
 test('defensive legacy NULL traffic parity (fixture-only deviation from canonical NOT NULL)', async () => {

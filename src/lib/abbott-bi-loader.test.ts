@@ -331,6 +331,27 @@ test("manager summary validates bounded chronological pages and obtains period c
   assert.deepEqual(result.user_actions, []);
 });
 
+test("manager summary uses one ordered prepared row consumer when supplied", async () => {
+  let consumed = 0;
+  const db = executor(sql => {
+    if (sql.includes("abbott-summary-distinct")) return [{ summary_key_hex: Buffer.from("1\n000123\nDirect").toString("hex"), clients: 1, non_admin_clients: 1 }];
+    assert.doesNotMatch(sql, /canonical_fact_metrika_visits/, "must not buffer or repeat the visit SELECT");
+    return [];
+  });
+  Object.assign(db, { async forEachRow(sql: string, params: readonly unknown[], consume: (row: Record<string, unknown>) => void) {
+    consumed++;
+    assert.match(sql, /ORDER BY report_date, session_started_at, visit_id_hash/);
+    assert.doesNotMatch(sql, /LIMIT|start_url|end_url/);
+    assert.deepEqual(params, [41, "90602537", "2026-01-01", "2026-01-01"]);
+    for (let i = 0; i < 1001; i++) consume(privateVisit({ visit_id_hash: `v${i}` }));
+  } });
+  const result = await loadAbbottBiDataWithDependencies(7, ["90602537"], "2026-01-01", "2026-01-01", "manager", dependencies(executor(aggregateRows), db), { view: "users_summary" });
+  assert.equal(result.data_quality.status, "complete");
+  assert.equal(consumed, 1);
+  assert.equal(result.users_summary[0].visits, 1001);
+  assert.equal(result.users_summary[0].users, 1);
+});
+
 test("page views skip private visits/admin and returning retains both frequency and control", async () => {
   const privateDb = executor(sql => sql.includes("canonical_fact_metrika_visits") ? [privateVisit()] : []);
   const deps = dependencies(executor(aggregateRows), privateDb);
