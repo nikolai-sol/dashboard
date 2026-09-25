@@ -170,3 +170,19 @@ test('transaction-local RR preserves snapshot across pages and distinct after co
   assert.equal(fresh.result.users_summary[0].visits, 2);
   assert.equal(fresh.result.users_summary[0].users, 2);
 });
+
+test('defensive legacy NULL traffic parity (fixture-only deviation from canonical NOT NULL)', async () => {
+  await writer.query('ALTER TABLE report_bd_private.canonical_fact_metrika_visits MODIFY traffic_source VARCHAR(500) NULL');
+  try {
+    const scoped = await parity([
+      visit({ traffic_source: null }),
+      visit({ visit_id_hash: 'empty-source', traffic_source: '', client_id_hash: 'client-b' }),
+    ]);
+    assert.equal(scoped.result.users_summary.length, 1);
+    assert.equal(scoped.result.users_summary[0].traffic_source, '');
+    assert.equal(scoped.result.users_summary[0].users, 2);
+  } finally {
+    await seed([]);
+    await writer.query('ALTER TABLE report_bd_private.canonical_fact_metrika_visits MODIFY traffic_source VARCHAR(500) NOT NULL');
+  }
+});

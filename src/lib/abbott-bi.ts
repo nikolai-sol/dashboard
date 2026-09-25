@@ -564,7 +564,7 @@ async function queryManagerSummary(
            ELSE ids END AS ids FROM decoded
      ), keyed AS (
        SELECT client_id_hash, ids, CAST(CONCAT(IF(JSON_LENGTH(ids) > 0, '1', '0'), CHAR(10),
-         IF(JSON_LENGTH(ids) = 1, JSON_UNQUOTE(JSON_EXTRACT(ids, '$[0]')), ''), CHAR(10), traffic_source) AS BINARY) AS summary_key
+         IF(JSON_LENGTH(ids) = 1, JSON_UNQUOTE(JSON_EXTRACT(ids, '$[0]')), ''), CHAR(10), COALESCE(traffic_source, '')) AS BINARY) AS summary_key
        FROM identities
      ) SELECT HEX(summary_key) AS summary_key_hex,
          COUNT(DISTINCT CAST(client_id_hash AS BINARY)) AS clients,
