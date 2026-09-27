@@ -21,7 +21,27 @@ test('issuer host proof is pinned to the current combined runtime identity', () 
   assert.equal(HOST.sourcePid, 1061009);
   assert.equal(HOST.sourceStart, '164679343');
   assert.equal(HOST.sourceBoot, '1c736efb-eaa2-42d9-b247-bd1a2ef36a4e');
-  assert.equal(HOST.sourceSha, '8f389a28df1c4b741ec33b7538f0354b74f5a40e');
+  assert.equal(HOST.sourceSha, 'ca31250014342c6ed1aeaed4d3f7b7a3f2205999');
+});
+
+test('issuer accepts the approved current media source and exact 501:50 files', () => {
+  const f = fixture();
+  try {
+    for (const file of [HOST.sourceDir, HOST.sourceEnv, HOST.sourceStamp]) f.metadata.set(file, { uid: 501, gid: 50 });
+    fs.writeFileSync(f.resolve(HOST.sourceStamp), 'ca31250014342c6ed1aeaed4d3f7b7a3f2205999\n');
+    assert.deepEqual(bootstrapModule.readVerifiedAbbottSource(f.platform), values);
+  } finally { f.cleanup(); }
+});
+
+test('issuer rejects the previous media group and source stamp', () => {
+  for (const changed of ['directory-group', 'environment-group', 'stamp-group', 'source']) {
+    const f = fixture();
+    try {
+      if (changed === 'source') fs.writeFileSync(f.resolve(HOST.sourceStamp), '8f389a28df1c4b741ec33b7538f0354b74f5a40e\n');
+      else f.metadata.set({ 'directory-group': HOST.sourceDir, 'environment-group': HOST.sourceEnv, 'stamp-group': HOST.sourceStamp }[changed], { uid: 501, gid: 0 });
+      assert.throws(() => bootstrapModule.readVerifiedAbbottSource(f.platform), { message: 'Abbott host bootstrap refused' }, changed);
+    } finally { f.cleanup(); }
+  }
 });
 
 test('issuer source reader repeats sealed proof without account operations or writes', () => {
@@ -82,9 +102,9 @@ function fixture() {
   fs.chmodSync(resolve('/var/www'), 0o751);
   fs.writeFileSync(resolve(HOST.sourceEnv), source(), { mode: 0o600 });
   fs.writeFileSync(resolve(HOST.sourceStamp), HOST.sourceSha + '\n', { mode: 0o644 });
-  metadata.set(HOST.sourceDir, { uid: 501, gid: 0 });
-  metadata.set(HOST.sourceEnv, { uid: 501, gid: 0 });
-  metadata.set(HOST.sourceStamp, { uid: 501, gid: 0 });
+  metadata.set(HOST.sourceDir, { uid: 501, gid: 50 });
+  metadata.set(HOST.sourceEnv, { uid: 501, gid: 50 });
+  metadata.set(HOST.sourceStamp, { uid: 501, gid: 50 });
   const events = [];
   let user = null, group = null;
   const platform = { fs: io, uid: () => 0, hostname: () => HOST.hostname,

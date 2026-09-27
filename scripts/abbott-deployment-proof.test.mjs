@@ -6,6 +6,16 @@ const NGINX='/etc/nginx/conf.d/dashboard-next.conf',ROOT='/var/www/dashboard-abb
 const BOOT='1c736efb-eaa2-42d9-b247-bd1a2ef36a4e';
 const NGINX_TEXT='server { listen 80; server_name dashboards.adreports.ru alias.example; return 301 https://$host$request_uri; }\nserver { listen 443 ssl; server_name alias.example dashboards.adreports.ru; location / { proxy_pass http://127.0.0.1:3001; } }\n';
 const FOREIGN_INCLUDE='/etc/nginx/snippets/foreign-project.conf';
+test('current media 501:50 and approved source are accepted without weakening other identities',async()=>{
+ const m=await api(),f=fixture();
+ f.metadata.set('/var/www/dashboard',{uid:501,gid:50,mode:0o40755});
+ f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:50,mode:0o100644});
+ f.files.set('/var/www/dashboard/.release-source-sha','ca31250014342c6ed1aeaed4d3f7b7a3f2205999\n');
+ const proof=m.createAbbottDeploymentProof(f.options);
+ assert.doesNotThrow(()=>proof.currentCombinedSource());
+ assert.doesNotThrow(()=>proof.preflight());
+ assert.doesNotThrow(()=>proof.perimeter());
+});
 test('current combined proof is fixed to 3001 and retains identity without Nginx or other dashboard proofs',async()=>{
  const m=await api(),f=fixture(),proof=m.createAbbottDeploymentProof(f.options);
  assert.equal(typeof proof.currentCombinedSource,'function');
@@ -17,19 +27,22 @@ test('current combined proof is fixed to 3001 and retains identity without Nginx
  f.files.set('/proc/3722244/stat',f.files.get('/proc/3722244/stat').replace('122353750','122353749'));
  assert.throws(()=>proof.currentCombinedSource());assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
 });
-for(const kind of ['absent','duplicate','owner','cwd','sha','symlink','permission','boot','start','stamp-inode'])test('current combined proof refuses '+kind,async()=>{
+for(const kind of ['absent','duplicate','owner','directory-group','stamp-group','cwd','sha','symlink','directory-symlink','permission','boot','start','stamp-inode'])test('current combined proof refuses '+kind,async()=>{
  const m=await api(),f=fixture(),proof=m.createAbbottDeploymentProof(f.options);assert.equal(typeof proof.currentCombinedSource,'function');
  if(['boot','start','stamp-inode'].includes(kind))proof.currentCombinedSource();
  if(kind==='absent')f.files.set('/proc/1/net/tcp','header\n');
  if(kind==='duplicate')f.files.set('/proc/1/net/tcp',f.files.get('/proc/1/net/tcp')+f.files.get('/proc/3722244/net/tcp').split('\n')[1]+'\n');
  if(kind==='owner')f.files.set('/proc/3722244/status','Uid:\t1\t1\t1\t1\nGid:\t0\t0\t0\t0\n');
+ if(kind==='directory-group')f.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});
+ if(kind==='stamp-group')f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});
  if(kind==='cwd')f.links.set('/proc/3722244/cwd','/wrong');
  if(kind==='sha')f.files.set('/var/www/dashboard/.release-source-sha','a'.repeat(40)+'\n');
  if(kind==='symlink')f.links.set('/var/www/dashboard/.release-source-sha','/other');
- if(kind==='permission')f.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40777});
+ if(kind==='directory-symlink')f.links.set('/var/www/dashboard','/other');
+ if(kind==='permission')f.metadata.set('/var/www/dashboard',{uid:501,gid:50,mode:0o40777});
  if(kind==='boot')f.files.set('/proc/sys/kernel/random/boot_id','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n');
  if(kind==='start')f.files.set('/proc/3722244/stat',f.files.get('/proc/3722244/stat').replace('122353749','122353750'));
- if(kind==='stamp-inode')f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644,ino:99});
+ if(kind==='stamp-inode')f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:50,mode:0o100644,ino:99});
  assert.throws(()=>proof.currentCombinedSource(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});assert.equal(f.fds.size,0);assert.ok(f.buffers.every(b=>b.every(v=>v===0)));
 });
 test('stored-current proof accepts sealed authority without trusting a dead PID',async()=>{
@@ -140,7 +153,7 @@ function fixture(){
  const registration={appName:'dashboard-abbott',pmId:6,exec:'/usr/bin/env',cwd:ROOT+'/apps/abbott',args:['-i','PATH=/usr/local/bin:/usr/bin:/bin','/usr/bin/node','/var/www/.dashboard-abbott-launcher.cjs'],uid:'dashboard-abbott',gid:'dashboard-abbott',releaseId:ID,sourceSha:SHA};
  const receipt={version:1,binding:{sourceSha:SHA,runId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},transaction:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',record,directory:{dev:'1',ino:'2'},process:{appName:'dashboard-abbott',pmId:6,pid:12345,startTime:'555',bootId:BOOT,uid:982,gid:984,cwd:ROOT+'/apps/abbott',script:'/var/www/.dashboard-abbott-launcher.cjs',sourceSha:SHA,registration}};
  const receiptPath=CONTROL+'/ownership-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.json';
- const files=new Map(Object.entries({[NGINX]:'nginx-fixture',[CONTROL+'/current.json']:JSON.stringify(record),[CONTROL+'/'+ID+'/record.json']:JSON.stringify(record),[receiptPath]:JSON.stringify(receipt),[ROOT+'/.release-source-sha']:SHA+'\n',[ROOT+'/.release-runtime-scope']:'abbott\n',[CONTROL+'/'+ID+'/trusted-runtime-manifest.json']:'manifest-fixture','/proc/sys/kernel/random/boot_id':BOOT+'\n','/var/www/dashboard/.release-source-sha':'8f389a28df1c4b741ec33b7538f0354b74f5a40e\n','/var/www/dashboard-zaruku/.release-source-sha':'af1948c8b9a0f70d8696afb9c8abc254408a5daa\n','/usr/bin/node':'node-fixture','/var/lib/dashboard-abbott/browser-cache/stamp.json':'browser-fixture','/var/www/.dashboard-abbott-launcher.cjs':'launcher-fixture',[CONTROL+'/'+ID+'/deploy/abbott/start.cjs']:'launcher-fixture'}));
+ const files=new Map(Object.entries({[NGINX]:'nginx-fixture',[CONTROL+'/current.json']:JSON.stringify(record),[CONTROL+'/'+ID+'/record.json']:JSON.stringify(record),[receiptPath]:JSON.stringify(receipt),[ROOT+'/.release-source-sha']:SHA+'\n',[ROOT+'/.release-runtime-scope']:'abbott\n',[CONTROL+'/'+ID+'/trusted-runtime-manifest.json']:'manifest-fixture','/proc/sys/kernel/random/boot_id':BOOT+'\n','/var/www/dashboard/.release-source-sha':'ca31250014342c6ed1aeaed4d3f7b7a3f2205999\n','/var/www/dashboard-zaruku/.release-source-sha':'af1948c8b9a0f70d8696afb9c8abc254408a5daa\n','/usr/bin/node':'node-fixture','/var/lib/dashboard-abbott/browser-cache/stamp.json':'browser-fixture','/var/www/.dashboard-abbott-launcher.cjs':'launcher-fixture',[CONTROL+'/'+ID+'/deploy/abbott/start.cjs']:'launcher-fixture'}));
  files.set('/var/lib/dashboard-abbott/browser-cache-chrome/stamp.json','browser-fixture');
  files.set('/etc/passwd','dashboard-abbott:x:982:984::/nonexistent:/usr/sbin/nologin\n');files.set('/etc/group','dashboard-abbott:x:984:\n');
  const links=new Map([['/var/www/dashboard-medroche',med]]),owners=new Map();
@@ -157,7 +170,7 @@ function fixture(){
  function stat(p){const file=files.has(p),link=links.has(p),pid=Number(/^\/proc\/(\d+)/.exec(p)?.[1]),[uid,gid]=owners.get(pid)??[0,0],net=p.includes('/net');return{dev:1,ino:2,size:file?Buffer.byteLength(files.get(p)):0,uid:net?0:uid,gid:net?0:gid,mode:link?0o120777:file?0o100600:0o40755,nlink:1,mtimeMs:1,ctimeMs:1,isFile:()=>file,isDirectory:()=>!file&&!link,isSymbolicLink:()=>link,...metadata.get(p)};}
  const io={constants:fs.constants,lstatSync:stat,fstatSync:fd=>stat(fds.get(fd)),realpathSync:p=>links.get(p)??p,readlinkSync:p=>links.get(p),readdirSync:p=>p===CONTROL?[receiptPath.split('/').at(-1)]:p==='/proc'?['1','self','net',...processes.map(r=>String(r[0]))]:p==='/proc/1/fd'?[]:p.endsWith('/fd')?['10']:[],openSync(p,flags){assert.equal(flags,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);opened.push(p);fds.set(++serial,p);return serial;},readSync(fd,b,o,l,pos){buffers.push(b);return Buffer.from(files.get(fds.get(fd))).copy(b,o,pos,pos+l);},closeSync:fd=>fds.delete(fd)};
  for(const file of[NGINX,'/var/www/dashboard/.release-source-sha','/var/www/dashboard-zaruku/.release-source-sha'])metadata.set(file,{mode:0o100644});
- metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});
+ metadata.set('/var/www/dashboard',{uid:501,gid:50,mode:0o40755});metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:50,mode:0o100644});
  metadata.set('/usr/bin/node',{mode:0o100755});metadata.set('/var/lib/dashboard-abbott/browser-cache/stamp.json',{mode:0o100640,gid:984});metadata.set('/var/lib/dashboard-abbott/browser-cache-chrome/stamp.json',{mode:0o100640,gid:984});
  metadata.set(CONTROL,{mode:0o40700});metadata.set('/var/www/dashboard-abbott-releases',{mode:0o40711});metadata.set('/var/www/dashboard-abbott-backups',{mode:0o40711});
  for(const directory of ['/var/www/dashboard-medroche-releases',med.slice(0,-'/standalone'.length),med,med+'/apps',med+'/apps/site-seo'])metadata.set(directory,{uid:0,gid:983,mode:0o40750});
@@ -310,13 +323,13 @@ test('neighbor cwd and release ancestry are root-owned nonwritable real director
   const f=fixture();if(mode==='symlink')f.links.set(file,'/elsewhere');else f.metadata.set(file,mode==='owner'?{uid:983}:{mode:0o40777});assert.throws(()=>m.createAbbottDeploymentProof(f.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'},file+'/'+mode);
  }
 });
-test('combined neighbor preserves its established uid-501 release ownership',async()=>{
+test('combined neighbor preserves its established uid-501 gid-50 release ownership',async()=>{
  const m=await api(),f=fixture();
- f.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});
- f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});
+ f.metadata.set('/var/www/dashboard',{uid:501,gid:50,mode:0o40755});
+ f.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:50,mode:0o100644});
  assert.doesNotThrow(()=>m.createAbbottDeploymentProof(f.options).preflight());
- for(const [file,metadata]of [['/var/www/dashboard',{uid:502}],['/var/www/dashboard',{mode:0o40777}],['/var/www/dashboard/.release-source-sha',{uid:0}]]){
-  const invalid=fixture();invalid.metadata.set('/var/www/dashboard',{uid:501,gid:0,mode:0o40755});invalid.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:0,mode:0o100644});invalid.metadata.set(file,{...invalid.metadata.get(file),...metadata});
+ for(const [file,metadata]of [['/var/www/dashboard',{uid:502}],['/var/www/dashboard',{gid:0}],['/var/www/dashboard',{mode:0o40777}],['/var/www/dashboard/.release-source-sha',{uid:0}],['/var/www/dashboard/.release-source-sha',{gid:0}]]){
+  const invalid=fixture();invalid.metadata.set('/var/www/dashboard',{uid:501,gid:50,mode:0o40755});invalid.metadata.set('/var/www/dashboard/.release-source-sha',{uid:501,gid:50,mode:0o100644});invalid.metadata.set(file,{...invalid.metadata.get(file),...metadata});
   assert.throws(()=>m.createAbbottDeploymentProof(invalid.options).preflight(),{message:'ABBOTT_DEPLOY_PREFLIGHT_REFUSED'});
  }
 });
@@ -369,7 +382,7 @@ test('normal deployment perimeter contains no historical neighbor PID, release, 
  const whole=fs.readFileSync(new URL('./abbott-runtime-release-remote.mjs',import.meta.url),'utf8').split('// Based on')[0];
  const begin=whole.indexOf('  function currentCombinedSource(){'),end=whole.indexOf('  function perimeter(){',begin);assert.ok(begin>0&&end>begin);
  const current=whole.slice(begin,end),source=whole.slice(0,begin)+whole.slice(end);
- assert.match(current,/8f389a28df1c4b741ec33b7538f0354b74f5a40e/);assert.doesNotMatch(whole.slice(end),/currentCombinedSource\(/);
+ assert.match(current,/ca31250014342c6ed1aeaed4d3f7b7a3f2205999/);assert.doesNotMatch(whole.slice(end),/currentCombinedSource\(/);
  for(const value of ['3722244','791065','1870897','122353749','131477500','139126198','13d68b0b2c820ba5d223f254bc4eba6d0cf24418','8f389a28df1c4b741ec33b7538f0354b74f5a40e','af1948c8b9a0f70d8696afb9c8abc254408a5daa','1fd9d1b0e7ac65b20f1e3b7ee8cb544001e9691b006c103779d6ba55717a387c',BOOT])assert.ok(!source.includes(value));
  assert.match(source,/let boot,perimeterSnapshot/);assert.doesNotMatch(source,/snapshot.*(?:write|env|stdin)/i);
 });

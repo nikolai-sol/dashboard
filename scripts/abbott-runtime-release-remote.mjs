@@ -307,14 +307,14 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
     phase('preflight_neighbor_combined');if(getuid()!==0||hostname()!=='ybjqbzojln')fail();
     const observedBoot=read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim();
     if(!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(observedBoot))fail();
-    const cwd='/var/www/dashboard',file=cwd+'/.release-source-sha',owner={path:cwd,uid:501,gid:0};
+    const cwd='/var/www/dashboard',file=cwd+'/.release-source-sha',owner={path:cwd,uid:501,gid:50};
     ancestry(file,0,0,owner);const directory=stat(cwd);
-    if(!directory.isDirectory()||directory.isSymbolicLink()||directory.uid!==501||directory.gid!==0||directory.mode&0o022||io.realpathSync(cwd)!==cwd)fail();
-    const stamp=read(file,128,{uid:501,gid:0,mode:0o644,ancestorOwned:owner}),stampMetadata=metadata(stat(file));
-    if(stamp!=='8f389a28df1c4b741ec33b7538f0354b74f5a40e\n')fail();
+    if(!directory.isDirectory()||directory.isSymbolicLink()||directory.uid!==501||directory.gid!==50||directory.mode&0o022||io.realpathSync(cwd)!==cwd)fail();
+    const stamp=read(file,128,{uid:501,gid:50,mode:0o644,ancestorOwned:owner}),stampMetadata=metadata(stat(file));
+    if(stamp!=='ca31250014342c6ed1aeaed4d3f7b7a3f2205999\n')fail();
     const [listener]=discover([3001]);if(listener.uid!==0)fail();
     const process=kernel([listener.pid,null,0,0,cwd,3001],cwd+'/server.js');
-    if(process.listener[2]!==listener.inode||!stable(directory,stat(cwd))||read(file,128,{uid:501,gid:0,mode:0o644,ancestorOwned:owner})!==stamp||!isDeepStrictEqual(stampMetadata,metadata(stat(file)))||read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim()!==observedBoot)fail();
+    if(process.listener[2]!==listener.inode||!stable(directory,stat(cwd))||read(file,128,{uid:501,gid:50,mode:0o644,ancestorOwned:owner})!==stamp||!isDeepStrictEqual(stampMetadata,metadata(stat(file)))||read('/proc/sys/kernel/random/boot_id',128,{proc:true}).trim()!==observedBoot)fail();
     const snapshot={boot:observedBoot,listener,process,stamp,stampMetadata,directory:metadata(directory)};
     if(currentSourceSnapshot&&!isDeepStrictEqual(snapshot,currentSourceSnapshot))fail();currentSourceSnapshot??=snapshot;
   }
@@ -330,12 +330,12 @@ export function createAbbottDeploymentProof({io=fs,hostname=os.hostname,getuid=(
       phase('preflight_neighbor_'+name,'listener');const listener=discovered.find(r=>r.port===port);if(!listener||listener.uid!==uid)fail();
       reason('cwd');const cwd=io.realpathSync('/proc/'+listener.pid+'/cwd');
       if(fixedCwd?cwd!==fixedCwd:!/^\/var\/www\/dashboard-medroche-releases\/[a-f0-9]{40}\/standalone\/apps\/site-seo$/.test(cwd))fail();
-      const neighborOwner=name==='combined'?{path:cwd,uid:501,gid:0}:name==='medroche'?{path:'/var/www/dashboard-medroche-releases',uid:0,gid:983,recursive:true}:null;
+      const neighborOwner=name==='combined'?{path:cwd,uid:501,gid:50}:name==='medroche'?{path:'/var/www/dashboard-medroche-releases',uid:0,gid:983,recursive:true}:null;
       ancestry(cwd+'/server.js',0,0,neighborOwner);const cwdDirectory=stat(cwd),cwdUid=neighborOwner?.uid??0,cwdGid=neighborOwner?.gid??0;
       if(!cwdDirectory.isDirectory()||cwdDirectory.isSymbolicLink()||cwdDirectory.uid!==cwdUid||cwdDirectory.gid!==cwdGid||cwdDirectory.mode&0o022||io.realpathSync(cwd)!==cwd)fail();
       reason('release_record');let release;
       if(name==='medroche'){const target=cwd.slice(0,-'/apps/site-seo'.length),file='/var/www/dashboard-medroche';ancestry(file);link(file,target);release={target,metadata:metadata(stat(file))};}
-      else{const file=name==='combined'?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha',bytes=read(file,128,neighborOwner?{uid:501,gid:0,ancestorOwned:neighborOwner}:{});if(!/^[a-f0-9]{40}\n?$/.test(bytes))fail();release={bytes,metadata:metadata(stat(file))};}
+      else{const file=name==='combined'?'/var/www/dashboard/.release-source-sha':'/var/www/dashboard-zaruku/.release-source-sha',bytes=read(file,128,neighborOwner?{uid:501,gid:50,ancestorOwned:neighborOwner}:{});if(!/^[a-f0-9]{40}\n?$/.test(bytes))fail();release={bytes,metadata:metadata(stat(file))};}
       const process=kernel([listener.pid,null,uid,gid,cwd,port],cwd+'/server.js');if(process.listener[2]!==listener.inode)fail();
       reason('cwd');if(!stable(cwdDirectory,stat(cwd)))fail();
       neighbors.push({name,release,process,listener,cwdDirectory:metadata(cwdDirectory)});

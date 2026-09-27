@@ -11,7 +11,7 @@ export const HOST = Object.freeze({
   hostname: 'ybjqbzojln', account: 'dashboard-abbott',
   sourceDir: '/var/www/dashboard', sourceEnv: '/var/www/dashboard/.env',
   sourceStamp: '/var/www/dashboard/.release-source-sha',
-  sourceSha: '8f389a28df1c4b741ec33b7538f0354b74f5a40e',
+  sourceSha: 'ca31250014342c6ed1aeaed4d3f7b7a3f2205999',
   sourcePid: 1061009, sourceStart: '164679343', sourceBoot: '1c736efb-eaa2-42d9-b247-bd1a2ef36a4e',
   sourceUid: Object.freeze([0, 0, 0, 0]), sourceGid: Object.freeze([0, 0, 0, 0]),
   envParserFile: '/var/www/dashboard/node_modules/@next/env/dist/index.js',
@@ -136,11 +136,11 @@ function sourceSnapshot(platform) {
   const io = platform.fs;
   for (const name of ['/', '/var']) directory(io, name, 0, 0, 0o755);
   directory(io, '/var/www', 0, 0, 0o751);
-  directory(io, HOST.sourceDir, 501, 0, 0o755);
+  directory(io, HOST.sourceDir, 501, 50, 0o755);
   platform.verifySourceProcess();
-  const stamp = privateRead(io, HOST.sourceStamp, 501, 0, 0o644);
+  const stamp = privateRead(io, HOST.sourceStamp, 501, 50, 0o644);
   if (stamp.toString() !== HOST.sourceSha + '\n') refuse();
-  return privateRead(io, HOST.sourceEnv, 501, 0, 0o600);
+  return privateRead(io, HOST.sourceEnv, 501, 50, 0o600);
 }
 
 function validateAccounts(user, group) {
@@ -224,9 +224,9 @@ const realPlatform = {
   },
   evaluateEnvironment(bytes) {
     for (const name of [HOST.envParserFile, HOST.envParserPackage]) if (fs.realpathSync(name) !== name) refuse();
-    const pkg = JSON.parse(privateRead(fs, HOST.envParserPackage, 501, 0, 0o644));
+    const pkg = JSON.parse(privateRead(fs, HOST.envParserPackage, 501, 50, 0o644));
     if (pkg.name !== '@next/env' || pkg.version !== HOST.envParserVersion) refuse();
-    const parser = privateRead(fs, HOST.envParserFile, 501, 0, 0o644);
+    const parser = privateRead(fs, HOST.envParserFile, 501, 50, 0o644);
     return evaluateNextEnvironment(bytes, parser);
   },
   user() {
