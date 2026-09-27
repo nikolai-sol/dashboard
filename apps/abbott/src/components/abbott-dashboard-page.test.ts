@@ -10,20 +10,23 @@ import * as dateHelpers from "../../../../src/lib/abbott-date-range";
 import { getDashboardI18n } from "../../../../src/lib/dashboard-i18n";
 import { projectAbbottDashboardData } from "../../../../src/lib/abbott-data-projection";
 import AbbottBiDashboard from "../../../../src/components/AbbottBiDashboard";
+import * as viewRequest from "./abbott-view-request";
 import { abbottFixture } from "../lib/abbott-export-fixture";
 
 const pageUrl = new URL("./AbbottDashboardPage.tsx", import.meta.url);
 const source = () => readFileSync(pageUrl, "utf8");
 
 test("focused page calls only the matching Abbott API alias", () => {
-  assert.match(source(), /fetch\(`\/api\/dashboard\/\$\{dashboardId\}/);
+  assert.match(source(), /buildAbbottViewUrl\(\{ dashboardId, from:/);
+  assert.match(source(), /fetch\(url, \{ cache: "no-store", signal \}\)/);
+  assert.equal(viewRequest.buildAbbottViewUrl({dashboardId:"18",from:"2026-08-01",to:"2026-08-09",view:"users_summary"}),"/api/dashboard/18?from=2026-08-01&to=2026-08-09&view=users_summary");
   assert.doesNotMatch(source(), /ZarukuSeoDashboard|CampaignDashboard|PerformanceDashboard|MediaPlan|compareRange|selectedBrandId|isDemoMode|generateAiSummary/);
 });
 
 test("Abbott header, dashboard, and completed-period handlers retain production markup and bodies", () => {
   const baseline = execFileSync("git", ["show", "8f389a28df1c4b741ec33b7538f0354b74f5a40e:src/app/dashboard/[id]/page.tsx"], { encoding: "utf8" });
   const page = source();
-  const productionComparablePage = page.replace("            showUserIdAnalytics={showAbbottUserIdAnalytics}\n", "");
+  const productionComparablePage = page.replace(/            (?:key|activeView|viewPending|onViewChange|showUserIdAnalytics)=.*\n/g, "");
   for (const name of ["resolveInitialAbbottRange", "formatPeriodDate"]) {
     const body = baseline.slice(baseline.indexOf(`function ${name}(`)).split("\n}\n")[0] + "\n}";
     assert.ok(page.includes(body), `${name} must match production`);
@@ -38,6 +41,7 @@ test("Abbott header, dashboard, and completed-period handlers retain production 
     const end = tag === "DashboardHeader" ? branch.indexOf("\n        />", start) + 11 : branch.indexOf("\n          />", start) + 13;
     assert.ok(productionComparablePage.includes(branch.slice(start, end)), `${tag} JSX must match production`);
   }
+  for (const prop of ["key={dateFrom", "activeView={activeView}", "viewPending={viewPending}", "onViewChange={(view) => setViewSelection", "showUserIdAnalytics={showAbbottUserIdAnalytics}"]) assert.ok(page.includes(prop), `${prop} remains scoped`);
 });
 
 type Element = { type: string; props: Record<string, unknown> };
@@ -74,6 +78,7 @@ function harness(id: "18" | "abbott", query: string, replies: ResponseFixture[],
       return [values[key], (next: unknown) => { const value = typeof next === "function" ? next(values[key]) : next; if (!Object.is(value, values[key])) { values[key] = value; dirty = true; } }];
     },
     useMemo(fn: () => unknown) { return fn(); },
+    useRef(initial: unknown) { const key = cursor++; if (!(key in values)) values[key] = { current: initial }; return values[key]; },
     useEffect(fn: () => void | (() => void), next: unknown[]) {
       const key = cursor++;
       if (!deps[key] || next.some((value, i) => !Object.is(value, deps[key][i]))) {
@@ -85,7 +90,7 @@ function harness(id: "18" | "abbott", query: string, replies: ResponseFixture[],
   const exports: { default?: (props: { dashboardId: string }) => Element } = {};
   const script = ts.transpileModule(source(), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   vm.runInNewContext(script, {
-    exports, Date: FixedDate, URLSearchParams, console: { warn() {} },
+    exports, Date: FixedDate, URLSearchParams, AbortController, console: { warn() {} },
     fetch: async (url: string) => { requests.push(url); const reply = replies.shift(); assert.ok(reply, `unexpected fetch ${url}`); return { status: reply.status, ok: reply.status >= 200 && reply.status < 300, json: async () => reply.body }; },
     require(name: string) {
       if (name === "react") return react;
@@ -93,6 +98,7 @@ function harness(id: "18" | "abbott", query: string, replies: ResponseFixture[],
       if (name === "next/navigation") return { useRouter: () => router, useSearchParams: () => params };
       if (name === "@/lib/abbott-date-range") return datedHelpers;
       if (name === "@/lib/dashboard-i18n") return { getDashboardI18n };
+      if (name === "./abbott-view-request") return viewRequest;
       if (name === "./AbbottDashboardHeader") return { __esModule: true, default: "DashboardHeader" };
       if (name === "next/link" || name.startsWith("@/components/")) return { __esModule: true, default: name.split("/").pop() };
       throw new Error(`Unexpected client dependency ${name}`);
@@ -121,14 +127,19 @@ function harness(id: "18" | "abbott", query: string, replies: ResponseFixture[],
   };
 }
 
-function validData() {
-  return { dashboard: { type: "abbott_bi", language: "ru", client_name: "Abbott", dashboard_name: "Аналитика трафика", period: { from: "2026-08-01", to: "2026-08-09" } }, abbott_bi: { data_quality: { status: "complete" }, session_journeys: { report_date: "", schema: null, summary: null, rows: [] } } };
+function validData(from: string, to: string, view: "full" | "users_summary" | "page_stats", audience: "manager" | "embed") {
+  return { dashboard: { type: "abbott_bi", language: "ru", client_name: "Abbott", dashboard_name: "Аналитика трафика", period: { from, to } }, abbott_bi: {
+    access_level: audience,
+    data_quality: { status: "complete", release_id: 49 },
+    read_contract: { version: 1, view, available_views: audience === "manager" ? ["users_summary", "user_actions", "page_stats", "returning"] : ["users_summary", "page_stats", "returning"] },
+    ...(audience === "manager" ? { session_journeys: { report_date: "", schema: null, summary: null, rows: [] } } : {}),
+  } };
 }
 
 test("embed projection renders without restoring private session journeys",async()=>{
   const projected=projectAbbottDashboardData(abbottFixture(),"embed");
   const {session_journeys: _privateJourneys,...embedAbbott}=projected.abbott_bi!;
-  const embed={...projected,abbott_bi:embedAbbott};
+  const embed={...projected,dashboard:{...projected.dashboard,period:{from:"2026-08-01",to:"2026-08-09"}},abbott_bi:{...embedAbbott,access_level:"embed",data_quality:{...embedAbbott.data_quality,status:"complete",release_id:49},read_contract:{version:1,view:"full",available_views:["users_summary","page_stats","returning"]}}};
   const app=harness("18","from=2026-08-01&to=2026-08-09&access_token=viewer&embed_key=embed&pdf=true",[{status:200,body:embed}]);
   assert.equal((await app.flush()).props["data-dashboard-ready"],"true");
   const dashboard=app.find("AbbottBiDashboard");
@@ -147,18 +158,18 @@ test("embed projection renders without restoring private session journeys",async
 
 for (const id of ["18", "abbott"] as const) {
   test(`${id} loads matching API and retains PDF, mobile, token, and embed parameters`, async () => {
-    const app = harness(id, "from=2026-08-01&to=2026-08-09&access_token=viewer&embed_key=embed&pdf=true&mobile=1", [{ status: 200, body: validData() }]);
+    const app = harness(id, "from=2026-08-01&to=2026-08-09&access_token=viewer&embed_key=embed&pdf=true&mobile=1", [{ status: 200, body: validData("2026-08-01","2026-08-09","full","embed") }]);
     const root = await app.flush();
     assert.equal(root.props["data-dashboard-ready"], "true");
     assert.match(String(root.props.className), /pdf-mode/);
     assert.equal((root.props.style as { maxWidth: string }).maxWidth, "430px");
-    assert.equal(app.requests[0], `/api/dashboard/${id}?from=2026-08-01&to=2026-08-09&access_token=viewer&embed_key=embed`);
+    assert.equal(app.requests[0], `/api/dashboard/${id}?from=2026-08-01&to=2026-08-09&access_token=viewer&embed_key=embed&view=full`);
     assert.equal(app.find("AbbottBiDashboard").props.dashboardId, id);
   });
 }
 
 test("401 renders access gate; successful login preserves URL and reloads data", async () => {
-  const app = harness("18", "from=2026-08-01&to=2026-08-09&embed_key=embed&pdf=true&mobile=1", [{ status: 401, body: { dashboard: { dashboard_name: "Аналитика трафика", client_name: "Abbott", auth_mode: "password_only" } } }, { status: 200, body: validData() }]);
+  const app = harness("18", "from=2026-08-01&to=2026-08-09&embed_key=embed&pdf=true&mobile=1", [{ status: 401, body: { dashboard: { dashboard_name: "Аналитика трафика", client_name: "Abbott", auth_mode: "password_only" } } }, { status: 200, body: validData("2026-08-01","2026-08-09","full","embed") }]);
   assert.equal((await app.flush()).props["data-dashboard-ready"], "false");
   const gate = app.find("DashboardAccessGate");
   assert.equal(gate.props.authMode, "password_only");
@@ -178,7 +189,12 @@ for (const [status, text] of [[404, "Дашборд не найден"], [500, "
 }
 
 test("custom dates preserve URL flags and administrator changes reload the same range", async () => {
-  const app = harness("abbott", "from=2026-08-01&to=2026-08-09&access_token=v&embed_key=e&pdf=true&mobile=1", Array.from({ length: 4 }, () => ({ status: 200, body: validData() })));
+  const app = harness("abbott", "from=2026-08-01&to=2026-08-09&access_token=v&embed_key=e&pdf=true&mobile=1", [
+    {status:200,body:validData("2026-08-01","2026-08-09","full","embed")},
+    {status:200,body:validData("2026-08-01","2026-08-09","full","embed")},
+    {status:200,body:validData("2026-08-02","2026-08-09","full","embed")},
+    {status:200,body:validData("2026-08-02","2026-08-09","full","embed")},
+  ]);
   await app.flush();
   (app.find("AbbottDatePicker").props.onDraftFromChange as (date: string) => void)("2026-08-02");
   await app.flush();
@@ -208,8 +224,7 @@ test("month without completed days retains the empty state without signaling dat
 });
 
 test("loaded historical data followed by an empty current month does not signal readiness", async () => {
-  const historical = validData();
-  historical.dashboard.period = { from: "2026-07-01", to: "2026-07-31" };
+  const historical = validData("2026-07-01","2026-07-31","users_summary","manager");
   const app = harness("abbott", "from=2026-07-01&to=2026-07-31", [{ status: 200, body: historical }], "2026-08-01T10:00:00Z");
   assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
   (app.find("AbbottDatePicker").props.onPresetChange as (preset: string) => void)("this_month");
@@ -221,7 +236,10 @@ test("loaded historical data followed by an empty current month does not signal 
 });
 
 test("initial future end date normalizes to the latest completed day and preserves URL flags", async () => {
-  const app = harness("18", "from=2026-08-01&to=2026-08-15&embed_key=e&pdf=true&mobile=1", Array.from({ length: 2 }, () => ({ status: 200, body: validData() })));
+  const app = harness("18", "from=2026-08-01&to=2026-08-15&embed_key=e&pdf=true&mobile=1", [
+    {status:200,body:validData("2026-08-01","2026-08-09","full","embed")},
+    {status:200,body:validData("2026-08-01","2026-08-09","full","embed")},
+  ]);
   assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
   assert.ok(app.requests.every((url) => url.includes("to=2026-08-09")));
   const url = new URL(app.urls[0], "http://local");
@@ -231,9 +249,9 @@ test("initial future end date normalizes to the latest completed day and preserv
 });
 
 test("incomplete current preset clamps to contiguous coverage and reloads before rendering", async () => {
-  const incomplete = { ...validData(), abbott_bi: { data_quality: { status: "incomplete", blocking_gaps: [{ report_date: "2026-08-08" }] } } };
-  const covered = validData();
-  covered.dashboard.period.to = "2026-08-07";
+  const complete = validData("2026-08-01","2026-08-09","full","embed");
+  const incomplete = { ...complete, abbott_bi: { ...complete.abbott_bi, data_quality: { status: "incomplete", release_id: 49, blocking_gaps: [{ report_date: "2026-08-08" }] } } };
+  const covered = validData("2026-08-01","2026-08-07","full","embed");
   const app = harness("abbott", "from=2026-08-01&to=2026-08-09&access_token=v&embed_key=e&pdf=true&mobile=1", [{ status: 200, body: incomplete }, { status: 200, body: covered }]);
   assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
   assert.equal(app.requests.length, 2);
@@ -244,12 +262,36 @@ test("incomplete current preset clamps to contiguous coverage and reloads before
 });
 
 test("a previous-month preset resolves exact dates and leaves warning rendering to existing Abbott UI", async () => {
-  const previous = validData();
-  previous.dashboard.period = { from: "2026-07-01", to: "2026-07-31" };
-  const app = harness("18", "from=2026-08-01&to=2026-08-09", [{ status: 200, body: validData() }, { status: 200, body: previous }]);
+  const previous = validData("2026-07-01","2026-07-31","users_summary","manager");
+  const app = harness("18", "from=2026-08-01&to=2026-08-09", [{ status: 200, body: validData("2026-08-01","2026-08-09","users_summary","manager") }, { status: 200, body: previous }]);
   await app.flush();
   (app.find("AbbottDatePicker").props.onPresetChange as (preset: string) => void)("previous_month");
   assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
-  assert.equal(app.requests[1], "/api/dashboard/18?from=2026-07-01&to=2026-07-31");
+  assert.equal(app.requests[1], "/api/dashboard/18?from=2026-07-01&to=2026-07-31&view=users_summary");
   assert.equal(app.find("AbbottDatePicker").props.preset, "previous_month");
+});
+
+test("selected tab requests the exact scoped view and keeps it selected only after matching response", async () => {
+  const app = harness("18", "from=2026-08-01&to=2026-08-09&access_token=viewer", [
+    {status:200,body:validData("2026-08-01","2026-08-09","users_summary","manager")},
+    {status:200,body:validData("2026-08-01","2026-08-09","page_stats","manager")},
+  ]);
+  assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
+  (app.find("AbbottBiDashboard").props.onViewChange as (view: "page_stats") => void)("page_stats");
+  assert.equal((await app.flush()).props["data-dashboard-ready"], "true");
+  assert.equal(app.requests[1], "/api/dashboard/18?from=2026-08-01&to=2026-08-09&access_token=viewer&view=page_stats");
+  assert.equal(app.find("AbbottBiDashboard").props.activeView, "page_stats");
+  assert.equal(app.find("AbbottBiDashboard").props.viewPending, false);
+});
+
+for (const mismatch of ["period", "view", "audience", "release"] as const) test(`scoped response ${mismatch} mismatch never signals readiness`, async () => {
+  const response = validData("2026-08-01","2026-08-09","users_summary","manager");
+  if (mismatch === "period") response.dashboard.period.to = "2026-08-08";
+  if (mismatch === "view") response.abbott_bi.read_contract.view = "page_stats";
+  if (mismatch === "audience") response.abbott_bi.access_level = "embed";
+  if (mismatch === "release") response.abbott_bi.data_quality.release_id = 0;
+  const app = harness("18", "from=2026-08-01&to=2026-08-09&access_token=viewer", [{status:200,body:response}]);
+  assert.equal((await app.flush()).props["data-dashboard-ready"], "false");
+  assert.equal(app.find("h1").props.children, "Извините тех проблемы. мы скоро вернем все на место!");
+  assert.equal(app.requests.length, 1);
 });

@@ -27,6 +27,7 @@ const ALLOWED_INTERNAL_INPUTS = new Set([
   "src/lib/abbott-page-url.ts",
   "src/lib/abbott-private-store.ts",
   "src/lib/abbott-private-types.ts",
+  "src/lib/abbott-read-request.ts",
   "src/lib/abbott-return-frequency.ts",
   "src/lib/access-auth.ts",
   "src/lib/dashboard-access-policy.ts",
