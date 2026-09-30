@@ -61,7 +61,6 @@ import {
 import { normalizeDashboardMetrikaSettings } from "@/lib/dashboard-metrika-settings";
 import { resolveDashboardDateRange } from "@/lib/dashboard-date-range";
 import { normalizeDashboardSectionFieldOverrides } from "@/lib/dashboard-section-fields";
-import { POSTCLICK_CAMPAIGN_ADS_JOIN_SQL } from "@/lib/postclick-campaign-ads-join";
 import {
   findMultibrandBrand,
   matchesAnyMultibrandPattern,
@@ -2067,7 +2066,15 @@ async function buildPostClickAnalytics(
         ON mp.dashboard_id = b.dashboard_id
        AND mp.line_key COLLATE utf8mb4_unicode_ci = b.line_key COLLATE utf8mb4_unicode_ci
       JOIN ${advertisingFactsSql}
-        ON ${POSTCLICK_CAMPAIGN_ADS_JOIN_SQL}
+        ON f.source_key COLLATE utf8mb4_unicode_ci = mp.source_key
+       AND f.platform_account_id COLLATE utf8mb4_unicode_ci = mp.platform_account_id COLLATE utf8mb4_unicode_ci
+       AND f.platform_campaign_id COLLATE utf8mb4_unicode_ci = mp.platform_campaign_id COLLATE utf8mb4_unicode_ci
+       AND f.report_date = m.report_date
+       AND (
+         f.platform_campaign_id COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_campaign), '')
+         OR f.platform_delivery_entity_id COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_campaign), '')
+         OR f.platform_creative_id COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_campaign), '')
+       )
       GROUP BY b.line_key, m.report_date, NULLIF(TRIM(m.utm_campaign), '')
       ORDER BY m.report_date, b.line_key
     `,
