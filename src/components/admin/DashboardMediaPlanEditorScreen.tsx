@@ -10,6 +10,8 @@ type DashboardMediaPlanEditorScreenProps = {
 
 type MediaPlanRowForm = Record<string, string | number | string[]>;
 
+const SAVED_LINE_KEY = "__saved_line_key";
+
 const MONTH_COLUMNS = [
   "январь",
   "февраль",
@@ -161,6 +163,7 @@ function toEditableRow(row: Record<string, unknown>, index: number): MediaPlanRo
   if (!String(next.line_key ?? "").trim()) {
     next.line_key = `manual::${index + 1}`;
   }
+  next[SAVED_LINE_KEY] = String(next.line_key).trim();
   if (!String(next.buy_type ?? "").trim()) {
     next.buy_type = "CPM";
   }
@@ -201,6 +204,7 @@ function fromEditableRow(row: MediaPlanRowForm): Record<string, unknown> {
 function buildNewRow(seed: number): MediaPlanRowForm {
   const row: MediaPlanRowForm = {
     line_key: `manual::new::${seed}`,
+    [SAVED_LINE_KEY]: `manual::new::${seed}`,
     platform: "",
     channel: "",
     format: "",
@@ -224,6 +228,80 @@ function buildNewRow(seed: number): MediaPlanRowForm {
     row[month] = 0;
   }
   return row;
+}
+
+export function buildMediaPlanSavePayload(
+  formData: DashboardFormData,
+  rows: MediaPlanRowForm[],
+  planSourceIndex: number,
+): DashboardFormData {
+  const preparedRows = rows
+    .map((row) => ({ editorRow: row, savedRow: fromEditableRow(recalculatePricing(row, false)) }))
+    .filter(({ savedRow }) =>
+      String(savedRow.platform ?? "").trim() || String(savedRow.channel ?? "").trim(),
+    );
+
+  const usedLineKeys = new Set<string>();
+  for (const { savedRow } of preparedRows) {
+    const lineKey = String(savedRow.line_key ?? "").trim();
+    if (!lineKey) continue;
+    if (usedLineKeys.has(lineKey)) {
+      throw new Error(`line_key "${lineKey}" is already used by another media plan row.`);
+    }
+    usedLineKeys.add(lineKey);
+  }
+
+  const remaps = new Map<string, { lineKey: string; channel: string }>();
+  for (const { editorRow, savedRow } of preparedRows) {
+    const oldLineKey = String(editorRow[SAVED_LINE_KEY] ?? editorRow.line_key ?? "").trim();
+    const lineKey = String(savedRow.line_key ?? "").trim();
+    if (!oldLineKey || !lineKey) continue;
+    remaps.set(oldLineKey, {
+      lineKey,
+      channel: String(savedRow.channel ?? "").trim(),
+    });
+  }
+
+  const bindingKeys = new Set(
+    formData.media_plan_bindings
+      .map((binding) => String(binding.line_key ?? binding.channel).trim())
+      .filter(Boolean),
+  );
+  for (const [oldLineKey, { lineKey }] of remaps) {
+    if (lineKey !== oldLineKey && bindingKeys.has(lineKey)) {
+      throw new Error(`line_key "${lineKey}" is already owned by an existing binding.`);
+    }
+  }
+
+  const nextSources = formData.sources.map((source, index) => {
+    if (index !== planSourceIndex) return source;
+    return {
+      ...source,
+      source_config: {
+        ...(source.source_config ?? {}),
+        inline_rows: preparedRows.map(({ savedRow }) => savedRow),
+        upload_file: undefined,
+      },
+    };
+  });
+
+  const nextBindings = formData.media_plan_bindings.map((binding) => {
+    const oldLineKey = String(binding.line_key ?? binding.channel).trim();
+    const remap = remaps.get(oldLineKey);
+    if (!remap) return binding;
+    if (oldLineKey === remap.lineKey && binding.channel === remap.channel) return binding;
+    return {
+      ...binding,
+      line_key: remap.lineKey,
+      channel: remap.channel,
+    };
+  });
+
+  return {
+    ...formData,
+    sources: nextSources,
+    media_plan_bindings: nextBindings,
+  };
 }
 
 export default function DashboardMediaPlanEditorScreen({
@@ -354,26 +432,7 @@ export default function DashboardMediaPlanEditorScreen({
     setNotice(null);
 
     try {
-      const trimmedRows = rows
-        .map((row) => fromEditableRow(recalculatePricing(row, false)))
-        .filter((row) => String(row.platform ?? "").trim() || String(row.channel ?? "").trim());
-
-      const nextSources = formData.sources.map((source, index) => {
-        if (index !== planSourceIndex) return source;
-        return {
-          ...source,
-          source_config: {
-            ...(source.source_config ?? {}),
-            inline_rows: trimmedRows,
-            upload_file: undefined,
-          },
-        };
-      });
-
-      const nextForm: DashboardFormData = {
-        ...formData,
-        sources: nextSources,
-      };
+      const nextForm = buildMediaPlanSavePayload(formData, rows, planSourceIndex);
 
       const response = await fetch(`/api/admin/dashboards/${dashboardId}`, {
         method: "PUT",
@@ -386,6 +445,12 @@ export default function DashboardMediaPlanEditorScreen({
       }
 
       setFormData(nextForm);
+      setRows((current) =>
+        current.map((row) => ({
+          ...row,
+          [SAVED_LINE_KEY]: String(row.line_key ?? "").trim(),
+        })),
+      );
       setNotice("Media plan rows saved.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Failed to save media plan");
@@ -473,6 +538,7 @@ export default function DashboardMediaPlanEditorScreen({
             <button
               type="button"
               onClick={addRow}
+              disabled={saving}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               Add row
@@ -509,6 +575,7 @@ export default function DashboardMediaPlanEditorScreen({
                             step={isNumeric ? "any" : undefined}
                             value={typeof raw === "number" ? String(raw) : String(raw ?? "")}
                             onChange={(event) => updateCell(rowIndex, column, event.target.value)}
+                            disabled={saving}
                             className="min-w-[120px] rounded-md border border-slate-300 px-2 py-1 text-sm text-slate-800 focus:border-indigo-500 focus:outline-none"
                           />
                         </td>
@@ -518,6 +585,7 @@ export default function DashboardMediaPlanEditorScreen({
                       <button
                         type="button"
                         onClick={() => deleteRow(rowIndex)}
+                        disabled={saving}
                         className="rounded-md border border-rose-200 px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                       >
                         Delete
