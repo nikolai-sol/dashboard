@@ -54,6 +54,7 @@ import {
   latestZarukuReportingDate,
 } from "@/lib/dashboard-date-range";
 import {
+  buildConversionTrend,
   postClickConversionsByDate,
   resolveDashboardConversions,
 } from "@/lib/dashboard-conversion-metrics";
@@ -973,24 +974,16 @@ function CombinedDashboardByIdPage() {
       row.views += point.views;
     });
 
-    if (postClickDailyConversions) {
-      byDate.forEach((row) => {
-        row.conversions = 0;
-      });
-      postClickDailyConversions.forEach((conversions, date) => {
-        if (!byDate.has(date)) {
-          byDate.set(date, { impressions: 0, clicks: 0, spend: 0, conversions: 0, views: 0 });
-        }
-        byDate.get(date)!.conversions = conversions;
-      });
-    }
-
     return [...byDate.entries()]
       .map(([date, data]) => ({ date, ...data }))
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [filteredBoundPromopages.timeseries, filteredPlatforms, filteredTimeseries, postClickDailyConversions]);
+  }, [filteredBoundPromopages.timeseries, filteredPlatforms, filteredTimeseries]);
 
   const latestTrend = useMemo(() => aggregatedDaily.slice(-30), [aggregatedDaily]);
+  const latestConversionTrend = useMemo(
+    () => buildConversionTrend(aggregatedDaily, postClickDailyConversions).slice(-30),
+    [aggregatedDaily, postClickDailyConversions],
+  );
 
   const kpiCards = useMemo<RenderableKpiCard[]>(() => {
     const kpiConfig = (dashboard?.kpi_config?.slice(0, 5) ?? ["impressions", "clicks", "ctr", "cpm", "spend"])
@@ -1080,7 +1073,7 @@ function CombinedDashboardByIdPage() {
         prev: previousTotals.prevConversions,
         color: "#059669",
         format: (value: number) => compact(value, locale),
-        trend: latestTrend.map((item) => item.conversions),
+        trend: latestConversionTrend.map((item) => item.conversions),
       },
       cpa: {
         key: "cpa",
@@ -1089,7 +1082,7 @@ function CombinedDashboardByIdPage() {
         prev: previousTotals.prevCpa,
         color: "#dc2626",
         format: (value: number) => money(value, currencyCode, locale),
-        trend: latestTrend.map((item) =>
+        trend: latestConversionTrend.map((item) =>
           item.conversions > 0 ? item.spend / item.conversions : 0,
         ),
       },
@@ -1158,7 +1151,7 @@ function CombinedDashboardByIdPage() {
       });
 
     return [...baseCards, ...customCards];
-  }, [currencyCode, dashboard?.custom_kpi_cards, dashboard?.kpi_config, i18n.metrics, latestTrend, locale, previousTotals, showSpend, totals]);
+  }, [currencyCode, dashboard?.custom_kpi_cards, dashboard?.kpi_config, i18n.metrics, latestConversionTrend, latestTrend, locale, previousTotals, showSpend, totals]);
 
   const renderSection = (sectionId: string) => {
     if (sectionId === "kpi_grid") {
