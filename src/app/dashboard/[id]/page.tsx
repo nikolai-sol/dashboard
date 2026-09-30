@@ -53,6 +53,10 @@ import {
   clampZarukuDateRange,
   latestZarukuReportingDate,
 } from "@/lib/dashboard-date-range";
+import {
+  postClickConversionsByDate,
+  resolveDashboardConversions,
+} from "@/lib/dashboard-conversion-metrics";
 
 const SPEND_RELATED_KPIS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
 
@@ -728,6 +732,13 @@ function CombinedDashboardByIdPage() {
       timeseries: dashboard.postclick_analytics.timeseries.filter((item) => visibleChannels.has(item.channel)),
     };
   }, [dashboard, filteredPlanVsFact]);
+  const hasPostClickConversionAuthority = dashboard?.postclick_analytics !== undefined;
+  const postClickDailyConversions = useMemo(
+    () => postClickConversionsByDate(
+      hasPostClickConversionAuthority ? filteredPostClickAnalytics.timeseries : undefined,
+    ),
+    [filteredPostClickAnalytics.timeseries, hasPostClickConversionAuthority],
+  );
 
   const currencyCode = dashboard?.dashboard.currency || "EUR";
   const dashboardLanguage = dashboard?.dashboard.language ?? "en";
@@ -825,7 +836,11 @@ function CombinedDashboardByIdPage() {
     const baseImpressions = filteredPlatforms.reduce((sum, item) => sum + item.impressions, 0);
     const baseClicks = filteredPlatforms.reduce((sum, item) => sum + item.clicks, 0);
     const baseSpend = filteredPlatforms.reduce((sum, item) => sum + item.spend, 0);
-    const totalConversions = filteredPlatforms.reduce((sum, item) => sum + item.conversions, 0);
+    const advertisingConversions = filteredPlatforms.reduce((sum, item) => sum + item.conversions, 0);
+    const totalConversions = resolveDashboardConversions(
+      advertisingConversions,
+      hasPostClickConversionAuthority ? filteredPostClickAnalytics.rows : undefined,
+    );
     const baseViews = filteredPlatforms.reduce((sum, item) => sum + item.views, 0);
     const baseReach = filteredPlatforms.reduce((sum, item) => sum + item.reach, 0);
     const promoImpressions = filteredBoundPromopages.byChannel.reduce((sum, item) => sum + item.impressions, 0);
@@ -858,7 +873,12 @@ function CombinedDashboardByIdPage() {
       avgCpa,
       avgFrequency,
     };
-  }, [filteredBoundPromopages.byChannel, filteredPlatforms]);
+  }, [
+    filteredBoundPromopages.byChannel,
+    filteredPlatforms,
+    filteredPostClickAnalytics.rows,
+    hasPostClickConversionAuthority,
+  ]);
 
   const scales = useMemo(() => {
     const kpi = dashboard?.kpi;
@@ -953,10 +973,22 @@ function CombinedDashboardByIdPage() {
       row.views += point.views;
     });
 
+    if (postClickDailyConversions) {
+      byDate.forEach((row) => {
+        row.conversions = 0;
+      });
+      postClickDailyConversions.forEach((conversions, date) => {
+        if (!byDate.has(date)) {
+          byDate.set(date, { impressions: 0, clicks: 0, spend: 0, conversions: 0, views: 0 });
+        }
+        byDate.get(date)!.conversions = conversions;
+      });
+    }
+
     return [...byDate.entries()]
       .map(([date, data]) => ({ date, ...data }))
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [filteredBoundPromopages.timeseries, filteredPlatforms, filteredTimeseries]);
+  }, [filteredBoundPromopages.timeseries, filteredPlatforms, filteredTimeseries, postClickDailyConversions]);
 
   const latestTrend = useMemo(() => aggregatedDaily.slice(-30), [aggregatedDaily]);
 
