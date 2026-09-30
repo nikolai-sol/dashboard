@@ -131,3 +131,22 @@ test("save payload rejects a renamed row key owned only by a stale binding", () 
     /line_key.*orphan-key.*binding/i,
   );
 });
+
+test("save payload rejects two editor rows that claim the same saved key", () => {
+  const form = dashboardForm();
+
+  assert.throws(
+    () => buildMediaPlanSavePayload(form, [{
+      __saved_line_key: "programmati-old",
+      line_key: "programmatik-new",
+      channel: "программатик",
+      platform: "Hybrid",
+    }, {
+      __saved_line_key: "programmati-old",
+      line_key: "third-party",
+      channel: "программатик 3rd party",
+      platform: "Hybrid",
+    }], 0),
+    /saved line_key.*programmati-old.*more than one/i,
+  );
+});

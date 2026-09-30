@@ -256,6 +256,9 @@ export function buildMediaPlanSavePayload(
     const oldLineKey = String(editorRow[SAVED_LINE_KEY] ?? editorRow.line_key ?? "").trim();
     const lineKey = String(savedRow.line_key ?? "").trim();
     if (!oldLineKey || !lineKey) continue;
+    if (remaps.has(oldLineKey)) {
+      throw new Error(`saved line_key "${oldLineKey}" belongs to more than one editor row.`);
+    }
     remaps.set(oldLineKey, {
       lineKey,
       channel: String(savedRow.channel ?? "").trim(),
