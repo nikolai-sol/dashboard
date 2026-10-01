@@ -1,7 +1,7 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { creativeKey, type CreativePerformance } from '@/lib/creative-performance-contract';
-export default function CreativePerformanceTable({ data, locale = 'en-US', currency = 'EUR', showSpend = true }: {
+export default function CreativePerformanceTable({ data, locale = 'en-US', showSpend = true }: {
     data: CreativePerformance;
     locale?: string;
     currency?: string;
@@ -13,13 +13,14 @@ export default function CreativePerformanceTable({ data, locale = 'en-US', curre
     const rows = useMemo(() => data.rows.filter(r => [r.name, r.platform_creative_id, r.platform_campaign_id, r.platform_account_id, r.channel, r.source_key].join(' ').toLowerCase().includes(search.toLowerCase())), [data.rows, search]);
     const safePage = Math.min(page, Math.max(0, Math.ceil(rows.length / 50) - 1));
     const fmt = (v: number | null | undefined) => v == null ? '—' : v.toLocaleString(locale, { maximumFractionDigits: 2 });
-    const allHeads = ru ? ['Источник / кабинет', 'Кампания', 'ID креатива', 'Креатив', 'Размер', 'Показы', 'Клики', `Расход платформы (${currency})`, 'CTR %', `CPC (${currency})`] : ['Source / account', 'Campaign', 'Creative ID', 'Creative name', 'Size', 'Impressions', 'Clicks', `Platform spend (${currency})`, 'CTR %', `CPC (${currency})`];
+    const allHeads = ru ? ['Источник / кабинет', 'Кампания', 'ID креатива', 'Креатив', 'Размер', 'Показы', 'Клики', 'Расход платформы', 'CTR %', 'CPC'] : ['Source / account', 'Campaign', 'Creative ID', 'Creative name', 'Size', 'Impressions', 'Clicks', 'Platform spend', 'CTR %', 'CPC'];
     const heads = allHeads.filter((_, i) => showSpend || ![7, 9].includes(i));
     if (data.has_mappings)
         heads.push(...(ru ? ['Визиты', 'Пользователи*', 'Просмотры страниц', 'Глубина', 'Цели', 'CR %', 'Отказы %', 'Время (сек.)'] : ['Visits', 'Users*', 'Pageviews', 'Page depth', 'Goal reaches', 'CR %', 'Bounce %', 'Visit duration (s)']));
     return <section className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
   <h2 className="text-lg font-semibold">{ru ? 'Эффективность креативов' : 'Creative performance'}</h2>
-  <p className="mt-1 text-sm text-gray-500">{ru ? 'Данные платформ доступны без UTM-сопоставления. Строки Hybrid могут представлять группы креативов. Неизвестные значения: —.' : 'Platform data is available without UTM mapping. Hybrid rows may represent creative groups. Unknown values are shown as —.'}</p>
+  <p className="mt-1 text-sm text-gray-500">{ru ? 'Данные рекламных платформ. Строки Hybrid могут представлять группы креативов. Неизвестные значения: —.' : 'Advertising platform data. Hybrid rows may represent creative groups. Unknown values are shown as —.'}</p>
+  {showSpend && <p className="mt-1 text-sm text-gray-500">{ru ? 'Единицы платформы; валюта не подтверждена.' : 'Platform-reported units; currency not verified.'}</p>}
   <input aria-label="Search creatives" placeholder={ru ? 'Поиск креативов, кампаний или кабинетов' : 'Search creatives, campaigns or accounts'} value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} className="my-4 w-full rounded border p-2 print:hidden"/>
   <div className="overflow-x-auto print:overflow-visible"><table className="w-full text-sm print:text-[7px]">
    <thead><tr>{heads.map(h => <th key={h} className="whitespace-nowrap border-b px-3 py-2 text-left print:whitespace-normal print:px-1">{h}</th>)}</tr></thead>

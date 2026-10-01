@@ -1,3 +1,5 @@
+// Creative Metrica configuration is deferred in the approved platform-only release.
+export const CREATIVE_MAPPING_AVAILABLE = false;
 export const UTM_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
 export type UtmTuple = Record<(typeof UTM_FIELDS)[number], string>;
 export interface CreativeTarget {
@@ -17,7 +19,7 @@ export interface CreativeRow extends CreativeTarget {
     size: string;
     impressions: number;
     clicks: number;
-    spend: number;
+    spend: number | null;
     ctr: number | null;
     cpc: number | null;
     postclick: {

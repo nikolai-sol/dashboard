@@ -9,9 +9,10 @@ test('mapping read and write reject missing auth and viewer sessions before data
 });
 import pool from './db';
 import {createAdminSession} from './access-auth';
-test('authenticated narrow save locks and preserves unrelated config and releases its single connection',async()=>{
- const original=pool.getConnection;let stored:Record<string,unknown>|null=null;const calls:string[]=[];
- const conn={beginTransaction:async()=>calls.push('begin'),commit:async()=>calls.push('commit'),rollback:async()=>calls.push('rollback'),release:()=>calls.push('release'),execute:async(sql:string,args?:unknown[])=>{calls.push(sql);if(sql.startsWith('SELECT config'))return[[{dashboard_type:'awareness',config:{period_from:'2026-09-01',period_to:'2026-09-30',custom_setting:{preserve:true},creative_utm_bindings:[{old:true}]}}]];if(sql.startsWith('UPDATE dashboards')){stored=JSON.parse(String(args?.[0]));return[{}];}return[[]];}};
- pool.getConnection=(async()=>conn) as unknown as typeof pool.getConnection;
- try{const response=await PUT(new Request('http://localhost/api/admin/dashboards/987/creative-mappings',{method:'PUT',headers:{cookie:`${ADMIN_SESSION_COOKIE}=${createAdminSession('admin@example.test')}`},body:JSON.stringify({mappings:[]})}),{params:{id:'987'}});assert.equal(response.status,200);assert.deepEqual(stored?.['custom_setting'],{preserve:true});assert.deepEqual(stored?.['creative_utm_bindings'],[]);assert.ok(calls.some(c=>c.endsWith('FOR UPDATE')));assert.ok(calls.includes('commit'));assert.equal(calls.at(-1),'release');}finally{pool.getConnection=original;}
+test('new mapping API is inactive for authenticated admins before database access',async()=>{
+ const original=pool.getConnection;let accessed=false;
+ pool.getConnection=(async()=>{accessed=true;throw Error('Database access is not allowed for the deferred feature');}) as typeof pool.getConnection;
+ try{for(const method of [GET,PUT]){const response=await method(new Request('http://localhost/api/admin/dashboards/987/creative-mappings',{method:method===PUT?'PUT':'GET',headers:{cookie:`${ADMIN_SESSION_COOKIE}=${createAdminSession('admin@example.test')}`}}),{params:{id:'987'}});assert.equal(response.status,404);}assert.equal(accessed,false);}finally{pool.getConnection=original;}
 });
+import MappingPage from '../app/admin/dashboards/[id]/creative-mappings/page';
+test('new mapping page is inactive',async()=>{await assert.rejects(()=>MappingPage({params:Promise.resolve({id:'987'})}),error=>Boolean(error&&typeof error==='object'&&'digest' in error&&String(error.digest).includes('404')));});

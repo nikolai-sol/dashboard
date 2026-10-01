@@ -9,6 +9,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
     counters?: string[];
     goalMode?: "all" | "selected";
     now?: Date;
+    platformOnly?: boolean;
 } = {}): Promise<CreativePerformance> {
     const executor = options.executor ?? pool;
     const [bindings] = await executor.execute<RowDataPacket[]>('SELECT DISTINCT line_key, channel, source_key, platform_account_id, platform_campaign_id, effective_from, effective_to FROM media_plan_bindings WHERE dashboard_id=?', [dashboardId]);
@@ -20,7 +21,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
     // One query per configured source; EXISTS prevents duplicate bindings multiplying facts.
     for (const source of new Set(eligible.map(b => String(b.source_key)))) {
         const [facts] = await executor.execute<RowDataPacket[]>(`SELECT f.platform_account_id,f.platform_campaign_id,f.platform_creative_id,
-   f.report_date,SUM(f.impressions) impressions,SUM(f.clicks) clicks,SUM(f.spend) spend,
+   f.report_date,SUM(f.impressions) impressions,SUM(f.clicks) clicks,SUM(f.spend) spend,COUNT(*) fact_rows,COUNT(f.spend) spend_rows,
    MAX(c.creative_name) creative_name,MAX(CAST(c.raw_payload AS CHAR)) raw_payload
    FROM ${advertisingFactTable(source, true)} f
    LEFT JOIN canonical_source_creatives c ON c.source_key=f.source_key AND c.platform_account_id=f.platform_account_id AND c.platform_creative_id=f.platform_creative_id
@@ -48,15 +49,23 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
             }
             row.impressions += Number(f.impressions || 0);
             row.clicks += Number(f.clicks || 0);
-            row.spend += Number(f.spend || 0);
+            // SUM alone hides missing costs inside a daily group. Preserve that uncertainty.
+            const completeCost = f.spend != null && Number(f.fact_rows) > 0
+                && Number(f.spend_rows) === Number(f.fact_rows) && Number.isFinite(Number(f.spend));
+            row.spend = row.spend !== null && completeCost ? row.spend + Number(f.spend) : null;
         }
         rows.push(...aggregate.values());
     }
     for (const row of rows) {
         row.ctr = row.impressions ? 100 * row.clicks / row.impressions : null;
-        row.cpc = row.clicks ? row.spend / row.clicks : null;
+        row.cpc = row.clicks && row.spend !== null ? row.spend / row.clicks : null;
         if (mappings.some(m => creativeKey(m) === creativeKey(row)))
             row.availability = 'Creative analytics collection not yet verified';
+    }
+    // This release's dashboard entry point deliberately excludes creative Metrica work.
+    if (options.platformOnly) {
+        for (const row of rows) row.availability = 'Platform creative data';
+        return { rows, has_mappings: false };
     }
     const candidates = mappings.filter(m => rows.some(r => creativeKey(r) === creativeKey(m)));
     let validMappings: CreativeMapping[] = [];

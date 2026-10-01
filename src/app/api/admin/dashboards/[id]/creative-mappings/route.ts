@@ -3,7 +3,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import pool from '@/lib/db';
 import { ADMIN_SESSION_COOKIE, parseCookieValue, verifyAdminSession } from '@/lib/access-auth';
 import { loadCreativePerformance } from '@/lib/creative-performance';
-import { validateMappings, isMediaCreativeDashboard } from '@/lib/creative-performance-contract';
+import { validateMappings, isMediaCreativeDashboard, CREATIVE_MAPPING_AVAILABLE } from '@/lib/creative-performance-contract';
 import { loadSchema } from '@/lib/schema-parser';
 import { resolveSourceKey } from '@/lib/source-mapping';
 type Context = {
@@ -17,6 +17,8 @@ function configObject(v: unknown): Record<string, unknown> { return typeof v ===
 async function handle(request: Request, context: Context, save: boolean) {
     if (!verifyAdminSession(parseCookieValue(request.headers.get('cookie'), ADMIN_SESSION_COOKIE)))
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!CREATIVE_MAPPING_AVAILABLE)
+        return NextResponse.json({ error: "Creative mapping is not available in this release" }, { status: 404 });
     const id = Number((await context.params).id);
     if (!Number.isSafeInteger(id) || id < 1)
         return NextResponse.json({ error: 'Invalid dashboard id' }, { status: 400 });

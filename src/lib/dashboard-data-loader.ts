@@ -1,5 +1,5 @@
 import { loadCreativePerformance } from './creative-performance';
-import { isMediaCreativeDashboard, type CreativeMapping } from './creative-performance-contract';
+import { isMediaCreativeDashboard } from './creative-performance-contract';
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import {
@@ -3546,7 +3546,7 @@ export async function loadDashboardData(
       metrikaSettings.selected_goal_ids,
       metrikaSettings.goal_mode,
     );
-    const creativePerformance = isMediaCreativeDashboard(dashboardType) ? await loadCreativePerformance(dashboard.id, range.from > String(config.period_from ?? range.from) ? range.from : String(config.period_from ?? range.from), range.to < String(config.period_to ?? range.to) ? range.to : String(config.period_to ?? range.to), (config.creative_utm_bindings ?? []) as CreativeMapping[], planByChannel.map(row => ({line_key: row.line_key || row.channel, channel: row.channel})), metrikaSettings.selected_goal_ids.map(String), {counters: metrikaAccountIds, goalMode: metrikaSettings.goal_mode}) : undefined;
+    const creativePerformance = isMediaCreativeDashboard(dashboardType) ? await loadCreativePerformance(dashboard.id, range.from > String(config.period_from ?? range.from) ? range.from : String(config.period_from ?? range.from), range.to < String(config.period_to ?? range.to) ? range.to : String(config.period_to ?? range.to), [], planByChannel.map(row => ({line_key: row.line_key || row.channel, channel: row.channel})), [], {platformOnly: true}) : undefined;
     let sectionOrder = getSectionOrder(config, dashboardType, showSpend);
     if (postclickAnalytics && postclickAnalytics.rows.length > 0) {
       sectionOrder = withOptionalSection(sectionOrder, "postclick_analytics", "plan_vs_fact");
