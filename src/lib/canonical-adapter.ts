@@ -266,7 +266,7 @@ function authorityFactScope(sourceKey: string): 'campaign' | 'delivery_entity' {
   return ADS_AUTHORITY_FACT_SCOPE[sourceKey] ?? 'delivery_entity';
 }
 
-function advertisingFactTable(sourceKey: string): string {
+export function advertisingFactTable(sourceKey: string, creativeGrain = false): string {
   if (sourceKey !== 'between' && sourceKey !== 'yandex_direct') {
     return 'canonical_fact_ads_daily';
   }
@@ -276,6 +276,7 @@ function advertisingFactTable(sourceKey: string): string {
   return `(
     SELECT
       source_key, platform_account_id, platform_campaign_id, fact_scope, report_date,
+      ${creativeGrain ? 'platform_creative_id,' : ''}
       spend, impressions, clicks, views, conversions, reach,
       video_views_25, video_views_50, video_views_75, video_views_100
     FROM canonical_advertising_facts_current
@@ -283,7 +284,7 @@ function advertisingFactTable(sourceKey: string): string {
     UNION ALL
     SELECT
       legacy.source_key, legacy.platform_account_id, legacy.platform_campaign_id,
-      legacy.fact_scope, legacy.report_date, legacy.spend, legacy.impressions,
+      legacy.fact_scope, legacy.report_date, ${creativeGrain ? 'legacy.platform_creative_id,' : ''} legacy.spend, legacy.impressions,
       legacy.clicks, legacy.views, legacy.conversions, legacy.reach,
       legacy.video_views_25, legacy.video_views_50, legacy.video_views_75,
       legacy.video_views_100

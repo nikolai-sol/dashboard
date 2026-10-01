@@ -1,3 +1,4 @@
+import { preserveCreativeMappingNamespace } from '@/lib/creative-performance-contract';
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
@@ -106,7 +107,7 @@ export async function PUT(
     await conn.beginTransaction();
 
     const [existingRows] = await conn.execute<DashboardConfigRow[]>(
-      "SELECT config FROM dashboards WHERE id = ? LIMIT 1",
+      "SELECT config FROM dashboards WHERE id = ? LIMIT 1 FOR UPDATE",
       [dashboardId],
     );
     const existingRow = existingRows[0];
@@ -116,6 +117,7 @@ export async function PUT(
     }
 
     const existingConfig = parseConfig(existingRow.config);
+    preserveCreativeMappingNamespace(config, existingConfig);
     if (
       !Object.prototype.hasOwnProperty.call(payload.config, "ai_summary_authoring") &&
       Object.prototype.hasOwnProperty.call(existingConfig, "ai_summary_authoring")

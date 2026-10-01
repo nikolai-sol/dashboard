@@ -1,5 +1,6 @@
 "use client";
 
+import CreativePerformanceTable from '@/components/CreativePerformanceTable';
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -2271,6 +2272,7 @@ function CombinedDashboardByIdPage() {
       ) : null}
 
       {sectionOrder.map((sectionId) => renderSection(sectionId))}
+      {dashboard?.creative_performance && <CreativePerformanceTable data={{...dashboard.creative_performance, rows: dashboard.creative_performance.rows.filter(row => filteredPlanVsFact.some(item => item.channel === row.channel))}} locale={locale} currency={currencyCode} showSpend={showSpend} />}
 
       {dashboard?.custom_tables?.map((table, i) => (
         <CustomTable key={i} data={table} locale={locale} pdfMode={isPdfMode} />

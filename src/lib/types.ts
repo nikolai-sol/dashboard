@@ -1,3 +1,4 @@
+import type { CreativePerformance } from './creative-performance-contract';
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 import type {
   DashboardMetrikaTrafficMetricId,
@@ -1569,6 +1570,7 @@ export interface DashboardAiSummary {
 }
 
 export interface DashboardData {
+  creative_performance?: CreativePerformance;
   dashboard: DashboardMeta;
   kpi_config: string[];
   visible_metrics?: string[];
