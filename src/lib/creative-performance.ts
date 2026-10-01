@@ -24,11 +24,11 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
    f.report_date,SUM(f.impressions) impressions,SUM(f.clicks) clicks,SUM(f.spend) spend,COUNT(*) fact_rows,COUNT(f.spend) spend_rows,
    MAX(c.creative_name) creative_name,MAX(CAST(c.raw_payload AS CHAR)) raw_payload
    FROM ${advertisingFactTable(source, true)} f
-   LEFT JOIN canonical_source_creatives c ON c.source_key=f.source_key AND c.platform_account_id=f.platform_account_id AND c.platform_creative_id=f.platform_creative_id
+   LEFT JOIN canonical_source_creatives c ON c.source_key=f.source_key COLLATE utf8mb4_unicode_ci AND c.platform_account_id=f.platform_account_id COLLATE utf8mb4_unicode_ci AND c.platform_creative_id=f.platform_creative_id COLLATE utf8mb4_unicode_ci
    WHERE f.source_key=? AND f.fact_scope=? AND f.report_date BETWEEN ? AND ?
     AND COALESCE(f.platform_creative_id,'') NOT IN ('','__campaign__')
-    AND EXISTS (SELECT 1 FROM media_plan_bindings b WHERE b.dashboard_id=? AND b.source_key=f.source_key
-     AND b.platform_account_id=f.platform_account_id AND b.platform_campaign_id=f.platform_campaign_id
+    AND EXISTS (SELECT 1 FROM media_plan_bindings b WHERE b.dashboard_id=? AND b.source_key=f.source_key COLLATE utf8mb4_unicode_ci
+     AND b.platform_account_id=f.platform_account_id COLLATE utf8mb4_unicode_ci AND b.platform_campaign_id=f.platform_campaign_id COLLATE utf8mb4_unicode_ci
      AND f.report_date>=COALESCE(b.effective_from,?) AND f.report_date<=COALESCE(b.effective_to,?))
    GROUP BY f.platform_account_id,f.platform_campaign_id,f.platform_creative_id,f.report_date`, [source, ADS_AUTHORITY_FACT_SCOPE[source] ?? 'delivery_entity', from, to, dashboardId, from, to]);
         const aggregate = new Map<string, CreativeRow>();

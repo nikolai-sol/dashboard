@@ -52,3 +52,8 @@ test('unknown platform cost stays null within or across daily groups; known zero
  const mixedDays=await run([{spend:4,spend_rows:1,fact_rows:1},{report_date:'2026-09-30',spend:null,spend_rows:0,fact_rows:1}]);assert.equal(mixedDays.spend,null);assert.equal(mixedDays.cpc,null);
  const zero=await run([{spend:0,spend_rows:1,fact_rows:1}]);assert.equal(zero.spend,0);assert.equal(zero.cpc,0);
 });
+
+test('cross-table creative identity comparisons use the canonical compatible collation',async()=>{
+ const queries:string[]=[];const executor={execute:async(sql:string)=>{if(sql.includes('SELECT DISTINCT line_key'))return[bindings];queries.push(sql);return[[]];}} as unknown as Pick<typeof pool,'execute'>;await loadCreativePerformance(42,'2026-09-01','2026-09-30',[],undefined,[],{executor,platformOnly:true});
+ for(const expression of ['c.source_key=f.source_key','c.platform_account_id=f.platform_account_id','c.platform_creative_id=f.platform_creative_id','b.source_key=f.source_key','b.platform_account_id=f.platform_account_id','b.platform_campaign_id=f.platform_campaign_id']) assert.ok(queries[0].includes(expression+' COLLATE utf8mb4_unicode_ci'));
+});
