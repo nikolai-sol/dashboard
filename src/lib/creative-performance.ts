@@ -3,11 +3,12 @@ import pool from './db';
 import { aggregateCreativePostclick } from './creative-postclick';
 import { advertisingFactTable } from './canonical-adapter';
 import { ADS_AUTHORITY_FACT_SCOPE } from './source-mapping';
-import { creativeKey, creativeSize, validateMappings, type CreativeMapping, type CreativePerformance, type CreativeRow } from './creative-performance-contract';
+import { creativeKey, creativeSize, validateMappings, creativeAnalyticsThrough, type CreativeMapping, type CreativePerformance, type CreativeRow } from './creative-performance-contract';
 export async function loadCreativePerformance(dashboardId: number, from: string, to: string, mappings: CreativeMapping[] = [], channels?: string[], goalIds: string[] = [], options: {
     executor?: Pick<typeof pool, "execute">;
     counters?: string[];
     goalMode?: "all" | "selected";
+    now?: Date;
 } = {}): Promise<CreativePerformance> {
     const executor = options.executor ?? pool;
     const [bindings] = await executor.execute<RowDataPacket[]>('SELECT DISTINCT line_key, channel, source_key, platform_account_id, platform_campaign_id, effective_from, effective_to FROM media_plan_bindings WHERE dashboard_id=?', [dashboardId]);
@@ -64,10 +65,12 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
             if (candidates.some(m => creativeKey(m) === creativeKey(row)))
                 row.availability = 'Mapping conflict or counter no longer configured';
     }
+    const analyticsTo=creativeAnalyticsThrough(to,options.now);
     for (const counter of new Set(validMappings.map(m => m.counter_id))) {
+        if(analyticsTo<from) { for(const row of rows)if(validMappings.some(m=>creativeKey(m)===creativeKey(row)))row.availability="No completed Metrica days in this period"; continue; }
         try {
-            const [facts] = await executor.execute<RowDataPacket[]>(`SELECT report_date,analytics_scope,attribution,utm_source,utm_medium,utm_campaign,utm_content,utm_term,visits,users,pageviews,bounce_rate,avg_visit_duration_seconds,goal_id,goal_reaches FROM canonical_fact_site_analytics_daily WHERE source_key='yandex_metrika' AND analytics_account_id=? AND analytics_scope IN ('creative_traffic','creative_goal') AND attribution='last' AND report_date BETWEEN ? AND ?`, [counter, from, to]);
-            const [coverage] = await executor.execute<RowDataPacket[]>(`SELECT report_date,analytics_scope,attribution,status FROM canonical_media_creative_coverage_daily WHERE source_key='yandex_metrika' AND analytics_account_id=? AND attribution='last' AND report_date BETWEEN ? AND ?`, [counter, from, to]);
+            const [facts] = await executor.execute<RowDataPacket[]>(`SELECT report_date,analytics_scope,attribution,utm_source,utm_medium,utm_campaign,utm_content,utm_term,visits,users,pageviews,bounce_rate,avg_visit_duration_seconds,goal_id,goal_reaches FROM canonical_fact_site_analytics_daily WHERE source_key='yandex_metrika' AND analytics_account_id=? AND analytics_scope IN ('creative_traffic','creative_goal') AND attribution='last' AND report_date BETWEEN ? AND ?`, [counter, from, analyticsTo]);
+            const [coverage] = await executor.execute<RowDataPacket[]>(`SELECT report_date,analytics_scope,attribution,status FROM canonical_media_creative_coverage_daily WHERE source_key='yandex_metrika' AND analytics_account_id=? AND attribution='last' AND report_date BETWEEN ? AND ?`, [counter, from, analyticsTo]);
             for (const mapping of validMappings.filter(m => m.counter_id === counter)) {
                 const row = rows.find(r => creativeKey(r) === creativeKey(mapping))!;
                 if (validMappings.filter(m => creativeKey(m) === creativeKey(row)).length !== 1) {
@@ -76,7 +79,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
                 }
                 const owners = eligible.filter(b => b.source_key === row.source_key && String(b.platform_account_id) === row.platform_account_id && String(b.platform_campaign_id) === row.platform_campaign_id && String(b.line_key) === row.line_key);
                 const dates: string[] = [];
-                for (let d = from; d <= to;) {
+                for (let d = from; d <= analyticsTo;) {
                     if (owners.some(b => d >= String(b.effective_from ?? from).slice(0, 10) && d <= String(b.effective_to ?? to).slice(0, 10)))
                         dates.push(d);
                     const day = new Date(d + 'T00:00:00Z');
@@ -99,5 +102,5 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
                 }).code ?? 'unknown' });
         }
     }
-    return { rows, has_mappings: rows.some(r => mappings.some(m => creativeKey(m) === creativeKey(r))) };
+    return { rows, analytics_through:analyticsTo, has_mappings: rows.some(r => mappings.some(m => creativeKey(m) === creativeKey(r))) };
 }

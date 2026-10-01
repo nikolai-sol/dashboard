@@ -915,6 +915,7 @@ export async function GET(
       for (const r of data.creative_performance.rows) {
         ws.addRow([r.source_key,r.platform_account_id,r.platform_campaign_id,r.platform_creative_id,r.name,r.size,r.impressions,r.clicks,...(data.dashboard.show_spend?[r.spend]:[]),r.ctr,...(data.dashboard.show_spend?[r.cpc]:[]),...(mapped?[r.postclick?.visits??null,r.postclick?.users??null,r.postclick?.pageviews??null,r.postclick?.page_depth??null,r.postclick?.goal_reaches??null,r.postclick?.conversion_rate??null,r.postclick?.bounce_rate??null,r.postclick?.avg_visit_duration??null,r.availability]:[])]);
       }
+      if(mapped) ws.addRow([`Metrica: last attribution; completed days through ${data.creative_performance.analytics_through ?? "unavailable"} (UTC)`]);
       autoFit(ws);
     }
 

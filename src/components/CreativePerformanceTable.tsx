@@ -29,6 +29,7 @@ export default function CreativePerformanceTable({ data, locale = 'en-US', curre
   </table></div>
   {!rows.length && <p className="py-4 text-gray-500">{ru ? 'Нет данных по креативам за выбранный период.' : 'No creative-level platform data for this period.'}</p>}
   <div className="mt-3 flex items-center gap-3 text-sm print:hidden"><button disabled={!safePage} onClick={() => setPage(safePage - 1)}>{ru ? 'Назад' : 'Previous'}</button><span>{rows.length} · {ru ? 'Страница' : 'Page'} {safePage + 1}</span><button disabled={(safePage + 1) * 50 >= rows.length} onClick={() => setPage(safePage + 1)}>{ru ? 'Далее' : 'Next'}</button></div>
-  {data.has_mappings && <p className="mt-2 text-xs text-gray-500">{ru ? 'Атрибуция Метрики: last. * Пользователи недоступны, если нельзя исключить повторы между датами или UTM. Наведите курсор на строку, чтобы увидеть статус данных.' : 'Metrica attribution: last. * Users are unavailable when deduplication across dates or UTM tuples cannot be established. Hover a row for its collection or mapping status.'}</p>}
+  {data.has_mappings && data.analytics_through && <p className="mt-2 text-xs text-gray-500">{ru?'Метрика по завершённым дням до':'Metrica completed days through'} {data.analytics_through} (UTC)</p>}
+      {data.has_mappings && <p className="mt-2 text-xs text-gray-500">{ru ? 'Атрибуция Метрики: last. * Пользователи недоступны, если нельзя исключить повторы между датами или UTM. Наведите курсор на строку, чтобы увидеть статус данных.' : 'Metrica attribution: last. * Users are unavailable when deduplication across dates or UTM tuples cannot be established. Hover a row for its collection or mapping status.'}</p>}
  </section>;
 }

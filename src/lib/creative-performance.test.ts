@@ -22,3 +22,10 @@ test('optional analytics query failure preserves platform rows with explicit una
  const data=await loadCreativePerformance(987,'2026-09-29','2026-09-29',[mapping],undefined,[],{executor,counters:['counter']});
  assert.equal(data.rows.length,1);assert.equal(data.rows[0].impressions,100);assert.equal(data.rows[0].postclick,null);assert.match(data.rows[0].availability,/unavailable/);
 });
+test('future campaign range clips only analytics to UTC yesterday and keeps missing past coverage unknown',async()=>{
+ const b={...bindings[0],effective_to:'2026-12-30'};const tuple={utm_source:'a',utm_medium:'b',utm_campaign:'c',utm_content:'d',utm_term:''};const mapping={...b,platform_creative_id:'creative',counter_id:'counter',tuples:[tuple]};let coveragePresent=true;const queryEnds:string[]=[];
+ const executor={execute:async(sql:string,args:unknown[])=>{if(sql.includes('SELECT DISTINCT line_key'))return[[b]];if(sql.includes('canonical_fact_site_analytics_daily')){queryEnds.push(String(args.at(-1)));return[[{...tuple,analytics_scope:'creative_traffic',attribution:'last',report_date:'2026-09-30',visits:5,users:3,pageviews:8,bounce_rate:20,avg_visit_duration_seconds:30}]];}if(sql.includes('canonical_media_creative_coverage_daily'))return[coveragePresent?['creative_traffic','creative_goal'].map(analytics_scope=>({report_date:'2026-09-30',analytics_scope,attribution:'last',status:'complete_with_data'})):[]];return[[{...b,platform_creative_id:'creative',report_date:'2026-09-30',impressions:100,clicks:2,spend:4,raw_payload:{}}]];}} as unknown as Pick<typeof pool,'execute'>;
+ const options={executor,counters:['counter'],now:new Date('2026-10-01T12:00:00Z')};
+ const data=await loadCreativePerformance(987,'2026-09-30','2026-12-30',[mapping],undefined,[],options);assert.equal(data.rows[0].postclick?.visits,5);assert.equal(data.analytics_through,'2026-09-30');assert.deepEqual(queryEnds,['2026-09-30']);
+ coveragePresent=false;const gap=await loadCreativePerformance(987,'2026-09-30','2026-12-30',[mapping],undefined,[],options);assert.equal(gap.rows[0].postclick,null);assert.equal(gap.rows[0].impressions,100);
+});

@@ -35,6 +35,7 @@ export interface CreativeRow extends CreativeTarget {
 export interface CreativePerformance {
     rows: CreativeRow[];
     has_mappings: boolean;
+    analytics_through?: string;
 }
 export function creativeKey(t: CreativeTarget): string { return JSON.stringify([t.source_key, t.platform_account_id, t.platform_campaign_id, t.platform_creative_id, t.line_key]); }
 export function tupleKey(t: UtmTuple): string { return JSON.stringify(UTM_FIELDS.map(k => t[k])); }
@@ -89,4 +90,12 @@ export function isMediaCreativeDashboard(type: string): boolean { return ['aware
 export function preserveCreativeMappingNamespace(config:Record<string,unknown>,existing:Record<string,unknown>):void {
  delete config.creative_utm_bindings;
  if(existing.creative_utm_bindings!==undefined)config.creative_utm_bindings=existing.creative_utm_bindings;
+}
+
+/** Matches the Media collector's UTC anchor and one-day collection floor. */
+export function creativeAnalyticsThrough(requestedTo:string,now:Date=new Date()):string {
+ const day=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));
+ day.setUTCDate(day.getUTCDate()-1);
+ const complete=day.toISOString().slice(0,10);
+ return requestedTo<complete?requestedTo:complete;
 }
