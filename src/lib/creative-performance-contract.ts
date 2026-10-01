@@ -88,8 +88,10 @@ export function isMediaCreativeDashboard(type: string): boolean { return ['aware
 
 /** The dedicated editor owns this namespace; a stale generic wizard cannot replace it. */
 export function preserveCreativeMappingNamespace(config:Record<string,unknown>,existing:Record<string,unknown>):void {
- delete config.creative_utm_bindings;
- if(existing.creative_utm_bindings!==undefined)config.creative_utm_bindings=existing.creative_utm_bindings;
+ for(const key of ["creative_utm_bindings","creative_analytics"]) {
+  delete config[key];
+  if(existing[key]!==undefined)config[key]=existing[key];
+ }
 }
 
 /** Matches the Media collector's UTC anchor and one-day collection floor. */
