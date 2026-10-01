@@ -4,7 +4,7 @@ import { aggregateCreativePostclick } from './creative-postclick';
 import { advertisingFactTable } from './canonical-adapter';
 import { ADS_AUTHORITY_FACT_SCOPE } from './source-mapping';
 import { creativeKey, creativeSize, validateMappings, creativeAnalyticsThrough, type CreativeMapping, type CreativePerformance, type CreativeRow } from './creative-performance-contract';
-export async function loadCreativePerformance(dashboardId: number, from: string, to: string, mappings: CreativeMapping[] = [], channels?: string[], goalIds: string[] = [], options: {
+export async function loadCreativePerformance(dashboardId: number, from: string, to: string, mappings: CreativeMapping[] = [], lines?: { line_key: string; channel: string }[], goalIds: string[] = [], options: {
     executor?: Pick<typeof pool, "execute">;
     counters?: string[];
     goalMode?: "all" | "selected";
@@ -13,7 +13,10 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
     const executor = options.executor ?? pool;
     const [bindings] = await executor.execute<RowDataPacket[]>('SELECT DISTINCT line_key, channel, source_key, platform_account_id, platform_campaign_id, effective_from, effective_to FROM media_plan_bindings WHERE dashboard_id=?', [dashboardId]);
     const rows: CreativeRow[] = [];
-    const eligible = bindings.filter(b => !channels || channels.includes(String(b.channel)));
+    const currentLines = new Map(lines?.map(line => [line.line_key || line.channel, line.channel]));
+    const eligible = bindings
+        .filter(b => !lines || currentLines.has(String(b.line_key || b.channel)))
+        .map(b => ({...b, channel: currentLines.get(String(b.line_key || b.channel)) ?? b.channel} as RowDataPacket));
     // One query per configured source; EXISTS prevents duplicate bindings multiplying facts.
     for (const source of new Set(eligible.map(b => String(b.source_key)))) {
         const [facts] = await executor.execute<RowDataPacket[]>(`SELECT f.platform_account_id,f.platform_campaign_id,f.platform_creative_id,

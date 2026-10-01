@@ -29,3 +29,13 @@ test('future campaign range clips only analytics to UTC yesterday and keeps miss
  const data=await loadCreativePerformance(987,'2026-09-30','2026-12-30',[mapping],undefined,[],options);assert.equal(data.rows[0].postclick?.visits,5);assert.equal(data.analytics_through,'2026-09-30');assert.deepEqual(queryEnds,['2026-09-30']);
  coveragePresent=false;const gap=await loadCreativePerformance(987,'2026-09-30','2026-12-30',[mapping],undefined,[],options);assert.equal(gap.rows[0].postclick,null);assert.equal(gap.rows[0].impressions,100);
 });
+test('stable binding line key survives a renamed display channel',async()=>{
+ const b={...bindings[0],channel:'Программати'};
+ const executor={execute:async(sql:string)=>sql.includes('SELECT DISTINCT line_key')?[[b]]:[[{...b,platform_creative_id:'creative',report_date:'2026-09-29',impressions:100,clicks:2,spend:4,raw_payload:{}}]]} as unknown as Pick<typeof pool,'execute'>;
+ const data=await loadCreativePerformance(987,'2026-09-01','2026-09-30',[],[{line_key:'L1',channel:'Программатик'}],[],{executor});
+ assert.equal(data.rows.length,1);assert.equal(data.rows[0].line_key,'L1');assert.equal(data.rows[0].channel,'Программатик');assert.equal(data.rows[0].impressions,100);
+});
+test('an empty visible line selection yields no creative rows',async()=>{
+ let queries=0;const executor={execute:async()=>{queries++;return[bindings];}} as unknown as Pick<typeof pool,'execute'>;
+ const data=await loadCreativePerformance(987,'2026-09-01','2026-09-30',[],[],[],{executor});assert.equal(data.rows.length,0);assert.equal(queries,1);
+});
