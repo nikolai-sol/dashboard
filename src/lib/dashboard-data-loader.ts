@@ -72,6 +72,7 @@ import {
   getDefaultKpiCards,
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
   SPEND_RELATED_METRICS,
+  resolveCreativeSectionOrder,
 } from "@/lib/dashboard-presets";
 import {
   buildPeriodMonths as buildNormalizedPeriodMonths,
@@ -867,9 +868,9 @@ function getSectionOrder(
   showSpend: boolean,
 ): DashboardSectionId[] {
   if (Array.isArray(config.section_order)) {
-    return sanitizeDashboardSectionOrder(config.section_order, type, showSpend, false);
+    return resolveCreativeSectionOrder(sanitizeDashboardSectionOrder(config.section_order, type, showSpend, false), type, config.show_creative_performance);
   }
-  return sanitizeDashboardSectionOrder(config.section_order, type, showSpend, true);
+  return resolveCreativeSectionOrder(sanitizeDashboardSectionOrder(config.section_order, type, showSpend, true), type, config.show_creative_performance);
 }
 
 function withOptionalSection(
@@ -3546,7 +3547,7 @@ export async function loadDashboardData(
       metrikaSettings.selected_goal_ids,
       metrikaSettings.goal_mode,
     );
-    const creativePerformance = isMediaCreativeDashboard(dashboardType) ? await loadCreativePerformance(dashboard.id, range.from > String(config.period_from ?? range.from) ? range.from : String(config.period_from ?? range.from), range.to < String(config.period_to ?? range.to) ? range.to : String(config.period_to ?? range.to), [], planByChannel.map(row => ({line_key: row.line_key || row.channel, channel: row.channel})), [], {platformOnly: true}) : undefined;
+    const creativePerformance = isMediaCreativeDashboard(dashboardType) && config.show_creative_performance !== false ? await loadCreativePerformance(dashboard.id, range.from > String(config.period_from ?? range.from) ? range.from : String(config.period_from ?? range.from), range.to < String(config.period_to ?? range.to) ? range.to : String(config.period_to ?? range.to), [], planByChannel.map(row => ({line_key: row.line_key || row.channel, channel: row.channel})), [], {platformOnly: true}) : undefined;
     let sectionOrder = getSectionOrder(config, dashboardType, showSpend);
     if (postclickAnalytics && postclickAnalytics.rows.length > 0) {
       sectionOrder = withOptionalSection(sectionOrder, "postclick_analytics", "plan_vs_fact");

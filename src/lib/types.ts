@@ -15,6 +15,7 @@ export type DashboardSectionId =
   | "analytics"
   | "traffic_sources"
   | "postclick_analytics"
+  | "creative_performance"
   | "conversion_funnel"
   | "campaign_table"
   | "scatter_plot"

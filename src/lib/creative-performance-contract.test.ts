@@ -19,7 +19,7 @@ test('counter tuple cannot belong to two targets and foreign targets rejected',(
 });
 test('mixed metadata never chooses arbitrary first size',()=>{
  assert.equal(creativeSize({creative_size:{version:1,status:'mixed',variants:[{width:160,height:600,source:'parsed'}]}}),'Mixed sizes');
- assert.equal(creativeSize({creative_size:{version:1,status:'single',variants:[{width:160,height:600,source:'parsed'}]}}),'160 × 600 (parsed)');
+ assert.equal(creativeSize({creative_size:{version:1,status:'single',variants:[{width:160,height:600,source:'parsed'}]}}),'160 × 600');
  assert.equal(creativeSize({}),'—');
 });
 
@@ -47,3 +47,5 @@ import { creativeAnalyticsThrough } from './creative-performance-contract';
 test('creative analytics uses UTC completed days, not future campaign end or latest coverage',()=>{const now=new Date('2026-10-01T00:01:00Z');assert.equal(creativeAnalyticsThrough('2026-12-30',now),'2026-09-30');assert.equal(creativeAnalyticsThrough('2026-09-15',now),'2026-09-15');});
 
 test('generic wizard preserves explicit creative collection opt-in without requiring a mapping',()=>{const config:Record<string,unknown>={creative_analytics:{counter_ids:[]},title:'Updated'};preserveCreativeMappingNamespace(config,{creative_analytics:{counter_ids:['112718783']}});assert.deepEqual(config.creative_analytics,{counter_ids:['112718783']});assert.equal(config.creative_utm_bindings,undefined);});
+
+test('size display preserves native label and raw parsed provenance',()=>{const raw={creative_size:{version:1,status:'single',variants:[{width:300,height:250,source:'parsed'}]}};const before=JSON.stringify(raw);assert.equal(creativeSize(raw),'300 × 250');assert.equal(JSON.stringify(raw),before);assert.equal(creativeSize({creative_size:{version:1,status:'single',variants:[{width:300,height:250,source:'native'}]}}),'300 × 250 (native)');});

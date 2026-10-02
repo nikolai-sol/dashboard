@@ -11,6 +11,7 @@ import type {
 import {
   sanitizeSectionOrder as sanitizeDashboardSectionOrder,
   SPEND_RELATED_METRICS,
+  resolveCreativeSectionOrder,
 } from "@/lib/dashboard-presets";
 import { normalizeDashboardSectionFieldOverrides } from "@/lib/dashboard-section-fields";
 
@@ -42,6 +43,7 @@ const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelat
   { id: "analytics", label: "Website analytics" },
   { id: "traffic_sources", label: "Traffic sources" },
   { id: "postclick_analytics", label: "Post-click analytics" },
+  { id: "creative_performance", label: "Creative performance / Креативы" },
   { id: "promopages", label: "Promopages" },
   { id: "conversion_funnel", label: "Conversion funnel", performanceOnly: true },
   { id: "campaign_table", label: "Campaign performance", spendRelated: true, performanceOnly: true },
@@ -192,10 +194,11 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   const sectionFieldOverrides = normalizeDashboardSectionFieldOverrides(config.section_field_overrides);
   const metricPool = sanitizeMetricPool(showSpend);
   const kpiCards = sanitizeCards(config.kpi_cards ?? [], showSpend);
-  const sectionOrder = sanitizeSectionOrder(config.section_order, data.dashboard_type, showSpend, false);
+  const sectionOrder = resolveCreativeSectionOrder(sanitizeSectionOrder(config.section_order, data.dashboard_type, showSpend, false), data.dashboard_type, config.show_creative_performance);
   const customKpiCards = sanitizeCustomKpiCards(config.custom_kpi_cards, showSpend);
   const visibleSectionOptions = SECTION_OPTIONS.filter(
     (section) =>
+      (section.id !== "creative_performance" || ["awareness", "performance", "overview", "multibrand"].includes(data.dashboard_type)) &&
       (data.dashboard_type === "performance" || !section.performanceOnly) &&
       (showSpend || !section.spendRelated),
   );
@@ -249,7 +252,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
     const next = checked
       ? sanitizeSectionOrder([...sectionOrder, sectionId], data.dashboard_type, showSpend, false)
       : sanitizeSectionOrder(sectionOrder.filter((item) => item !== sectionId), data.dashboard_type, showSpend, false);
-    patchConfig({ section_order: next });
+    patchConfig({ section_order: next, ...(sectionId === "creative_performance" ? { show_creative_performance: checked } : {}) });
   };
 
   const moveSection = (sectionId: DashboardSectionId, direction: -1 | 1) => {
@@ -268,7 +271,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
       show_spend: checked,
       kpi_cards: sanitizeCards(config.kpi_cards ?? [], checked),
       visible_metrics: sanitizeVisibleMetrics(config.visible_metrics ?? [], checked),
-      section_order: sanitizeSectionOrder(config.section_order, data.dashboard_type, checked, false),
+      section_order: sanitizeSectionOrder(sectionOrder, data.dashboard_type, checked, false),
       custom_kpi_cards: sanitizeCustomKpiCards(config.custom_kpi_cards, checked),
     });
   };

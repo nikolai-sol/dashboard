@@ -9,6 +9,7 @@ export type DashboardSectionId =
   | "analytics"
   | "traffic_sources"
   | "postclick_analytics"
+  | "creative_performance"
   | "conversion_funnel"
   | "campaign_table"
   | "scatter_plot"
@@ -167,6 +168,7 @@ export type DashboardFormData = {
     visible_metrics: string[];
     section_order?: DashboardSectionId[];
     show_spend: boolean;
+    show_creative_performance?: boolean;
     show_ai_summary: boolean;
     kpi_cards: string[];
     custom_kpi_cards?: CustomKpiCardForm[];

@@ -1,3 +1,4 @@
+import { isMediaCreativeDashboard } from "./creative-performance-contract";
 import type { DashboardKind, DashboardSectionId } from "@/lib/types";
 
 export const SPEND_RELATED_METRICS = new Set(["spend", "cpm", "cpc", "cpv", "cpa", "roas"]);
@@ -104,7 +105,7 @@ export function sanitizeSectionOrder(
   fillDefaults = true,
 ): DashboardSectionId[] {
   const defaults = getDefaultSectionOrder(type, showSpend);
-  const allowed = [...defaults, ...OPTIONAL_SECTIONS.filter((item) => showSpend || !SPEND_RELATED_SECTIONS.has(item))];
+  const allowed = [...defaults, ...(isMediaCreativeDashboard(type) ? ["creative_performance" as const] : []), ...OPTIONAL_SECTIONS.filter((item) => showSpend || !SPEND_RELATED_SECTIONS.has(item))];
   if (!Array.isArray(raw)) {
     return defaults;
   }
@@ -113,4 +114,13 @@ export function sanitizeSectionOrder(
     .map((item) => String(item) as DashboardSectionId)
     .filter((item) => allowed.includes(item) && !seen.has(item) && seen.add(item));
   return fillDefaults ? [...normalized, ...defaults.filter((item) => !seen.has(item))] : normalized;
+}
+
+// Old configs predate this section and already displayed the table unconditionally.
+// Only an explicit saved false hides it; existing order and other hidden sections stay intact.
+export function resolveCreativeSectionOrder(
+  order: DashboardSectionId[], type: DashboardKind, enabled: unknown,
+): DashboardSectionId[] {
+  if (!isMediaCreativeDashboard(type) || enabled === false) return order.filter(id => id !== "creative_performance");
+  return order.includes("creative_performance") ? order : [...order, "creative_performance"];
 }

@@ -1485,6 +1485,10 @@ function CombinedDashboardByIdPage() {
       );
     }
 
+    if (sectionId === "creative_performance") {
+      return dashboard?.creative_performance ? <CreativePerformanceTable key={sectionId} data={{...dashboard.creative_performance, rows: dashboard.creative_performance.rows.filter(row => filteredPlanVsFact.some(item => item.channel === row.channel))}} locale={locale} currency={currencyCode} showSpend={showSpend} /> : null;
+    }
+
     if (sectionId === "postclick_analytics") {
       if (!filteredPostClickAnalytics.rows.length) return null;
       return (
@@ -2272,7 +2276,6 @@ function CombinedDashboardByIdPage() {
       ) : null}
 
       {sectionOrder.map((sectionId) => renderSection(sectionId))}
-      {dashboard?.creative_performance && <CreativePerformanceTable data={{...dashboard.creative_performance, rows: dashboard.creative_performance.rows.filter(row => filteredPlanVsFact.some(item => item.channel === row.channel))}} locale={locale} currency={currencyCode} showSpend={showSpend} />}
 
       {dashboard?.custom_tables?.map((table, i) => (
         <CustomTable key={i} data={table} locale={locale} pdfMode={isPdfMode} />

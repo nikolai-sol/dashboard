@@ -80,7 +80,7 @@ export function creativeSize(payload: unknown): string {
         if (s.status === 'mixed')
             return 'Mixed sizes';
         const v = s.variants?.[0];
-        return s.status === 'single' && s.variants?.length === 1 && Number(v.width) > 0 && Number(v.height) > 0 && ['native', 'parsed'].includes(v.source) ? `${v.width} × ${v.height} (${v.source})` : '—';
+        return s.status === 'single' && s.variants?.length === 1 && Number(v.width) > 0 && Number(v.height) > 0 && ['native', 'parsed'].includes(v.source) ? `${v.width} × ${v.height}${v.source === 'native' ? ' (native)' : ''}` : '—';
     }
     catch {
         return '—';

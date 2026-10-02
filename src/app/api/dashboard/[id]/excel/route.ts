@@ -907,7 +907,7 @@ export async function GET(
       autoFit(ws);
     }
 
-    if (data.creative_performance) {
+    if (worksheetHasSection(data, "creative_performance") && data.creative_performance) {
       const ws = workbook.addWorksheet(truncateSheetName("Creative performance", usedSheetNames));
       const mapped = data.creative_performance.has_mappings;
       ws.addRow(["Source", "Account", "Campaign", "Creative ID", "Creative", "Size", "Impressions", "Clicks", ...(data.dashboard.show_spend ? ["Platform spend"] : []), "CTR %", ...(data.dashboard.show_spend ? ["CPC"] : []), ...(mapped ? ["Visits", "Users (non-additive)", "Pageviews", "Page depth", "Goals", "CR %", "Bounce %", "Duration (s)", "Availability"] : [])]);
