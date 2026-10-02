@@ -1,9 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type pool from './db';
-import { loadCreativePerformance } from './creative-performance';
+import { loadCreativePerformance, hybridCreativeFactTable } from './creative-performance';
 import { advertisingFactTable } from './canonical-adapter';
 const bindings=[{line_key:'L1',channel:'Display',source_key:'getintent',platform_account_id:'account-A',platform_campaign_id:'campaign-A',effective_from:'2026-09-01',effective_to:'2026-09-30'},{line_key:'L2',channel:'Video',source_key:'getintent',platform_account_id:'account-A',platform_campaign_id:'campaign-B',effective_from:'2026-09-01',effective_to:'2026-09-30'}];
+test('Hybrid native authority requires accepted exact account-day publication lineage and suppresses empty fallback',()=>{
+ const sql=hybridCreativeFactTable();
+ assert.match(sql,/canonical_advertising_facts_current/);
+ assert.match(sql,/native_grain='creative'/);assert.match(sql,/breakdown_scope='native_creative'/);
+ assert.match(sql,/UNION ALL/);assert.match(sql,/NOT EXISTS/);
+ for(const value of ['canonical_ad_coverage_daily','canonical_ad_publications','canonical_collector_run_events','complete_with_data','complete_empty','hybrid_native_creative_publication','contract_version','account_banner_id','full_account_day'])assert.ok(sql.includes(value),value);
+ for(const alias of ['native','legacy'])for(const field of ['source_key','platform_account_id','report_date'])assert.ok(sql.includes(`p.${field}=${alias}.${field}`),`${alias}.${field}`);
+ assert.match(sql,/coverage\.publication_id=p\.id/);assert.match(sql,/coverage\.ingestion_run_id=p\.ingestion_run_id/);assert.match(sql,/e\.run_id=p\.ingestion_run_id/);
+ assert.match(sql,/p\.status='published'/);assert.match(sql,/p\.is_active=1/);
+ // No fact-presence test is used as completeness proof: complete-empty must hide stale groups.
+ assert.doesNotMatch(sql,/COUNT\(|rows_published\s*>\s*0/);
+});
+test('Hybrid native names and sizes stay native while legacy fallback remains a group',async()=>{
+ const b={...bindings[0],source_key:'hybrid'};let query='';
+ const executor={execute:async(sql:string)=>{if(sql.includes('SELECT DISTINCT line_key'))return[[b]];query=sql;return[[{...b,platform_creative_id:'banner-1',native_creative:1,creative_name:'Banner 160x600',raw_payload:{creative_size:{version:1,status:'single',variants:[{width:160,height:600,source:'native'}]}},report_date:'2026-09-29',impressions:80,clicks:4,spend:null,fact_rows:1,impressions_rows:1,clicks_rows:1,spend_rows:0},{...b,platform_creative_id:'c_570',native_creative:0,creative_name:'First misleading banner',raw_payload:{},report_date:'2026-09-28',impressions:20,clicks:1,spend:null,fact_rows:1,impressions_rows:1,clicks_rows:1,spend_rows:0}]];}} as unknown as Pick<typeof pool,'execute'>;
+ const data=await loadCreativePerformance(42,'2026-09-01','2026-09-30',[],undefined,[],{executor,platformOnly:true});
+ assert.equal(data.rows.length,2);assert.equal(data.rows[0].name,'Banner 160x600');assert.equal(data.rows[1].name,'c_570 (creative group)');assert.equal(data.rows.reduce((sum,r)=>sum+(r.impressions??0),0),100);assert.match(query,/MAX\(f.native_creative\)/);
+});
 test('unmapped creatives retain platform facts and separate shared creative ID by campaign',async()=>{
  const calls:string[]=[];
  const executor={execute:async(sql:string)=>{calls.push(sql);if(sql.includes('SELECT DISTINCT line_key'))return[bindings];return[bindings.map((b,i)=>({...b,platform_creative_id:'shared-creative',report_date:'2026-09-29',impressions:(i+1)*100,clicks:10,spend:5,spend_rows:1,fact_rows:1,impressions_rows:1,clicks_rows:1,creative_name:'Known creative',raw_payload:{}}))];}} as unknown as Pick<typeof pool,'execute'>;

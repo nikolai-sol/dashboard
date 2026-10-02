@@ -4,6 +4,34 @@ import { aggregateCreativePostclick } from './creative-postclick';
 import { advertisingFactTable } from './canonical-adapter';
 import { ADS_AUTHORITY_FACT_SCOPE } from './source-mapping';
 import { creativeKey, creativeSize, validateMappings, creativeAnalyticsThrough, type CreativeMapping, type CreativePerformance, type CreativeRow } from './creative-performance-contract';
+
+export function hybridCreativeFactTable(): string {
+    // The event identifies the full-account native contract. Coverage and the
+    // active publication prove acceptance, including an accepted empty day.
+    const accepted = (alias: string) => `SELECT 1 FROM canonical_ad_publications p
+      JOIN canonical_ad_coverage_daily coverage ON coverage.publication_id=p.id
+       AND coverage.source_key=p.source_key COLLATE utf8mb4_unicode_ci
+       AND coverage.platform_account_id=p.platform_account_id COLLATE utf8mb4_unicode_ci
+       AND coverage.report_date=p.report_date AND coverage.ingestion_run_id=p.ingestion_run_id
+      WHERE p.source_key=${alias}.source_key COLLATE utf8mb4_unicode_ci
+       AND p.platform_account_id=${alias}.platform_account_id COLLATE utf8mb4_unicode_ci
+       AND p.report_date=${alias}.report_date AND p.status='published' AND p.is_active=1
+       AND coverage.coverage_state IN ('complete_with_data','complete_empty')
+       AND EXISTS (SELECT 1 FROM canonical_collector_run_events e
+        WHERE e.run_id=p.ingestion_run_id AND e.event_type='hybrid_native_creative_publication'
+         AND JSON_UNQUOTE(JSON_EXTRACT(e.event_payload,'$.contract_version'))='1'
+         AND JSON_UNQUOTE(JSON_EXTRACT(e.event_payload,'$.breakdown_scope'))='native_creative'
+         AND JSON_UNQUOTE(JSON_EXTRACT(e.event_payload,'$.identity'))='account_banner_id'
+         AND JSON_UNQUOTE(JSON_EXTRACT(e.event_payload,'$.fetch_kind'))='full_account_day')`;
+    const columns = 'source_key,platform_account_id,platform_campaign_id,fact_scope,report_date,platform_creative_id,spend,impressions,clicks';
+    return `(SELECT ${columns},1 native_creative FROM canonical_advertising_facts_current native
+      WHERE native.source_key='hybrid' AND native.native_grain='creative'
+       AND native.breakdown_scope='native_creative' AND EXISTS (${accepted('native')})
+      UNION ALL
+      SELECT ${columns},0 native_creative FROM canonical_fact_ads_daily legacy
+      WHERE legacy.source_key='hybrid' AND NOT EXISTS (${accepted('legacy')}))`;
+}
+
 export async function loadCreativePerformance(dashboardId: number, from: string, to: string, mappings: CreativeMapping[] = [], lines?: { line_key: string; channel: string }[], goalIds: string[] = [], options: {
     executor?: Pick<typeof pool, "execute">;
     counters?: string[];
@@ -22,8 +50,8 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
     for (const source of new Set(eligible.map(b => String(b.source_key)))) {
         const [facts] = await executor.execute<RowDataPacket[]>(`SELECT f.platform_account_id,f.platform_campaign_id,f.platform_creative_id,
    f.report_date,SUM(f.impressions) impressions,SUM(f.clicks) clicks,SUM(f.spend) spend,COUNT(*) fact_rows,COUNT(f.spend) spend_rows,COUNT(f.impressions) impressions_rows,COUNT(f.clicks) clicks_rows,
-   MAX(c.creative_name) creative_name,MAX(CAST(c.raw_payload AS CHAR)) raw_payload
-   FROM ${advertisingFactTable(source, true)} f
+   MAX(c.creative_name) creative_name,MAX(CAST(c.raw_payload AS CHAR)) raw_payload,${source === 'hybrid' ? 'MAX(f.native_creative)' : '0'} native_creative
+   FROM ${source === 'hybrid' ? hybridCreativeFactTable() : advertisingFactTable(source, true)} f
    LEFT JOIN canonical_source_creatives c ON c.source_key=f.source_key COLLATE utf8mb4_unicode_ci AND c.platform_account_id=f.platform_account_id COLLATE utf8mb4_unicode_ci AND c.platform_creative_id=f.platform_creative_id COLLATE utf8mb4_unicode_ci
    WHERE f.source_key=? AND f.fact_scope=? AND f.report_date BETWEEN ? AND ?
     AND COALESCE(f.platform_creative_id,'') NOT IN ('','__campaign__')
@@ -44,7 +72,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
             const key = creativeKey(target);
             let row = aggregate.get(key);
             if (!row) {
-                row = { ...target, channel: String(b.channel), name: source === 'hybrid' ? `${f.platform_creative_id} (creative group)` : String(f.creative_name ?? f.platform_creative_id), size: creativeSize(f.raw_payload), impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, postclick: null, availability: 'No UTM mapping' };
+                row = { ...target, channel: String(b.channel), name: source === 'hybrid' && !Number(f.native_creative) ? `${f.platform_creative_id} (creative group)` : String(f.creative_name ?? f.platform_creative_id), size: creativeSize(f.raw_payload), impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, postclick: null, availability: 'No UTM mapping' };
                 aggregate.set(key, row);
             }
             // A partial SUM is not a complete numerator or denominator for CTR.
