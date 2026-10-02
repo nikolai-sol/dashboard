@@ -21,7 +21,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
     // One query per configured source; EXISTS prevents duplicate bindings multiplying facts.
     for (const source of new Set(eligible.map(b => String(b.source_key)))) {
         const [facts] = await executor.execute<RowDataPacket[]>(`SELECT f.platform_account_id,f.platform_campaign_id,f.platform_creative_id,
-   f.report_date,SUM(f.impressions) impressions,SUM(f.clicks) clicks,SUM(f.spend) spend,COUNT(*) fact_rows,COUNT(f.spend) spend_rows,
+   f.report_date,SUM(f.impressions) impressions,SUM(f.clicks) clicks,SUM(f.spend) spend,COUNT(*) fact_rows,COUNT(f.spend) spend_rows,COUNT(f.impressions) impressions_rows,COUNT(f.clicks) clicks_rows,
    MAX(c.creative_name) creative_name,MAX(CAST(c.raw_payload AS CHAR)) raw_payload
    FROM ${advertisingFactTable(source, true)} f
    LEFT JOIN canonical_source_creatives c ON c.source_key=f.source_key COLLATE utf8mb4_unicode_ci AND c.platform_account_id=f.platform_account_id COLLATE utf8mb4_unicode_ci AND c.platform_creative_id=f.platform_creative_id COLLATE utf8mb4_unicode_ci
@@ -47,8 +47,12 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
                 row = { ...target, channel: String(b.channel), name: source === 'hybrid' ? `${f.platform_creative_id} (creative group)` : String(f.creative_name ?? f.platform_creative_id), size: creativeSize(f.raw_payload), impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, postclick: null, availability: 'No UTM mapping' };
                 aggregate.set(key, row);
             }
-            row.impressions += Number(f.impressions || 0);
-            row.clicks += Number(f.clicks || 0);
+            // A partial SUM is not a complete numerator or denominator for CTR.
+            for (const metric of ['impressions', 'clicks'] as const) {
+                const complete = f[metric] != null && Number(f.fact_rows) > 0
+                    && Number(f[`${metric}_rows`]) === Number(f.fact_rows) && Number.isFinite(Number(f[metric]));
+                row[metric] = row[metric] !== null && complete ? row[metric] + Number(f[metric]) : null;
+            }
             // SUM alone hides missing costs inside a daily group. Preserve that uncertainty.
             const completeCost = f.spend != null && Number(f.fact_rows) > 0
                 && Number(f.spend_rows) === Number(f.fact_rows) && Number.isFinite(Number(f.spend));
@@ -57,7 +61,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
         rows.push(...aggregate.values());
     }
     for (const row of rows) {
-        row.ctr = row.impressions ? 100 * row.clicks / row.impressions : null;
+        row.ctr = row.impressions && row.clicks !== null ? 100 * row.clicks / row.impressions : null;
         row.cpc = row.clicks && row.spend !== null ? row.spend / row.clicks : null;
         if (mappings.some(m => creativeKey(m) === creativeKey(row)))
             row.availability = 'Creative analytics collection not yet verified';

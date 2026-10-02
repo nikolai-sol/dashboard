@@ -17,8 +17,8 @@ export interface CreativeRow extends CreativeTarget {
     channel: string;
     name: string;
     size: string;
-    impressions: number;
-    clicks: number;
+    impressions: number | null;
+    clicks: number | null;
     spend: number | null;
     ctr: number | null;
     cpc: number | null;
@@ -36,6 +36,7 @@ export interface CreativeRow extends CreativeTarget {
 }
 export interface CreativePerformance {
     rows: CreativeRow[];
+    selected_columns?: CreativeFieldId[];
     has_mappings: boolean;
     analytics_through?: string;
 }
@@ -102,4 +103,29 @@ export function creativeAnalyticsThrough(requestedTo:string,now:Date=new Date())
  day.setUTCDate(day.getUTCDate()-1);
  const complete=day.toISOString().slice(0,10);
  return requestedTo<complete?requestedTo:complete;
+}
+
+export const DEFAULT_CREATIVE_FIELDS = ['source_account', 'campaign_id', 'creative_id', 'name', 'size', 'impressions', 'clicks', 'spend', 'ctr', 'cpc'] as const;
+export type CreativeFieldId = (typeof DEFAULT_CREATIVE_FIELDS)[number];
+export function creativeFields(value: unknown, showSpend: boolean): CreativeFieldId[] {
+    const valid = new Set<string>(DEFAULT_CREATIVE_FIELDS);
+    const fields = Array.isArray(value) ? [...new Set(value.filter((v): v is CreativeFieldId => typeof v === 'string' && valid.has(v)))] : [];
+    return (fields.length ? fields : [...DEFAULT_CREATIVE_FIELDS]).filter(f => showSpend || !['spend', 'cpc'].includes(f));
+}
+export function creativeFieldLabel(field: CreativeFieldId, ru = false): string {
+    const labels = ru ? ['Источник / кабинет', 'Кампания', 'ID креатива', 'Креатив', 'Размер', 'Показы', 'Клики', 'Расход платформы', 'CTR %', 'CPC'] : ['Source / account', 'Campaign', 'Creative ID', 'Creative name', 'Size', 'Impressions', 'Clicks', 'Platform spend', 'CTR %', 'CPC'];
+    return labels[DEFAULT_CREATIVE_FIELDS.indexOf(field)];
+}
+export function creativeFieldValue(row: CreativeRow, field: CreativeFieldId): string | number | null {
+    if (field === 'source_account') return `${row.source_key} / ${row.platform_account_id}`;
+    if (field === 'campaign_id') return row.platform_campaign_id;
+    if (field === 'creative_id') return row.platform_creative_id;
+    if (field === 'ctr') return row.impressions !== null && row.impressions > 0 && row.clicks !== null ? 100 * row.clicks / row.impressions : null;
+    return row[field];
+}
+/** Preserve the existing workbook's separate Source/Account columns by default. */
+export function creativeExcelColumns(value: unknown, showSpend: boolean) {
+    return creativeFields(value, showSpend).flatMap(field => field === 'source_account'
+        ? [{label: 'Source', value: (row: CreativeRow): string | number | null => row.source_key}, {label: 'Account', value: (row: CreativeRow): string | number | null => row.platform_account_id}]
+        : [{label: field === 'name' ? 'Creative' : creativeFieldLabel(field), value: (row: CreativeRow) => creativeFieldValue(row, field)}]);
 }

@@ -49,3 +49,21 @@ test('creative analytics uses UTC completed days, not future campaign end or lat
 test('generic wizard preserves explicit creative collection opt-in without requiring a mapping',()=>{const config:Record<string,unknown>={creative_analytics:{counter_ids:[]},title:'Updated'};preserveCreativeMappingNamespace(config,{creative_analytics:{counter_ids:['112718783']}});assert.deepEqual(config.creative_analytics,{counter_ids:['112718783']});assert.equal(config.creative_utm_bindings,undefined);});
 
 test('size display preserves native label and raw parsed provenance',()=>{const raw={creative_size:{version:1,status:'single',variants:[{width:300,height:250,source:'parsed'}]}};const before=JSON.stringify(raw);assert.equal(creativeSize(raw),'300 × 250');assert.equal(JSON.stringify(raw),before);assert.equal(creativeSize({creative_size:{version:1,status:'single',variants:[{width:300,height:250,source:'native'}]}}),'300 × 250 (native)');});
+
+import * as creativeContract from './creative-performance-contract';
+test('creative fields preserve defaults, exact requested subset and global cost veto',()=>{
+ assert.equal(typeof creativeContract.creativeFields,'function');
+ assert.deepEqual(creativeContract.creativeFields(['size','impressions','ctr'],true),['size','impressions','ctr']);
+ assert.deepEqual(creativeContract.creativeFields(['spend','size','cpc','ctr'],false),['size','ctr']);
+ assert.equal(creativeContract.creativeFields(undefined,true).length,10);
+});
+
+test('workbook uses the exact shared selected fields and retains legacy default source/account split',()=>{
+ const fields=creativeContract.creativeExcelColumns(['size','impressions','ctr'],true);
+ assert.deepEqual(fields.map(c=>c.label),['Size','Impressions','CTR %']);
+ const row={size:'300 × 250',impressions:1000,clicks:19,ctr:null} as creativeContract.CreativeRow;
+ assert.deepEqual(fields.map(c=>c.value(row)),['300 × 250',1000,1.9]);
+ assert.equal(creativeContract.creativeExcelColumns(undefined,true).length,11);
+ assert.equal(creativeContract.creativeFieldValue({...row,clicks:null},'ctr'),null);
+ assert.equal(creativeContract.creativeFieldValue({...row,impressions:0},'ctr'),null);
+});

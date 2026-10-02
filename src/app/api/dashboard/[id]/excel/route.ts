@@ -1,3 +1,4 @@
+import { creativeExcelColumns, creativeFields } from "@/lib/creative-performance-contract";
 import { NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { projectAbbottDashboardData } from "@/lib/abbott-data-projection";
@@ -910,12 +911,14 @@ export async function GET(
     if (worksheetHasSection(data, "creative_performance") && data.creative_performance) {
       const ws = workbook.addWorksheet(truncateSheetName("Creative performance", usedSheetNames));
       const mapped = data.creative_performance.has_mappings;
-      ws.addRow(["Source", "Account", "Campaign", "Creative ID", "Creative", "Size", "Impressions", "Clicks", ...(data.dashboard.show_spend ? ["Platform spend"] : []), "CTR %", ...(data.dashboard.show_spend ? ["CPC"] : []), ...(mapped ? ["Visits", "Users (non-additive)", "Pageviews", "Page depth", "Goals", "CR %", "Bounce %", "Duration (s)", "Availability"] : [])]);
+      const columns = creativeExcelColumns(data.creative_performance.selected_columns, data.dashboard.show_spend);
+      const hasCost = creativeFields(data.creative_performance.selected_columns, data.dashboard.show_spend).some(field => field === 'spend' || field === 'cpc');
+      ws.addRow([...columns.map(column => column.label), ...(mapped ? ["Visits", "Users (non-additive)", "Pageviews", "Page depth", "Goals", "CR %", "Bounce %", "Duration (s)", "Availability"] : [])]);
       styleHeaderRow(ws.getRow(1));
       for (const r of data.creative_performance.rows) {
-        ws.addRow([r.source_key,r.platform_account_id,r.platform_campaign_id,r.platform_creative_id,r.name,r.size,r.impressions,r.clicks,...(data.dashboard.show_spend?[r.spend]:[]),r.ctr,...(data.dashboard.show_spend?[r.cpc]:[]),...(mapped?[r.postclick?.visits??null,r.postclick?.users??null,r.postclick?.pageviews??null,r.postclick?.page_depth??null,r.postclick?.goal_reaches??null,r.postclick?.conversion_rate??null,r.postclick?.bounce_rate??null,r.postclick?.avg_visit_duration??null,r.availability]:[])]);
+        ws.addRow([...columns.map(column => column.value(r)), ...(mapped?[r.postclick?.visits??null,r.postclick?.users??null,r.postclick?.pageviews??null,r.postclick?.page_depth??null,r.postclick?.goal_reaches??null,r.postclick?.conversion_rate??null,r.postclick?.bounce_rate??null,r.postclick?.avg_visit_duration??null,r.availability]:[])]);
       }
-      if (data.dashboard.show_spend) ws.addRow(["Platform-reported units; currency not verified."]);
+      if (hasCost) ws.addRow(["Platform-reported units; currency not verified."]);
       if(mapped) ws.addRow([`Metrica: last attribution; completed days through ${data.creative_performance.analytics_through ?? "unavailable"} (UTC)`]);
       autoFit(ws);
     }

@@ -13,3 +13,8 @@ test('cost visibility is preserved and mapping save is disabled before successfu
  const admin=renderToStaticMarkup(<Mapping dashboardId="987"/>);assert.match(admin,/<button disabled=""[^>]*>Save mappings<\/button>/);
 });
 test('platform-only table contains no new UTM prompt or Metrica column',()=>{const html=renderToStaticMarkup(<Table data={{rows:[{...row,availability:'Platform creative data'}],has_mappings:false}}/>);assert.doesNotMatch(html,/UTM|Metrica|>Visits</);assert.match(html,/Banner 160x600/);});
+test('three selected creative columns hide identity display without merging rows or showing cost notes',()=>{
+ const html=renderToStaticMarkup(<Table data={{rows:[{...row,ctr:null},{...row,platform_campaign_id:'other',ctr:null}],has_mappings:false,selected_columns:['size','impressions','ctr']}}/>);
+ assert.deepEqual([...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(m=>m[1]),['Size','Impressions','CTR %']);
+ assert.equal((html.match(/<td\b/g)||[]).length,6);assert.doesNotMatch(html,/Banner 160x600|Source \/ account|Creative ID|Platform spend|currency not verified/);assert.equal((html.match(/>10<\/td>/g)||[]).length,2);
+});

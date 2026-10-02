@@ -37,3 +37,17 @@ test('existing Metrics controls toggle, save/reload and reorder platform creativ
 test('creative controls are absent for isolated dashboard editors',()=>{
  for(const dashboard_type of ['abbott_bi','zaruku_bi'] as const) assert.doesNotMatch(renderToStaticMarkup(Step({data:{...fixture(),dashboard_type},onChange:()=>{}})),/Creative performance \/ Креативы/);
 });
+
+test('creative column preset and checkbox selection survive API normalization and reload',()=>{
+ let data=fixture();const render=()=>Step({data,onChange:next=>{data=next;}});
+ const preset=elements(render()).find(e=>e.type==='button'&&Children.toArray(e.props.children).includes('Size, impressions, CTR / Размер, показы, CTR'));
+ assert.ok(preset);preset.props.onClick!();
+ data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
+ assert.deepEqual(data.config.section_field_overrides?.creative_performance?.visible_fields,['size','impressions','ctr']);
+ const panel=elements(render()).find(e=>e.type==='div'&&elements(e.props.children).some(c=>c.type==='h5'&&Children.toArray(c.props.children).includes('Creative performance columns / Колонки креативов'))&&elements(e.props.children).filter(c=>c.type==='input').length===10);
+ assert.ok(panel);
+ const inputs=elements(panel.props.children).filter(e=>e.type==='input');assert.equal(inputs.filter(e=>e.props.checked).length,3);
+ inputs[6].props.onChange!({target:{checked:true}});
+ data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
+ assert.deepEqual(data.config.section_field_overrides?.creative_performance?.visible_fields,['size','impressions','ctr','clicks']);
+});

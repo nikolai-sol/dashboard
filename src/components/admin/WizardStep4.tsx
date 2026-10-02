@@ -1,5 +1,6 @@
 "use client";
 
+import { DEFAULT_CREATIVE_FIELDS, creativeFieldLabel, isMediaCreativeDashboard } from "@/lib/creative-performance-contract";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type {
   CustomKpiCardForm,
@@ -552,6 +553,21 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
         </p>
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {isMediaCreativeDashboard(data.dashboard_type) && <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Creative performance columns / Колонки креативов</h5>
+            <button type="button" className="mt-2 text-sm text-blue-700" onClick={() => patchSectionFieldOverrides({creative_performance: {visible_fields: ['size', 'impressions', 'ctr']}})}>Size, impressions, CTR / Размер, показы, CTR</button>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {DEFAULT_CREATIVE_FIELDS.map(field => {
+                const current = sectionFieldOverrides.creative_performance?.visible_fields ?? [];
+                return <label key={`creative-${field}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={current.includes(field)} onChange={e => patchSectionFieldOverrides({creative_performance: {visible_fields: e.target.checked ? [...current, field] : current.filter(f => f !== field)}})} />
+                  {creativeFieldLabel(field)}
+                </label>;
+              })}
+            </div>
+            {!showSpend && <p className="mt-2 text-xs text-slate-500">Cost columns remain hidden while Show spend is off.</p>}
+          </div>}
+
           <div className="rounded-lg border border-slate-200 p-4">
             <h5 className="text-sm font-semibold text-slate-900">Trend chart metrics</h5>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">

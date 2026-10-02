@@ -1,3 +1,4 @@
+import type { CreativeFieldId } from "./creative-performance-contract";
 import type { DashboardLanguage } from "@/lib/dashboard-i18n";
 import type { MultibrandConfig } from "@/lib/multibrand";
 
@@ -113,6 +114,7 @@ export type DashboardPromopagesFieldId =
   | "metrica_visits";
 
 export type DashboardSectionFieldOverridesForm = {
+  creative_performance?: { visible_fields: CreativeFieldId[] };
   trend_chart?: {
     visible_metrics: string[];
   };

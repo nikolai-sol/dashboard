@@ -3703,7 +3703,7 @@ export async function loadDashboardData(
             }
           : undefined,
       traffic_sources: trafficSources.length > 0 ? trafficSources : undefined,
-      creative_performance: creativePerformance,
+      creative_performance: creativePerformance ? { ...creativePerformance, selected_columns: sectionFieldOverrides.creative_performance?.visible_fields } : undefined,
       postclick_analytics: postclickAnalytics
         ? {
             ...postclickAnalytics,

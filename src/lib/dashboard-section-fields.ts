@@ -1,3 +1,4 @@
+import { creativeFields } from "./creative-performance-contract";
 import type {
   DashboardPostClickFieldId,
   DashboardPromopagesFieldId,
@@ -131,6 +132,10 @@ export function normalizeDashboardSectionFieldOverrides(
       : {};
 
   return {
+    creative_performance: {
+      visible_fields: creativeFields(input.creative_performance && typeof input.creative_performance === 'object'
+        ? (input.creative_performance as Record<string, unknown>).visible_fields : undefined, true),
+    },
     trend_chart: {
       visible_metrics: normalizeTrendFields(
         input.trend_chart && typeof input.trend_chart === "object"
