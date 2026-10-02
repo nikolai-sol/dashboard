@@ -39,6 +39,7 @@ import { zarukuTimeOwner } from "@/components/zaruku-seo-week-selection";
 import type { MultibrandBrandSummary } from "@/components/MultibrandExecutivePage";
 import { getDashboardI18n } from "@/lib/dashboard-i18n";
 import type { DashboardData } from "@/lib/types";
+import { filterCreativeRows } from "@/lib/creative-performance-aggregation";
 import { resolvePlatformIdFromSourceKey } from "@/lib/source-mapping";
 import {
   ABBOTT_NO_COMPLETED_DAYS,
@@ -1486,7 +1487,7 @@ function CombinedDashboardByIdPage() {
     }
 
     if (sectionId === "creative_performance") {
-      return dashboard?.creative_performance ? <CreativePerformanceTable key={sectionId} data={{...dashboard.creative_performance, rows: dashboard.creative_performance.rows.filter(row => filteredPlanVsFact.some(item => item.channel === row.channel))}} locale={locale} currency={currencyCode} showSpend={showSpend} /> : null;
+      return dashboard?.creative_performance ? <CreativePerformanceTable key={sectionId} data={{...dashboard.creative_performance, rows: filterCreativeRows(dashboard.creative_performance.rows, effectiveFilterMode === "channel" ? selectedChannels : filteredPlanVsFact.map(item => item.channel), effectiveFilterMode === "platform" ? selectedPlatforms : undefined)}} locale={locale} currency={currencyCode} showSpend={showSpend} /> : null;
     }
 
     if (sectionId === "postclick_analytics") {

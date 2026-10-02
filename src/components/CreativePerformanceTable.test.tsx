@@ -13,8 +13,13 @@ test('cost visibility is preserved and mapping save is disabled before successfu
  const admin=renderToStaticMarkup(<Mapping dashboardId="987"/>);assert.match(admin,/<button disabled=""[^>]*>Save mappings<\/button>/);
 });
 test('platform-only table contains no new UTM prompt or Metrica column',()=>{const html=renderToStaticMarkup(<Table data={{rows:[{...row,availability:'Platform creative data'}],has_mappings:false}}/>);assert.doesNotMatch(html,/UTM|Metrica|>Visits</);assert.match(html,/Banner 160x600/);});
-test('three selected creative columns hide identity display without merging rows or showing cost notes',()=>{
+test('three selected creative columns group by size without exposing identities or cost notes',()=>{
  const html=renderToStaticMarkup(<Table data={{rows:[{...row,ctr:null},{...row,platform_campaign_id:'other',ctr:null}],has_mappings:false,selected_columns:['size','impressions','ctr']}}/>);
  assert.deepEqual([...html.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(m=>m[1]),['Size','Impressions','CTR %']);
- assert.equal((html.match(/<td\b/g)||[]).length,6);assert.doesNotMatch(html,/Banner 160x600|Source \/ account|Creative ID|Platform spend|currency not verified/);assert.equal((html.match(/>10<\/td>/g)||[]).length,2);
+ assert.equal((html.match(/<td\b/g)||[]).length,3);assert.doesNotMatch(html,/Banner 160x600|Source \/ account|Creative ID|Platform spend|currency not verified/);assert.equal((html.match(/>10<\/td>/g)||[]).length,1);assert.match(html,/>200<\/td>/);
+});
+
+test('metrics-only table has one row and disables description search',()=>{
+ const html=renderToStaticMarkup(<Table data={{rows:[row,{...row,size:'728 × 90'}],has_mappings:false,selected_columns:['impressions','ctr']}}/>);
+ assert.equal((html.match(/<td\b/g)||[]).length,2);assert.match(html,/disabled=""/);assert.match(html,/No descriptive columns to search/);assert.match(html,/>200<\/td>/);
 });

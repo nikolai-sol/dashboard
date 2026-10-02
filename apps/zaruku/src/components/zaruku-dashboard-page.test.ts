@@ -63,8 +63,8 @@ test("the isolated route directly exports the page and the combined adapter disp
   const legacy = functionSource(combined, "CombinedDashboardByIdPage");
   const body = legacy.slice(legacy.indexOf("() ") + 3) + "\n";
   assert.equal(createHash("sha256").update(body).digest("hex"),
-    // Includes reviewed Media post-click KPI authority and configured creative-table rendering; all other compatibility branches stay frozen.
-    "652665a1d92a36bd35045c35686b187816d3997dfef4c695b1a6073f67f1f8e2",
+    // Includes reviewed Media post-click KPI authority and configured creative-table rendering/source filtering; all other compatibility branches stay frozen.
+    "153d8001369749a23cb0899c65cd25c2c34c97e28b1070f0c932db64762b8016",
     "The existing Abbott, advertising, and numeric/type-driven compatibility behavior must stay unchanged");
 });
 
