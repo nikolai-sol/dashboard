@@ -1,4 +1,5 @@
 import { loadCreativePerformance } from './creative-performance';
+import { selectCreativePreviewRows } from './creative-preview-plus';
 import { isMediaCreativeDashboard } from './creative-performance-contract';
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
@@ -868,9 +869,9 @@ function getSectionOrder(
   showSpend: boolean,
 ): DashboardSectionId[] {
   if (Array.isArray(config.section_order)) {
-    return resolveCreativeSectionOrder(sanitizeDashboardSectionOrder(config.section_order, type, showSpend, false), type, config.show_creative_performance);
+    return resolveCreativeSectionOrder(sanitizeDashboardSectionOrder(config.section_order, type, showSpend, false), type, config.show_creative_performance, config.show_creative_performance_plus);
   }
-  return resolveCreativeSectionOrder(sanitizeDashboardSectionOrder(config.section_order, type, showSpend, true), type, config.show_creative_performance);
+  return resolveCreativeSectionOrder(sanitizeDashboardSectionOrder(config.section_order, type, showSpend, true), type, config.show_creative_performance, config.show_creative_performance_plus);
 }
 
 function withOptionalSection(
@@ -3547,7 +3548,7 @@ export async function loadDashboardData(
       metrikaSettings.selected_goal_ids,
       metrikaSettings.goal_mode,
     );
-    const creativePerformance = isMediaCreativeDashboard(dashboardType) && config.show_creative_performance !== false ? await loadCreativePerformance(dashboard.id, range.from > String(config.period_from ?? range.from) ? range.from : String(config.period_from ?? range.from), range.to < String(config.period_to ?? range.to) ? range.to : String(config.period_to ?? range.to), [], planByChannel.map(row => ({line_key: row.line_key || row.channel, channel: row.channel})), [], {platformOnly: true}) : undefined;
+    const creativePerformance = isMediaCreativeDashboard(dashboardType) && (config.show_creative_performance !== false || config.show_creative_performance_plus === true) ? await loadCreativePerformance(dashboard.id, range.from > String(config.period_from ?? range.from) ? range.from : String(config.period_from ?? range.from), range.to < String(config.period_to ?? range.to) ? range.to : String(config.period_to ?? range.to), [], planByChannel.map(row => ({line_key: row.line_key || row.channel, channel: row.channel})), [], {platformOnly: true}) : undefined;
     let sectionOrder = getSectionOrder(config, dashboardType, showSpend);
     if (postclickAnalytics && postclickAnalytics.rows.length > 0) {
       sectionOrder = withOptionalSection(sectionOrder, "postclick_analytics", "plan_vs_fact");
@@ -3703,7 +3704,8 @@ export async function loadDashboardData(
             }
           : undefined,
       traffic_sources: trafficSources.length > 0 ? trafficSources : undefined,
-      creative_performance: creativePerformance ? { ...creativePerformance, selected_columns: sectionFieldOverrides.creative_performance?.visible_fields } : undefined,
+      creative_performance: creativePerformance && config.show_creative_performance !== false ? { ...creativePerformance, selected_columns: sectionFieldOverrides.creative_performance?.visible_fields } : undefined,
+      creative_performance_plus: creativePerformance && config.show_creative_performance_plus === true ? { rows: selectCreativePreviewRows(creativePerformance.rows, config.creative_preview_links), has_mappings: false, selected_columns: sectionFieldOverrides.creative_performance_plus?.visible_fields } : undefined,
       postclick_analytics: postclickAnalytics
         ? {
             ...postclickAnalytics,

@@ -1,5 +1,6 @@
 "use client";
 
+import { CREATIVE_PLUS_FIELDS } from "@/lib/creative-preview-plus";
 import { DEFAULT_CREATIVE_FIELDS, creativeFieldLabel, isMediaCreativeDashboard } from "@/lib/creative-performance-contract";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type {
@@ -45,6 +46,7 @@ const SECTION_OPTIONS: Array<{ id: DashboardSectionId; label: string; spendRelat
   { id: "traffic_sources", label: "Traffic sources" },
   { id: "postclick_analytics", label: "Post-click analytics" },
   { id: "creative_performance", label: "Creative performance / Креативы" },
+  { id: "creative_performance_plus", label: "Эффективность креативов +" },
   { id: "promopages", label: "Promopages" },
   { id: "conversion_funnel", label: "Conversion funnel", performanceOnly: true },
   { id: "campaign_table", label: "Campaign performance", spendRelated: true, performanceOnly: true },
@@ -195,11 +197,11 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
   const sectionFieldOverrides = normalizeDashboardSectionFieldOverrides(config.section_field_overrides);
   const metricPool = sanitizeMetricPool(showSpend);
   const kpiCards = sanitizeCards(config.kpi_cards ?? [], showSpend);
-  const sectionOrder = resolveCreativeSectionOrder(sanitizeSectionOrder(config.section_order, data.dashboard_type, showSpend, false), data.dashboard_type, config.show_creative_performance);
+  const sectionOrder = resolveCreativeSectionOrder(sanitizeSectionOrder(config.section_order, data.dashboard_type, showSpend, false), data.dashboard_type, config.show_creative_performance, config.show_creative_performance_plus);
   const customKpiCards = sanitizeCustomKpiCards(config.custom_kpi_cards, showSpend);
   const visibleSectionOptions = SECTION_OPTIONS.filter(
     (section) =>
-      (section.id !== "creative_performance" || ["awareness", "performance", "overview", "multibrand"].includes(data.dashboard_type)) &&
+      (!["creative_performance", "creative_performance_plus"].includes(section.id) || ["awareness", "performance", "overview", "multibrand"].includes(data.dashboard_type)) &&
       (data.dashboard_type === "performance" || !section.performanceOnly) &&
       (showSpend || !section.spendRelated),
   );
@@ -253,7 +255,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
     const next = checked
       ? sanitizeSectionOrder([...sectionOrder, sectionId], data.dashboard_type, showSpend, false)
       : sanitizeSectionOrder(sectionOrder.filter((item) => item !== sectionId), data.dashboard_type, showSpend, false);
-    patchConfig({ section_order: next, ...(sectionId === "creative_performance" ? { show_creative_performance: checked } : {}) });
+    patchConfig({ section_order: next, ...(sectionId === "creative_performance" ? { show_creative_performance: checked } : {}), ...(sectionId === "creative_performance_plus" ? { show_creative_performance_plus: checked } : {}) });
   };
 
   const moveSection = (sectionId: DashboardSectionId, direction: -1 | 1) => {
@@ -562,6 +564,21 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
                 return <label key={`creative-${field}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
                   <input type="checkbox" checked={current.includes(field)} onChange={e => patchSectionFieldOverrides({creative_performance: {visible_fields: e.target.checked ? [...current, field] : current.filter(f => f !== field)}})} />
                   {creativeFieldLabel(field)}
+                </label>;
+              })}
+            </div>
+            {!showSpend && <p className="mt-2 text-xs text-slate-500">Cost columns remain hidden while Show spend is off.</p>}
+          </div>}
+
+          {isMediaCreativeDashboard(data.dashboard_type) && <div className="rounded-lg border border-slate-200 p-4">
+            <h5 className="text-sm font-semibold text-slate-900">Эффективность креативов + — колонки</h5>
+            <p className="mt-1 text-xs text-slate-500">Только привязанные креативы с импортированными ссылками на превью.</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {CREATIVE_PLUS_FIELDS.map(field => {
+                const current = sectionFieldOverrides.creative_performance_plus?.visible_fields ?? [];
+                return <label key={`creative-plus-${field}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={current.includes(field)} onChange={e => patchSectionFieldOverrides({creative_performance_plus: {visible_fields: e.target.checked ? [...current, field] : current.filter(f => f !== field)}})} />
+                  {creativeFieldLabel(field, true)}
                 </label>;
               })}
             </div>

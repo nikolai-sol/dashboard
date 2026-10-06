@@ -1,3 +1,4 @@
+import { creativePlusExcelColumns, creativePlusFields } from "@/lib/creative-preview-plus";
 import { groupCreativeRows, filterCreativeRows } from "@/lib/creative-performance-aggregation";
 import { creativeExcelColumns, creativeFields } from "@/lib/creative-performance-contract";
 import { NextResponse } from "next/server";
@@ -909,19 +910,31 @@ export async function GET(
       autoFit(ws);
     }
 
-    if (worksheetHasSection(data, "creative_performance") && data.creative_performance) {
-      const ws = workbook.addWorksheet(truncateSheetName("Creative performance", usedSheetNames));
-      const mapped = data.creative_performance.has_mappings;
-      const columns = creativeExcelColumns(data.creative_performance.selected_columns, data.dashboard.show_spend);
-      const hasCost = creativeFields(data.creative_performance.selected_columns, data.dashboard.show_spend).some(field => field === 'spend' || field === 'cpc');
+    for (const sectionId of ["creative_performance", "creative_performance_plus"] as const) {
+      const creativeData = data[sectionId];
+      if (!worksheetHasSection(data, sectionId) || !creativeData) continue;
+      const plus = sectionId === "creative_performance_plus";
+      const ws = workbook.addWorksheet(truncateSheetName(plus ? "Эффективность креативов +" : "Creative performance", usedSheetNames));
+      const mapped = creativeData.has_mappings;
+      const columns = plus ? creativePlusExcelColumns(creativeData.selected_columns, data.dashboard.show_spend) : creativeExcelColumns(creativeData.selected_columns, data.dashboard.show_spend);
+      const fields = plus ? creativePlusFields(creativeData.selected_columns, data.dashboard.show_spend) : creativeFields(creativeData.selected_columns, data.dashboard.show_spend);
+      const hasCost = fields.some(field => field === 'spend' || field === 'cpc');
       ws.addRow([...columns.map(column => column.label), ...(mapped ? ["Visits", "Users (non-additive)", "Pageviews", "Page depth", "Goals", "CR %", "Bounce %", "Duration (s)", "Availability"] : [])]);
       styleHeaderRow(ws.getRow(1));
-      const creativeRows = groupCreativeRows(filterCreativeRows(data.creative_performance.rows, data.plan_vs_fact.map(row => row.channel)), creativeFields(data.creative_performance.selected_columns, data.dashboard.show_spend));
+      const creativeRows = groupCreativeRows(filterCreativeRows(creativeData.rows, data.plan_vs_fact.map(row => row.channel)), fields);
       for (const r of creativeRows) {
-        ws.addRow([...columns.map(column => column.value(r)), ...(mapped?[r.postclick?.visits??null,r.postclick?.users??null,r.postclick?.pageviews??null,r.postclick?.page_depth??null,r.postclick?.goal_reaches??null,r.postclick?.conversion_rate??null,r.postclick?.bounce_rate??null,r.postclick?.avg_visit_duration??null,r.availability]:[])]);
+        const excelRow = ws.addRow([...columns.map(column => column.value(r)), ...(mapped?[r.postclick?.visits??null,r.postclick?.users??null,r.postclick?.pageviews??null,r.postclick?.page_depth??null,r.postclick?.goal_reaches??null,r.postclick?.conversion_rate??null,r.postclick?.bounce_rate??null,r.postclick?.avg_visit_duration??null,r.availability]:[])]);
+        if (plus) {
+          const previewIndex = columns.findIndex(column => column.label === 'Preview');
+          if (previewIndex >= 0) {
+            const cell = excelRow.getCell(previewIndex + 1);
+            cell.alignment = {wrapText: true, vertical: 'top'};
+            if (r.preview_urls?.length === 1) cell.value = {text: r.preview_urls[0], hyperlink: r.preview_urls[0]};
+          }
+        }
       }
       if (hasCost) ws.addRow(["Platform-reported units; currency not verified." + (creativeRows.some(row => row.mixed_cost_basis) ? " Spend and CPC are unavailable for groups combining accounts with unverified units." : "")]);
-      if(mapped) ws.addRow([`Metrica: last attribution; completed days through ${data.creative_performance.analytics_through ?? "unavailable"} (UTC)`]);
+      if(mapped) ws.addRow([`Metrica: last attribution; completed days through ${creativeData.analytics_through ?? "unavailable"} (UTC)`]);
       autoFit(ws);
     }
 

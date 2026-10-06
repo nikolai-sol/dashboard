@@ -29,6 +29,7 @@ export function groupCreativeRows(rows: readonly CreativeRow[], fields: readonly
         }
         const row = existing.row;
         row.member_count++;
+        if (row.preview_urls || input.preview_urls) row.preview_urls = [...new Set([...(row.preview_urls ?? []), ...(input.preview_urls ?? [])])];
         row.impressions = sumComplete(row.impressions, input.impressions);
         row.clicks = sumComplete(row.clicks, input.clicks);
         row.mixed_cost_basis ||= existing.costBasis !== costBasis;

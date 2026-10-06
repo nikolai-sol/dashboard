@@ -23,3 +23,10 @@ test('metrics-only table has one row and disables description search',()=>{
  const html=renderToStaticMarkup(<Table data={{rows:[row,{...row,size:'728 × 90'}],has_mappings:false,selected_columns:['impressions','ctr']}}/>);
  assert.equal((html.match(/<td\b/g)||[]).length,2);assert.match(html,/disabled=""/);assert.match(html,/No descriptive columns to search/);assert.match(html,/>200<\/td>/);
 });
+
+test('Plus is separate and renders all grouped previews as safe clickable links',()=>{
+ const first='https://px.adhigh.net/creative_preview?c=1';const second='https://px.adhigh.net/creative_preview?c=2';
+ const html=renderToStaticMarkup(<Table variant="plus" data={{rows:[{...row,availability:'Platform creative data',preview_urls:[first]},{...row,availability:'Platform creative data',platform_creative_id:'y',preview_urls:[second]}],has_mappings:false,selected_columns:['size','impressions','ctr','preview']}}/>);
+ assert.match(html,/Эффективность креативов \+/);assert.match(html,/<details/);assert.match(html,/href="https:\/\/px.adhigh.net\/creative_preview\?c=1"/);assert.match(html,/href="https:\/\/px.adhigh.net\/creative_preview\?c=2"/);
+ assert.equal((html.match(/<td\b/g)||[]).length,4);assert.match(html,/>200<\/td>/);assert.doesNotMatch(html,/UTM|Metrica/);
+});

@@ -11,6 +11,7 @@ export type DashboardSectionId =
   | "traffic_sources"
   | "postclick_analytics"
   | "creative_performance"
+  | "creative_performance_plus"
   | "conversion_funnel"
   | "campaign_table"
   | "scatter_plot"
@@ -115,6 +116,7 @@ export type DashboardPromopagesFieldId =
 
 export type DashboardSectionFieldOverridesForm = {
   creative_performance?: { visible_fields: CreativeFieldId[] };
+  creative_performance_plus?: { visible_fields: CreativeFieldId[] };
   trend_chart?: {
     visible_metrics: string[];
   };
@@ -171,6 +173,7 @@ export type DashboardFormData = {
     section_order?: DashboardSectionId[];
     show_spend: boolean;
     show_creative_performance?: boolean;
+    show_creative_performance_plus?: boolean;
     show_ai_summary: boolean;
     kpi_cards: string[];
     custom_kpi_cards?: CustomKpiCardForm[];

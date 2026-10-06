@@ -16,6 +16,7 @@ export type DashboardSectionId =
   | "traffic_sources"
   | "postclick_analytics"
   | "creative_performance"
+  | "creative_performance_plus"
   | "conversion_funnel"
   | "campaign_table"
   | "scatter_plot"
@@ -1572,6 +1573,7 @@ export interface DashboardAiSummary {
 
 export interface DashboardData {
   creative_performance?: CreativePerformance;
+  creative_performance_plus?: CreativePerformance;
   dashboard: DashboardMeta;
   kpi_config: string[];
   visible_metrics?: string[];

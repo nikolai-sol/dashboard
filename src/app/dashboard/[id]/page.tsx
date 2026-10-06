@@ -1486,6 +1486,9 @@ function CombinedDashboardByIdPage() {
       );
     }
 
+    if (sectionId === "creative_performance_plus") {
+      return dashboard?.creative_performance_plus ? <CreativePerformanceTable key={sectionId} variant="plus" data={{...dashboard.creative_performance_plus, rows: filterCreativeRows(dashboard.creative_performance_plus.rows, effectiveFilterMode === "channel" ? selectedChannels : filteredPlanVsFact.map(item => item.channel), effectiveFilterMode === "platform" ? selectedPlatforms : undefined)}} locale={locale} currency={currencyCode} showSpend={showSpend} /> : null;
+    }
     if (sectionId === "creative_performance") {
       return dashboard?.creative_performance ? <CreativePerformanceTable key={sectionId} data={{...dashboard.creative_performance, rows: filterCreativeRows(dashboard.creative_performance.rows, effectiveFilterMode === "channel" ? selectedChannels : filteredPlanVsFact.map(item => item.channel), effectiveFilterMode === "platform" ? selectedPlatforms : undefined)}} locale={locale} currency={currencyCode} showSpend={showSpend} /> : null;
     }

@@ -14,6 +14,7 @@ export interface CreativeMapping extends CreativeTarget {
     tuples: UtmTuple[];
 }
 export interface CreativeRow extends CreativeTarget {
+    preview_urls?: string[];
     channel: string;
     name: string;
     size: string;
@@ -91,7 +92,7 @@ export function isMediaCreativeDashboard(type: string): boolean { return ['aware
 
 /** The dedicated editor owns this namespace; a stale generic wizard cannot replace it. */
 export function preserveCreativeMappingNamespace(config:Record<string,unknown>,existing:Record<string,unknown>):void {
- for(const key of ["creative_utm_bindings","creative_analytics"]) {
+ for(const key of ["creative_utm_bindings","creative_analytics","creative_preview_links"]) {
   delete config[key];
   if(existing[key]!==undefined)config[key]=existing[key];
  }
@@ -106,17 +107,19 @@ export function creativeAnalyticsThrough(requestedTo:string,now:Date=new Date())
 }
 
 export const DEFAULT_CREATIVE_FIELDS = ['source_account', 'campaign_id', 'creative_id', 'name', 'size', 'impressions', 'clicks', 'spend', 'ctr', 'cpc'] as const;
-export type CreativeFieldId = (typeof DEFAULT_CREATIVE_FIELDS)[number];
+export type CreativeFieldId = (typeof DEFAULT_CREATIVE_FIELDS)[number] | "preview";
 export function creativeFields(value: unknown, showSpend: boolean): CreativeFieldId[] {
     const valid = new Set<string>(DEFAULT_CREATIVE_FIELDS);
     const fields = Array.isArray(value) ? [...new Set(value.filter((v): v is CreativeFieldId => typeof v === 'string' && valid.has(v)))] : [];
     return (fields.length ? fields : [...DEFAULT_CREATIVE_FIELDS]).filter(f => showSpend || !['spend', 'cpc'].includes(f));
 }
 export function creativeFieldLabel(field: CreativeFieldId, ru = false): string {
+    if (field === "preview") return ru ? "Превью" : "Preview";
     const labels = ru ? ['Источник / кабинет', 'Кампания', 'ID креатива', 'Креатив', 'Размер', 'Показы', 'Клики', 'Расход платформы', 'CTR %', 'CPC'] : ['Source / account', 'Campaign', 'Creative ID', 'Creative name', 'Size', 'Impressions', 'Clicks', 'Platform spend', 'CTR %', 'CPC'];
-    return labels[DEFAULT_CREATIVE_FIELDS.indexOf(field)];
+    return labels[DEFAULT_CREATIVE_FIELDS.indexOf(field as (typeof DEFAULT_CREATIVE_FIELDS)[number])];
 }
 export function creativeFieldValue(row: CreativeRow, field: CreativeFieldId): string | number | null {
+    if (field === 'preview') return row.preview_urls?.join('\n') ?? '';
     if (field === 'source_account') return `${row.source_key} / ${row.platform_account_id}`;
     if (field === 'campaign_id') return row.platform_campaign_id;
     if (field === 'creative_id') return row.platform_creative_id;

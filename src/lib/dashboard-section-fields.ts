@@ -1,3 +1,4 @@
+import { creativePlusFields } from "./creative-preview-plus";
 import { creativeFields } from "./creative-performance-contract";
 import type {
   DashboardPostClickFieldId,
@@ -132,6 +133,10 @@ export function normalizeDashboardSectionFieldOverrides(
       : {};
 
   return {
+    creative_performance_plus: {
+      visible_fields: creativePlusFields(input.creative_performance_plus && typeof input.creative_performance_plus === 'object'
+        ? (input.creative_performance_plus as Record<string, unknown>).visible_fields : undefined, true),
+    },
     creative_performance: {
       visible_fields: creativeFields(input.creative_performance && typeof input.creative_performance === 'object'
         ? (input.creative_performance as Record<string, unknown>).visible_fields : undefined, true),

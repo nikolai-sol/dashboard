@@ -381,6 +381,7 @@ export default function DashboardWizard({ dashboardId }: DashboardWizardProps) {
                 ),
             show_spend: Boolean(config.show_spend ?? true),
             show_creative_performance: config.show_creative_performance !== false,
+            show_creative_performance_plus: config.show_creative_performance_plus === true,
             show_ai_summary: Boolean(config.show_ai_summary ?? false),
             kpi_cards: Array.isArray(config.kpi_cards)
               ? config.kpi_cards.map((item) => String(item)).slice(0, 5)

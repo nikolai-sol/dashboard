@@ -51,3 +51,18 @@ test('creative column preset and checkbox selection survive API normalization an
  data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
  assert.deepEqual(data.config.section_field_overrides?.creative_performance?.visible_fields,['size','impressions','ctr','clicks']);
 });
+
+test('Plus toggle and preview columns persist separately from original table',()=>{
+ let data=fixture();const render=()=>Step({data,onChange:next=>{data=next;}});
+ const label=()=>elements(render()).find(e=>e.type==='label'&&Children.toArray(e.props.children).includes('Эффективность креативов +'));
+ assert.ok(label());const toggle=()=>elements(label()!.props.children).find(e=>e.type==='input')!;
+ assert.equal(toggle().props.checked,false);toggle().props.onChange!({target:{checked:true}});
+ data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
+ assert.equal(data.config.show_creative_performance_plus,true);assert.equal(toggle().props.checked,true);
+ assert.ok(data.config.section_order?.includes('creative_performance_plus'));assert.equal(creativeControl(render()).props.checked,true);
+ const panel=elements(render()).find(e=>e.type==='div'&&elements(e.props.children).some(c=>c.type==='h5'&&Children.toArray(c.props.children).includes('Эффективность креативов + — колонки'))&&elements(e.props.children).filter(c=>c.type==='input').length===11);
+ assert.ok(panel);const inputs=elements(panel.props.children).filter(e=>e.type==='input');assert.equal(inputs[10].props.checked,true);inputs[10].props.onChange!({target:{checked:false}});
+ data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
+ assert.ok(!data.config.section_field_overrides?.creative_performance_plus?.visible_fields.includes('preview'));
+ assert.ok(!data.config.section_field_overrides?.creative_performance?.visible_fields.includes('preview'));
+});

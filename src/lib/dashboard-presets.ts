@@ -105,7 +105,7 @@ export function sanitizeSectionOrder(
   fillDefaults = true,
 ): DashboardSectionId[] {
   const defaults = getDefaultSectionOrder(type, showSpend);
-  const allowed = [...defaults, ...(isMediaCreativeDashboard(type) ? ["creative_performance" as const] : []), ...OPTIONAL_SECTIONS.filter((item) => showSpend || !SPEND_RELATED_SECTIONS.has(item))];
+  const allowed = [...defaults, ...(isMediaCreativeDashboard(type) ? ["creative_performance" as const, "creative_performance_plus" as const] : []), ...OPTIONAL_SECTIONS.filter((item) => showSpend || !SPEND_RELATED_SECTIONS.has(item))];
   if (!Array.isArray(raw)) {
     return defaults;
   }
@@ -119,8 +119,16 @@ export function sanitizeSectionOrder(
 // Old configs predate this section and already displayed the table unconditionally.
 // Only an explicit saved false hides it; existing order and other hidden sections stay intact.
 export function resolveCreativeSectionOrder(
-  order: DashboardSectionId[], type: DashboardKind, enabled: unknown,
+  order: DashboardSectionId[], type: DashboardKind, enabled: unknown, plusEnabled?: unknown,
 ): DashboardSectionId[] {
-  if (!isMediaCreativeDashboard(type) || enabled === false) return order.filter(id => id !== "creative_performance");
-  return order.includes("creative_performance") ? order : [...order, "creative_performance"];
+  let result = !isMediaCreativeDashboard(type) || enabled === false
+    ? order.filter(id => id !== "creative_performance")
+    : order.includes("creative_performance") ? order : [...order, "creative_performance" as const];
+  if (!isMediaCreativeDashboard(type) || plusEnabled !== true) return result.filter(id => id !== "creative_performance_plus");
+  if (!result.includes("creative_performance_plus")) {
+    result = [...result];
+    const index = result.indexOf("creative_performance");
+    result.splice(index < 0 ? result.length : index + 1, 0, "creative_performance_plus");
+  }
+  return result;
 }
