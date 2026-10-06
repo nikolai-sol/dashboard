@@ -1,0 +1,19 @@
+{
+  "mode": "dry_run",
+  "dashboardId": 1,
+  "snapshotId": "audit-20261006",
+  "label": "Проверка источников 05–06.10.2026",
+  "checkedAt": "2026-10-06",
+  "regions": 85,
+  "sources": 230,
+  "registerSha256": "20287dad3c11cb1201b267ced2f905445a2c99e155a9becb91c011b65c4a352a",
+  "sourcesSha256": "203c85aee73f8a71da64739de975075af832f3981d5122f7afeff809778257a1",
+  "inputSha256": "bd5559d8a947fb381aa7b0aa0a80db70a55d778e1b9a97e81c600013440880d1",
+  "metrics": {
+    "cases": 58,
+    "casesPrior": 12,
+    "reportedWow": 37,
+    "calculatedWow": 6
+  },
+  "campaignUnknown": 85
+}
