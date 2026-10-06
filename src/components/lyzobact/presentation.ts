@@ -1,6 +1,6 @@
 export type SignalState='unknown'|'growth'|'decline'|'stable';
-export function signalState(row:{reportedWowPct:number|null;calculatedWowPct:number|null;isHistorical:boolean}):SignalState {
- if(row.isHistorical)return 'unknown';
+export function signalState(row:{reportedWowPct:number|null;calculatedWowPct:number|null;isHistorical:boolean;isAutumn2026:boolean;sourceQualityKind:string}):SignalState {
+ if(row.isHistorical||!row.isAutumn2026||!['primary_autumn','secondary_autumn'].includes(row.sourceQualityKind))return 'unknown';
  const n=row.reportedWowPct??row.calculatedWowPct;
  return n===null||!Number.isFinite(n)?'unknown':n>0?'growth':n<0?'decline':'stable';
 }
