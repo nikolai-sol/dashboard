@@ -1,0 +1,6 @@
+import assert from 'node:assert/strict';import test from 'node:test';import{geoArea}from'd3-geo';import{projectionGeometry}from'./map-geometry';
+test('RFC7946 ring orientation does not render the world instead of a region',()=>{const source={type:'FeatureCollection' as const,features:[{type:'Feature' as const,properties:{regionKey:'test'},geometry:{type:'Polygon' as const,coordinates:[[[30,50],[31,50],[31,51],[30,51],[30,50]]]}}]};const out=projectionGeometry(source);assert.ok(geoArea(out.features[0])<0.1);assert.deepEqual(source.features[0].geometry.coordinates[0][1],[31,50]);});
+import fs from 'node:fs';
+import {REGIONAL_CANONICAL_KEYS}from'@/lib/lyzobact-regions-import';
+import type{RegionalGeometry}from'./RegionalMap';
+test('display geometry covers the exact agreed85 regions with finite local spherical areas',()=>{const source=JSON.parse(fs.readFileSync('public/lyzobact/regions.geojson','utf8'))as RegionalGeometry;assert.deepEqual(source.features.map(f=>f.properties.regionKey).sort(),[...REGIONAL_CANONICAL_KEYS].sort());const projected=projectionGeometry(source);for(const f of projected.features){const area=geoArea(f);assert.ok(area>0&&area<Math.PI,`${f.properties.regionKey}: invalid area ${area}`);}});

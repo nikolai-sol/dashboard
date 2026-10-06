@@ -2,6 +2,7 @@
 
 import CreativePerformanceTable from '@/components/CreativePerformanceTable';
 import type { CSSProperties } from "react";
+import RegionalModuleLink from "@/components/lyzobact/RegionalModuleLink";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -2279,6 +2280,7 @@ function CombinedDashboardByIdPage() {
         />
       ) : null}
 
+      {!isPdfMode && <RegionalModuleLink dashboardId={String(dashboardId)} accessToken={viewerAccessToken} />}
       {sectionOrder.map((sectionId) => renderSection(sectionId))}
 
       {dashboard?.custom_tables?.map((table, i) => (

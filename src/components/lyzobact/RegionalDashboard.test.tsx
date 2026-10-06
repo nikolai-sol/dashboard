@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {renderToStaticMarkup} from 'react-dom/server';
+import {createElement} from 'react';
+import RegionalDashboard from './RegionalDashboard';
+import type {RegionalModuleData,RegionalRow} from '@/lib/lyzobact-regions-types';
+const row={regionKey:'test',name:'Тестовый регион',period:'39 неделя 2026',publicationDate:'2026-09-29',checkedAt:'2026-10-06',cases:42,casesPrior:null,reportedWowPct:null,calculatedWowPct:null,comparisonBasis:'Сравнение не опубликовано',sourceUrl:'https://example.test/report',alternateSourceUrl:null,sourceQuality:'Первичный текст',sourceQualityKind:'primary_autumn',isHistorical:false,isAutumn2026:true,geography:'Регион',organization:'Источник',notes:'Проверить полноту',available:'42 случая',status:'Есть отчёт',cadence:'Не установлена',format:'HTML',restriction:'Не установлено',campaignStatus:'unknown',campaignStatusAt:null,wordstatWowPct:null,temperatureC:null} satisfies RegionalRow;
+const data={dashboardId:1,status:'ready',snapshots:[{id:'audit',label:'Проверка источников 05–06.10.2026',checkedAt:'2026-10-06'}],selectedSnapshotId:'audit',rows:[row],sourcePages:[]} satisfies RegionalModuleData;
+test('audited data UI preserves period/source and explicit unavailable inputs',()=>{const html=renderToStaticMarkup(createElement(RegionalDashboard,{data,onSnapshotChange:()=>{},initialGeometry:{type:'FeatureCollection',features:[]}}));assert.match(html,/39 неделя 2026/);assert.match(html,/https:\/\/example.test\/report/);assert.match(html,/Данные не загружены/);assert.match(html,/Не установлен/);assert.match(html,/Периоды различаются/);assert.match(html,/Без автоматического запуска РК/);assert.doesNotMatch(html,/0%/);});
+test('no imported snapshot is explicit rather than a zero epidemic report',()=>{const html=renderToStaticMarkup(createElement(RegionalDashboard,{data:{...data,status:'not_imported',rows:[]},onSnapshotChange:()=>{}}));assert.match(html,/Проверенный снимок ещё не импортирован/);});
