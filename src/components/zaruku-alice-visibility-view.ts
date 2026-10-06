@@ -50,6 +50,12 @@ export function selectAliceSnapshot(
   return [...snapshots].sort((left, right) => right.month.localeCompare(left.month))[0] ?? null;
 }
 
+export function selectLatestAliceDetailSnapshot(
+  snapshots: ZarukuAliceVisibilitySnapshot[],
+): ZarukuAliceVisibilitySnapshot | null {
+  return selectAliceSnapshot(snapshots.filter((snapshot) => snapshot.queries.length > 0), null);
+}
+
 function aliceMonthOrdinal(month: string): number | null {
   const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
   if (!match) return null;

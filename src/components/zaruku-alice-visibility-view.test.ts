@@ -9,6 +9,7 @@ import {
   formatAliceMonthLabel,
   paginateAliceQueries,
   selectAliceSnapshot,
+  selectLatestAliceDetailSnapshot,
 } from "@/components/zaruku-alice-visibility-view";
 
 const query = (queryText: string, portalPresent: boolean): ZarukuAliceVisibilityQuery => ({
@@ -86,6 +87,27 @@ test("month selection falls back to the newest available snapshot", () => {
   const august = snapshot("2026-08", rows);
   assert.equal(selectAliceSnapshot([july, august], "2026-06"), august);
   assert.equal(selectAliceSnapshot([july, august], "2026-07"), july);
+});
+
+test("latest detail preserves August beneath a September summary without changing input order", () => {
+  const july = snapshot("2026-07");
+  const august = snapshot("2026-08", rows);
+  const september = snapshot("2026-09");
+  const snapshots = [august, september, july];
+  assert.equal(selectLatestAliceDetailSnapshot(snapshots), august);
+  assert.equal(selectAliceSnapshot(snapshots, null), september);
+  assert.deepEqual(snapshots, [august, september, july]);
+});
+
+test("latest detail is absent when all snapshots are summaries or the list is empty", () => {
+  assert.equal(selectLatestAliceDetailSnapshot([snapshot("2026-07"), snapshot("2026-09")]), null);
+  assert.equal(selectLatestAliceDetailSnapshot([]), null);
+});
+
+test("a newer detailed October supersedes August detail", () => {
+  const august = snapshot("2026-08", rows);
+  const october = snapshot("2026-10", rows);
+  assert.equal(selectLatestAliceDetailSnapshot([august, october, snapshot("2026-09")]), october);
 });
 
 test("Alice history keeps published values in chronological order and inserts a null point for a missing month", () => {

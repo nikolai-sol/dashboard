@@ -123,6 +123,36 @@ test("July summary-only view keeps its official SoV and withholds query detail",
   assert.doesNotMatch(markup, /155/);
 });
 
+test("September summary retains August query and competitor panels with their own month label", () => {
+  const september = { ...julySnapshot, id: "september", month: "2026-09", officialSovPct: 46.8773 };
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, {
+    data: data([augustSnapshot, september, julySnapshot]), locale: "ru-RU",
+  }));
+
+  assert.match(markup, /сентябрь 2026 г\./);
+  assert.match(markup, /46,88%/);
+  assert.match(markup, /Детализация запросов за сентябрь 2026 г\. пока недоступна\./);
+  assert.match(markup, /Запросы и конкуренты: август 2026 г\./);
+  assert.match(markup, /инвалидность после мастэктомии/);
+  assert.match(markup, /Конкуренты в выгрузке/);
+  assert.match(markup, /onco-life\.ru/);
+  assert.doesNotMatch(markup, /Запросов в выгрузке/);
+  assert.doesNotMatch(markup, /57,42%/);
+});
+
+test("summary-only fallback keeps partial source warnings for older query detail", () => {
+  const september = { ...julySnapshot, id: "september", month: "2026-09", officialSovPct: 46.8773 };
+  const partialAugust = { ...augustSnapshot, competitors: [], featuredSites: [], queries: augustSnapshot.queries.map((query) => ({ ...query, sources: [] })) };
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, {
+    data: data([partialAugust, september], "partial"), locale: "ru-RU",
+  }));
+  assert.match(markup, /Запросы и конкуренты: август 2026 г\./);
+  assert.match(markup, /инвалидность после мастэктомии/);
+  assert.match(markup, /Источники временно недоступны/);
+  assert.match(markup, /Данные об источниках для конкурентов временно недоступны/);
+  assert.doesNotMatch(markup, /В выгрузке нет внешних источников для подсчёта/);
+});
+
 test("empty data explains what is needed for the first snapshot", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: data([]), locale: "ru-RU" }));
   assert.match(markup, /Пока нет опубликованных снимков ИИ-видимости/);

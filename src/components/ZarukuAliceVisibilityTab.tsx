@@ -11,6 +11,7 @@ import {
   monthlySovDelta,
   paginateAliceQueries,
   selectAliceSnapshot,
+  selectLatestAliceDetailSnapshot,
   type AlicePresenceFilter,
 } from "@/components/zaruku-alice-visibility-view";
 import { resolveSafeExternalUrl } from "@/components/zaruku-seo-analytics";
@@ -126,6 +127,7 @@ function CompetitorPanels({ snapshot, locale, detailsAvailable }: { snapshot: Za
 
 export default function ZarukuAliceVisibilityTab({ data, locale = "ru-RU" }: Props) {
   const snapshot = selectAliceSnapshot(data.snapshots, null);
+  const detailSnapshot = selectLatestAliceDetailSnapshot(data.snapshots);
   const detailState = aliceDetailState(snapshot);
   const chart = useMemo(() => buildAliceHistoryChart(data.snapshots), [data.snapshots]);
   const delta = monthlySovDelta(data.snapshots, snapshot?.month ?? null);
@@ -169,6 +171,10 @@ export default function ZarukuAliceVisibilityTab({ data, locale = "ru-RU" }: Pro
         {hasQueryDetail ? null : <p role="status" className="mt-4 text-sm text-slate-500">{detailMessage}</p>}
       </div>
     </section>
-    {hasQueryDetail ? <><QueryTable snapshot={snapshot} locale={locale} sourcesAvailable={sourceDetailsAvailable} /><CompetitorPanels snapshot={snapshot} locale={locale} detailsAvailable={sourceDetailsAvailable} /></> : null}
+    {detailSnapshot ? <>
+      {detailSnapshot.month !== snapshot.month ? <p className="text-sm text-slate-600">Запросы и конкуренты: {formatAliceMonthLabel(detailSnapshot.month, locale)}</p> : null}
+      <QueryTable key={detailSnapshot.id} snapshot={detailSnapshot} locale={locale} sourcesAvailable={sourceDetailsAvailable} />
+      <CompetitorPanels snapshot={detailSnapshot} locale={locale} detailsAvailable={sourceDetailsAvailable} />
+    </> : null}
   </div>;
 }
