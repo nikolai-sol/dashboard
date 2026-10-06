@@ -2,6 +2,97 @@ import { createHash } from 'node:crypto';
 import Papa from 'papaparse';
 import type { RegionalRow, RegionalSourcePage } from './lyzobact-regions-types';
 
+// Frozen 85-region scope from register-85.json (SHA256
+// 20287dad3c11cb1201b267ced2f905445a2c99e155a9becb91c011b65c4a352a).
+// This independent manifest is not derived from each imported file or map/network data.
+export const REGIONAL_CANONICAL_KEYS: readonly string[] = Object.freeze([
+  "Altai Krai",
+  "Amur",
+  "Arkhangelsk",
+  "Astrakhan Oblast",
+  "Belgorod",
+  "Bryansk",
+  "Vladimir",
+  "Volgograd Oblast",
+  "Vologda",
+  "Voronezh",
+  "Jewish Autonomous Oblast",
+  "Zabaykalsky",
+  "Ivanovo",
+  "Irkutsk",
+  "Kabardino-Balkaria",
+  "Kaliningrad",
+  "Kaluga",
+  "Kamchatka",
+  "Karachay-Cherkessia",
+  "Kemerovo",
+  "Kirov Oblast",
+  "Kostroma",
+  "Krasnodar Krai",
+  "Krasnoyarsk",
+  "Kurgan",
+  "Kursk",
+  "Leningrad Oblast",
+  "Lipetsk",
+  "Magadan",
+  "Moscow city",
+  "Moscow Oblast",
+  "Murmansk",
+  "Nenets AO",
+  "Nizhny Novgorod Oblast",
+  "Novgorod",
+  "Novosibirsk",
+  "Omsk",
+  "Orenburg Oblast",
+  "Oryol",
+  "Penza Oblast",
+  "Perm Krai",
+  "Primorsky",
+  "Pskov",
+  "Adygea",
+  "Altai Republic",
+  "Bashkortostan",
+  "Buryatia",
+  "Dagestan",
+  "Ingushetia",
+  "Kalmykia",
+  "Karelia",
+  "Komi",
+  "Crimea",
+  "Mari El",
+  "Mordovia",
+  "Sakha",
+  "North Ossetia-Alania",
+  "Tatarstan",
+  "Tuva",
+  "Khakassia",
+  "Rostov Oblast",
+  "Ryazan",
+  "Samara Oblast",
+  "Saint Petersburg",
+  "Saratov Oblast",
+  "Sakhalin",
+  "Sverdlovsk",
+  "Sevastopol",
+  "Smolensk",
+  "Stavropol Krai",
+  "Tambov",
+  "Tver",
+  "Tomsk",
+  "Tula",
+  "Tyumen",
+  "Udmurtia",
+  "Ulyanovsk Oblast",
+  "Khabarovsk",
+  "Yugra",
+  "Chelyabinsk",
+  "Chechnya",
+  "Chuvashia",
+  "Chukotka",
+  "Yamalo-Nenets",
+  "Yaroslavl"
+]);
+
 export interface RegionalImport {
   snapshotId: string; label: string; checkedAt: string; inputSha256: string;
   registerSha256: string; sourcesSha256: string; rows: RegionalRow[]; sourcePages: RegionalSourcePage[];
@@ -37,12 +128,12 @@ function url(value: unknown): string | null {
   if (!['http:','https:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('Only public HTTP(S) source URLs allowed');
   return s; // Keep original Unicode and exact source spelling.
 }
-export function prepareRegionalImport(registerJson: string, sourcesCsv: string, options: {snapshotId: string; label: string; expectedRegions?: number; expectedSources?: number}): RegionalImport {
+export function prepareRegionalImport(registerJson: string, sourcesCsv: string, options: {snapshotId: string; label: string; expectedSources?: number}): RegionalImport {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(options.snapshotId)) throw new Error('Invalid snapshot ID');
   const label = text(options.label,true);
   if (label.length > 255) throw new Error('Snapshot label too long');
   const input: unknown = JSON.parse(registerJson);
-  if (!Array.isArray(input) || input.length !== (options.expectedRegions ?? 85)) throw new Error('Unexpected region count');
+  if (!Array.isArray(input) || input.length !== REGIONAL_CANONICAL_KEYS.length) throw new Error('Unexpected region count');
   const rows = input.map((value): RegionalRow => {
     const r = record(value), sourceQuality = text(r.access_content,true);
     if(!['Да','Нет'].includes(String(r.autumn)))throw new Error('Invalid autumn audit flag');
@@ -61,6 +152,7 @@ export function prepareRegionalImport(registerJson: string, sourcesCsv: string, 
   });
   const keys = new Set(rows.map(r=>r.regionKey));
   if(keys.size !== rows.length) throw new Error('Duplicate region keys');
+  if(REGIONAL_CANONICAL_KEYS.some(key=>!keys.has(key)) || rows.some(row=>!REGIONAL_CANONICAL_KEYS.includes(row.regionKey)))throw new Error('Input must contain the exact canonical region key set');
   const parsed=Papa.parse<Record<string,string>>(sourcesCsv.replace(/^\uFEFF/,''),{header:true,skipEmptyLines:'greedy'});
   if(parsed.errors.length) throw new Error(`Invalid source CSV: ${parsed.errors[0].code}`);
   if(parsed.data.length !== (options.expectedSources ?? 230)) throw new Error('Unexpected source count');
