@@ -19,11 +19,6 @@ export function previousIntentRange(current: IntentRange): IntentRange {
   };
   return { from: shift(current.from, -dates(current).length), to: shift(current.from, -1) };
 }
-export function buildIntentDailyQuery() {
-  return { sql: `SELECT report_date, bucket, query_rows, impressions, clicks, source_coverage, ingestion_run_id
-    FROM seo_intent_daily WHERE analytics_account_id = ? AND host_id = ? AND device_type = ? AND classifier_version = ?
-    ORDER BY report_date, bucket`, params: ["66624469", "https:zaruku.ru:443", "ALL", ZARUKU_INTENT_VERSION] };
-}
 export function normalizeIntentDailyRow(row: Record<string, unknown>): IntentDailyRow {
   const count = (value: unknown) => {
     const number = Number(value);

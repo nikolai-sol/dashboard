@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildIntentView, buildIntentDailyQuery, previousIntentRange } from "./zaruku-intent";
+import { buildIntentView, previousIntentRange } from "./zaruku-intent";
 import type { IntentDailyRow } from "./types";
 
 function day(date: string, medical: number, noise: number, medicalClicks = medical, noiseClicks = noise, sourceCoverage: IntentDailyRow["sourceCoverage"] = "complete"): IntentDailyRow[] {
@@ -34,10 +34,4 @@ test("previous range uses previous calendar month or equal inclusive length acro
   assert.deepEqual(previousIntentRange({ from: "2026-01-01", to: "2026-01-31" }), { from: "2025-12-01", to: "2025-12-31" });
   assert.deepEqual(previousIntentRange({ from: "2026-09-08", to: "2026-10-05" }), { from: "2026-08-11", to: "2026-09-07" });
   assert.deepEqual(previousIntentRange({ from: "2026-01-01", to: "2026-01-03" }), { from: "2025-12-29", to: "2025-12-31" });
-});
-test("canonical SELECT binds exact scope/version without raw queries or external source calls", () => {
-  const query = buildIntentDailyQuery();
-  assert.match(query.sql, /FROM seo_intent_daily/);
-  assert.deepEqual(query.params, ["66624469", "https:zaruku.ru:443", "ALL", "zaruku_intent_v1_20261007"]);
-  assert.doesNotMatch(query.sql, /query_text|canonical_fact_webmaster/);
 });

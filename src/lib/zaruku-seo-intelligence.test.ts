@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildIntentDailyQuery,
   buildSeoAiVisibilityQuery,
   buildSeoSovWeeklyQuery,
   loadZarukuSeoIntelligenceData,
@@ -22,6 +23,13 @@ test("buildSeoAiVisibilityQuery scopes monthly AI visibility by analytics accoun
   assert.match(query.sql, /FROM seo_ai_visibility/);
   assert.match(query.sql, /analytics_account_id IN \(\?\)/);
   assert.deepEqual(query.params, ["66624469"]);
+});
+
+test("canonical SELECT binds exact scope/version without raw queries or external source calls", () => {
+  const query = buildIntentDailyQuery();
+  assert.match(query.sql, /FROM seo_intent_daily/);
+  assert.deepEqual(query.params, ["66624469", "https:zaruku.ru:443", "ALL", "zaruku_intent_v1_20261007"]);
+  assert.doesNotMatch(query.sql, /query_text|canonical_fact_webmaster/);
 });
 
 test("normalizes SOV rows with 28d window metadata", () => {

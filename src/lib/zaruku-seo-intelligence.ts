@@ -1,6 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
-import { buildIntentDailyQuery, normalizeIntentDailyRow } from "./zaruku-intent";
+import { ZARUKU_INTENT_VERSION, normalizeIntentDailyRow } from "./zaruku-intent";
 import type {
   ZarukuSeoAiVisibilityAggregateRow,
   ZarukuSeoIntelligenceData,
@@ -120,6 +120,12 @@ export function buildSeoAiVisibilityQuery(counterIds: string[]): SqlQuery {
     `,
     params: accountIds,
   };
+}
+
+export function buildIntentDailyQuery(): SqlQuery {
+  return { sql: `SELECT report_date, bucket, query_rows, impressions, clicks, source_coverage, ingestion_run_id
+    FROM seo_intent_daily WHERE analytics_account_id = ? AND host_id = ? AND device_type = ? AND classifier_version = ?
+    ORDER BY report_date, bucket`, params: ["66624469", "https:zaruku.ru:443", "ALL", ZARUKU_INTENT_VERSION] };
 }
 
 export function normalizeSeoSovWeeklyRow(row: SeoSovWeeklyDbRow): ZarukuSeoSovWeeklyRow {
