@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { advanceApprovedSuccessor, freezeShadowRelease, requireExactShadowRelease, createFixtureReleaseAuthorityAdapter, createReleaseAuthorityAdapter, releaseAuthorityGitEnvironment, assertReleaseAuthorityInvocation, REPOSITORY_AUTHORITY } from './freeze-zaruku-shadow-release.mjs';
 
 test('release authority pins the approved predecessor and matches the committed repository policy', () => {
-  assert.equal(REPOSITORY_AUTHORITY.approvedPredecessor, 'a8402eef6dd3318be6360f94419704719a639b8e');
+  assert.equal(REPOSITORY_AUTHORITY.approvedPredecessor, 'a24ce637a78bd6cd0a08ad63284706567442185b');
   const policy = JSON.parse(fs.readFileSync(new URL('../deploy/zaruku/repository.json', import.meta.url), 'utf8'));
   assert.deepEqual(policy, REPOSITORY_AUTHORITY);
 });
