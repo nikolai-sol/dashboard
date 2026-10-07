@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
+import { buildIntentDailyQuery, normalizeIntentDailyRow } from "./zaruku-intent";
 import type {
   ZarukuSeoAiVisibilityAggregateRow,
   ZarukuSeoIntelligenceData,
@@ -174,6 +175,7 @@ export async function loadZarukuSeoIntelligenceData(
   const results = await Promise.allSettled([
     queryExecutor(buildSeoSovWeeklyQuery(normalizedCounterIds)),
     queryExecutor(buildSeoAiVisibilityQuery(normalizedCounterIds)),
+    normalizedCounterIds.includes("66624469") ? queryExecutor(buildIntentDailyQuery()) : Promise.reject(new Error("intent account outside scope")),
   ]);
   const errors: string[] = [];
 
@@ -208,7 +210,17 @@ export async function loadZarukuSeoIntelligenceData(
   const weeks = [...new Set(sovRows.map((row) => row.week))].sort();
   const periods = [...new Set(aiRows.map((row) => row.period))].sort();
 
+  let intentRows: ReturnType<typeof normalizeIntentDailyRow>[] = [];
+  let intentAvailable = false;
+  if (results[2].status === "fulfilled") {
+    try {
+      intentRows = results[2].value.map(row => normalizeIntentDailyRow(row as Record<string, unknown>));
+      intentAvailable = true;
+    } catch { /* Optional malformed data stays unavailable, never falls back to historical SOV. */ }
+  }
+
   return {
+    intent: { available: intentAvailable, rows: intentRows },
     available: status !== "unavailable",
     status,
     error: errors.length > 0 ? errors.join("; ") : null,

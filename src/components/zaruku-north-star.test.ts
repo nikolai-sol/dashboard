@@ -104,11 +104,11 @@ const runs: ZarukuSeoRunRow[] = [
 test("buildNorthStarKpis uses the latest published official Alice SoV", () => {
   const kpis = buildNorthStarKpis({ sovRows, aiRows, aliceSnapshots, opportunities });
 
-  assert.equal(kpis.noise.value, 63.74);
-  assert.equal(kpis.medicalIntent.value, 24.81);
-  assert.equal(kpis.medicalIntent.guardValue, 72.79);
+  assert.equal(kpis.noise.value, null);
+  assert.equal(kpis.medicalIntent.value, null);
+  assert.equal(kpis.medicalIntent.guardValue, null);
   assert.equal(kpis.aiVisibility.value, 43.91);
-  assert.equal(kpis.aiVisibility.delta, -0.09000000000000341);
+  assert.equal(kpis.aiVisibility.delta, null);
   assert.deepEqual(kpis.aiVisibility.series, [
     { label: "2026-07", value: 44 },
     { label: "2026-08", value: 43.91 },

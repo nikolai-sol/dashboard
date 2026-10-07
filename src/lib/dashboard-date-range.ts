@@ -3,7 +3,7 @@ import {
   defaultAbbottRange,
   normalizeAbbottRequestedRange,
 } from "./abbott-date-range";
-import { clampZarukuDateRange } from "./zaruku-date-range";
+import { clampZarukuDateRange, latestZarukuReportingDate } from "./zaruku-date-range";
 export { clampZarukuDateRange, latestZarukuReportingDate } from "./zaruku-date-range";
 
 export type DashboardDateRange = { from: string; to: string };
@@ -81,7 +81,7 @@ export function resolveDashboardDateRange(input: DashboardDateRangeInput): Dashb
   if (input.dashboardType === "multibrand" && !valid(from) && !valid(to) && !daysRaw) return fallback;
 
   const today = now.toISOString().slice(0, 10);
-  const completeTo = shift(today, -1);
+  const completeTo = isZaruku ? latestZarukuReportingDate(now) : shift(today, -1);
   const days = Number(daysRaw);
   if (Number.isInteger(days) && days > 0) {
     const rangeTo = isZaruku ? completeTo : today;

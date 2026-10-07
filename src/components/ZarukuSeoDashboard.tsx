@@ -1,5 +1,7 @@
 "use client";
 
+import { buildIntentView, previousIntentRange } from "@/lib/zaruku-intent";
+
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
@@ -389,6 +391,7 @@ function NorthStarBlock({ data, locale }: Props) {
     aiRows: data.seo_intelligence.ai.rows,
     aliceSnapshots: data.alice_visibility.snapshots,
     opportunities: data.seo_os.opportunities,
+    intentView: buildIntentView(data.seo_intelligence.intent?.rows ?? [], data.period, previousIntentRange(data.period)),
   }));
   return (
     <section className="card-surface zaruku-panel h-full overflow-hidden border-t-slate-300 bg-surface-alt px-5 py-4">
@@ -410,7 +413,7 @@ function NorthStarBlock({ data, locale }: Props) {
               </div>
               <div data-zaruku-kpi-value-row className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1">
                 <span className="zaruku-kpi-value min-w-0 text-3xl font-semibold leading-none text-slate-950">{formatNorthStarValue(item.value, item.key, locale)}</span>
-                <span className="shrink-0 text-sm font-medium text-slate-400">{item.arrow}</span>
+                {item.arrow ? <span className="shrink-0 text-sm font-medium text-slate-400">{item.arrow}</span> : null}
                 {item.showDelta ? (
                   <span className={item.deltaTone === "good" ? "shrink-0 text-xs font-medium text-teal-700" : "shrink-0 text-xs font-medium text-red-700"}>
                     {formatNorthStarDelta(item.delta, item.key, locale)}
@@ -500,6 +503,7 @@ function AliceVisibilitySummaryCard({ data, locale, onOpenAlice }: Props & { onO
 }
 
 function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWeek: string | null }) {
+  const intent = buildIntentView(data.seo_intelligence.intent?.rows ?? [], data.period, previousIntentRange(data.period));
   const selectedRows = buildSemanticHealthRows(data.seo_intelligence.sov.rows, primaryWeek ?? data.seo_intelligence.sov.latest_week);
   const weeks = data.seo_intelligence.sov.weeks;
   const chartRows = weeks.map((week) => {
@@ -514,8 +518,52 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
   });
   const periodLabel = selectedRows[0]?.period_label ?? primaryWeek ?? data.seo_intelligence.sov.latest_week;
   return (
-    <Panel data={data} title="Семантическое здоровье" source="seo_os" layer="serp" pending={selectedRows.length === 0} right={<span className="text-xs text-slate-400">{periodLabel ?? "неделя —"}</span>}>
+    <Panel data={data} title="Семантическое здоровье" source="seo_os" layer="serp" right={<span className="text-xs text-slate-400">{data.period.from} — {data.period.to}</span>}>
       <div className="space-y-4">
+        <div data-intent-current className="space-y-3">
+          <p className="text-xs text-slate-500">Новые эвристические правила: {intent.classifierVersion}. Сравнение: {intent.previous.requested.from} — {intent.previous.requested.to}.</p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {([
+              ["Медицинский интент · показы", intent.current.medicalImpressionShare, intent.deltas.medicalImpressionPp, intent.current.impressions, "показов"],
+              ["Медицинский интент · клики", intent.current.medicalClickShare, intent.deltas.medicalClickPp, intent.current.clicks, "кликов"],
+              ["Шум · показы", intent.current.noiseImpressionShare, intent.deltas.noiseImpressionPp, intent.current.impressions, "показов"],
+              ["Шум · клики", intent.current.noiseClickShare, intent.deltas.noiseClickPp, intent.current.clicks, "кликов"],
+            ] as const).map(([label, value, delta, total, unit]) => <div key={label} className="min-w-0 rounded-lg bg-slate-50 p-3">
+              <div className="text-xs text-slate-500">{label}</div><div className="mt-1 text-xl font-semibold tabular-nums">{formatPercent(value, locale, 2)}</div>
+              <p className="mt-1 text-xs text-slate-500">Знаменатель: {total == null ? "—" : formatNumber(total, locale)} {unit}</p>
+              {delta != null ? <p className="mt-1 text-xs">{delta > 0 ? "↑ +" : delta < 0 ? "↓ −" : ""}{Math.abs(delta).toLocaleString(locale, { maximumFractionDigits: 2 })} п. п.</p> : null}
+            </div>)}
+          </div>
+          <p className="text-xs text-slate-600">Доступные даты Вебмастера: {intent.current.availableRanges.map(range => `${range.from} — ${range.to}`).join(", ") || "нет данных за выбранный период"}.</p>
+          {intent.current.missingDates.length ? <p className="text-xs text-amber-700">Нет данных: {intent.current.missingDates.join(", ")}. Отсутствующие даты не означают нулевую активность.</p> : null}
+          <p className="text-xs text-slate-500">Сравниваемый период · доступные даты: {intent.previous.availableRanges.map(range => `${range.from} — ${range.to}`).join(", ") || "нет"}; отсутствуют: {intent.previous.missingDates.join(", ") || "нет"}.</p>
+          {intent.current.completeness !== "complete" || intent.previous.completeness !== "complete" ? <p role="status" className="text-xs text-amber-700">Сравнение недоступно: полнота данных не подтверждена</p> : null}
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+            <div className="min-w-0"><h4 className="text-xs font-medium">Доля в показах · медицинский интент (бирюзовый) / шум (красный)</h4>
+              <ResponsiveContainer width="100%" height={220}><LineChart data={intent.weekly} margin={{ top: 12, right: 12, left: -16, bottom: 12 }}>
+                <CartesianGrid vertical={false} stroke={ZARUKU_CHART_PALETTE.grid} /><XAxis dataKey="requested.from" tick={{ fontSize: 11 }} interval="preserveStartEnd" /><YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} /><Tooltip labelFormatter={value => String(value)} formatter={value => formatPercent(typeof value === "number" ? value : null, locale, 2)} />
+                <Line dataKey="medicalImpressionShare" name="Медицинский интент · показы" connectNulls={false} stroke={ZARUKU_CHART_PALETTE.seo} dot={{ r: 3 }} /><Line dataKey="noiseImpressionShare" name="Шум · показы" connectNulls={false} stroke={ZARUKU_CHART_PALETTE.danger} dot={{ r: 3 }} />
+              </LineChart></ResponsiveContainer>
+            </div>
+            <div className="min-w-0"><h4 className="text-xs font-medium">Доля в кликах · медицинский интент (бирюзовый) / шум (красный)</h4>
+              <ResponsiveContainer width="100%" height={220}><LineChart data={intent.weekly} margin={{ top: 12, right: 12, left: -16, bottom: 12 }}>
+                <CartesianGrid vertical={false} stroke={ZARUKU_CHART_PALETTE.grid} /><XAxis dataKey="requested.from" tick={{ fontSize: 11 }} interval="preserveStartEnd" /><YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} /><Tooltip labelFormatter={value => String(value)} formatter={value => formatPercent(typeof value === "number" ? value : null, locale, 2)} />
+                <Line dataKey="medicalClickShare" name="Медицинский интент · клики" connectNulls={false} stroke={ZARUKU_CHART_PALETTE.seo} dot={{ r: 3 }} /><Line dataKey="noiseClickShare" name="Шум · клики" connectNulls={false} stroke={ZARUKU_CHART_PALETTE.danger} dot={{ r: 3 }} />
+              </LineChart></ResponsiveContainer>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="Недельные сегменты интента">
+            {intent.weekly.map(week => <div key={week.requested.from} className="min-w-0 rounded-md border border-slate-200 p-3 text-xs">
+              <p className="font-medium">{week.requested.from} — {week.requested.to}</p>
+              <p className="mt-1">Показы · мед.: {formatPercent(week.medicalImpressionShare, locale, 2)} · шум: {formatPercent(week.noiseImpressionShare, locale, 2)}</p>
+              <p>Клики · мед.: {formatPercent(week.medicalClickShare, locale, 2)} · шум: {formatPercent(week.noiseClickShare, locale, 2)}</p>
+              <p className="mt-1 text-slate-500">Показы: {week.impressions == null ? "—" : formatNumber(week.impressions, locale)} · клики: {week.clicks == null ? "—" : formatNumber(week.clicks, locale)}</p>
+              <p className="mt-1 text-slate-500">Доступны: {week.availableRanges.map(range => `${range.from} — ${range.to}`).join(", ") || "нет данных"}</p>
+              {week.missingDates.length ? <p className="mt-1 text-amber-700">Нет данных: {week.missingDates.join(", ")}</p> : null}
+            </div>)}
+          </div>
+        </div>
+        <h4 className="border-t border-slate-200 pt-4 text-sm font-medium">Исторический срез · июль, старые правила · {periodLabel ?? "2026-06-13 — 2026-07-10"}</h4>
         <ResponsiveContainer width="100%" height={240}>
           <LineChart data={chartRows} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
             <CartesianGrid stroke={ZARUKU_CHART_PALETTE.grid} strokeDasharray="3 3" />

@@ -14,7 +14,7 @@ test("Zaruku defaults to the latest 28 complete UTC days", () => {
     configTo: "2026-03-26",
     dashboardType: "zaruku_bi",
     now,
-  }), { from: "2026-06-24", to: "2026-07-21" });
+  }), { from: "2026-06-23", to: "2026-07-20" });
 });
 
 test("explicit Zaruku from and to override the rolling default", () => {
@@ -54,7 +54,11 @@ test("Zaruku days selection ends on the last complete day", () => {
     configTo: null,
     dashboardType: "zaruku_bi",
     now,
-  }), { from: "2026-07-15", to: "2026-07-21" });
+  }), { from: "2026-07-14", to: "2026-07-20" });
+});
+
+test("October Zaruku default and explicit days preserve 28 dates after the reporting clamp", () => {
+  for (const suffix of ["", "?days=28"]) assert.deepEqual(resolveDashboardDateRange({ requestUrl: `https://dash.test/zaruku${suffix}`, configFrom: null, configTo: null, dashboardType: "zaruku_bi", now: new Date("2026-10-07T12:00:00Z") }), { from: "2026-09-08", to: "2026-10-05" });
 });
 
 test("non-Zaruku dashboards preserve configured periods", () => {

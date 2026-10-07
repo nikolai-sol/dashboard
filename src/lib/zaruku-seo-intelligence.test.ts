@@ -100,3 +100,12 @@ test("loadZarukuSeoIntelligenceData isolates missing optional tables", async () 
   assert.equal(data.ai.available, false);
   assert.match(data.error ?? "", /missing ai table/);
 });
+
+test("missing daily intent table cannot fall back to July SOV", async () => {
+  const data = await loadZarukuSeoIntelligenceData(["66624469"], async query => {
+    if (query.sql.includes("seo_intent_daily")) throw new Error("missing daily table");
+    return [];
+  });
+  assert.deepEqual(data.intent?.rows, []);
+  assert.equal(data.intent?.available, false);
+});

@@ -3,6 +3,17 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
+
+test("intent uses actual dashboard period and shows both denominators, gaps and historical separation", () => {
+  assert.match(source, /buildIntentView\(data\.seo_intelligence\.intent\?\.rows \?\? \[\], data\.period, previousIntentRange\(data\.period\)\)/);
+  for (const field of ["medicalClickShare", "noiseClickShare", "medicalImpressionShare", "noiseImpressionShare", "availableRanges", "missingDates"]) assert.match(source, new RegExp(field));
+  assert.match(source, /Сравнение недоступно: полнота данных не подтверждена/);
+  assert.match(source, /Исторический срез.*старые правила/);
+  assert.match(source, /item\.arrow \?/);
+  assert.match(source, /data=\{intent\.weekly\}/);
+  assert.match(source, /dataKey="medicalClickShare".*connectNulls=\{false\}/);
+  assert.match(source, /dataKey="noiseClickShare".*connectNulls=\{false\}/);
+});
 const toolbarSource = readFileSync(new URL("./ZarukuSeoWeekToolbar.tsx", import.meta.url), "utf8");
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");

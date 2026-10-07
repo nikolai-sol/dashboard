@@ -1366,7 +1366,22 @@ export interface ZarukuSeoAiVisibilityAggregateRow {
   ingestion_run_id: string | null;
 }
 
+export type IntentBucket = "medical" | "noise" | "brand" | "uncertain" | "other";
+export type IntentDailyRow = { date: string; bucket: IntentBucket; queryRows: number; impressions: number; clicks: number; sourceCoverage: "observed_unknown" | "complete"; ingestionRunId: string };
+export type IntentRange = { from: string; to: string };
+export type IntentPeriod = {
+  requested: IntentRange; availableRanges: IntentRange[]; missingDates: string[];
+  completeness: "complete" | "partial" | "unverified" | "unavailable";
+  impressions: number | null; clicks: number | null;
+  medicalImpressions: number | null; medicalClicks: number | null;
+  noiseImpressions: number | null; noiseClicks: number | null;
+  medicalImpressionShare: number | null; medicalClickShare: number | null;
+  noiseImpressionShare: number | null; noiseClickShare: number | null;
+};
+export type IntentView = { classifierVersion: string; current: IntentPeriod; previous: IntentPeriod; weekly: IntentPeriod[]; deltas: { medicalImpressionPp: number | null; medicalClickPp: number | null; noiseImpressionPp: number | null; noiseClickPp: number | null } };
+
 export interface ZarukuSeoIntelligenceData {
+  intent?: { available: boolean; rows: IntentDailyRow[] };
   available: boolean;
   status: "available" | "partial" | "unavailable";
   error: string | null;

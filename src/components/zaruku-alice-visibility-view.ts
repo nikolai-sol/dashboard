@@ -23,6 +23,8 @@ export type AliceHistoryChart = {
 
 const ALICE_HISTORY_MONTH_WIDTH = 112;
 const ALICE_HISTORY_MIN_WIDTH = 240;
+// Reserve the 48px value axis and 28px padding at each plot edge before allocating readable month labels.
+const ALICE_HISTORY_AXIS_WIDTH = 104;
 
 const RUSSIAN_MONTHS = [
   "январь", "февраль", "март", "апрель", "май", "июнь",
@@ -84,7 +86,7 @@ export function buildAliceHistoryChart(
 
   return {
     rows,
-    width: Math.max(ALICE_HISTORY_MIN_WIDTH, rows.length * ALICE_HISTORY_MONTH_WIDTH),
+    width: rows.length <= 2 ? ALICE_HISTORY_MIN_WIDTH : rows.length * ALICE_HISTORY_MONTH_WIDTH + ALICE_HISTORY_AXIS_WIDTH,
   };
 }
 

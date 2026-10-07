@@ -6,7 +6,7 @@ export type NorthStarStripItem = {
   key: NorthStarKpi["key"];
   label: string;
   value: number | null;
-  arrow: "↑" | "↓";
+  arrow: "↑" | "↓" | null;
   delta: number | null;
   showDelta: boolean;
   deltaTone: "good" | "bad" | "neutral";
@@ -70,7 +70,7 @@ export function buildNorthStarStripItems(kpis: NorthStarKpis): NorthStarStripIte
     key: kpi.key,
     label: NORTH_STAR_LABELS[kpi.key],
     value: kpi.value,
-    arrow: kpi.goal === "down" ? "↓" : "↑",
+    arrow: kpi.delta != null && Number.isFinite(kpi.delta) && Math.abs(kpi.delta) >= 0.05 ? (kpi.delta > 0 ? "↑" : "↓") : null,
     delta: kpi.delta,
     showDelta: kpi.delta != null && Number.isFinite(kpi.delta) && Math.abs(kpi.delta) >= 0.05,
     deltaTone: deltaTone(kpi),

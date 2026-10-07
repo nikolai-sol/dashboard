@@ -72,13 +72,19 @@ test("north-star strip hides zero deltas and keeps details in tooltips", () => {
   const items = buildNorthStarStripItems(northStarKpis);
 
   assert.deepEqual(items.map((item) => [item.key, item.label, item.arrow, item.showDelta]), [
-    ["noise", "Шум", "↓", false],
-    ["medicalIntent", "Мед. интент", "↑", false],
-    ["aiVisibility", "Алиса AI", "↑", false],
+    ["noise", "Шум", null, false],
+    ["medicalIntent", "Мед. интент", null, false],
+    ["aiVisibility", "Алиса AI", null, false],
   ]);
   assert.equal(items.some((item) => item.key === "approveRate"), false);
   assert.match(items[1].tooltip, /контроль кликов 72,8%/);
   assert.doesNotMatch(items.map((item) => item.tooltip).join(" "), /Окно:|wm_alisa_manual|источник данных|SoV|Яндекс Вебмастер/);
+});
+
+test("strip direction reflects signed change rather than the desired goal", () => {
+  const items = buildNorthStarStripItems({ ...northStarKpis, noise: { ...northStarKpis.noise, delta: 3 }, medicalIntent: { ...northStarKpis.medicalIntent, delta: -2 } });
+  assert.equal(items[0].arrow, "↑");
+  assert.equal(items[1].arrow, "↓");
 });
 
 test("north-star tooltip copy explains what each KPI means and why it matters", () => {

@@ -131,8 +131,8 @@ test("Alice history uses compact month-count widths for one, two, three, and twe
 
   assert.equal(buildAliceHistoryChart(months.slice(0, 1)).width, 240);
   assert.equal(buildAliceHistoryChart(months.slice(0, 2)).width, 240);
-  assert.equal(buildAliceHistoryChart(months.slice(0, 3)).width, 336);
-  assert.equal(buildAliceHistoryChart(months).width, 1_344);
+  assert.equal(buildAliceHistoryChart(months.slice(0, 3)).width, 440);
+  assert.equal(buildAliceHistoryChart(months).width, 1_448);
   assert.deepEqual(buildAliceHistoryChart(months).rows.map((row) => row.month), months.map((row) => row.month));
   assert.deepEqual(buildAliceHistoryChart(months).rows.map((row) => row.sov), months.map((row) => row.officialSovPct));
 });

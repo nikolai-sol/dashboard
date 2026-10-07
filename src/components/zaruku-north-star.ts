@@ -6,6 +6,7 @@ import type {
   ZarukuSeoSovWeeklyRow,
   ZarukuSeoTaskRow,
   ZarukuSeoTaskStatus,
+  IntentView,
 } from "@/lib/types";
 
 const BASELINES = {
@@ -87,13 +88,6 @@ function latestOfficialAliceSnapshot(rows: ZarukuAliceVisibilitySnapshot[]) {
   return [...rows].sort((left, right) => sortText(left.month, right.month)).at(-1) ?? null;
 }
 
-function metricSeries(rows: ZarukuSeoSovWeeklyRow[], cluster: string, valueKey: "impressions_share" | "clicks_share") {
-  return rows
-    .filter((row) => row.cluster === cluster)
-    .sort((left, right) => sortText(left.week, right.week))
-    .map((row) => ({ label: row.week, value: row[valueKey] }));
-}
-
 function aiSeries(aliceSnapshots: ZarukuAliceVisibilitySnapshot[], legacyRows: ZarukuSeoAiVisibilityAggregateRow[]) {
   if (aliceSnapshots.length > 0) {
     return [...aliceSnapshots]
@@ -123,19 +117,17 @@ function delta(value: number | null, baseline: number) {
 }
 
 export function buildNorthStarKpis({
-  sovRows,
   aiRows,
   aliceSnapshots = [],
   opportunities,
+  intentView,
 }: {
   sovRows: ZarukuSeoSovWeeklyRow[];
   aiRows: ZarukuSeoAiVisibilityAggregateRow[];
   aliceSnapshots?: ZarukuAliceVisibilitySnapshot[];
   opportunities: ZarukuSeoOpportunityRow[];
+  intentView?: IntentView;
 }): NorthStarKpis {
-  const latestSovRows = latestValue(sovRows);
-  const noise = latestSovRows.find((row) => row.cluster === CLUSTERS.noise) ?? null;
-  const medicalIntent = latestSovRows.find((row) => row.cluster === CLUSTERS.medicalIntent) ?? null;
   const officialAlice = latestOfficialAliceSnapshot(aliceSnapshots);
   const ai = latestAiRow(aiRows);
   const approveRate = approveRateForLatestDecisionWeek(opportunities);
@@ -144,32 +136,32 @@ export function buildNorthStarKpis({
     noise: {
       key: "noise",
       label: "Шум в показах",
-      value: noise?.impressions_share ?? null,
+      value: intentView?.current.noiseImpressionShare ?? null,
       baseline: BASELINES.noise,
-      delta: delta(noise?.impressions_share ?? null, BASELINES.noise),
+      delta: intentView?.deltas.noiseImpressionPp ?? null,
       goal: "down",
-      period: noise?.period_label ?? noise?.week ?? null,
-      tooltip: "Доля показов по чужим брендам лабораторий. Доля внутри сайта, не рыночная доля",
-      series: metricSeries(sovRows, CLUSTERS.noise, "impressions_share"),
+      period: intentView ? `${intentView.current.requested.from} — ${intentView.current.requested.to}` : null,
+      tooltip: "Доля показов по настроенным чужим брендам. Доля внутри сайта, не рыночная доля",
+      series: [],
     },
     medicalIntent: {
       key: "medicalIntent",
       label: "Медицинский интент в показах",
-      value: medicalIntent?.impressions_share ?? null,
+      value: intentView?.current.medicalImpressionShare ?? null,
       baseline: BASELINES.medicalIntent,
-      delta: delta(medicalIntent?.impressions_share ?? null, BASELINES.medicalIntent),
+      delta: intentView?.deltas.medicalImpressionPp ?? null,
       goal: "up",
-      period: medicalIntent?.period_label ?? medicalIntent?.week ?? null,
-      guardValue: medicalIntent?.clicks_share ?? null,
+      period: intentView ? `${intentView.current.requested.from} — ${intentView.current.requested.to}` : null,
+      guardValue: intentView?.current.medicalClickShare ?? null,
       guardBaseline: BASELINES.medicalIntentClicks,
-      series: metricSeries(sovRows, CLUSTERS.medicalIntent, "impressions_share"),
+      series: [],
     },
     aiVisibility: {
       key: "aiVisibility",
       label: "Видимость в Алисе AI",
       value: officialAlice?.officialSovPct ?? ai?.presence_rate ?? null,
       baseline: BASELINES.aiVisibility,
-      delta: delta(officialAlice?.officialSovPct ?? ai?.presence_rate ?? null, BASELINES.aiVisibility),
+      delta: null,
       goal: "up",
       period: officialAlice?.month ?? ai?.period ?? null,
       note: officialAlice
