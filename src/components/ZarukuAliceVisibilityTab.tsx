@@ -152,8 +152,9 @@ export default function ZarukuAliceVisibilityTab({ data, locale = "ru-RU" }: Pro
         <p className="text-xs leading-relaxed text-slate-500">Последний загруженный месяц<br /><span className="font-medium text-slate-700">{formatAliceMonthLabel(snapshot.month, locale)}</span></p>
       </header>
       <div className="zaruku-panel-body">
-        <div className="max-w-full overflow-x-auto" role="region" aria-label="История официальной доли в Алисе AI" tabIndex={0}>
-          <div className="h-56 w-full" style={{ minWidth: chart.width }}>
+        <div data-alice-summary-layout className="grid max-w-4xl grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div data-alice-history-chart className="min-w-0 max-w-full overflow-x-auto" role="region" aria-label="История официальной доли в Алисе AI" tabIndex={0}>
+          <div className="h-56" style={{ width: chart.width }}>
             <ResponsiveContainer width="100%" height={224} minWidth={0} minHeight={224}>
               <LineChart data={chart.rows} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={ZARUKU_CHART_PALETTE.grid} />
@@ -165,10 +166,13 @@ export default function ZarukuAliceVisibilityTab({ data, locale = "ru-RU" }: Pro
             </ResponsiveContainer>
           </div>
         </div>
-        <div data-alice-kpi-grid className={`mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 ${hasExampleCoverage ? "xl:grid-cols-4" : "max-w-2xl"}`}><KpiCard label="Официальная доля в Алисе AI" value={formatOfficialSov(snapshot.officialSovPct, locale)} note={delta == null ? "Первый опубликованный месяц" : `Δ ${formatPercentagePointDelta(delta, locale)} · к предыдущему опубликованному месяцу`} />{hasExampleCoverage ? <><KpiCard label="Запросов в выгрузке" value={formatNumber(snapshot.exportedQueryCount, locale)} /><KpiCard label="Zaruku присутствует" value={formatNumber(snapshot.portalPresentQueryCount, locale)} /><KpiCard label="Доля в примерах" value={formatPercent(snapshot.samplePresencePct, locale)} /></> : <KpiCard label="Период и источник" value={formatAliceMonthLabel(snapshot.month, locale)} note="Яндекс Вебмастер · ручная месячная выгрузка" />}</div>
+        <div data-alice-kpi-grid className="grid min-w-0 grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3"><KpiCard label="Официальная доля в Алисе AI" value={formatOfficialSov(snapshot.officialSovPct, locale)} note={delta == null ? "Первый опубликованный месяц" : `Δ ${formatPercentagePointDelta(delta, locale)} · к предыдущему опубликованному месяцу`} />{hasExampleCoverage ? <><KpiCard label="Запросов в выгрузке" value={formatNumber(snapshot.exportedQueryCount, locale)} /><KpiCard label="Zaruku присутствует" value={formatNumber(snapshot.portalPresentQueryCount, locale)} /><KpiCard label="Доля в примерах" value={formatPercent(snapshot.samplePresencePct, locale)} /></> : <KpiCard label="Период и источник" value={formatAliceMonthLabel(snapshot.month, locale)} note="Яндекс Вебмастер · ручная месячная выгрузка" />}</div>
+        </div>
+        <div data-alice-summary-end>
         {hasExampleCoverage ? <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-relaxed text-slate-600">Официальная доля рассчитана Яндексом: {formatOfficialSov(snapshot.officialSovPct, locale)} — это общий показатель видимости сайта. Доля в примерах рассчитана только по выгруженным строкам: {formatPercent(snapshot.samplePresencePct, locale)} среди {formatNumber(snapshot.exportedQueryCount, locale)} примеров.</p> : null}
         {data.status === "partial" ? <p role="status" className="mt-4 text-sm text-amber-700">Часть детализации по источникам и примерам временно недоступна. Запросы и показатели выше сохранены.</p> : null}
         {hasQueryDetail ? null : <p role="status" className="mt-4 text-sm text-slate-500">{detailMessage}</p>}
+        </div>
       </div>
     </section>
     {detailSnapshot ? <>
