@@ -370,7 +370,7 @@ test('SQL mapped composition is scoped, bounded and permits only exact unknown-l
       'declare const flags: Record<string,boolean>; const rows=[0]; export const sql=rows.map(()=>'+Array.from({length:7},(_,index)=>`(flags.f${index} ? "SELECT 1 " : "SELECT 2 ")`).join('+')+').join(" UNION ALL ");',
     ])assert.throws(()=>scan(source),/SQL|composition|authority/i,source);
     assert.deepEqual(scanZarukuRuntimeMysqlTables(root),loadMysqlTableAuthority(mysqlAuthorityPath).tables);
-    assert.equal(loadMysqlTableAuthority(mysqlAuthorityPath).tables.length,35);
+    assert.equal(loadMysqlTableAuthority(mysqlAuthorityPath).tables.length,36);
   } finally {fs.rmSync(directory,{recursive:true});}
 });
 
