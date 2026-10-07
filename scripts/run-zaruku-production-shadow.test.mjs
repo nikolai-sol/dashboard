@@ -17,7 +17,7 @@ function fixture(overrides = {}) {
     linuxBuildHelperFixture: async () => ({ passed: true }),
     linuxPrivilegeFixture: async () => ({ passed: overrides.linuxPrivilegeFixture !== 'not-run' }),
     hostBoundary: async () => ({ passed: true }),
-    dbBoundary: async () => ({ passed: true, tableSelectCount: 35 }),
+    dbBoundary: async () => ({ passed: true, tableSelectCount: 36 }),
     runtimeSecrets: async () => ({ passed: true }),
     managerAuth: async () => ({ passed: true }),
     fullPredeploy: async () => ({ passed: true }),
