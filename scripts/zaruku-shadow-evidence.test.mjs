@@ -76,7 +76,7 @@ for(const fault of ['credential-read','final-context-recheck','lost-parity-respo
       const directory=`/var/www/.dashboard-zaruku-shadow/evidence/${request.sourceSha}-${request.runId}`;
       if(action==='preflight')return {...baseline,mysqlIdentity:{dev:'1',ino:'2',sha256:'b'.repeat(64)},inventoryIdentity:{dev:'3',ino:'4'},inventorySha256:'b'.repeat(64)};
       if(action==='allocateEvidence'){allocated=worker.allocateEvidence(request,f.io);return allocated;}
-      if(action==='dbBoundary')return {passed:true,tableSelectCount:36};
+      if(action==='dbBoundary')return {passed:true,tableSelectCount:37};
       if(action==='attest')return {passed:true,sourceSha:sha,pid:123,cwd:'/var/www/dashboard-zaruku/apps/zaruku',uid:1001,gid:1001,groups:[],capabilities:'0',loopbackOnly:true,port:3002,process:'dashboard-zaruku'};
       if(action==='parity'){
         // Reproduce the old worker's allocation-before-throw path when no

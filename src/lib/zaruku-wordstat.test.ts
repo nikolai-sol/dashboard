@@ -106,6 +106,7 @@ function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "hist
     queries,
     run: async (query: SqlQuery) => {
       queries.push(query);
+      if (query.sql.includes("wordstat:monthly-demand")) return [];
       if (query.sql.includes("wordstat:observed-days")) return rows["observed-days"] ?? [];
       if (query.sql.includes("wordstat:metadata")) return rows.metadata ?? [];
       if (query.sql.includes("wordstat:historical-period")) return rows["historical-period"] ?? [];
@@ -116,6 +117,125 @@ function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "hist
     },
   };
 }
+
+test("native monthly reader binds complete immutable buckets to exact canonical coverage", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const query = buildZarukuWordstatQueries("66624469", "2026-10-08").monthlyDemand;
+  assert.ok(query, "native monthly query is required");
+  assert.match(query.sql, /FROM canonical_fact_wordstat_dynamics_monthly/);
+  assert.match(query.sql, /seed\.is_active = 1/);
+  assert.match(query.sql, /monthly\.registry_version = 'wordstat-v1'/);
+  assert.match(query.sql, /monthly\.analytics_account_id = '66624469'/);
+  assert.match(query.sql, /coverage\.endpoint = 'dynamics_monthly'/);
+  assert.match(query.sql, /coverage\.status = 'success'/);
+  assert.match(query.sql, /coverage\.returned_row_count = 1/);
+  assert.match(query.sql, /coverage\.persisted_row_count = 1/);
+  assert.match(query.sql, /coverage\.ingestion_run_id = monthly\.ingestion_run_id/);
+  assert.match(query.sql, /DAY\(monthly\.month_from\) = 1/);
+  assert.match(query.sql, /monthly\.month_to = LAST_DAY\(monthly\.month_from\)/);
+  assert.match(query.sql, /monthly\.month_to < \?/);
+  assert.match(query.sql, /JSON_QUOTE\(monthly\.region_scope\)/);
+  assert.doesNotMatch(query.sql, /DATE_SUB|INTERVAL 3 MONTH|dynamics_daily/);
+  assert.equal(query.sql.split("?").length - 1, query.params.length);
+  assert.ok(query.params.includes("2026-10-08"));
+  assert.equal(query.sql.includes("2026-10-08"), false);
+});
+
+test("monthly loader keeps missing, zero, invalid buckets and publication distinct from daily observations", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const base = { seed_hash: "a", registry_version: "wordstat-v1", query: "виды рака", topic: null, cluster: null,
+    month_from: "2026-08-01", month_to: "2026-08-31", region_scope: "all", device_type: "all", count: 0,
+    publication_at: "2026-10-08 16:00:00" };
+  const data = await loadZarukuWordstatData("66624469", async (q) => {
+    if (q.sql.includes("wordstat:monthly-demand")) return [base, { ...base, month_from: "2026-09-01", month_to: "2026-09-30", count: 20 },
+      { ...base, seed_hash: "bad", month_from: "2026-08-02" }, { ...base, seed_hash: "future", month_from: "2026-10-01", month_to: "2026-10-31", publication_at: "2026-10-09 16:00:00" },
+      { ...base, seed_hash: "negative", count: -1 }, { ...base, seed_hash: "dup", count: 1 }, { ...base, seed_hash: "dup", count: 2 }];
+    return [];
+  }, new Date("2026-10-08T16:30:00Z"));
+  assert.deepEqual(data.monthly_demand?.available_months, ["2026-08", "2026-09"]);
+  assert.equal(data.monthly_demand?.default_month, "2026-09");
+  assert.deepEqual(data.monthly_demand?.rows.map(row => row.count), [0, 20]);
+  assert.deepEqual(data.observed_demand?.days, []);
+  assert.match(data.latest_confirmed_publication_at ?? "", /2026-10-08/);
+  assert.equal(data.status, "partial");
+  const dateObjects = await loadZarukuWordstatData("66624469", async q => q.sql.includes("wordstat:monthly-demand")
+    ? [{ ...base, month_from: new Date("2026-08-01"), month_to: new Date("2026-08-31") }] : [], new Date("2026-10-08"));
+  assert.match(dateObjects.latest_confirmed_publication_at ?? "", /2026-10-08/);
+  const empty = await loadZarukuWordstatData("66624469", async () => [], new Date("2026-10-08"));
+  assert.deepEqual(empty.monthly_demand, { rows: [], available_months: [], default_month: null });
+});
+
+test("missing optional monthly table does not change confirmed rolling freshness or fabricate monthly counts", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const fixture = fakeQuery({ metadata: [availableMetadata()] });
+  const now = new Date("2026-09-02T12:00:00Z");
+  const baseline = await loadZarukuWordstatData("66624469", fixture.run, now);
+  assert.equal(baseline.source_freshness?.freshness_status, "healthy");
+  const missing = await loadZarukuWordstatData("66624469", async q => {
+    if (q.sql.includes("wordstat:monthly-demand")) throw new Error("optional table unavailable");
+    return fixture.run(q);
+  }, now);
+  assert.deepEqual(missing.monthly_demand, { rows: [], available_months: [], default_month: null });
+  assert.equal(missing.current.query_status, baseline.current.query_status);
+  assert.equal(missing.current.region_status, baseline.current.region_status);
+  assert.equal(missing.source_freshness?.freshness_status, baseline.source_freshness?.freshness_status);
+  assert.equal(missing.status, "partial");
+});
+
+test("confirmed monthly demand is not globally empty when rolling discovery is successful empty", async () => {
+  const { loadZarukuWordstatData } = await wordstatModule();
+  const fixture = fakeQuery({ metadata: [{ ...availableMetadata(), query_empty_scope_count: 28, region_empty_scope_count: 28 }],
+    "historical-period": [{ period_from: "2026-07-10", period_to: "2026-07-31" }] });
+  const data = await loadZarukuWordstatData("66624469", async q => q.sql.includes("wordstat:monthly-demand")
+    ? [{ seed_hash: "a", registry_version: "wordstat-v1", query: "виды рака", topic: null, cluster: null,
+      month_from: "2026-08-01", month_to: "2026-08-31", region_scope: "all", device_type: "all", count: 0 }] : fixture.run(q),
+    new Date("2026-09-02T12:00:00Z"));
+  assert.equal(data.current.query_status, "empty");
+  assert.equal(data.current.region_status, "empty");
+  assert.equal(data.status, "available");
+  assert.equal(data.monthly_demand?.rows[0].count, 0);
+});
+
+test("monthly comparisons use calendar predecessors and exact identity with no zero fabrication", async () => {
+  const { calculateWordstatMonthlyGrowth } = await wordstatModule();
+  const base = { seed_hash: "a", registry_version: "wordstat-v1", query: "виды рака", topic: null, cluster: null,
+    region_scope: "all", device_type: "all" };
+  const rows = [
+    { ...base, month_from: "2026-07-01", month_to: "2026-07-31", count: 10 },
+    { ...base, month_from: "2026-08-01", month_to: "2026-08-31", count: 20 },
+    { ...base, month_from: "2026-09-01", month_to: "2026-09-30", count: 30 },
+    { ...base, seed_hash: "zero", month_from: "2026-08-01", month_to: "2026-08-31", count: 0 },
+    { ...base, seed_hash: "zero", month_from: "2026-09-01", month_to: "2026-09-30", count: 0 },
+    { ...base, seed_hash: "new", month_from: "2026-08-01", month_to: "2026-08-31", count: 0 },
+    { ...base, seed_hash: "new", month_from: "2026-09-01", month_to: "2026-09-30", count: 5 },
+    { ...base, seed_hash: "missing", month_from: "2026-07-01", month_to: "2026-07-31", count: 2 },
+    { ...base, seed_hash: "missing", month_from: "2026-09-01", month_to: "2026-09-30", count: 8 },
+    { ...base, registry_version: "other", month_from: "2026-09-01", month_to: "2026-09-30", count: 100 },
+  ];
+  const september = calculateWordstatMonthlyGrowth(rows, "2026-09");
+  assert.equal(september.comparable_count, 3);
+  assert.equal(september.growing_count, 2);
+  assert.equal(september.rows.find(row => row.seed_hash === "missing")?.previous_count, null);
+  assert.equal(september.rows.find(row => row.seed_hash === "zero")?.absolute_change, 0);
+  assert.equal(september.rows.find(row => row.seed_hash === "new")?.percent_change, null);
+  assert.equal(september.rows.find(row => row.seed_hash === "new")?.new_from_zero, true);
+  assert.equal(september.rows.find(row => row.registry_version === "other")?.previous_count, null);
+  assert.equal(calculateWordstatMonthlyGrowth(rows, "2026-08").rows.find(row => row.seed_hash === "a")?.percent_change, 100);
+  assert.deepEqual(calculateWordstatMonthlyGrowth([], "2027-01").previous_period, { from: "2026-12-01", to: "2026-12-31" });
+  assert.deepEqual(calculateWordstatMonthlyGrowth([], "2024-03").previous_period, { from: "2024-02-01", to: "2024-02-29" });
+  assert.throws(() => calculateWordstatMonthlyGrowth(rows, "2026-13"));
+});
+
+test("current SQL excludes only exact durable owner decisions before deduplication", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const { currentQueries } = buildZarukuWordstatQueries("66624469", "2026-10-08");
+  assert.equal((currentQueries.sql.match(/excluded\.review_source = 'owner_exclusion'/g) ?? []).length, 2);
+  assert.match(currentQueries.sql, /excluded\.query_hash = facts\.query_hash/);
+  assert.match(currentQueries.sql, /excluded\.registry_version = facts\.registry_version/);
+  assert.match(currentQueries.sql, /excluded\.is_active = 0/);
+  assert.match(currentQueries.sql, /excluded\.review_status = 'reviewed'/);
+  assert.doesNotMatch(currentQueries.sql, /видео|c714ecef|LIKE/);
+});
 
 function availableMetadata(): DbRow {
   return {
@@ -783,7 +903,7 @@ test("Wordstat SQL scopes run state by endpoint family and selects the latest re
   const { buildZarukuWordstatQueries } = await wordstatModule();
   const queries = buildZarukuWordstatQueries("66624469");
 
-  assert.deepEqual(Object.keys(queries).sort(), ["currentQueries", "currentRegions", "historicalRows", "observedDays"]);
+  assert.deepEqual(Object.keys(queries).sort(), ["currentQueries", "currentRegions", "historicalRows", "monthlyDemand", "observedDays"]);
   assert.doesNotMatch(queries.currentQueries.sql, /wordstat:metadata/i);
   assert.match(queries.currentQueries.sql, /:current'[\s\S]*:all'/i);
   assert.match(queries.currentRegions.sql, /:regions'[\s\S]*:all'/i);

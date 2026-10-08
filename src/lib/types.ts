@@ -891,7 +891,25 @@ export interface ZarukuWordstatIndicators {
   region_opportunity_reason: string;
 }
 
+export interface ZarukuWordstatMonthlyRow {
+  seed_hash: string;
+  registry_version: string;
+  query: string;
+  topic: string | null;
+  cluster: string | null;
+  month_from: string;
+  month_to: string;
+  count: number;
+  region_scope: string;
+  device_type: string;
+}
+
 export interface ZarukuWordstatData {
+  monthly_demand?: {
+    available_months: string[];
+    default_month: string | null;
+    rows: ZarukuWordstatMonthlyRow[];
+  };
   observed_demand?: {
     days: ZarukuWordstatObservedDay[];
     confirmed_dates: string[];

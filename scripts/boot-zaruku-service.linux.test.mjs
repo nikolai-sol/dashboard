@@ -230,7 +230,7 @@ test('staged joint coordinator uses persistent fenced admin, sealed reader trans
   fs.chownSync('/var/www/www-root/data',1010,1010);fs.chmodSync('/var/www/www-root/data',0o755);
   try {
     const result=spawnSync(process.execPath,[`${staged}/scripts/zaruku-shadow-dispatch.mjs`,'db-provision'],{env:{},encoding:'utf8',timeout:60000});
-    assert.equal(result.status,0,result.stderr+' '+fs.readFileSync('/var/www/.dashboard-zaruku-shadow/db-provision.json','utf8')+' '+fs.readFileSync('/tmp/zaruku-protocol-events','utf8'));assert.equal(JSON.parse(result.stdout).tableSelectCount,36);
+    assert.equal(result.status,0,result.stderr+' '+fs.readFileSync('/var/www/.dashboard-zaruku-shadow/db-provision.json','utf8')+' '+fs.readFileSync('/tmp/zaruku-protocol-events','utf8'));assert.equal(JSON.parse(result.stdout).tableSelectCount,37);
     assert.doesNotMatch(result.stdout+result.stderr,new RegExp(shared));
     const record=JSON.parse(fs.readFileSync('/var/www/.dashboard-zaruku-shadow/db-provision.json'));
     assert.equal(record.status,'complete');assert.equal(record.sessionId,'42');assert.equal(record.accountCreated,true);

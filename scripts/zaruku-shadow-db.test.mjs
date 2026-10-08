@@ -28,7 +28,7 @@ test('joint DB and anonymous secret transaction holds creation ownership through
     const receipts=[],events=[];f.admin.close=async()=>events.push('close');f.admin.sessionId='42';
     const adapters={random:size=>{assert.equal(size,48);return password;},openAdmin:async()=>f.admin,receipt:()=>({save:value=>receipts.push(structuredClone(value))}),publish:async(value,onAllocated)=>{assert.equal(value,secret);events.push('install');onAllocated({dev:1,ino:2});if(fault==='secret')throw new Error('PRIVATE_SENTINEL');},remove:async identity=>{assert.deepEqual(identity,{dev:1,ino:2});events.push('remove');}};
     const operation=provisionReaderAndSecrets('a'.repeat(40),()=>events.push('guard'),adapters);
-    if(fault==='none')assert.equal((await operation).tableSelectCount,36);else await assert.rejects(operation,error=>!error.message.includes('PRIVATE_SENTINEL'));
+    if(fault==='none')assert.equal((await operation).tableSelectCount,37);else await assert.rejects(operation,error=>!error.message.includes('PRIVATE_SENTINEL'));
     const drops=f.calls.filter(row=>row.sql?.startsWith('DROP USER'));
     assert.equal(drops.length,['secret','grant','drop'].includes(fault)?1:0);
     assert.equal(events.includes('remove'),['secret','release'].includes(fault));

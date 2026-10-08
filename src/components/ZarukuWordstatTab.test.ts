@@ -8,6 +8,27 @@ import type { ZarukuWordstatData } from "@/lib/types";
 
 const JULY_DATES = Array.from({ length: 22 }, (_, index) => `2026-07-${String(index + 10).padStart(2, "0")}`);
 
+test("monthly main table is compact while raw rolling detail preserves dates and diagnostics", () => {
+  const data = { ...fixture, monthly_demand: { available_months: ["2026-07", "2026-08", "2026-09"], default_month: "2026-09",
+    rows: ["2026-07", "2026-08", "2026-09"].map((month, i) => ({ seed_hash: "a", registry_version: "wordstat-v1",
+      query: "виды рака", topic: null, cluster: null, month_from: `${month}-01`, month_to: `${month}-${i === 2 ? 30 : 31}`,
+      region_scope: "all", device_type: "all", count: 10 + i * 10 })) } };
+  const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, { data }));
+  assert.match(markup, /Спрос по месяцам/);
+  assert.match(markup, /aria-label="Месяц спроса"/);
+  assert.match(markup, /value="2026-09" selected/);
+  assert.match(markup, /Дополнительные запросы/);
+  assert.match(markup, /03\.08\.2026–01\.09\.2026/);
+  assert.match(markup, /<details[^>]*>[\s\S]*Состояние данных/);
+  assert.doesNotMatch(markup, /Нужна медицинская проверка|Доля запросов в регионе/);
+  assert.doesNotMatch(markup, /Показатели не смешивают Wordstat|Спрос показан отдельно для каждого запроса/);
+  assert.doesNotMatch(markup, /Визиты из поиска Яндекса/);
+  const header = markup.slice(0, markup.indexOf("Сводка спроса"));
+  assert.doesNotMatch(header, /Сопоставление · 10–31 июля/);
+  const summary = markup.slice(markup.indexOf("Сводка спроса"), markup.indexOf("Спрос по месяцам"));
+  assert.doesNotMatch(summary, /Предыдущий сопоставимый период Wordstat не собирался/);
+});
+
 const fixture: ZarukuWordstatData = {
   status: "available",
   historical: {
@@ -132,13 +153,13 @@ test("Wordstat tab renders all required management sections with its independent
   const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, { data: fixture }));
 
   for (const label of [
-    "Темы с растущим спросом",
+    "Запросы с ростом спроса",
     "Самая большая возможность",
     "Нерелевантный спрос сейчас",
     "Новые темы для проверки",
-    "Сравнение с региональным трафиком",
+    "Спрос по месяцам",
     "10–31 июля 2026: спрос и присутствие Zaruku",
-    "Текущие запросы Wordstat",
+    "Дополнительные запросы",
     "Региональный спрос Wordstat",
     "Wordstat → проверка → SEO OS",
     "Запросы: 03.08.2026–01.09.2026",
@@ -151,7 +172,7 @@ test("Wordstat tab renders all required management sections with its independent
 test("unreviewed query cannot become a task", () => {
   const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, { data: unreviewedFixture }));
 
-  assert.match(markup, /Нужна медицинская проверка/);
+  assert.doesNotMatch(markup, /Нужна медицинская проверка/);
   assert.match(markup, /Не создаёт задачу SEO OS/);
   assert.doesNotMatch(markup, /Можно передать на одобрение в SEO OS/);
 });
@@ -243,7 +264,7 @@ test("regional interest uses the official 100-point affinity baseline without tr
   assert.match(regionMarkup, /52 · ниже/);
   assert.match(regionMarkup, /100 · на уровне среднего/);
   assert.match(regionMarkup, /120 · выше/);
-  assert.match(regionMarkup, /25%/);
+  assert.doesNotMatch(regionMarkup, /25%|Доля запросов в регионе/);
   assert.match(regionMarkup, /Сопоставимый региональный срез Яндекс-органики в Метрике пока не подключён/);
   assert.doesNotMatch(regionMarkup, /Высокая возможность|Средняя возможность/);
 });
@@ -276,9 +297,9 @@ test("scope states keep valid historical rows visible while current query and re
   assert.match(markup, /лечение рака/);
   assert.match(markup, /Сбор запросов завершился успешно, но строк нет/);
   assert.match(markup, /Региональная разбивка Wordstat пока недоступна/);
-  assert.match(markup, /Темы с растущим спросом[\s\S]*?>—</);
+  assert.match(markup, /Запросы с ростом спроса[\s\S]*?>—</);
   assert.match(markup, /Нерелевантный спрос сейчас[\s\S]*?>—</);
-  assert.match(markup, /Сравнение с региональным трафиком[\s\S]*?>—</);
+  assert.match(markup, /Сопоставимый региональный срез Яндекс-органики в Метрике пока не подключён/);
 });
 
 test("partial scope retains rows but does not publish its KPI as a confirmed zero", () => {
@@ -295,7 +316,7 @@ test("partial scope retains rows but does not publish its KPI as a confirmed zer
   assert.match(markup, /лечение рака/);
   assert.match(markup, /Данные по темам доступны частично/);
   assert.match(markup, /Данные по запросам доступны частично/);
-  assert.match(markup, /Темы с растущим спросом[\s\S]*?>—</);
+  assert.match(markup, /Запросы с ростом спроса[\s\S]*?>—</);
   assert.match(markup, /Нерелевантный спрос сейчас[\s\S]*?>—</);
 });
 
@@ -392,7 +413,7 @@ test("new demand from zero has an absolute change and no infinite percentage", (
       } },
   }}));
   assert.match(markup, /Появился спрос/);
-  assert.match(markup, /1 из 1 сопоставимых/);
+  assert.match(markup, /Нет подтверждённых месячных данных/);
   assert.match(markup, /21\.09\.2026–27\.09\.2026/);
   assert.match(markup, /28\.09\.2026–04\.10\.2026/);
   assert.doesNotMatch(markup, /Infinity|NaN/);

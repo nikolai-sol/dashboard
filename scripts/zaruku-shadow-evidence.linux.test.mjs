@@ -81,7 +81,7 @@ for(const bounded of [false,true])test(`actual worker death fences surviving wri
     writeDecision:decision=>publishDecision({...request,decision}),
   };
   for(const name of ['linuxBuildHelperFixture','linuxPrivilegeFixture','hostBoundary','runtimeSecrets','managerAuth','fullPredeploy','releaseAuthority'])adapter[name]=()=>({passed:true,sourceSha});
-  adapter.dbBoundary=()=>({passed:true,tableSelectCount:36});
+  adapter.dbBoundary=()=>({passed:true,tableSelectCount:37});
   const result=await runProductionShadow(adapter);await closed;
   assert.equal(result.decision,'NO-GO');assert.equal(result.failure,'same-snapshot parity');assert.deepEqual(stopped,['dashboard-zaruku']);assert.equal(errors,'');
   const published=verifyPublished(directory);

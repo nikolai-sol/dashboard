@@ -20,6 +20,7 @@
     "canonical_fact_webmaster_query_pages_daily",
     "canonical_fact_webmaster_summary_daily",
     "canonical_fact_wordstat_dynamics_daily",
+    "canonical_fact_wordstat_dynamics_monthly",
     "canonical_fact_wordstat_regions_snapshot",
     "canonical_fact_wordstat_requests_snapshot",
     "canonical_metrika_breakdown_coverage_daily",

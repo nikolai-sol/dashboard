@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
+import { wordstatCalendarMonth } from "@/lib/zaruku-wordstat-monthly";
+export { calculateWordstatMonthlyGrowth } from "@/lib/zaruku-wordstat-monthly";
 import type {
   ZarukuSourceFreshnessRow,
   ZarukuWordstatAction,
@@ -8,6 +10,7 @@ import type {
   ZarukuWordstatData,
   ZarukuWordstatHistoricalRow,
   ZarukuWordstatIndicators,
+  ZarukuWordstatMonthlyRow,
   ZarukuWordstatOpportunity,
   ZarukuWordstatObservedDay,
   ZarukuWordstatObservedRegion,
@@ -163,7 +166,7 @@ function median(values: number[]) {
 }
 
 
-function wordstatScopeHash(account: string, endpoint: "dynamics" | "regions" | "top_requests",
+function wordstatScopeHash(account: string, endpoint: "dynamics" | "dynamics_monthly" | "regions" | "top_requests",
   registryVersion: string, seedHash: string, extra: string[]) {
   return createHash("sha256").update(JSON.stringify({
     account, endpoint, extra, registry_version: registryVersion, seed_hash: seedHash,
@@ -171,8 +174,10 @@ function wordstatScopeHash(account: string, endpoint: "dynamics" | "regions" | "
 }
 
 /** Exactly the collector's sorted, compact JSON bytes, with JSON escaping retained. */
-function scopeHashSql(endpoint: "dynamics" | "regions" | "top_requests", fact: string) {
-  const extra = endpoint === "dynamics"
+function scopeHashSql(endpoint: "dynamics" | "dynamics_monthly" | "regions" | "top_requests", fact: string) {
+  const extra = endpoint === "dynamics_monthly"
+    ? `JSON_QUOTE(DATE_FORMAT(${fact}.month_from, '%Y-%m-%d')), ',', JSON_QUOTE(DATE_FORMAT(${fact}.month_to, '%Y-%m-%d')), ',', JSON_QUOTE(${fact}.region_scope)`
+    : endpoint === "dynamics"
     ? `JSON_QUOTE(DATE_FORMAT(coverage.requested_from, '%Y-%m-%d')), ',', JSON_QUOTE(DATE_FORMAT(coverage.requested_to, '%Y-%m-%d'))`
     : `JSON_QUOTE(DATE_FORMAT(${fact}.snapshot_date, '%Y-%m-%d'))`;
   return `SHA2(CONCAT('{"account":', JSON_QUOTE(${fact}.analytics_account_id),
@@ -252,13 +257,55 @@ export function classifyWordstatOpportunity(row: WordstatOpportunityInput): Zaru
 }
 
 export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | Date = new Date()): Record<
-  "historicalRows" | "currentQueries" | "currentRegions" | "observedDays",
+  "historicalRows" | "currentQueries" | "currentRegions" | "observedDays" | "monthlyDemand",
   WordstatSqlQuery
 > {
   const normalizedAccountId = requireAccountId(accountId);
   const currentUtcDate = requireUtcDate(nowUtc);
   const yesterday = new Date(Date.parse(currentUtcDate) - 86_400_000).toISOString().slice(0, 10);
   return {
+    monthlyDemand: {
+      sql: `
+        /* wordstat:monthly-demand */
+        SELECT monthly.seed_hash, monthly.registry_version, seed.phrase_text AS query,
+          monthly.topic, monthly.cluster, monthly.month_from, monthly.month_to,
+          monthly.region_scope, monthly.device_type, monthly.count,
+          (SELECT MAX(GREATEST(coverage.updated_at, COALESCE(coverage_run.finished_at, coverage.updated_at)))
+           FROM canonical_wordstat_coverage coverage
+           JOIN canonical_collector_runs coverage_run ON coverage_run.id = coverage.ingestion_run_id
+             AND coverage_run.source_key = monthly.source_key
+             AND coverage_run.job_key IN (CONCAT('yandex_wordstat:', ?, ':historical'), CONCAT('yandex_wordstat:', ?, ':all'))
+           WHERE coverage.analytics_account_id = monthly.analytics_account_id
+             AND coverage.source_key = monthly.source_key AND coverage.registry_version = monthly.registry_version
+             AND coverage.endpoint = 'dynamics_monthly' AND coverage.status = 'success'
+             AND coverage.returned_row_count = 1 AND coverage.persisted_row_count = 1
+             AND coverage.ingestion_run_id = monthly.ingestion_run_id
+             AND coverage.requested_from = monthly.month_from AND coverage.requested_to = monthly.month_to
+             AND coverage.scope_hash = ${scopeHashSql("dynamics_monthly", "monthly")}) AS publication_at
+        FROM canonical_fact_wordstat_dynamics_monthly monthly
+        JOIN canonical_wordstat_seed_registry seed ON seed.analytics_account_id = monthly.analytics_account_id
+          AND seed.registry_version = monthly.registry_version AND seed.seed_hash = monthly.seed_hash AND seed.is_active = 1
+        WHERE monthly.analytics_account_id = ? AND monthly.analytics_account_id = '66624469' AND monthly.source_key = 'yandex_wordstat'
+          AND monthly.registry_version = 'wordstat-v1' AND monthly.device_type = 'all' AND monthly.region_scope = 'all'
+          AND DAY(monthly.month_from) = 1 AND monthly.month_to = LAST_DAY(monthly.month_from)
+          AND monthly.month_to < ? AND monthly.count IS NOT NULL AND monthly.count >= 0
+          AND EXISTS (
+            SELECT 1 FROM canonical_wordstat_coverage coverage
+            JOIN canonical_collector_runs coverage_run ON coverage_run.id = coverage.ingestion_run_id
+              AND coverage_run.source_key = monthly.source_key
+              AND coverage_run.job_key IN (CONCAT('yandex_wordstat:', ?, ':historical'), CONCAT('yandex_wordstat:', ?, ':all'))
+            WHERE coverage.analytics_account_id = monthly.analytics_account_id
+              AND coverage.source_key = monthly.source_key AND coverage.registry_version = monthly.registry_version
+              AND coverage.endpoint = 'dynamics_monthly' AND coverage.status = 'success'
+              AND coverage.returned_row_count = 1 AND coverage.persisted_row_count = 1
+              AND coverage.ingestion_run_id = monthly.ingestion_run_id
+              AND coverage.requested_from = monthly.month_from AND coverage.requested_to = monthly.month_to
+              AND coverage.scope_hash = ${scopeHashSql("dynamics_monthly", "monthly")}
+          )
+        ORDER BY monthly.month_from, monthly.registry_version, monthly.seed_hash
+      `,
+      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId, currentUtcDate, normalizedAccountId, normalizedAccountId],
+    },
     observedDays: {
       sql: `
         /* wordstat:observed-days */
@@ -706,6 +753,13 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             AND facts.analytics_account_id = selected_snapshot.analytics_account_id
             AND facts.device_type = 'all'
             AND facts.count IS NOT NULL AND facts.count >= 0
+            AND NOT EXISTS (
+              SELECT 1 FROM canonical_wordstat_query_classifications excluded
+              WHERE excluded.analytics_account_id = facts.analytics_account_id
+                AND excluded.registry_version = facts.registry_version AND excluded.query_hash = facts.query_hash
+                AND excluded.is_active = 0 AND excluded.review_status = 'reviewed'
+                AND excluded.review_source = 'owner_exclusion'
+            )
             AND EXISTS (
               SELECT 1 FROM confirmed_coverage coverage
               WHERE facts.analytics_account_id = coverage.analytics_account_id
@@ -787,6 +841,13 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             AND facts.analytics_account_id = ?
             AND facts.device_type = 'all'
             AND facts.count IS NOT NULL AND facts.count >= 0
+            AND NOT EXISTS (
+              SELECT 1 FROM canonical_wordstat_query_classifications excluded
+              WHERE excluded.analytics_account_id = facts.analytics_account_id
+                AND excluded.registry_version = facts.registry_version AND excluded.query_hash = facts.query_hash
+                AND excluded.is_active = 0 AND excluded.review_status = 'reviewed'
+                AND excluded.review_source = 'owner_exclusion'
+            )
             AND EXISTS (
               SELECT 1 FROM confirmed_coverage coverage
               WHERE facts.analytics_account_id = coverage.analytics_account_id
@@ -1208,6 +1269,29 @@ type ObservedDbRow = {
   requested_from?: string; requested_to?: string; device?: string; publication_at?: string | Date;
 };
 
+type MonthlyDbRow = ZarukuWordstatMonthlyRow & { publication_at?: string | Date };
+
+function normalizeMonthlyRows(rows: unknown[], nowUtc: Date): ZarukuWordstatMonthlyRow[] {
+  const today = requireUtcDate(nowUtc);
+  const selected = new Map<string, ZarukuWordstatMonthlyRow | null>();
+  for (const raw of rows as MonthlyDbRow[]) {
+    const month_from = formatDate(raw.month_from), month_to = formatDate(raw.month_to);
+    const count = asNullableNumber(raw.count);
+    if (!month_from || !month_to || !validDate(month_from) || !validDate(month_to) || month_to >= today
+      || count == null || !Number.isSafeInteger(count) || count < 0 || !raw.seed_hash
+      || raw.registry_version !== "wordstat-v1" || raw.device_type !== "all" || raw.region_scope !== "all") continue;
+    const bounds = wordstatCalendarMonth(month_from.slice(0, 7));
+    if (bounds.from !== month_from || bounds.to !== month_to) continue;
+    const row = { seed_hash: raw.seed_hash, registry_version: raw.registry_version, query: asString(raw.query),
+      topic: asString(raw.topic) || null, cluster: asString(raw.cluster) || null, month_from, month_to, count,
+      region_scope: raw.region_scope, device_type: raw.device_type };
+    const key = JSON.stringify([row.registry_version, row.seed_hash, month_from, row.region_scope, row.device_type]);
+    selected.set(key, selected.has(key) ? null : row);
+  }
+  return [...selected.values()].filter((row): row is ZarukuWordstatMonthlyRow => row != null)
+    .sort((a, b) => a.month_from.localeCompare(b.month_from) || a.seed_hash.localeCompare(b.seed_hash));
+}
+
 function normalizeObservedDays(rows: unknown[], account: string, nowUtc: Date): ZarukuWordstatObservedDay[] {
   const today = requireUtcDate(nowUtc);
   return (rows as ObservedDbRow[]).flatMap((raw) => {
@@ -1455,14 +1539,21 @@ export async function loadZarukuWordstatData(
     query(queries.currentQueries),
     query(queries.currentRegions),
     query(queries.observedDays),
+    query(queries.monthlyDemand),
   ]);
   const historicalRows = valueOrEmpty<HistoricalDbRow>(settled[0]);
   const queryRows = valueOrEmpty<CurrentQueryDbRow>(settled[1]);
   const regionRows = valueOrEmpty<CurrentRegionDbRow>(settled[2]);
   const observedRows = valueOrEmpty<ObservedDbRow>(settled[3]);
+  const monthlyRows = valueOrEmpty<MonthlyDbRow>(settled[4]);
+  const monthly = normalizeMonthlyRows(monthlyRows, nowUtc);
+  const availableMonths = [...new Set(monthly.map(row => row.month_from.slice(0, 7)))].sort();
+  const monthlyKey = (row: ZarukuWordstatMonthlyRow) => JSON.stringify([row.registry_version, row.seed_hash, formatDate(row.month_from), formatDate(row.month_to), row.region_scope, row.device_type]);
+  const confirmedMonthlyKeys = new Set(monthly.map(monthlyKey));
   const observedDays = normalizeObservedDays(observedRows, normalizedAccountId, nowUtc);
   const observedRegions = normalizeObservedRegions(regionRows, normalizedAccountId);
   const latestPublication = [
+    ...monthlyRows.filter(row => confirmedMonthlyKeys.has(monthlyKey(row))).map(row => formatDateTime(row.publication_at)),
     ...observedRows.map((row) => formatDateTime(row.publication_at)),
     ...[...queryRows, ...regionRows].map((row) => formatDateTime(row.endpoint_publication_at)),
   ].filter((value): value is string => value != null).sort().at(-1) ?? null;
@@ -1521,11 +1612,11 @@ export async function loadZarukuWordstatData(
   if (allCurrentScopesEmpty) messages.push("Нет запросов по выбранным темам в подтверждённом снимке Wordstat.");
 
   let status: ZarukuWordstatData["status"];
-  if (!observedDays.length && historicalStatus === "unavailable" && queryStatus === "unavailable" && regionStatus === "unavailable") {
+  if (!monthly.length && !observedDays.length && historicalStatus === "unavailable" && queryStatus === "unavailable" && regionStatus === "unavailable") {
     status = "unavailable";
   } else if (failedQueries > 0 || periodsDiffer || [historicalStatus, queryStatus, regionStatus].some((value) => value === "partial" || value === "unavailable")) {
     status = "partial";
-  } else if (queryStatus === "empty" && regionStatus === "empty") {
+  } else if (!monthly.length && queryStatus === "empty" && regionStatus === "empty") {
     status = "empty";
   } else {
     status = "available";
@@ -1533,6 +1624,7 @@ export async function loadZarukuWordstatData(
 
   return {
     status,
+    monthly_demand: { rows: monthly, available_months: availableMonths, default_month: availableMonths.at(-1) ?? null },
     observed_demand: { days: observedDays, confirmed_dates: [...new Set(observedDays.map((day) => day.date))].sort(),
       growth: calculateWordstatWeeklyGrowth(observedDays, nowUtc) },
     observed_regions: observedRegions,
@@ -1567,7 +1659,7 @@ export async function loadZarukuWordstatData(
       periodsDiffer,
       currentCoverageMissing,
       currentEndpointRunProblem,
-      settled.slice(1).filter((result) => result.status === "rejected").length,
+      settled.slice(1, 4).filter((result) => result.status === "rejected").length,
       nowUtc,
     ),
     messages,
