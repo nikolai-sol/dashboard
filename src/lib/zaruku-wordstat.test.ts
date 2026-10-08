@@ -25,7 +25,7 @@ test("Wordstat joins established SEO/GSC tables with an explicit compatible coll
   }
 });
 
-function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "historical-rows" | "current-queries" | "current-regions", DbRow[]>>) {
+function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "historical-rows" | "current-queries" | "current-regions" | "observed-days", DbRow[]>>) {
   const queries: SqlQuery[] = [];
   const metadata = rows.metadata?.[0] ?? null;
   const endpointRows = (facts: DbRow[] | undefined, endpoint: "query" | "region" | "historical") => {
@@ -79,6 +79,7 @@ function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "hist
     queries,
     run: async (query: SqlQuery) => {
       queries.push(query);
+      if (query.sql.includes("wordstat:observed-days")) return rows["observed-days"] ?? [];
       if (query.sql.includes("wordstat:metadata")) return rows.metadata ?? [];
       if (query.sql.includes("wordstat:historical-period")) return rows["historical-period"] ?? [];
       if (query.sql.includes("wordstat:historical")) return endpointRows(rows["historical-rows"], "historical");
@@ -725,8 +726,7 @@ test("Wordstat SQL binds facts and run lineage to account-scoped confirmed cover
   assert.match(queries.historicalRows.sql, /seed\.registry_version\s*=\s*dynamics\.registry_version/i);
   assert.match(queries.historicalRows.sql, /coverage\.ingestion_run_id\s*=\s*dynamics\.ingestion_run_id/i);
   assert.match(queries.historicalRows.sql, /dynamics\.report_date\s+BETWEEN\s+coverage\.requested_from\s+AND\s+coverage\.requested_to/i);
-  assert.match(queries.historicalRows.sql, /'2026-07-10'/i);
-  assert.match(queries.historicalRows.sql, /'2026-07-31'/i);
+  assert.doesNotMatch(queries.historicalRows.sql, /'2026-07-10'|'2026-07-31'/i);
   assert.doesNotMatch(queries.historicalRows.sql, /previous_demand/i);
   assert.match(queries.currentQueries.sql, /facts\.ingestion_run_id\s*=\s*coverage\.ingestion_run_id/i);
   assert.match(queries.currentRegions.sql, /facts\.ingestion_run_id\s*=\s*coverage\.ingestion_run_id/i);
@@ -734,8 +734,8 @@ test("Wordstat SQL binds facts and run lineage to account-scoped confirmed cover
   assert.match(queries.currentRegions.sql, /facts\.registry_version\s*=\s*coverage\.registry_version/i);
   assert.doesNotMatch(queries.currentQueries.sql, /MAX\(requested_to\)/i);
   assert.doesNotMatch(queries.currentRegions.sql, /MAX\(requested_to\)/i);
-  assert.match(queries.currentRegions.sql, /classification\s*=\s*'medical'/i);
-  assert.match(queries.currentRegions.sql, /review_status\s*=\s*'reviewed'/i);
+  assert.doesNotMatch(queries.currentRegions.sql, /classification\s*=\s*'medical'/i);
+  assert.doesNotMatch(queries.currentRegions.sql, /review_status\s*=\s*'reviewed'/i);
   assert.match(queries.currentQueries.sql, /AS seo_os_eligible/i);
   assert.match(queries.currentQueries.sql, /classifications\.is_active\s*=\s*1/i);
   assert.doesNotMatch(queries.currentQueries.sql, /query_hash\s*=\s*facts\.query_hash\s+AND\s+classifications\.is_active\s*=\s*1/i);
@@ -745,7 +745,7 @@ test("Wordstat SQL binds facts and run lineage to account-scoped confirmed cover
   assert.match(queries.currentQueries.sql, /PARTITION BY facts\.device_type, facts\.normalized_query/i);
   assert.doesNotMatch(queries.currentQueries.sql, /PARTITION BY facts\.request_kind/i);
   assert.match(queries.currentQueries.sql, /CASE\s+WHEN facts\.request_kind = 'popular' THEN 0 ELSE 1 END/i);
-  assert.match(queries.currentRegions.sql, /PARTITION BY facts\.region_id/i);
+  assert.match(queries.currentRegions.sql, /PARTITION BY facts\.seed_hash, facts\.registry_version, facts\.region_id, facts\.device_type/i);
   for (const query of [queries.currentQueries, queries.currentRegions]) {
     assert.match(query.sql, /coverage\.requested_to\s*<=\s*\?/i);
     assert.equal(query.params.includes("2026-09-02"), true);
@@ -756,7 +756,7 @@ test("Wordstat SQL scopes run state by endpoint family and selects the latest re
   const { buildZarukuWordstatQueries } = await wordstatModule();
   const queries = buildZarukuWordstatQueries("66624469");
 
-  assert.deepEqual(Object.keys(queries).sort(), ["currentQueries", "currentRegions", "historicalRows"]);
+  assert.deepEqual(Object.keys(queries).sort(), ["currentQueries", "currentRegions", "historicalRows", "observedDays"]);
   assert.doesNotMatch(queries.currentQueries.sql, /wordstat:metadata/i);
   assert.match(queries.currentQueries.sql, /:current'[\s\S]*:all'/i);
   assert.match(queries.currentRegions.sql, /:regions'[\s\S]*:all'/i);
@@ -788,7 +788,8 @@ test("Wordstat endpoint SQL carries selected coverage-run status separately from
 
   for (const query of [queries.currentQueries, queries.currentRegions]) {
     assert.match(query.sql, /coverage_run\.status\s+AS\s+selected_coverage_run_status/i);
-    assert.match(query.sql, /latest_snapshot\.selected_coverage_run_status\s+AS\s+endpoint_coverage_run_status/i);
+    assert.match(query.sql, /coverage_state\.endpoint_coverage_run_status/i);
+    assert.match(query.sql, /SUM\(coverage_run\.status\s*<>\s*'success'\)\s*>\s*0\s+THEN\s+'partial'/i);
     assert.match(query.sql, /latest_endpoint_run\.status\s+AS\s+endpoint_last_status/i);
   }
 });
@@ -847,4 +848,110 @@ test("Wordstat read model never imports providers, credentials, or capture-share
   assert.doesNotMatch(source, /wordstat_count\s*\/\s*(webmaster_)?impressions/i);
   assert.doesNotMatch(source, /market_share|capture_rate/i);
   assert.doesNotMatch(source, /WORDSTAT_TOKEN|oauth|wordstat_api|fetch\s*\(/i);
+});
+
+function observedWeek(seed: string, start: number, previous = 10, current = 20, registry = "wordstat-v1") {
+  return Array.from({ length: 14 }, (_, i) => ({
+    seed_hash: seed, registry_version: registry, phrase: "наблюдаемый запрос",
+    classification: "unreviewed" as const, review_status: "pending" as const,
+    date: new Date(Date.UTC(2026, 8, start + i)).toISOString().slice(0, 10),
+    count: i < 7 ? previous : current,
+  }));
+}
+
+test("pending tracked seeds have real consecutive-week growth", async () => {
+  const { calculateWordstatWeeklyGrowth } = await wordstatModule();
+  const days = observedWeek("pending-seed", 21);
+  const result = calculateWordstatWeeklyGrowth(days, new Date("2026-10-08T12:00:00Z"));
+  assert.deepEqual(result.previous_period, { from: "2026-09-21", to: "2026-09-27" });
+  assert.deepEqual(result.current_period, { from: "2026-09-28", to: "2026-10-04" });
+  assert.equal(result.comparable_count, 1);
+  assert.equal(result.growing_count, 1);
+  assert.deepEqual(result.rows[0], { seed_hash: "pending-seed", registry_version: "wordstat-v1",
+    previous_count: 70, current_count: 140, absolute_change: 70, percent_change: 100, new_from_zero: false });
+  assert.equal(days[0].review_status, "pending");
+});
+
+test("weekly growth preserves missing days, zero baselines, registry identity and closed weeks", async () => {
+  const { calculateWordstatWeeklyGrowth } = await wordstatModule();
+  const days = [
+    ...observedWeek("incomplete", 21).filter((_, i) => i !== 2),
+    ...observedWeek("complete", 21), ...observedWeek("new", 21, 0, 2),
+    ...observedWeek("zero", 21, 0, 0),
+    ...observedWeek("split", 21).slice(0, 7),
+    ...observedWeek("split", 21, 10, 20, "wordstat-v2").slice(7),
+    ...observedWeek("unfinished", 28),
+  ];
+  const result = calculateWordstatWeeklyGrowth(days, new Date("2026-10-08T12:00:00Z"));
+  assert.equal(result.comparable_count, 3);
+  assert.equal(result.growing_count, 2);
+  assert.equal(result.rows.find((r) => r.seed_hash === "incomplete")?.absolute_change, null);
+  assert.equal(result.rows.find((r) => r.seed_hash === "new")?.percent_change, null);
+  assert.equal(result.rows.find((r) => r.seed_hash === "new")?.new_from_zero, true);
+  assert.equal(result.rows.find((r) => r.seed_hash === "zero")?.absolute_change, 0);
+  assert.equal(result.rows.find((r) => r.seed_hash === "unfinished")?.previous_count, null);
+  const gap = calculateWordstatWeeklyGrowth([
+    ...observedWeek("gap", 14).slice(0, 7), ...observedWeek("gap", 28).slice(0, 7),
+  ], new Date("2026-10-08T12:00:00Z"));
+  assert.equal(gap.current_period, null);
+  const conflict = calculateWordstatWeeklyGrowth([
+    ...observedWeek("conflict", 21), { ...observedWeek("conflict", 21)[0], count: 999 },
+  ], new Date("2026-10-08T12:00:00Z"));
+  assert.equal(conflict.comparable_count, 0);
+});
+
+test("observed reader uses exact scope hashes and preserves mixed regional runs", async () => {
+  const { buildZarukuWordstatQueries, loadZarukuWordstatData } = await wordstatModule();
+  const queries = buildZarukuWordstatQueries("66624469", "2026-10-08");
+  assert.ok(queries.observedDays);
+  assert.match(queries.observedDays.sql, /EXISTS/);
+  assert.doesNotMatch(queries.observedDays.sql, /classification = 'medical'/);
+  assert.doesNotMatch(queries.currentRegions.sql, /latest\.ingestion_run_id = coverage\.ingestion_run_id/);
+  assert.match(queries.currentRegions.sql, /facts\.seed_hash/);
+  const { createHash } = await import("node:crypto");
+  const hash = (seed: string, endpoint: string, extra: string[]) => createHash("sha256").update(JSON.stringify({
+    account: "66624469", endpoint, extra, registry_version: "wordstat-v1", seed_hash: seed,
+  })).digest("hex");
+  assert.equal(hash("a", "dynamics", ["2026-09-13", "2026-10-04", "all"]),
+    "b67ada468184463dd735f8f2af976095547d14f537817fcff3f527f8fd820f5b");
+  for (const query of Object.values(queries)) assert.equal(query.sql.split("?").length - 1, query.params.length);
+  assert.match(queries.currentRegions.sql, /facts\.ingestion_run_id\s*=\s*coverage\.ingestion_run_id/);
+  assert.match(queries.currentRegions.sql, /coverage\.scope_hash\s*=\s*SHA2/);
+  const dynamics = { seed_hash: "a", registry_version: "wordstat-v1", phrase: "наблюдаемый запрос",
+    classification: "unreviewed", review_status: "pending", report_date: "2026-10-04", count: 20,
+    requested_from: "2026-09-13", requested_to: "2026-10-04", device: "all",
+    scope_hash: hash("a", "dynamics", ["2026-09-13", "2026-10-04", "all"]),
+    publication_at: "2026-10-07 08:15:00" };
+  const baseRegion = { ...dynamics, snapshot_date: "2026-10-06", region_id: 213,
+    region_name: "Москва", region_type: "city", share: 0.1, affinity_index: 120 };
+  const original = fakeQuery({ metadata: [{ ...availableMetadata(), last_status: "partial" }] });
+  const data = await loadZarukuWordstatData("66624469", async (q) => {
+    if (q.sql.includes("wordstat:observed-days")) return [dynamics, { ...dynamics, seed_hash: "wrong" },
+      { ...dynamics, report_date: "2026-10-03", count: null }];
+    if (q.sql.includes("wordstat:current-regions")) return [
+      ...await original.run(q),
+      { ...baseRegion, seed_hash: "a", scope_hash: hash("a", "regions", ["2026-10-06", "all"]), ingestion_run_id: 2794 },
+      { ...baseRegion, seed_hash: "b", scope_hash: hash("b", "regions", ["2026-10-06", "all"]), ingestion_run_id: 2797 },
+      { ...baseRegion, seed_hash: "wrong", scope_hash: hash("a", "regions", ["2026-10-06", "all"]) },
+    ];
+    return original.run(q);
+  }, new Date("2026-10-08T12:00:00Z"));
+  assert.deepEqual(data.observed_demand?.days.map((r) => r.seed_hash), ["a"]);
+  assert.deepEqual(data.observed_regions?.map((r) => r.seed_hash).sort(), ["a", "b"]);
+  assert.equal(data.latest_confirmed_publication_at, "2026-10-07 08:15:00");
+  assert.equal(data.source_freshness?.last_status, "partial");
+  assert.equal(data.source_freshness?.last_success_at, "2026-09-02 06:00:00");
+});
+
+test("current fact reads prune to the exact selected snapshot before scope validation", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const queries = buildZarukuWordstatQueries("66624469", "2026-10-08");
+  for (const query of [queries.currentQueries, queries.currentRegions]) {
+    assert.match(query.sql, /JOIN latest_snapshot selected_snapshot/);
+    assert.match(query.sql, /facts\.snapshot_date = selected_snapshot\.requested_to/);
+    assert.match(query.sql, /facts\.window_from = selected_snapshot\.requested_from/);
+    assert.match(query.sql, /facts\.window_to = selected_snapshot\.requested_to/);
+    assert.match(query.sql, /EXISTS/);
+    assert.match(query.sql, /coverage\.scope_hash\s*=\s*SHA2/);
+  }
 });

@@ -143,6 +143,7 @@ function sourceStatusClass(status: ReturnType<typeof sourceStatus>) {
 }
 
 function sourceStateNote(data: ZarukuWordstatData, source: ZarukuSourceFreshnessRow | null) {
+  if (source?.note) return source.note;
   if (source?.freshness_status === "failed") {
     return "Новое обновление завершилось ошибкой. Если показан прошлый снимок, его фактические даты сохранены выше и он не выдан за текущий.";
   }
@@ -301,7 +302,7 @@ function QueryDiscovery({ data, locale = "ru-RU" }: Props) {
       <div className="mb-3 flex flex-wrap gap-2" aria-label="Сортировка запросов"><SortButton label="Запрос" sortKey="query" sort={sort} onChange={changeSort} /><SortButton label="Спрос" sortKey="count" sort={sort} onChange={changeSort} /><SortButton label="Классификация" sortKey="classification" sort={sort} onChange={changeSort} /><SortButton label="Действие" sortKey="action" sort={sort} onChange={changeSort} /></div>
       {message ? <p role="status" className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">{message}</p> : null}
       <ZarukuTableFrame mode="operational" label={`Текущие запросы Wordstat · ${formatPeriod(data.current.query_period, locale)}`}>
-        <table className="zaruku-table min-w-[1120px]"><thead><tr><th className="px-4 py-2.5 text-left font-medium">Запрос</th><th className="px-4 py-2.5 text-right font-medium">Спрос Wordstat</th><th className="px-4 py-2.5 text-left font-medium">Классификация</th><th className="px-4 py-2.5 text-left font-medium">Тема Zaruku</th><th className="px-4 py-2.5 text-right font-medium">SEO OS</th><th className="px-4 py-2.5 text-left font-medium">Страница Zaruku</th><th className="px-4 py-2.5 text-left font-medium">Предложенное действие</th></tr></thead><tbody className="divide-y divide-slate-100">{paginated.rows.map((row) => <tr key={row.normalized_query}><td className="px-4 py-3 font-medium text-slate-700">{row.query}<div className="mt-0.5 text-xs font-normal text-slate-500">{row.request_kind === "popular" ? "Популярный запрос" : "Похожий запрос"}</div></td><td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.count, locale)}</td><td className="px-4 py-3 text-slate-600">{CLASSIFICATION_LABELS[row.classification]}</td><td className="px-4 py-3 text-slate-600">{row.topic ?? "—"}</td><td className="px-4 py-3 text-right tabular-nums text-slate-600">{row.seo_os_position == null ? "Не отслеживается" : `${formatPosition(row.seo_os_position, locale)} · ${row.seo_os_week ?? "неделя не указана"}`}</td><td className="px-4 py-3 text-slate-600">{row.confirmed_url ?? "Не подтверждена"}</td><td className="px-4 py-3 text-slate-700"><div>{queryAction(row)}</div><div className="mt-0.5 text-xs text-slate-500">{reviewState(row)}</div></td></tr>)}</tbody></table>
+        <table className="zaruku-table min-w-[1120px]"><thead><tr><th className="px-4 py-2.5 text-left font-medium">Запрос</th><th className="px-4 py-2.5 text-right font-medium">Спрос Wordstat</th><th className="px-4 py-2.5 text-left font-medium">Классификация</th><th className="px-4 py-2.5 text-left font-medium">Тема Zaruku</th><th className="px-4 py-2.5 text-right font-medium">SEO OS</th><th className="px-4 py-2.5 text-left font-medium">Страница Zaruku</th><th className="px-4 py-2.5 text-left font-medium">Предложенное действие</th></tr></thead><tbody className="divide-y divide-slate-100">{paginated.rows.map((row) => <tr key={row.normalized_query}><td className="max-w-xs whitespace-normal break-words px-4 py-3 font-medium text-slate-700" title={row.query}>{row.query}<div className="mt-0.5 text-xs font-normal text-slate-500">{row.request_kind === "popular" ? "Популярный запрос" : "Похожий запрос"}</div></td><td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatNumber(row.count, locale)}</td><td className="px-4 py-3 text-slate-600">{CLASSIFICATION_LABELS[row.classification]}</td><td className="px-4 py-3 text-slate-600">{row.topic ?? "—"}</td><td className="px-4 py-3 text-right tabular-nums text-slate-600">{row.seo_os_position == null ? "Не отслеживается" : `${formatPosition(row.seo_os_position, locale)} · ${row.seo_os_week ?? "неделя не указана"}`}</td><td className="max-w-xs whitespace-normal break-all px-4 py-3 text-slate-600" title={row.confirmed_url ?? undefined}>{row.confirmed_url ?? "Не подтверждена"}</td><td className="px-4 py-3 text-slate-700"><div>{queryAction(row)}</div><div className="mt-0.5 text-xs text-slate-500">{reviewState(row)}</div></td></tr>)}</tbody></table>
       </ZarukuTableFrame>
       <footer className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500"><button type="button" disabled={paginated.page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Предыдущая</button><span>{paginated.totalRows.toLocaleString(locale)} найдено · Страница {paginated.page} из {paginated.totalPages}</span><button type="button" disabled={paginated.page >= paginated.totalPages} onClick={() => setPage((value) => Math.min(paginated.totalPages, value + 1))} className="rounded-md border border-slate-200 px-3 py-1.5 disabled:opacity-40">Следующая</button></footer>
     </>
@@ -322,6 +323,82 @@ function RegionTable({ rows, locale, period, status }: { rows: ZarukuWordstatReg
   );
 }
 
+
+function availableDateRanges(dates: string[], locale: string) {
+  const sorted = [...new Set(dates)].sort();
+  const ranges: Array<{ from: string; to: string }> = [];
+  for (const date of sorted) {
+    const last = ranges.at(-1);
+    if (last && Date.parse(date) - Date.parse(last.to) === 86_400_000) last.to = date;
+    else ranges.push({ from: date, to: date });
+  }
+  return ranges.map((range) => range.from === range.to ? formatDate(range.from, locale) : formatPeriod(range, locale)).join(", ");
+}
+
+function ObservedDemand({ data, locale }: Props & { locale: string }) {
+  const demand = data.observed_demand;
+  if (!demand?.days.length) return <p role="status" className="text-sm text-slate-500">Нет подтверждённых наблюдений спроса Wordstat.</p>;
+  const seeds = new Map<string, typeof demand.days>();
+  for (const day of demand.days) {
+    const key = JSON.stringify([day.registry_version, day.seed_hash]);
+    const group = seeds.get(key) ?? [];
+    group.push(day); seeds.set(key, group);
+  }
+  const growth = new Map(demand.growth.rows.map((row) => [JSON.stringify([row.registry_version, row.seed_hash]), row]));
+  return <>
+    {demand.growth.current_period ? <p className="mb-3 text-xs text-slate-500">Предыдущая неделя: {formatPeriod(demand.growth.previous_period, locale)}. Текущая полная неделя: {formatPeriod(demand.growth.current_period, locale)}.</p>
+      : <p role="status" className="mb-3 text-xs text-slate-500">Нет двух последовательных полных недель с подтверждёнными датами для сравнения.</p>}
+    <ZarukuTableFrame mode="operational" label="Спрос по отслеживаемым запросам">
+      <table className="zaruku-table min-w-[1080px]">
+        <thead><tr><th className="px-4 py-2.5 text-left font-medium">Отслеживаемый запрос / доступные даты</th>
+          <th className="px-4 py-2.5 text-right font-medium">Последний доступный день</th>
+          <th className="px-4 py-2.5 text-right font-medium">Предыдущая неделя</th>
+          <th className="px-4 py-2.5 text-right font-medium">Текущая полная неделя</th>
+          <th className="px-4 py-2.5 text-right font-medium">Изменение</th>
+          <th className="px-4 py-2.5 text-right font-medium">Изменение, %</th></tr></thead>
+        <tbody className="divide-y divide-slate-100">{[...seeds.entries()].sort(([, a], [, b]) => a[0].phrase.localeCompare(b[0].phrase, locale)).map(([key, days]) => {
+          const day = days[0], row = growth.get(key);
+          const latest = [...days].sort((a, b) => b.date.localeCompare(a.date))[0];
+          return <tr key={key}>
+            <td className="max-w-sm whitespace-normal break-words px-4 py-3 font-medium text-slate-700" title={day.phrase}>
+              {day.phrase}
+              <div className="mt-1 text-xs font-normal text-slate-500">{day.review_status === "pending" ? "Нужна медицинская проверка" : CLASSIFICATION_LABELS[day.classification]}</div>
+              <div className="mt-1 text-xs font-normal text-slate-500">Доступные даты: {availableDateRanges(days.map((item) => item.date), locale)}</div>
+              {row?.absolute_change == null ? <div className="mt-1 text-xs font-normal text-slate-500">Недостаточно данных для сопоставления</div> : null}
+            </td>
+            <td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatNumber(latest.count, locale)}<div className="mt-1 text-xs text-slate-500">{formatDate(latest.date, locale)}</div></td>
+            <td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatNumber(row?.previous_count, locale)}</td>
+            <td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatNumber(row?.current_count, locale)}</td>
+            <td className="px-4 py-3 text-right tabular-nums text-slate-600">{row?.absolute_change != null && row.absolute_change > 0 ? "+" : ""}{formatNumber(row?.absolute_change, locale)}</td>
+            <td className="px-4 py-3 text-right tabular-nums text-slate-600">{row?.new_from_zero ? "Появился спрос" : formatPercentPoints(row?.percent_change, locale)}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </ZarukuTableFrame>
+  </>;
+}
+
+function ObservedRegionTable({ data, locale }: Props & { locale: string }) {
+  const options = new Map<string, { phrase: string; pending: boolean }>();
+  for (const seed of [...(data.observed_demand?.days ?? []), ...(data.observed_regions ?? [])]) {
+    options.set(JSON.stringify([seed.registry_version, seed.seed_hash]), { phrase: seed.phrase, pending: seed.review_status === "pending" });
+  }
+  const sorted = [...options.entries()].sort(([ka, a], [kb, b]) => a.phrase.localeCompare(b.phrase, locale) || ka.localeCompare(kb));
+  const [selected, setSelected] = useState("");
+  const selectedKey = options.has(selected) ? selected : sorted[0]?.[0] ?? "";
+  const rows = (data.observed_regions ?? []).filter((row) => JSON.stringify([row.registry_version, row.seed_hash]) === selectedKey);
+  if (!data.observed_regions) return <RegionTable rows={data.current.regions} locale={locale} period={data.current.region_period} status={data.current.region_status} />;
+  return <>
+    {sorted.length ? <label className="mb-4 block max-w-xl text-xs font-medium text-slate-600">Отслеживаемый запрос
+      <select value={selectedKey} onChange={(event) => setSelected(event.target.value)} className="mt-1.5 w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+        {sorted.map(([key, seed]) => <option key={key} value={key}>{seed.phrase}{seed.pending ? " · Не проверен" : ""}</option>)}
+      </select>
+    </label> : null}
+    <p className="mb-3 text-xs leading-relaxed text-slate-500">Показан спрос только выбранного запроса. Значения пересекающихся регионов и запросов не складываются.</p>
+    <RegionTable rows={rows} locale={locale} period={data.current.region_period} status={data.current.region_status} />
+  </>;
+}
+
 export default function ZarukuWordstatTab({ data, locale = "ru-RU" }: Props) {
   const historicalPeriod = formatHistoricalPeriod(data.historical.period, locale);
   const historicalCoverage = formatHistoricalCoverage(data.historical, locale);
@@ -336,37 +413,41 @@ export default function ZarukuWordstatTab({ data, locale = "ru-RU" }: Props) {
       <section className="card-surface zaruku-panel">
         <div className="zaruku-panel-body">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div><h3 className="text-lg font-semibold text-slate-900">Где есть медицинский спрос, что уже получает Zaruku и что стоит улучшить</h3><p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Wordstat показывает спрос, а не визиты, показы или долю сайта.</p></div>
+            <div><h3 className="text-lg font-semibold text-slate-900">Спрос Wordstat по отслеживаемым запросам</h3><p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-600">Wordstat показывает спрос, а не визиты, показы или долю сайта.</p></div>
             <div className="flex flex-wrap gap-2 text-xs text-slate-600"><span className="rounded-md bg-slate-50 px-2.5 py-1.5">Сопоставление · {historicalCoverage}</span><span className="rounded-md bg-slate-50 px-2.5 py-1.5">Новые запросы · последние 30 дней · {queryPeriod}</span></div>
           </div>
-          <div className="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-500 sm:flex-row sm:items-start sm:justify-between"><div><span className={`mr-2 inline-flex rounded-md px-2 py-1 font-semibold ${sourceStatusClass(status)}`}>{status}</span>{data.source_freshness?.last_success_at ? <>Последний успешный сбор: {formatDateTime(data.source_freshness.last_success_at, locale)}.</> : "Последний успешный сбор пока не подтверждён."}</div><span className="max-w-xl">{sourceStateNote(data, data.source_freshness)}</span></div>
+          <div className="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-3 text-xs leading-relaxed text-slate-500 sm:flex-row sm:items-start sm:justify-between"><div><span className={`mr-2 inline-flex rounded-md px-2 py-1 font-semibold ${sourceStatusClass(status)}`}>{status}</span>{data.latest_confirmed_publication_at ? <div>Последняя подтверждённая публикация: {formatDateTime(data.latest_confirmed_publication_at, locale)}.</div> : null}{data.source_freshness?.last_success_at ? <>Последний полностью успешный сбор: {formatDateTime(data.source_freshness.last_success_at, locale)}.</> : "Последний полностью успешный сбор пока не подтверждён."}</div><span className="max-w-xl">{sourceStateNote(data, data.source_freshness)}</span></div>
           {data.messages.map((message) => <p key={message} role="status" className="mt-2 text-xs leading-relaxed text-slate-500">{message}</p>)}
         </div>
       </section>
 
       <Panel title="Сводка спроса" note="Показатели не смешивают Wordstat, Вебмастер, SEO OS и Метрику в одну долю или конверсию.">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <Indicator label="Темы с растущим спросом" value={indicatorValue(data.historical.status, formatNumber(data.indicators.growing_medical_topics, locale))} note={`${data.indicators.growing_medical_topics_reason} Период тем: ${historicalCoverage}.`} />
-          <Indicator label="Самая большая возможность" value={indicatorValue(data.historical.status, data.indicators.largest_opportunity ? OPPORTUNITY_LABELS[data.indicators.largest_opportunity] : "—")} note={`Категория для проверенной медицинской темы с заметным спросом и слабым присутствием Zaruku; это не процент и не доля рынка. Период тем: ${historicalPeriod}.`} />
+          {data.observed_demand ? <Indicator label="Отслеживаемые запросы с ростом спроса" value={data.observed_demand.growth.current_period ? `${data.observed_demand.growth.growing_count} из ${data.observed_demand.growth.comparable_count} сопоставимых` : "—"} note={`Недели: ${formatPeriod(data.observed_demand.growth.previous_period, locale)} / ${formatPeriod(data.observed_demand.growth.current_period, locale)}. Непроверенные запросы остаются на медицинской проверке.`} /> : <Indicator label="Темы с растущим спросом" value={indicatorValue(data.historical.status, formatNumber(data.indicators.growing_medical_topics, locale))} note={`${data.indicators.growing_medical_topics_reason} Период тем: ${historicalCoverage}.`} />}
+          {data.historical.rows.length > 0 && data.indicators.largest_opportunity != null ? <Indicator label="Самая большая возможность" value={indicatorValue(data.historical.status, data.indicators.largest_opportunity ? OPPORTUNITY_LABELS[data.indicators.largest_opportunity] : "—")} note={`Категория для проверенной медицинской темы с заметным спросом и слабым присутствием Zaruku; это не процент и не доля рынка. Период тем: ${historicalPeriod}.`} /> : null}
           <Indicator label="Нерелевантный спрос сейчас" value={indicatorValue(data.current.query_status, formatPercentPoints(data.indicators.irrelevant_demand_share, locale))} note={`Доля де-дублированного проверенного спроса в текущем окне, признанная нерелевантной правилами Zaruku. Период запросов: ${queryPeriod}.`} />
-          <Indicator label="Новые темы для проверки" value={indicatorValue(data.current.query_status, formatNumber(data.indicators.review_queue_count, locale))} note={`Только действующие непроверенные запросы; до медицинской проверки они не становятся задачами SEO OS. Период запросов: ${queryPeriod}.`} />
-          <Indicator label="Регионы возможностей" value={indicatorValue(data.current.region_status, formatNumber(data.indicators.region_opportunity_count, locale))} note={`${data.indicators.region_opportunity_reason} Поэтому сравнительный показатель недоступен. Период регионов: ${regionPeriod}.`} />
+          <Indicator label="Новые темы для проверки" value={data.current.query_status === "unavailable" ? "—" : formatNumber(data.indicators.review_queue_count, locale)} note={`${data.current.query_status === "partial" ? "Подтверждённая часть: " : ""}Только действующие непроверенные запросы; до медицинской проверки они не становятся задачами SEO OS. Период запросов: ${queryPeriod}.`} />
+          <Indicator label="Сравнение с региональным трафиком" value={indicatorValue(data.current.region_status, formatNumber(data.indicators.region_opportunity_count, locale))} note={`${data.indicators.region_opportunity_reason} Поэтому сравнительный показатель недоступен. Период регионов: ${regionPeriod}.`} />
         </div>
-        <p className="mt-4 max-w-4xl text-xs leading-relaxed text-slate-500">Рост спроса: {data.indicators.growing_medical_topics_reason}</p>
+        {!data.observed_demand ? <p className="mt-4 max-w-4xl text-xs leading-relaxed text-slate-500">Рост спроса: {data.indicators.growing_medical_topics_reason}</p> : null}
         <p className="mt-4 max-w-4xl text-xs leading-relaxed text-slate-500">Доля нерелевантного спроса среди запросов, найденных Wordstat. Определяется правилами Zaruku, а не Яндексом. Не является долей нецелевого трафика на сайте.</p>
       </Panel>
 
-      <Panel title={`${historicalHeading}: спрос и присутствие Zaruku`} note="Спрос Wordstat показан по каждой утверждённой теме. Его нельзя складывать между пересекающимися фразами и нельзя делить на показы Zaruku.">
+      {data.observed_demand ? <Panel title="Спрос по отслеживаемым запросам" note="Спрос показан отдельно для каждого запроса на его подтверждённых датах. Непроверенные фразы не являются одобренными медицинскими темами.">
+        <ObservedDemand data={data} locale={locale} />
+      </Panel> : null}
+
+      {data.historical.rows.length ? <Panel title={`${historicalHeading}: спрос и присутствие Zaruku`} note="Спрос Wordstat показан по каждой утверждённой теме. Его нельзя складывать между пересекающимися фразами и нельзя делить на показы Zaruku.">
         <HistoricalTable rows={data.historical.rows} locale={locale} coverageLabel={historicalCoverage} status={data.historical.status} />
-      </Panel>
+      </Panel> : null}
 
       <Panel title="Текущие запросы Wordstat" note={`Де-дублированные популярные и похожие запросы за последние 30 дней. Запросы: ${queryPeriod}.`}>
         <QueryDiscovery data={data} locale={locale} />
       </Panel>
 
-      <Panel title="Региональные возможности" note={`Спрос, доля и индекс интереса взяты из Wordstat. ${data.current.regional_traffic_comparison.reason} Поэтому сравнение с трафиком и региональное ранжирование возможностей недоступны. Регионы: ${regionPeriod}. Индекс интереса описывает относительный интерес в регионе, а не долю Zaruku на рынке.`}>
+      <Panel title="Региональный спрос Wordstat" note={`Спрос, доля и индекс интереса взяты из Wordstat. ${data.current.regional_traffic_comparison.reason} Поэтому сравнение с трафиком и региональное ранжирование возможностей недоступны. Регионы: ${regionPeriod}. Индекс интереса описывает относительный интерес в регионе, а не долю Zaruku на рынке.`}>
         {periodMismatch ? <p role="status" className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">Периоды запросов и регионов не совпадают: запросы {queryPeriod}, регионы {regionPeriod}. Они показаны отдельно и не объединены в общий показатель.</p> : null}
-        <RegionTable rows={data.current.regions} locale={locale} period={data.current.region_period} status={data.current.region_status} />
+        <ObservedRegionTable data={data} locale={locale} />
       </Panel>
 
       <Panel title="Wordstat → проверка → SEO OS" note="Wordstat создаёт предложение, а не готовую задачу. На одобрение в SEO OS может перейти только действующая, проверенная медицинская тема с подготовленным действием.">

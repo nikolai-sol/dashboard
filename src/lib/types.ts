@@ -847,6 +847,40 @@ export interface ZarukuWordstatRegionRow {
   affinity_index: number | null;
 }
 
+export interface ZarukuWordstatObservedDay {
+  seed_hash: string;
+  registry_version: string;
+  phrase: string;
+  classification: ZarukuWordstatClassification;
+  review_status: "reviewed" | "pending";
+  date: string;
+  count: number;
+}
+
+export interface ZarukuWordstatWeeklyGrowth {
+  previous_period: { from: string; to: string } | null;
+  current_period: { from: string; to: string } | null;
+  growing_count: number;
+  comparable_count: number;
+  rows: Array<{
+    seed_hash: string;
+    registry_version: string;
+    previous_count: number | null;
+    current_count: number | null;
+    absolute_change: number | null;
+    percent_change: number | null;
+    new_from_zero: boolean;
+  }>;
+}
+
+export interface ZarukuWordstatObservedRegion extends ZarukuWordstatRegionRow {
+  seed_hash: string;
+  registry_version: string;
+  phrase: string;
+  classification: ZarukuWordstatClassification;
+  review_status: "reviewed" | "pending";
+}
+
 export interface ZarukuWordstatIndicators {
   growing_medical_topics: number | null;
   growing_medical_topics_reason: string;
@@ -858,6 +892,13 @@ export interface ZarukuWordstatIndicators {
 }
 
 export interface ZarukuWordstatData {
+  observed_demand?: {
+    days: ZarukuWordstatObservedDay[];
+    confirmed_dates: string[];
+    growth: ZarukuWordstatWeeklyGrowth;
+  };
+  observed_regions?: ZarukuWordstatObservedRegion[];
+  latest_confirmed_publication_at?: string | null;
   status: "available" | "partial" | "empty" | "unavailable";
   historical: {
     status: ZarukuWordstatScopeStatus;

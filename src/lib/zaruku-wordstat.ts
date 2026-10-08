@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import pool from "@/lib/db";
 import type {
@@ -8,6 +9,9 @@ import type {
   ZarukuWordstatHistoricalRow,
   ZarukuWordstatIndicators,
   ZarukuWordstatOpportunity,
+  ZarukuWordstatObservedDay,
+  ZarukuWordstatObservedRegion,
+  ZarukuWordstatWeeklyGrowth,
   ZarukuWordstatQueryRow,
   ZarukuWordstatRegionRow,
 } from "@/lib/types";
@@ -15,13 +19,12 @@ import type {
 export type WordstatSqlQuery = { sql: string; params: Array<string | number> };
 export type WordstatQueryRunner = (query: WordstatSqlQuery) => Promise<unknown[]>;
 
-const HISTORICAL_WINDOW_FROM = "2026-07-10";
-const HISTORICAL_WINDOW_TO = "2026-07-31";
 const WORDSTAT_FRESHNESS_HOURS = 168;
 const GROWTH_UNAVAILABLE_REASON = "Предыдущий сопоставимый период Wordstat не собирался, поэтому показатель роста недоступен.";
 const REGION_TRAFFIC_UNAVAILABLE_REASON = "Сопоставимый региональный срез Яндекс-органики в Метрике пока не подключён.";
 
 type EndpointStateDbRow = {
+  endpoint_publication_at?: string | Date | null;
   endpoint_from: string | Date | null;
   endpoint_to: string | Date | null;
   endpoint_scope_count: number | string | null;
@@ -72,6 +75,14 @@ type CurrentQueryDbRow = EndpointStateDbRow & {
 };
 
 type CurrentRegionDbRow = EndpointStateDbRow & {
+  seed_hash?: string;
+  registry_version?: string;
+  phrase?: string;
+  classification?: string;
+  review_status?: string;
+  snapshot_date?: string;
+  scope_hash?: string;
+
   region_id: number | string | null;
   region_name: string | null;
   region_type: string | null;
@@ -151,6 +162,83 @@ function median(values: number[]) {
   return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
+
+function wordstatScopeHash(account: string, endpoint: "dynamics" | "regions" | "top_requests",
+  registryVersion: string, seedHash: string, extra: string[]) {
+  return createHash("sha256").update(JSON.stringify({
+    account, endpoint, extra, registry_version: registryVersion, seed_hash: seedHash,
+  })).digest("hex");
+}
+
+/** Exactly the collector's sorted, compact JSON bytes, with JSON escaping retained. */
+function scopeHashSql(endpoint: "dynamics" | "regions" | "top_requests", fact: string) {
+  const extra = endpoint === "dynamics"
+    ? `JSON_QUOTE(DATE_FORMAT(coverage.requested_from, '%Y-%m-%d')), ',', JSON_QUOTE(DATE_FORMAT(coverage.requested_to, '%Y-%m-%d'))`
+    : `JSON_QUOTE(DATE_FORMAT(${fact}.snapshot_date, '%Y-%m-%d'))`;
+  return `SHA2(CONCAT('{"account":', JSON_QUOTE(${fact}.analytics_account_id),
+    ',"endpoint":"${endpoint}","extra":[', ${extra}, ',', JSON_QUOTE(${fact}.device_type),
+    '],"registry_version":', JSON_QUOTE(${fact}.registry_version),
+    ',"seed_hash":', JSON_QUOTE(${fact}.seed_hash), '}'), 256)`;
+}
+
+function validCount(value: unknown) {
+  const count = asNullableNumber(value);
+  return count != null && count >= 0 ? count : null;
+}
+
+function validDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+    && Number.isFinite(Date.parse(value))
+    && new Date(value).toISOString().slice(0, 10) === value;
+}
+
+export function calculateWordstatWeeklyGrowth(days: ZarukuWordstatObservedDay[], nowUtc: Date): ZarukuWordstatWeeklyGrowth {
+  requireUtcDate(nowUtc);
+  const today = nowUtc.toISOString().slice(0, 10);
+  const grouped = new Map<string, { seed_hash: string; registry_version: string; dates: Map<string, number | null> }>();
+  for (const day of days) {
+    const key = JSON.stringify([day.registry_version, day.seed_hash]);
+    let seed = grouped.get(key);
+    if (!seed) {
+      seed = { seed_hash: day.seed_hash, registry_version: day.registry_version, dates: new Map() };
+      grouped.set(key, seed);
+    }
+    if (!validDate(day.date) || day.date >= today || validCount(day.count) == null) continue;
+    const existing = seed.dates.get(day.date);
+    seed.dates.set(day.date, existing === undefined || existing === day.count ? day.count : null);
+  }
+  const addDays = (date: string, count: number) => new Date(Date.parse(date) + count * 86_400_000).toISOString().slice(0, 10);
+  const weekSum = (dates: Map<string, number | null>, monday: string) => {
+    const values = Array.from({ length: 7 }, (_, i) => dates.get(addDays(monday, i)));
+    return values.every((value) => value != null) ? (values as number[]).reduce((sum, value) => sum + value, 0) : null;
+  };
+  const weeks = new Set<string>();
+  for (const seed of grouped.values()) for (const date of seed.dates.keys()) {
+    const parsed = new Date(date);
+    const monday = addDays(date, -((parsed.getUTCDay() + 6) % 7));
+    if (addDays(monday, 6) < today) weeks.add(monday);
+  }
+  const currentMonday = [...weeks].sort().reverse().find((monday) =>
+    [...grouped.values()].some((seed) => weekSum(seed.dates, monday) != null && weekSum(seed.dates, addDays(monday, -7)) != null));
+  const previousMonday = currentMonday ? addDays(currentMonday, -7) : null;
+  const rows = [...grouped.values()].map((seed) => {
+    const previous_count = previousMonday ? weekSum(seed.dates, previousMonday) : null;
+    const current_count = currentMonday ? weekSum(seed.dates, currentMonday) : null;
+    const absolute_change = previous_count != null && current_count != null ? current_count - previous_count : null;
+    return { seed_hash: seed.seed_hash, registry_version: seed.registry_version, previous_count, current_count,
+      absolute_change, percent_change: previous_count != null && previous_count > 0 && absolute_change != null
+        ? absolute_change / previous_count * 100 : null,
+      new_from_zero: previous_count === 0 && current_count != null && current_count > 0 };
+  });
+  return {
+    previous_period: previousMonday ? { from: previousMonday, to: addDays(previousMonday, 6) } : null,
+    current_period: currentMonday ? { from: currentMonday, to: addDays(currentMonday, 6) } : null,
+    comparable_count: rows.filter((row) => row.absolute_change != null).length,
+    growing_count: rows.filter((row) => row.absolute_change != null && row.absolute_change > 0).length,
+    rows,
+  };
+}
+
 export function classifyWordstatOpportunity(row: WordstatOpportunityInput): ZarukuWordstatOpportunity | null {
   if (row.classification !== "medical" || row.review_status !== "reviewed") return null;
   const demandIsHigh = row.wordstat_count >= row.demand_median;
@@ -164,12 +252,54 @@ export function classifyWordstatOpportunity(row: WordstatOpportunityInput): Zaru
 }
 
 export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | Date = new Date()): Record<
-  "historicalRows" | "currentQueries" | "currentRegions",
+  "historicalRows" | "currentQueries" | "currentRegions" | "observedDays",
   WordstatSqlQuery
 > {
   const normalizedAccountId = requireAccountId(accountId);
   const currentUtcDate = requireUtcDate(nowUtc);
+  const yesterday = new Date(Date.parse(currentUtcDate) - 86_400_000).toISOString().slice(0, 10);
   return {
+    observedDays: {
+      sql: `
+        /* wordstat:observed-days */
+        SELECT dynamics.seed_hash, dynamics.registry_version, seed.phrase_text AS phrase,
+          seed.classification, seed.review_status, dynamics.report_date, dynamics.count,
+          (SELECT MAX(GREATEST(coverage.updated_at, COALESCE(coverage_run.finished_at, coverage.updated_at)))
+           FROM canonical_wordstat_coverage coverage
+           JOIN canonical_collector_runs coverage_run ON coverage_run.id = coverage.ingestion_run_id
+             AND coverage_run.source_key = coverage.source_key
+             AND coverage_run.job_key IN (CONCAT('yandex_wordstat:', ?, ':historical'), CONCAT('yandex_wordstat:', ?, ':all'))
+           WHERE coverage.analytics_account_id = dynamics.analytics_account_id
+             AND coverage.source_key = dynamics.source_key AND coverage.endpoint = 'dynamics'
+             AND coverage.registry_version = dynamics.registry_version
+             AND coverage.ingestion_run_id = dynamics.ingestion_run_id
+             AND coverage.status IN ('success', 'success_empty')
+             AND dynamics.report_date BETWEEN coverage.requested_from AND coverage.requested_to
+             AND coverage.scope_hash = ${scopeHashSql("dynamics", "dynamics")}) AS publication_at
+        FROM canonical_fact_wordstat_dynamics_daily dynamics
+        JOIN canonical_wordstat_seed_registry seed ON seed.analytics_account_id = dynamics.analytics_account_id
+          AND seed.seed_hash = dynamics.seed_hash AND seed.registry_version = dynamics.registry_version
+          AND seed.is_active = 1
+        WHERE dynamics.analytics_account_id = ? AND dynamics.source_key = 'yandex_wordstat'
+          AND dynamics.device_type = 'all' AND dynamics.region_scope = 'all' AND dynamics.report_date <= ?
+          AND dynamics.count IS NOT NULL AND dynamics.count >= 0
+          AND EXISTS (
+            SELECT 1 FROM canonical_wordstat_coverage coverage
+            JOIN canonical_collector_runs coverage_run ON coverage_run.id = coverage.ingestion_run_id
+              AND coverage_run.source_key = coverage.source_key
+              AND coverage_run.job_key IN (CONCAT('yandex_wordstat:', ?, ':historical'), CONCAT('yandex_wordstat:', ?, ':all'))
+            WHERE coverage.analytics_account_id = dynamics.analytics_account_id
+              AND coverage.source_key = dynamics.source_key AND coverage.endpoint = 'dynamics'
+              AND coverage.registry_version = dynamics.registry_version
+              AND coverage.ingestion_run_id = dynamics.ingestion_run_id
+              AND coverage.status IN ('success', 'success_empty')
+              AND dynamics.report_date BETWEEN coverage.requested_from AND coverage.requested_to
+              AND coverage.scope_hash = ${scopeHashSql("dynamics", "dynamics")}
+          )
+        ORDER BY dynamics.registry_version, dynamics.seed_hash, dynamics.report_date
+      `,
+      params: [normalizedAccountId, normalizedAccountId, normalizedAccountId, yesterday, normalizedAccountId, normalizedAccountId],
+    },
     historicalRows: {
       sql: `
         /* wordstat:historical-rows */
@@ -192,7 +322,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         ),
         confirmed_dynamics_coverage AS (
           SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
-            coverage.requested_from, coverage.requested_to, coverage_run.status AS coverage_run_status
+            coverage.requested_from, coverage.requested_to, coverage.scope_hash, coverage_run.status AS coverage_run_status
           FROM canonical_wordstat_coverage coverage
           JOIN canonical_collector_runs coverage_run
             ON coverage_run.id = coverage.ingestion_run_id
@@ -208,24 +338,26 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             AND coverage.endpoint = 'dynamics'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
-            AND coverage.requested_from <= '${HISTORICAL_WINDOW_TO}'
-            AND coverage.requested_to >= '${HISTORICAL_WINDOW_FROM}'
+            AND coverage.requested_from <= '${yesterday}'
         ),
         confirmed_dynamics AS (
           SELECT dynamics.registry_version, dynamics.seed_hash, dynamics.report_date, dynamics.count
           FROM canonical_fact_wordstat_dynamics_daily dynamics
           JOIN approved_seeds seed ON seed.seed_hash = dynamics.seed_hash
             AND seed.registry_version = dynamics.registry_version
-          JOIN confirmed_dynamics_coverage coverage
-            ON coverage.analytics_account_id = dynamics.analytics_account_id
-            AND coverage.registry_version = dynamics.registry_version
-            AND coverage.ingestion_run_id = dynamics.ingestion_run_id
-            AND dynamics.report_date BETWEEN coverage.requested_from AND coverage.requested_to
           WHERE dynamics.source_key = 'yandex_wordstat'
             AND dynamics.analytics_account_id = ?
             AND dynamics.device_type = 'all'
             AND dynamics.region_scope = 'all'
-            AND dynamics.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
+            AND dynamics.report_date <= '${yesterday}'
+            AND EXISTS (
+              SELECT 1 FROM confirmed_dynamics_coverage coverage
+              WHERE coverage.analytics_account_id = dynamics.analytics_account_id
+                AND coverage.registry_version = dynamics.registry_version
+                AND coverage.ingestion_run_id = dynamics.ingestion_run_id
+                AND dynamics.report_date BETWEEN coverage.requested_from AND coverage.requested_to
+                AND coverage.scope_hash = ${scopeHashSql("dynamics", "dynamics")}
+            )
         ),
         confirmed_webmaster_snapshots AS (
           SELECT summary.source_key, summary.analytics_account_id, summary.host_id, summary.report_date,
@@ -238,7 +370,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           WHERE summary.source_key = 'yandex_webmaster'
             AND summary.analytics_account_id = ?
             AND summary.device_type = 'ALL'
-            AND summary.report_date BETWEEN '${HISTORICAL_WINDOW_FROM}' AND '${HISTORICAL_WINDOW_TO}'
+            AND summary.report_date <= '${yesterday}'
             AND (
               summary.impressions = 0
               OR EXISTS (
@@ -452,14 +584,19 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         ),
         confirmed_coverage AS (
           SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
-            coverage.requested_from AS window_from, coverage.requested_to AS window_to
+            coverage.requested_from AS window_from, coverage.requested_to AS window_to, coverage.scope_hash
           FROM canonical_wordstat_coverage coverage
           JOIN latest_snapshot latest
             ON latest.analytics_account_id = coverage.analytics_account_id
-            AND latest.registry_version = coverage.registry_version
-            AND latest.ingestion_run_id = coverage.ingestion_run_id
             AND latest.requested_from = coverage.requested_from
             AND latest.requested_to = coverage.requested_to
+          JOIN canonical_collector_runs coverage_run
+            ON coverage_run.id = coverage.ingestion_run_id
+            AND coverage_run.source_key = coverage.source_key
+            AND coverage_run.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':current'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'top_requests'
@@ -471,14 +608,21 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             MIN(coverage.requested_from) AS endpoint_from,
             MAX(coverage.requested_to) AS endpoint_to,
             COUNT(*) AS endpoint_scope_count,
-            SUM(coverage.status = 'success_empty') AS endpoint_empty_scope_count
+            SUM(coverage.status = 'success_empty') AS endpoint_empty_scope_count,
+            MAX(GREATEST(coverage.updated_at, COALESCE(coverage_run.finished_at, coverage.updated_at))) AS endpoint_publication_at,
+            CASE WHEN SUM(coverage_run.status <> 'success') > 0 THEN 'partial' ELSE 'success' END AS endpoint_coverage_run_status
           FROM canonical_wordstat_coverage coverage
           JOIN latest_snapshot latest
             ON latest.analytics_account_id = coverage.analytics_account_id
-            AND latest.registry_version = coverage.registry_version
-            AND latest.ingestion_run_id = coverage.ingestion_run_id
             AND latest.requested_from = coverage.requested_from
             AND latest.requested_to = coverage.requested_to
+          JOIN canonical_collector_runs coverage_run
+            ON coverage_run.id = coverage.ingestion_run_id
+            AND coverage_run.source_key = coverage.source_key
+            AND coverage_run.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':current'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'top_requests'
@@ -509,11 +653,12 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         ),
         endpoint_state AS (
           SELECT
+            coverage_state.endpoint_publication_at,
             coverage_state.endpoint_from,
             coverage_state.endpoint_to,
             COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
             COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
-            latest_snapshot.selected_coverage_run_status AS endpoint_coverage_run_status,
+            coverage_state.endpoint_coverage_run_status,
             latest_endpoint_run.status AS endpoint_last_status,
             COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
             COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
@@ -599,11 +744,11 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
                 facts.count DESC, facts.seed_hash ASC
             ) AS duplicate_rank
           FROM canonical_fact_wordstat_requests_snapshot facts
-          JOIN confirmed_coverage coverage ON facts.analytics_account_id = coverage.analytics_account_id
-            AND facts.registry_version = coverage.registry_version
-            AND facts.ingestion_run_id = coverage.ingestion_run_id
-            AND facts.window_from = coverage.window_from
-            AND facts.window_to = coverage.window_to
+          JOIN latest_snapshot selected_snapshot
+            ON facts.analytics_account_id = selected_snapshot.analytics_account_id
+            AND facts.snapshot_date = selected_snapshot.requested_to
+            AND facts.window_from = selected_snapshot.requested_from
+            AND facts.window_to = selected_snapshot.requested_to
           LEFT JOIN canonical_wordstat_query_classifications classifications
             ON classifications.analytics_account_id = facts.analytics_account_id
             AND classifications.registry_version = facts.registry_version
@@ -613,6 +758,15 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
             AND facts.device_type = 'all'
+            AND facts.count IS NOT NULL AND facts.count >= 0
+            AND EXISTS (
+              SELECT 1 FROM confirmed_coverage coverage
+              WHERE facts.analytics_account_id = coverage.analytics_account_id
+                AND facts.registry_version = coverage.registry_version
+                AND facts.ingestion_run_id = coverage.ingestion_run_id
+                AND facts.window_from = coverage.window_from AND facts.window_to = coverage.window_to
+                AND coverage.scope_hash = ${scopeHashSql("top_requests", "facts")}
+            )
         ),
         selected_requests AS (
           SELECT normalized_query, query, request_kind, device, count, share, classification, review_status,
@@ -622,6 +776,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           WHERE duplicate_rank = 1
         )
         SELECT
+          endpoint_state.endpoint_publication_at,
           endpoint_state.endpoint_from,
           endpoint_state.endpoint_to,
           endpoint_state.endpoint_scope_count,
@@ -668,6 +823,10 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
       ],
     },
     currentRegions: {
@@ -697,14 +856,19 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         ),
         confirmed_coverage AS (
           SELECT DISTINCT coverage.analytics_account_id, coverage.registry_version, coverage.ingestion_run_id,
-            coverage.requested_from AS window_from, coverage.requested_to AS window_to
+            coverage.requested_from AS window_from, coverage.requested_to AS window_to, coverage.scope_hash
           FROM canonical_wordstat_coverage coverage
           JOIN latest_snapshot latest
             ON latest.analytics_account_id = coverage.analytics_account_id
-            AND latest.registry_version = coverage.registry_version
-            AND latest.ingestion_run_id = coverage.ingestion_run_id
             AND latest.requested_from = coverage.requested_from
             AND latest.requested_to = coverage.requested_to
+          JOIN canonical_collector_runs coverage_run
+            ON coverage_run.id = coverage.ingestion_run_id
+            AND coverage_run.source_key = coverage.source_key
+            AND coverage_run.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':regions'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'regions'
@@ -716,14 +880,21 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             MIN(coverage.requested_from) AS endpoint_from,
             MAX(coverage.requested_to) AS endpoint_to,
             COUNT(*) AS endpoint_scope_count,
-            SUM(coverage.status = 'success_empty') AS endpoint_empty_scope_count
+            SUM(coverage.status = 'success_empty') AS endpoint_empty_scope_count,
+            MAX(GREATEST(coverage.updated_at, COALESCE(coverage_run.finished_at, coverage.updated_at))) AS endpoint_publication_at,
+            CASE WHEN SUM(coverage_run.status <> 'success') > 0 THEN 'partial' ELSE 'success' END AS endpoint_coverage_run_status
           FROM canonical_wordstat_coverage coverage
           JOIN latest_snapshot latest
             ON latest.analytics_account_id = coverage.analytics_account_id
-            AND latest.registry_version = coverage.registry_version
-            AND latest.ingestion_run_id = coverage.ingestion_run_id
             AND latest.requested_from = coverage.requested_from
             AND latest.requested_to = coverage.requested_to
+          JOIN canonical_collector_runs coverage_run
+            ON coverage_run.id = coverage.ingestion_run_id
+            AND coverage_run.source_key = coverage.source_key
+            AND coverage_run.job_key IN (
+              CONCAT('yandex_wordstat:', ?, ':regions'),
+              CONCAT('yandex_wordstat:', ?, ':all')
+            )
           WHERE coverage.source_key = 'yandex_wordstat'
             AND coverage.analytics_account_id = ?
             AND coverage.endpoint = 'regions'
@@ -754,11 +925,12 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         ),
         endpoint_state AS (
           SELECT
+            coverage_state.endpoint_publication_at,
             coverage_state.endpoint_from,
             coverage_state.endpoint_to,
             COALESCE(coverage_state.endpoint_scope_count, 0) AS endpoint_scope_count,
             COALESCE(coverage_state.endpoint_empty_scope_count, 0) AS endpoint_empty_scope_count,
-            latest_snapshot.selected_coverage_run_status AS endpoint_coverage_run_status,
+            coverage_state.endpoint_coverage_run_status,
             latest_endpoint_run.status AS endpoint_last_status,
             COALESCE(latest_endpoint_run.finished_at, latest_endpoint_run.started_at) AS endpoint_last_finished_at,
             COALESCE(latest_endpoint_success.finished_at, latest_endpoint_success.started_at) AS endpoint_last_success_at,
@@ -775,7 +947,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           LEFT JOIN latest_endpoint_success ON TRUE
         ),
         ranked_approved_seeds AS (
-          SELECT seed_hash, registry_version,
+          SELECT seed_hash, registry_version, phrase_text, classification, review_status,
             ROW_NUMBER() OVER (
               PARTITION BY seed_hash
               ORDER BY updated_at DESC, registry_version DESC
@@ -783,16 +955,15 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           FROM canonical_wordstat_seed_registry
           WHERE analytics_account_id = ?
             AND is_active = 1
-            AND classification = 'medical'
-            AND review_status = 'reviewed'
         ),
         approved_seeds AS (
-          SELECT seed_hash, registry_version
+          SELECT seed_hash, registry_version, phrase_text, classification, review_status
           FROM ranked_approved_seeds
           WHERE registry_rank = 1
         ),
         ranked_regions AS (
           SELECT
+            facts.seed_hash, facts.registry_version, seed.phrase_text AS phrase, seed.classification, seed.review_status,
             facts.region_id,
             regions.region_name,
             regions.region_type,
@@ -801,28 +972,38 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             facts.share,
             facts.affinity_index,
             ROW_NUMBER() OVER (
-              PARTITION BY facts.region_id
+              PARTITION BY facts.seed_hash, facts.registry_version, facts.region_id, facts.device_type
               ORDER BY facts.count DESC, facts.seed_hash ASC
             ) AS duplicate_rank
           FROM canonical_fact_wordstat_regions_snapshot facts
-          JOIN confirmed_coverage coverage ON facts.analytics_account_id = coverage.analytics_account_id
-            AND facts.registry_version = coverage.registry_version
-            AND facts.ingestion_run_id = coverage.ingestion_run_id
-            AND facts.window_from = coverage.window_from
-            AND facts.window_to = coverage.window_to
+          JOIN latest_snapshot selected_snapshot
+            ON facts.analytics_account_id = selected_snapshot.analytics_account_id
+            AND facts.snapshot_date = selected_snapshot.requested_to
+            AND facts.window_from = selected_snapshot.requested_from
+            AND facts.window_to = selected_snapshot.requested_to
           JOIN approved_seeds seed ON seed.seed_hash = facts.seed_hash
             AND seed.registry_version = facts.registry_version
           LEFT JOIN canonical_dim_wordstat_regions regions ON regions.region_id = facts.region_id
           WHERE facts.source_key = 'yandex_wordstat'
             AND facts.analytics_account_id = ?
             AND facts.device_type = 'all'
+            AND facts.count IS NOT NULL AND facts.count >= 0
+            AND EXISTS (
+              SELECT 1 FROM confirmed_coverage coverage
+              WHERE facts.analytics_account_id = coverage.analytics_account_id
+                AND facts.registry_version = coverage.registry_version
+                AND facts.ingestion_run_id = coverage.ingestion_run_id
+                AND facts.window_from = coverage.window_from AND facts.window_to = coverage.window_to
+                AND coverage.scope_hash = ${scopeHashSql("regions", "facts")}
+            )
         ),
         selected_regions AS (
-          SELECT region_id, region_name, region_type, device, count, share, affinity_index
+          SELECT seed_hash, registry_version, phrase, classification, review_status, region_id, region_name, region_type, device, count, share, affinity_index
           FROM ranked_regions
           WHERE duplicate_rank = 1
         )
         SELECT
+          endpoint_state.endpoint_publication_at,
           endpoint_state.endpoint_from,
           endpoint_state.endpoint_to,
           endpoint_state.endpoint_scope_count,
@@ -835,6 +1016,8 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           endpoint_state.endpoint_last_error_summary,
           endpoint_state.endpoint_rows_read,
           endpoint_state.endpoint_rows_written,
+          selected_regions.seed_hash, selected_regions.registry_version, selected_regions.phrase,
+          selected_regions.classification, selected_regions.review_status,
           selected_regions.region_id,
           selected_regions.region_name,
           selected_regions.region_type,
@@ -851,6 +1034,10 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         normalizedAccountId,
         normalizedAccountId,
         currentUtcDate,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
+        normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
@@ -878,7 +1065,7 @@ function periodFromValues(from: string | Date | null | undefined, to: string | D
 function confirmedDatesFromValue(value: string | string[] | null | undefined) {
   const values = Array.isArray(value) ? value : asString(value).split(",");
   return Array.from(new Set(values.map((item) => formatDate(item)).filter((item): item is string => item != null)))
-    .filter((item) => item >= HISTORICAL_WINDOW_FROM && item <= HISTORICAL_WINDOW_TO)
+    .filter(validDate)
     .sort();
 }
 
@@ -935,7 +1122,7 @@ function normalizeCurrentQueries(rows: unknown[]): ZarukuWordstatQueryRow[] {
   const selected = new Map<string, Omit<ZarukuWordstatQueryRow, "action">>();
   for (const raw of rows as CurrentQueryDbRow[]) {
     const device = asString(raw.device) || "all";
-    if (device !== "all") continue;
+    if (device !== "all" || validCount(raw.count) == null) continue;
     const classificationActive = asBoolean(raw.classification_active);
     const rawClassification = normalizeClassification(raw.classification);
     const rawReviewStatus = normalizeReviewStatus(raw.review_status);
@@ -946,7 +1133,7 @@ function normalizeCurrentQueries(rows: unknown[]): ZarukuWordstatQueryRow[] {
       query: asString(raw.query),
       request_kind: asString(raw.request_kind) === "similar" ? "similar" : "popular",
       device,
-      count: Math.round(asNumber(raw.count)),
+      count: Math.round(validCount(raw.count)!),
       share: asNullableNumber(raw.share),
       classification,
       review_status: reviewStatus,
@@ -974,10 +1161,51 @@ function normalizeCurrentQueries(rows: unknown[]): ZarukuWordstatQueryRow[] {
     .sort((left, right) => right.count - left.count || left.query.localeCompare(right.query) || left.request_kind.localeCompare(right.request_kind));
 }
 
+
+type ObservedDbRow = {
+  seed_hash: string; registry_version: string; phrase: string; classification: string; review_status: string;
+  report_date: string | Date; count: unknown; scope_hash?: string;
+  requested_from?: string; requested_to?: string; device?: string; publication_at?: string | Date;
+};
+
+function normalizeObservedDays(rows: unknown[], account: string, nowUtc: Date): ZarukuWordstatObservedDay[] {
+  const today = requireUtcDate(nowUtc);
+  return (rows as ObservedDbRow[]).flatMap((raw) => {
+    const date = formatDate(raw.report_date);
+    const count = validCount(raw.count);
+    if (!date || !validDate(date) || date >= today || count == null || !raw.seed_hash || !raw.registry_version) return [];
+    if (raw.scope_hash && raw.scope_hash !== wordstatScopeHash(account, "dynamics", raw.registry_version,
+      raw.seed_hash, [asString(raw.requested_from), asString(raw.requested_to), raw.device ?? "all"])) return [];
+    return [{ seed_hash: raw.seed_hash, registry_version: raw.registry_version, phrase: asString(raw.phrase),
+      classification: normalizeClassification(raw.classification), review_status: normalizeReviewStatus(raw.review_status),
+      date, count }];
+  });
+}
+
+function normalizeObservedRegions(rows: unknown[], account: string): ZarukuWordstatObservedRegion[] {
+  const selected = new Map<string, ZarukuWordstatObservedRegion>();
+  for (const raw of rows as CurrentRegionDbRow[]) {
+    const count = validCount(raw.count);
+    if (!raw.seed_hash || !raw.registry_version || raw.region_id == null || count == null || (raw.device ?? "all") !== "all") continue;
+    if (raw.scope_hash && raw.scope_hash !== wordstatScopeHash(account, "regions", raw.registry_version,
+      raw.seed_hash, [formatDate(raw.snapshot_date) ?? "", raw.device ?? "all"])) continue;
+    const row: ZarukuWordstatObservedRegion = {
+      seed_hash: raw.seed_hash, registry_version: raw.registry_version, phrase: asString(raw.phrase),
+      classification: normalizeClassification(raw.classification), review_status: normalizeReviewStatus(raw.review_status),
+      region_id: asNumber(raw.region_id), region_name: asString(raw.region_name) || "Не указан",
+      region_type: asString(raw.region_type) || "unknown", device: "all", count,
+      share: asNullableNumber(raw.share), affinity_index: asNullableNumber(raw.affinity_index),
+    };
+    selected.set(JSON.stringify([row.registry_version, row.seed_hash, row.region_id, row.device]), row);
+  }
+  return [...selected.values()].sort((a, b) => a.phrase.localeCompare(b.phrase) || b.count - a.count || a.region_id - b.region_id);
+}
+
 function normalizeCurrentRegions(rows: unknown[]): ZarukuWordstatRegionRow[] {
   const selected = new Map<string, ZarukuWordstatRegionRow>();
   for (const raw of rows as CurrentRegionDbRow[]) {
     if (raw.region_id == null) continue;
+    if (raw.seed_hash && (normalizeClassification(raw.classification) !== "medical" || normalizeReviewStatus(raw.review_status) !== "reviewed")) continue;
     const device = asString(raw.device) || "all";
     if (device !== "all") continue;
     const row = {
@@ -1021,6 +1249,7 @@ function makeIndicators(historical: ZarukuWordstatHistoricalRow[], queries: Zaru
 }
 
 type EndpointState = {
+  publicationAt: string | null;
   period: { from: string; to: string } | null;
   confirmedDates: string[];
   confirmedDayCount: number;
@@ -1042,6 +1271,7 @@ function endpointStateFromRows(rows: unknown[]): EndpointState | null {
   if (!raw) return null;
   const hasSelectedCoverageRunStatus = Object.prototype.hasOwnProperty.call(raw, "endpoint_coverage_run_status");
   return {
+    publicationAt: formatDateTime(raw.endpoint_publication_at),
     period: periodFromValues(raw.endpoint_from, raw.endpoint_to),
     confirmedDates: confirmedDatesFromValue(raw.endpoint_confirmed_dates),
     confirmedDayCount: Math.round(asNumber(raw.endpoint_confirmed_day_count)),
@@ -1087,7 +1317,7 @@ function stateHasRunStatus(state: EndpointState, status: "failed" | "partial" | 
   return state.lastStatus === status || state.selectedCoverageRunStatus === status;
 }
 
-function latestEndpointValue(states: Array<EndpointState | null>, key: "lastFinishedAt" | "lastSuccessAt" | "lastErrorAt") {
+function latestEndpointValue(states: Array<EndpointState | null>, key: "lastFinishedAt" | "lastSuccessAt" | "lastErrorAt" | "publicationAt") {
   return states.map((state) => state?.[key] ?? null).filter((value): value is string => value != null).sort().at(-1) ?? null;
 }
 
@@ -1150,9 +1380,11 @@ function makeFreshness(
     rows_written: Math.max(...knownStates.map((state) => state.rowsWritten)),
     last_error_at: latestEndpointValue(knownStates, "lastErrorAt"),
     last_error_summary: hasFailedRun || hasPartialRun || endpointRunProblem
-      ? "Последний релевантный сбор Wordstat завершился с ошибкой или частично."
+      ? knownStates.map((state) => state.lastErrorSummary).filter(Boolean).join(" · ") || "Последний релевантный сбор Wordstat завершился с ошибкой или частично."
       : null,
-    note: snapshotOrRunStale
+    note: hasFailedRun || hasPartialRun || endpointRunProblem
+      ? `Последний сбор выполнен с ошибкой или частично. Подтверждённые публикации отдельных областей показаны; последний полностью успешный сбор указан отдельно. ${knownStates.map((state) => state.lastErrorSummary).filter(Boolean).join(" · ")}`
+      : snapshotOrRunStale
       ? `Подтверждённый текущий снимок или его успешный сбор старше ${WORDSTAT_FRESHNESS_HOURS} часов.`
       : periodsDiffer
       ? "Подтверждённые снимки запросов и регионов Wordstat имеют разные периоды."
@@ -1182,10 +1414,18 @@ export async function loadZarukuWordstatData(
     query(queries.historicalRows),
     query(queries.currentQueries),
     query(queries.currentRegions),
+    query(queries.observedDays),
   ]);
   const historicalRows = valueOrEmpty<HistoricalDbRow>(settled[0]);
   const queryRows = valueOrEmpty<CurrentQueryDbRow>(settled[1]);
   const regionRows = valueOrEmpty<CurrentRegionDbRow>(settled[2]);
+  const observedRows = valueOrEmpty<ObservedDbRow>(settled[3]);
+  const observedDays = normalizeObservedDays(observedRows, normalizedAccountId, nowUtc);
+  const observedRegions = normalizeObservedRegions(regionRows, normalizedAccountId);
+  const latestPublication = [
+    ...observedRows.map((row) => formatDateTime(row.publication_at)),
+    ...[...queryRows, ...regionRows].map((row) => formatDateTime(row.endpoint_publication_at)),
+  ].filter((value): value is string => value != null).sort().at(-1) ?? null;
   const historicalState = endpointStateFromRows(historicalRows);
   const queryState = endpointStateFromRows(queryRows);
   const regionState = endpointStateFromRows(regionRows);
@@ -1241,7 +1481,7 @@ export async function loadZarukuWordstatData(
   if (allCurrentScopesEmpty) messages.push("Нет запросов по выбранным темам в подтверждённом снимке Wordstat.");
 
   let status: ZarukuWordstatData["status"];
-  if (historicalStatus === "unavailable" && queryStatus === "unavailable" && regionStatus === "unavailable") {
+  if (!observedDays.length && historicalStatus === "unavailable" && queryStatus === "unavailable" && regionStatus === "unavailable") {
     status = "unavailable";
   } else if (failedQueries > 0 || periodsDiffer || [historicalStatus, queryStatus, regionStatus].some((value) => value === "partial" || value === "unavailable")) {
     status = "partial";
@@ -1253,6 +1493,10 @@ export async function loadZarukuWordstatData(
 
   return {
     status,
+    observed_demand: { days: observedDays, confirmed_dates: [...new Set(observedDays.map((day) => day.date))].sort(),
+      growth: calculateWordstatWeeklyGrowth(observedDays, nowUtc) },
+    observed_regions: observedRegions,
+    latest_confirmed_publication_at: latestPublication,
     historical: {
       status: historicalStatus,
       period: historicalPeriod,

@@ -136,10 +136,10 @@ test("Wordstat tab renders all required management sections with its independent
     "Самая большая возможность",
     "Нерелевантный спрос сейчас",
     "Новые темы для проверки",
-    "Регионы возможностей",
+    "Сравнение с региональным трафиком",
     "10–31 июля 2026: спрос и присутствие Zaruku",
     "Текущие запросы Wordstat",
-    "Региональные возможности",
+    "Региональный спрос Wordstat",
     "Wordstat → проверка → SEO OS",
     "Запросы: 03.08.2026–01.09.2026",
     "Регионы: 03.08.2026–01.09.2026",
@@ -236,7 +236,7 @@ test("regional interest uses the official 100-point affinity baseline without tr
       },
     },
   }));
-  const regionStart = markup.indexOf("Региональные возможности");
+  const regionStart = markup.indexOf("Региональный спрос Wordstat");
   const regionEnd = markup.indexOf("Wordstat → проверка → SEO OS", regionStart);
   const regionMarkup = markup.slice(regionStart, regionEnd);
 
@@ -278,7 +278,7 @@ test("scope states keep valid historical rows visible while current query and re
   assert.match(markup, /Региональная разбивка Wordstat пока недоступна/);
   assert.match(markup, /Темы с растущим спросом[\s\S]*?>—</);
   assert.match(markup, /Нерелевантный спрос сейчас[\s\S]*?>—</);
-  assert.match(markup, /Регионы возможностей[\s\S]*?>—</);
+  assert.match(markup, /Сравнение с региональным трафиком[\s\S]*?>—</);
 });
 
 test("partial scope retains rows but does not publish its KPI as a confirmed zero", () => {
@@ -350,4 +350,50 @@ test("delayed successful snapshot has a distinct manager status", () => {
 
   assert.match(markup, /Задерживается/);
   assert.doesNotMatch(markup, />Частично</);
+});
+
+test("pending observations stay visible during a partial collector run", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, { data: {
+    ...unreviewedFixture, status: "partial", historical: { ...fixture.historical, rows: [] },
+    current: { ...unreviewedFixture.current, query_status: "partial" },
+    latest_confirmed_publication_at: "2026-10-07T08:15:00Z",
+    observed_demand: { days: [{ seed_hash: "pending-seed", registry_version: "v1",
+      phrase: "наблюдаемый запрос", classification: "unreviewed", review_status: "pending",
+      date: "2026-10-04", count: 20 }], confirmed_dates: ["2026-10-04"],
+      growth: { previous_period: null, current_period: null, growing_count: 0, comparable_count: 0, rows: [] } },
+    observed_regions: ["а запрос", "б запрос"].map((phrase, i) => ({
+      ...fixture.current.regions[0], seed_hash: String(i), registry_version: "v1", phrase,
+      classification: "unreviewed" as const, review_status: "pending" as const, region_name: i ? "НЕ ВЫБРАН" : "ВЫБРАН",
+    })),
+  }}));
+  assert.match(markup, /наблюдаемый запрос/);
+  assert.match(markup, /Нужна медицинская проверка|Не проверен/);
+  assert.match(markup, /04\.10\.2026/);
+  assert.match(markup, /Нет двух последовательных полных недель/);
+  assert.match(markup, />20</);
+  assert.match(markup, /Новые темы для проверки[\s\S]*?>1</);
+  assert.match(markup, /Последняя подтверждённая публикация/);
+  assert.match(markup, /Последний полностью успешный сбор/);
+  assert.match(markup, /ВЫБРАН/);
+  assert.doesNotMatch(markup, /НЕ ВЫБРАН|Высокая возможность|Можно передать на одобрение в SEO OS/);
+});
+
+test("new demand from zero has an absolute change and no infinite percentage", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuWordstatTab, { data: {
+    ...unreviewedFixture,
+    observed_demand: { days: [{ seed_hash: "a", registry_version: "v1", phrase: "новый спрос",
+      classification: "unreviewed", review_status: "pending", date: "2026-10-04", count: 20 }],
+      confirmed_dates: ["2026-10-04"], growth: {
+        previous_period: { from: "2026-09-21", to: "2026-09-27" },
+        current_period: { from: "2026-09-28", to: "2026-10-04" },
+        growing_count: 1, comparable_count: 1,
+        rows: [{ seed_hash: "a", registry_version: "v1", previous_count: 0, current_count: 20,
+          absolute_change: 20, percent_change: null, new_from_zero: true }],
+      } },
+  }}));
+  assert.match(markup, /Появился спрос/);
+  assert.match(markup, /1 из 1 сопоставимых/);
+  assert.match(markup, /21\.09\.2026–27\.09\.2026/);
+  assert.match(markup, /28\.09\.2026–04\.10\.2026/);
+  assert.doesNotMatch(markup, /Infinity|NaN/);
 });
