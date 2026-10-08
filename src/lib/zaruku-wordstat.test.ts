@@ -10,6 +10,33 @@ async function wordstatModule() {
   return import("./zaruku-wordstat");
 }
 
+test("Wordstat historical UTC yesterday bounds use aligned parameters across calendar boundaries", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const account = "66624469";
+  for (const [now, yesterday] of [
+    ["2027-01-01T00:00:00Z", "2026-12-31"],
+    ["2024-03-01T00:00:00Z", "2024-02-29"],
+    ["2026-03-01T00:00:00Z", "2026-02-28"],
+  ]) {
+    const { historicalRows } = buildZarukuWordstatQueries(account, new Date(now));
+    const bounds = ["coverage.requested_from", "dynamics.report_date", "summary.report_date"];
+    const positions = [4, 6, 8];
+    for (const [index, bound] of bounds.entries()) {
+      const marker = `${bound} <= ?`;
+      const offset = historicalRows.sql.indexOf(marker);
+      assert.notEqual(offset, -1, `${bound} must use a date placeholder`);
+      assert.equal(historicalRows.sql.slice(0, offset).split("?").length - 1, positions[index]);
+      assert.equal(historicalRows.params[positions[index]], yesterday);
+    }
+    assert.equal(historicalRows.sql.split("?").length - 1, historicalRows.params.length);
+    assert.deepEqual(historicalRows.params, [
+      account, account, account, account, yesterday, account, yesterday,
+      account, yesterday, account, account, account, account, account,
+    ]);
+    assert.equal(historicalRows.sql.includes(yesterday), false);
+  }
+});
+
 test("Wordstat ranking aliases do not use the MySQL reserved ROW_NUMBER keyword", async () => {
   const { buildZarukuWordstatQueries } = await wordstatModule();
   const { currentQueries } = buildZarukuWordstatQueries("66624469", "2026-09-10");

@@ -338,7 +338,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             AND coverage.endpoint = 'dynamics'
             AND coverage.status IN ('success', 'success_empty')
             AND coverage.ingestion_run_id IS NOT NULL
-            AND coverage.requested_from <= '${yesterday}'
+            AND coverage.requested_from <= ?
         ),
         confirmed_dynamics AS (
           SELECT dynamics.registry_version, dynamics.seed_hash, dynamics.report_date, dynamics.count
@@ -349,7 +349,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
             AND dynamics.analytics_account_id = ?
             AND dynamics.device_type = 'all'
             AND dynamics.region_scope = 'all'
-            AND dynamics.report_date <= '${yesterday}'
+            AND dynamics.report_date <= ?
             AND EXISTS (
               SELECT 1 FROM confirmed_dynamics_coverage coverage
               WHERE coverage.analytics_account_id = dynamics.analytics_account_id
@@ -370,7 +370,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           WHERE summary.source_key = 'yandex_webmaster'
             AND summary.analytics_account_id = ?
             AND summary.device_type = 'ALL'
-            AND summary.report_date <= '${yesterday}'
+            AND summary.report_date <= ?
             AND (
               summary.impressions = 0
               OR EXISTS (
@@ -548,8 +548,11 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
+        yesterday,
         normalizedAccountId,
+        yesterday,
         normalizedAccountId,
+        yesterday,
         normalizedAccountId,
         normalizedAccountId,
         normalizedAccountId,
