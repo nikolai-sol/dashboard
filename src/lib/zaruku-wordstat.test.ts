@@ -955,3 +955,46 @@ test("current fact reads prune to the exact selected snapshot before scope valid
     assert.match(query.sql, /coverage\.scope_hash\s*=\s*SHA2/);
   }
 });
+
+test("GSC URL enrichment filters confirmed current query names before preserving all-date ranking", async () => {
+  const { buildZarukuWordstatQueries } = await wordstatModule();
+  const { currentQueries } = buildZarukuWordstatQueries("66624469", "2026-10-08");
+  assert.match(currentQueries.sql, /requested_query_names AS/);
+  const names = currentQueries.sql.slice(currentQueries.sql.indexOf("requested_query_names AS"), currentQueries.sql.indexOf("confirmed_urls AS"));
+  assert.match(names, /SELECT DISTINCT facts.normalized_query COLLATE utf8mb4_unicode_ci/);
+  assert.match(names, /facts.ingestion_run_id = coverage.ingestion_run_id/);
+  assert.match(names, /coverage.scope_hash = SHA2/);
+  const urls = currentQueries.sql.slice(currentQueries.sql.indexOf("confirmed_urls AS"), currentQueries.sql.indexOf("ranked_requests AS"));
+  assert.match(urls, /FROM canonical_fact_gsc_queries_daily gsc/);
+  assert.match(urls, /FROM requested_query_names requested/);
+  assert.match(urls, /requested.normalized_query COLLATE utf8mb4_unicode_ci = LOWER\(TRIM\(gsc.query\)\) COLLATE utf8mb4_unicode_ci/);
+  assert.match(urls, /country = 'rus'/);
+  assert.match(urls, /page IS NOT NULL/);
+  assert.match(urls, /page <> ''/);
+  assert.match(urls, /ORDER BY report_date DESC, clicks DESC, impressions DESC, page ASC/);
+  assert.doesNotMatch(urls, /report_date\s*(?:BETWEEN|>=|<=)|query_hash/);
+});
+
+test("long confirmed history preserves every JSON date and its actual period and totals", async () => {
+  const { buildZarukuWordstatQueries, loadZarukuWordstatData } = await wordstatModule();
+  const dates = Array.from({ length: 180 }, (_, i) => new Date(Date.UTC(2026, 2, 1 + i)).toISOString().slice(0, 10));
+  const queries = buildZarukuWordstatQueries("66624469", "2026-10-08");
+  assert.match(queries.historicalRows.sql, /JSON_ARRAYAGG/);
+  assert.doesNotMatch(queries.historicalRows.sql, /GROUP_CONCAT/);
+  const fixture = fakeQuery({ metadata: [availableMetadata()],
+    "historical-period": [{ period_from: dates[0], period_to: dates.at(-1), confirmed_dates: dates, confirmed_day_count: 180, confirmed_dates_contiguous: 1 }],
+    "historical-rows": [{ seed_hash: "long-history", phrase: "проверенная тема", classification: "medical",
+      review_status: "reviewed", wordstat_count: 98765, webmaster_impressions: 12, webmaster_clicks: 2 }],
+  });
+  for (const serialized of [JSON.stringify([...dates].reverse()), [...dates].reverse()]) {
+    const data = await loadZarukuWordstatData("66624469", async (query) => {
+      const rows = await fixture.run(query);
+      return query.sql.includes("wordstat:historical-rows") ? rows.map((row) => ({ ...row, endpoint_confirmed_dates: serialized })) : rows;
+    }, new Date("2026-10-08T12:00:00Z"));
+    assert.deepEqual(data.historical.confirmed_dates, dates);
+    assert.equal(data.historical.confirmed_day_count, 180);
+    assert.equal(data.historical.confirmed_dates_contiguous, true);
+    assert.deepEqual(data.historical.period, { from: dates[0], to: dates.at(-1) });
+    assert.equal(data.historical.rows[0].wordstat_count, 98765);
+  }
+});

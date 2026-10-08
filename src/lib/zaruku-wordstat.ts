@@ -393,7 +393,7 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
         ),
         common_bounds AS (
           SELECT MIN(report_date) AS endpoint_from, MAX(report_date) AS endpoint_to,
-            GROUP_CONCAT(DATE_FORMAT(report_date, '%Y-%m-%d') ORDER BY report_date SEPARATOR ',') AS endpoint_confirmed_dates,
+            JSON_ARRAYAGG(DATE_FORMAT(report_date, '%Y-%m-%d')) AS endpoint_confirmed_dates,
             COUNT(*) AS endpoint_confirmed_day_count,
             CASE WHEN COUNT(*) > 0 AND DATEDIFF(MAX(report_date), MIN(report_date)) + 1 = COUNT(*)
               THEN 1 ELSE 0 END AS endpoint_confirmed_dates_contiguous
@@ -691,6 +691,27 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
           ) ranked_positions
           WHERE dedup_rank = 1
         ),
+        requested_query_names AS (
+          SELECT DISTINCT facts.normalized_query COLLATE utf8mb4_unicode_ci AS normalized_query
+          FROM canonical_fact_wordstat_requests_snapshot facts
+          JOIN latest_snapshot selected_snapshot
+            ON facts.analytics_account_id = selected_snapshot.analytics_account_id
+            AND facts.snapshot_date = selected_snapshot.requested_to
+            AND facts.window_from = selected_snapshot.requested_from
+            AND facts.window_to = selected_snapshot.requested_to
+          WHERE facts.source_key = 'yandex_wordstat'
+            AND facts.analytics_account_id = selected_snapshot.analytics_account_id
+            AND facts.device_type = 'all'
+            AND facts.count IS NOT NULL AND facts.count >= 0
+            AND EXISTS (
+              SELECT 1 FROM confirmed_coverage coverage
+              WHERE facts.analytics_account_id = coverage.analytics_account_id
+                AND facts.registry_version = coverage.registry_version
+                AND facts.ingestion_run_id = coverage.ingestion_run_id
+                AND facts.window_from = coverage.window_from AND facts.window_to = coverage.window_to
+                AND coverage.scope_hash = ${scopeHashSql("top_requests", "facts")}
+            )
+        ),
         confirmed_urls AS (
           SELECT normalized_query, page
           FROM (
@@ -701,11 +722,15 @@ export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | D
                 PARTITION BY LOWER(TRIM(query))
                 ORDER BY report_date DESC, clicks DESC, impressions DESC, page ASC
               ) AS dedup_rank
-            FROM canonical_fact_gsc_queries_daily
+            FROM canonical_fact_gsc_queries_daily gsc
             WHERE analytics_account_id = ?
               AND country = 'rus'
               AND page IS NOT NULL
               AND page <> ''
+              AND EXISTS (
+                SELECT 1 FROM requested_query_names requested
+                WHERE requested.normalized_query COLLATE utf8mb4_unicode_ci = LOWER(TRIM(gsc.query)) COLLATE utf8mb4_unicode_ci
+              )
           ) ranked_urls
           WHERE dedup_rank = 1
         ),
@@ -1063,7 +1088,19 @@ function periodFromValues(from: string | Date | null | undefined, to: string | D
 }
 
 function confirmedDatesFromValue(value: string | string[] | null | undefined) {
-  const values = Array.isArray(value) ? value : asString(value).split(",");
+  let values: string[];
+  if (Array.isArray(value)) values = value;
+  else {
+    const text = asString(value);
+    if (text.startsWith("[")) {
+      try {
+        const parsed: unknown = JSON.parse(text);
+        values = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+      } catch {
+        values = [];
+      }
+    } else values = text.split(",");
+  }
   return Array.from(new Set(values.map((item) => formatDate(item)).filter((item): item is string => item != null)))
     .filter(validDate)
     .sort();
