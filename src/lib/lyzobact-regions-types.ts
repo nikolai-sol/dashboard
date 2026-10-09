@@ -10,6 +10,21 @@ export interface RegionalRow {
   status: string; cadence: string; format: string; restriction: string;
   campaignStatus: 'active' | 'inactive' | 'unknown'; campaignStatusAt: string | null;
   wordstatWowPct: number | null; temperatureC: number | null;
+  wordstat?: RegionalWordstat;
+}
+export interface RegionalWordstat {
+  version: 1; status: 'complete' | 'unmapped';
+  priorPeriod: string; currentPeriod: string;
+  providerRegionId: number | null; providerGeography: string | null;
+  mappingStatus: 'exact_or_spelling_alias' | 'accepted_city_proxy' | 'combined_provider_geography' | 'not_in_returned_tree';
+  geographyNote: string; limitation: string;
+  baskets: RegionalWordstatBasket[];
+}
+export interface RegionalWordstatBasket {
+  key: 'flu' | 'symptoms' | 'medicines'; phrase: string;
+  priorCount: number | null; currentCount: number | null; wowPct: number | null;
+  zeroBaseline: boolean; daysReceived: number; httpStatus: number | null;
+  retrievedAt: string | null; rawSha256: string | null;
 }
 export interface RegionalSourcePage {
   id: number; regionKey: string; regionName: string; stage: string; period: string;

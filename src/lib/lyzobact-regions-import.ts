@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import Papa from 'papaparse';
 import type { RegionalRow, RegionalSourcePage } from './lyzobact-regions-types';
+import {validateRegionalWordstat,WORDSTAT_PHRASES} from './lyzobact-wordstat';
 
 // Frozen 85-region scope from register-85.json (SHA256
 // 20287dad3c11cb1201b267ced2f905445a2c99e155a9becb91c011b65c4a352a).
@@ -183,4 +184,23 @@ export async function persistRegionalImport(connection:RegionalImportConnection,
     await connection.execute("UPDATE lyzobact_regions_snapshots SET publication_status = 'published', published_at = UTC_TIMESTAMP() WHERE dashboard_id = ? AND id = ?",[dashboardId,input.snapshotId]);
     await connection.commit();return 'inserted';
   } catch(error) { await connection.rollback();throw error; }
+}
+
+/** Adds only Wordstat to an immutable clinical snapshot; original clinical data/history remain intact. */
+export function prepareWordstatSuccessor(base:RegionalImport,normalizedJson:string,options:{snapshotId:string;label:string;checkedAt:string}):RegionalImport {
+  if(!/^[a-zA-Z0-9_-]{1,64}$/.test(options.snapshotId)||options.snapshotId===base.snapshotId)throw new Error('New valid snapshot ID required');
+  const label=text(options.label,true);if(label.length>255)throw new Error('Snapshot label too long');
+  const checkedAt=date(options.checkedAt,true)!;
+  const input:unknown=JSON.parse(normalizedJson);
+  if(!Array.isArray(input)||input.length!==255)throw new Error('Expected255 Wordstat records');
+  if(base.rows.length!==85||new Set(base.rows.map(r=>r.regionKey)).size!==85||base.rows.some(r=>!REGIONAL_CANONICAL_KEYS.includes(r.regionKey)))throw new Error('Invalid clinical baseline');
+  const records=input.map(record);if(records.some(r=>!REGIONAL_CANONICAL_KEYS.includes(String(r.region_key))))throw new Error('Unknown Wordstat region');
+  const rows=base.rows.map(row=>{
+    const matches=records.filter(r=>r.region_key===row.regionKey);if(matches.length!==3)throw new Error('Expected three regional baskets');
+    const first=matches[0];const missing=first.provider_region_id===null;
+    for(const r of matches){for(const key of ['provider_region_id','provider_geography','mapping_status','prior_period','current_period'])if(r[key]!==first[key])throw new Error('Inconsistent Wordstat geography or dates');if(r.status!==(missing?'mapping_unavailable':'complete'))throw new Error('Incomplete Wordstat collection');}
+    const block=validateRegionalWordstat({version:1,status:missing?'unmapped':'complete',priorPeriod:first.prior_period,currentPeriod:first.current_period,providerRegionId:first.provider_region_id,providerGeography:missing?null:first.provider_geography,mappingStatus:first.mapping_status,geographyNote:text(first.geography_note),limitation:missing?'Wordstat не поддерживает этот регион и его столицу: проверенные ID отклонены. Значения отсутствуют, это не ноль.':row.regionKey==='Crimea'||row.regionKey==='Sevastopol'?'География Крыма включает Севастополь; строки не складываются.':'',baskets:matches.map(r=>({key:r.basket,phrase:r.phrase,priorCount:r.prior_count,currentCount:r.current_count,wowPct:r.wow_pct,zeroBaseline:r.prior_count===0,daysReceived:r.days_received,httpStatus:r.http_status??null,retrievedAt:r.retrieved_at??null,rawSha256:r.raw_sha256})).sort((a,b)=>Object.keys(WORDSTAT_PHRASES).indexOf(String(a.key))-Object.keys(WORDSTAT_PHRASES).indexOf(String(b.key)))},row.regionKey);
+    return {...structuredClone(row),wordstat:block};
+  });
+  return {...structuredClone(base),...options,label,checkedAt,rows,inputSha256:hash(JSON.stringify({baseInputSha256:base.inputSha256,wordstatSha256:hash(normalizedJson),...options}))};
 }

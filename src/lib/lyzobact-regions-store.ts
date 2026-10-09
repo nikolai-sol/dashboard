@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import type { RegionalModuleData, RegionalRow, RegionalSourcePage } from './lyzobact-regions-types';
+import {validateRegionalWordstat} from './lyzobact-wordstat';
 export type RegionalQueryRunner = (sql:string,params:readonly (number|string)[])=>Promise<Record<string,unknown>[]>;
 const query:RegionalQueryRunner=async(sql,params)=>{
   // Loaded only when executing a runtime query; offline importer/tests need no credentials.
@@ -24,6 +25,7 @@ function rowPayload(value:unknown):RegionalRow{
   if(typeof r.regionKey!=='string'||typeof r.name!=='string'||typeof r.period!=='string'||typeof r.checkedAt!=='string'||typeof r.sourceQuality!=='string'||typeof r.isHistorical!=='boolean'||typeof r.isAutumn2026!=='boolean')throw new Error('Invalid stored region');
   for(const key of ['cases','casesPrior','reportedWowPct','calculatedWowPct','wordstatWowPct','temperatureC'])if(r[key]!==null&&(typeof r[key]!=='number'||!Number.isFinite(r[key])))throw new Error('Invalid stored metric');
   if(!['primary_autumn','secondary_autumn','historical','index_only','unknown'].includes(String(r.sourceQualityKind))||!['active','inactive','unknown'].includes(String(r.campaignStatus)))throw new Error('Invalid stored status');
+  if(r.wordstat!==undefined)r.wordstat=validateRegionalWordstat(r.wordstat,r.regionKey as string);
   return r as unknown as RegionalRow;
 }
 function sourcePayload(value:unknown):RegionalSourcePage{
