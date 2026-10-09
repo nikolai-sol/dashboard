@@ -65,6 +65,7 @@ import {
   buildNorthStarKpis,
   buildSemanticHealthRows,
   buildWeeklyFocus,
+  intentRemainder,
 } from "@/components/zaruku-north-star";
 import {
   buildUnifiedSeoPageRows,
@@ -420,10 +421,13 @@ function NorthStarBlock({ data, locale }: Props) {
                   </span>
                 ) : null}
               </div>
+              <p className="mt-2 break-words text-[11px] leading-relaxed text-slate-500">{item.period ?? "Нет данных за выбранный период"}{item.source === "alice_official" ? " · официальная SoV" : item.source === "alice_legacy" ? " · проверенные AI-сценарии" : " · доля показов"}</p>
+              {item.comparisonPeriod ? <p className="mt-1 break-words text-[11px] leading-relaxed text-slate-500">К {item.comparisonPeriod} · {item.comparisonState === "unavailable" ? "сравнение недоступно" : item.comparisonState === "unchanged" ? "без изменений" : "изменение в п. п."}</p> : null}
+              {item.guardValue != null ? <p className="mt-1 text-[11px] leading-relaxed text-slate-600">Медицинские клики: {formatPercent(item.guardValue, locale, 2)} · {item.guardCount == null ? "—" : formatNumber(item.guardCount, locale)} кликов</p> : null}
+              {item.visibleAvailability ? <p className="mt-1 break-words text-[11px] leading-relaxed text-slate-500">{item.visibleAvailability}</p> : null}
             </div>
           ))}
         </div>
-        <div className="shrink-0 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">с 07.2026</div>
       </div>
     </section>
   );
@@ -521,6 +525,8 @@ function SemanticHealthPanel({ data, locale, primaryWeek }: Props & { primaryWee
     <Panel data={data} title="Семантическое здоровье" source="seo_os" layer="serp" right={<span className="text-xs text-slate-400">{data.period.from} — {data.period.to}</span>}>
       <div className="space-y-4">
         <div data-intent-current className="space-y-3">
+          <p className="text-xs text-slate-600">Доля медицинских показов · {data.period.from} — {data.period.to}. Период семантики не зависит от недель SEO A/B.</p>
+          <p className="text-xs text-slate-500">Остаток: собственный бренд + неопределённые + прочие · {formatPercent(intentRemainder(intent.current).impressionShare, locale, 2)} показов; {formatPercent(intentRemainder(intent.current).clickShare, locale, 2)} кликов. Доли рассчитаны из наблюдаемых чисел; рост доли показов не доказывает рост кликов.</p>
           <p className="text-xs text-slate-500">Новые эвристические правила: {intent.classifierVersion}. Сравнение: {intent.previous.requested.from} — {intent.previous.requested.to}.</p>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {([

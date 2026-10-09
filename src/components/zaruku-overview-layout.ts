@@ -14,6 +14,14 @@ export type NorthStarStripItem = {
   tooltipDescription: string;
   tooltipImportance: string;
   tooltip: string;
+  period: string | null;
+  source: NorthStarKpi["source"];
+  comparisonPeriod: string | null;
+  availabilityNote: string | null;
+  visibleAvailability: string | null;
+  comparisonState: "unavailable" | "unchanged" | "changed";
+  guardValue: number | null;
+  guardCount: number | null;
 };
 
 export type TrafficHealthItem = {
@@ -58,7 +66,12 @@ function deltaTone(kpi: NorthStarKpi) {
 
 function tooltipForKpi(kpi: NorthStarKpi) {
   const parts = [
+    kpi.source === "webmaster_intent" ? "Яндекс Вебмастер" : null,
     kpi.tooltip,
+    kpi.note,
+    kpi.period ? `Период: ${kpi.period}` : null,
+    kpi.comparisonPeriod ? `Сравнение: ${kpi.comparisonPeriod}` : null,
+    kpi.availabilityNote,
     kpi.guardValue != null ? `контроль кликов ${formatTooltipPercent(kpi.guardValue)}` : null,
     "Корреляционные показатели.",
   ];
@@ -70,12 +83,20 @@ export function buildNorthStarStripItems(kpis: NorthStarKpis): NorthStarStripIte
     key: kpi.key,
     label: NORTH_STAR_LABELS[kpi.key],
     value: kpi.value,
+    source: kpi.source,
+    period: kpi.period,
+    comparisonPeriod: kpi.comparisonPeriod ?? null,
+    availabilityNote: kpi.availabilityNote ?? null,
+    visibleAvailability: kpi.visibleAvailability ?? null,
+    comparisonState: kpi.delta == null ? "unavailable" : Math.abs(kpi.delta) < 0.05 ? "unchanged" : "changed",
+    guardValue: kpi.guardValue ?? null,
+    guardCount: kpi.guardCount ?? null,
     arrow: kpi.delta != null && Number.isFinite(kpi.delta) && Math.abs(kpi.delta) >= 0.05 ? (kpi.delta > 0 ? "↑" : "↓") : null,
     delta: kpi.delta,
     showDelta: kpi.delta != null && Number.isFinite(kpi.delta) && Math.abs(kpi.delta) >= 0.05,
     deltaTone: deltaTone(kpi),
     tooltipTitle: ZARUKU_NORTH_STAR_TOOLTIP_COPY[kpi.key].title,
-    tooltipDescription: ZARUKU_NORTH_STAR_TOOLTIP_COPY[kpi.key].description,
+    tooltipDescription: kpi.source === "alice_official" ? "Официальная SoV из Яндекс Вебмастера; она отличается от доли присутствия в строках выгрузки." : ZARUKU_NORTH_STAR_TOOLTIP_COPY[kpi.key].description,
     tooltipImportance: ZARUKU_NORTH_STAR_TOOLTIP_COPY[kpi.key].importance,
     tooltip: tooltipForKpi(kpi),
   }));

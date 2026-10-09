@@ -14,6 +14,16 @@ test("intent uses actual dashboard period and shows both denominators, gaps and 
   assert.match(source, /dataKey="medicalClickShare".*connectNulls=\{false\}/);
   assert.match(source, /dataKey="noiseClickShare".*connectNulls=\{false\}/);
 });
+
+test("overview and semantic panel expose actual periods and distinct impression/click context", () => {
+  const source = readFileSync(new URL("./ZarukuSeoDashboard.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /с 07\.2026/);
+  assert.match(source, /item.period/);
+  assert.match(source, /item.guardCount/);
+  assert.match(source, /Доля медицинских показов/);
+  assert.match(source, /собственный бренд \+ неопределённые \+ прочие/);
+  assert.match(source, /не зависит от недель SEO/);
+});
 const toolbarSource = readFileSync(new URL("./ZarukuSeoWeekToolbar.tsx", import.meta.url), "utf8");
 const russiaMapSource = readFileSync(new URL("./ZarukuRussiaDemandMap.tsx", import.meta.url), "utf8");
 const contentSource = readFileSync(new URL("./ZarukuContentTab.tsx", import.meta.url), "utf8");

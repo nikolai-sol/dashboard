@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildIntentView } from "@/lib/zaruku-intent";
+import { intentRemainder } from "./zaruku-north-star";
+import type { IntentDailyRow } from "@/lib/types";
 import type {
   ZarukuSeoAiVisibilityAggregateRow,
   ZarukuAliceVisibilitySnapshot,
@@ -118,6 +121,20 @@ test("buildNorthStarKpis uses the latest published official Alice SoV", () => {
   assert.equal(kpis.medicalIntent.goal, "up");
 });
 
+test("intent context retains gaps and raw-count remainder while share rises and clicks fall", () => {
+  const rows = ["medical", "noise", "brand", "uncertain", "other"].flatMap(bucket => [
+    { date: "2026-09-01", bucket, impressions: bucket === "medical" ? 2 : 1, clicks: bucket === "medical" ? 2 : 1 },
+    { date: "2026-08-31", bucket, impressions: bucket === "medical" ? 1 : 2, clicks: bucket === "medical" ? 9 : 1 },
+  ].map(row => ({ ...row, queryRows: 1, sourceCoverage: "complete", ingestionRunId: "fixture" }))) as IntentDailyRow[];
+  const intentView = buildIntentView(rows, { from: "2026-09-01", to: "2026-09-02" }, { from: "2026-08-30", to: "2026-08-31" });
+  const kpis = buildNorthStarKpis({ sovRows: [], aiRows: [], opportunities: [], intentView });
+  assert.ok(intentView.current.medicalImpressionShare! > intentView.previous.medicalImpressionShare!);
+  assert.equal(kpis.medicalIntent.guardCount, 2);
+  assert.match(kpis.medicalIntent.availabilityNote ?? "", /2026-09-02.*2026-08-30/);
+  assert.equal(intentRemainder(intentView.current).impressionShare, 50);
+  assert.equal(intentRemainder({ ...intentView.current, impressions: 0 }).impressionShare, null);
+});
+
 test("buildSemanticHealthRows keeps all latest-week SOV clusters and highlights baseline clusters", () => {
   const rows = buildSemanticHealthRows(sovRows, "2026-W29");
 
@@ -129,10 +146,21 @@ test("buildSemanticHealthRows keeps all latest-week SOV clusters and highlights 
 test("buildWeeklyFocus describes the latest official Alice SoV without legacy counts", () => {
   const focus = buildWeeklyFocus({ opportunities, aiRows, aliceSnapshots, tasks, runs, week: "2026-W29" });
 
-  assert.equal(focus.seo, "Фокус SEO: /rak-molochnoj-zhelezy/ — разрыв позиций раздела");
+  assert.equal(focus.seo, "Фокус SEO: принято — one · /rak-molochnoj-zhelezy/ — разрыв позиций раздела");
   assert.doesNotMatch(focus.ai, /89|155|упоминани|цитировани/i);
   assert.equal(focus.ai, "ИИ: официальная видимость в Алисе AI — 43,91% за 2026-08 · ручная выгрузка");
   assert.equal(focus.pipeline, "Конвейер: 2026-W29 завершён, дайджест 6, Медицинская проверка: 3");
+});
+
+test("official and legacy Alice definitions remain explicit and carry actual months", () => {
+  const official = buildNorthStarKpis({ sovRows, aiRows, aliceSnapshots: [{ ...aliceSnapshots[1], samplePresencePct: 57.42 }], opportunities });
+  assert.equal(official.aiVisibility.source, "alice_official");
+  assert.equal(official.aiVisibility.period, "2026-08");
+  assert.equal(official.aiVisibility.value, 43.91);
+  const legacy = buildNorthStarKpis({ sovRows, aiRows, opportunities });
+  assert.equal(legacy.aiVisibility.source, "alice_legacy");
+  assert.match(legacy.aiVisibility.tooltip ?? "", /проверенных.*сценариев/i);
+  assert.match(buildWeeklyFocus({ opportunities: [{ ...opportunities[0], decision: "pending" }], aiRows, tasks: [], runs: [], week: "2026-W29" }).seo, /ожидает решения/);
 });
 
 test("legacy Alice fallback keeps only visibility and Russian manual provenance", () => {

@@ -906,6 +906,8 @@ export interface ZarukuWordstatMonthlyRow {
 
 export interface ZarukuWordstatData {
   monthly_demand?: {
+    expected_count?: number | null;
+    expected_seeds?: Array<Pick<ZarukuWordstatMonthlyRow, "seed_hash" | "registry_version" | "query" | "region_scope" | "device_type">> | null;
     available_months: string[];
     default_month: string | null;
     rows: ZarukuWordstatMonthlyRow[];

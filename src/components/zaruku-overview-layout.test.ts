@@ -78,7 +78,7 @@ test("north-star strip hides zero deltas and keeps details in tooltips", () => {
   ]);
   assert.equal(items.some((item) => item.key === "approveRate"), false);
   assert.match(items[1].tooltip, /контроль кликов 72,8%/);
-  assert.doesNotMatch(items.map((item) => item.tooltip).join(" "), /Окно:|wm_alisa_manual|источник данных|SoV|Яндекс Вебмастер/);
+  assert.equal(items[0].period, northStarKpis.noise.period);
 });
 
 test("strip direction reflects signed change rather than the desired goal", () => {
@@ -98,10 +98,20 @@ test("north-star tooltip copy explains what each KPI means and why it matters", 
   assert.match(noise?.tooltipImportance ?? "", /основная видимость уходит/i);
 
   assert.equal(medicalIntent?.tooltipTitle, "Что такое медицинский интент");
-  assert.match(medicalIntent?.tooltipImportance ?? "", /целевой органический трафик/i);
+  assert.match(medicalIntent?.tooltipImportance ?? "", /не доказывает.*трафик/i);
 
   assert.equal(aiVisibility?.tooltipTitle, "Что такое Алиса AI");
   assert.match(aiVisibility?.tooltipImportance ?? "", /ИИ-ответах/i);
+});
+
+test("strip retains coverage, predecessor, click counts and comparison state", () => {
+  const items = buildNorthStarStripItems({ ...northStarKpis, medicalIntent: { ...northStarKpis.medicalIntent, comparisonPeriod: "2026-08-01 — 2026-08-31", availabilityNote: "Доступно: 2026-09-01 — 2026-09-02; нет: 2026-09-03", guardCount: 7, delta: null } });
+  assert.equal(items[1].comparisonPeriod, "2026-08-01 — 2026-08-31");
+  assert.match(items[1].availabilityNote ?? "", /2026-09-03/);
+  assert.equal(items[1].comparisonState, "unavailable");
+  assert.equal(buildNorthStarStripItems(northStarKpis)[0].comparisonState, "unchanged");
+  assert.equal(items[1].guardCount, 7);
+  assert.match(buildNorthStarStripItems({ ...northStarKpis, noise: { ...northStarKpis.noise, source: "webmaster_intent" } })[0].tooltip, /Яндекс Вебмастер/);
 });
 
 test("traffic health promotes five Metrika facts and keeps the rest secondary", () => {

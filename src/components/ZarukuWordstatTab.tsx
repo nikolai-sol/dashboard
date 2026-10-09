@@ -234,14 +234,15 @@ function Panel({ title, note, children }: { title: string; note?: string; childr
   );
 }
 
-function Indicator({ label, value, note }: { label: string; value: string; note: string }) {
+function Indicator({ label, value, note, period }: { label: string; value: string; note: string; period: string }) {
   return (
-    <div className="rounded-lg bg-slate-50 px-4 py-3">
+    <div className="min-w-0 rounded-lg bg-slate-50 px-4 py-3">
       <div className="flex items-start gap-1.5 text-xs text-slate-500">
         <span>{label}</span>
         <ZarukuInfoPopover label={`О показателе «${label}»`}><p className="text-xs leading-relaxed">{note}</p></ZarukuInfoPopover>
       </div>
       <div className="zaruku-kpi-value mt-2 text-2xl font-semibold text-slate-900">{value}</div>
+      <p data-wordstat-card-period className="mt-2 break-words text-xs leading-relaxed text-slate-500">{period}</p>
     </div>
   );
 }
@@ -402,7 +403,8 @@ export default function ZarukuWordstatTab({ data, locale = "ru-RU" }: Props) {
   const months = data.monthly_demand?.available_months ?? [];
   const [requestedMonth, setRequestedMonth] = useState(data.monthly_demand?.default_month ?? "");
   const selectedMonth = months.includes(requestedMonth) ? requestedMonth : months.at(-1) ?? "";
-  const monthly = selectedMonth ? calculateWordstatMonthlyGrowth(data.monthly_demand?.rows ?? [], selectedMonth) : null;
+  const monthly = selectedMonth ? calculateWordstatMonthlyGrowth(data.monthly_demand?.rows ?? [], selectedMonth, data.monthly_demand?.expected_seeds) : null;
+  const opportunity = data.historical.rows.find(row => row.opportunity === data.indicators.largest_opportunity && row.classification === "medical" && row.review_status === "reviewed");
   const monthLabel = (month: string) => new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T12:00:00Z`));
   const diagnostics = [...new Set([sourceStateNote(data, data.source_freshness), ...data.messages])];
 
@@ -420,10 +422,10 @@ export default function ZarukuWordstatTab({ data, locale = "ru-RU" }: Props) {
 
       <Panel title="Сводка спроса">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div><Indicator label="Запросы с ростом спроса" value={monthly && monthly.comparable_count > 0 ? formatNumber(monthly.growing_count, locale) : "—"} note="Сравнение полных календарных месяцев по каждому отслеживаемому запросу. Отсутствующие значения не считаются нулём." /><p className="mt-1 px-4 text-xs text-slate-500">{monthly ? `${monthly.comparable_count} сопоставимых · ${monthLabel(selectedMonth)}` : "Нет подтверждённых месячных данных"}</p></div>
-          {data.historical.rows.length > 0 && data.indicators.largest_opportunity != null ? <Indicator label="Самая большая возможность" value={indicatorValue(data.historical.status, data.indicators.largest_opportunity ? OPPORTUNITY_LABELS[data.indicators.largest_opportunity] : "—")} note={`Категория для проверенной медицинской темы с заметным спросом и слабым присутствием Zaruku; это не процент и не доля рынка. Период тем: ${historicalPeriod}.`} /> : null}
-          <Indicator label="Нерелевантный спрос сейчас" value={indicatorValue(data.current.query_status, formatPercentPoints(data.indicators.irrelevant_demand_share, locale))} note={`Доля де-дублированного проверенного спроса в текущем окне, признанная нерелевантной правилами Zaruku. Период запросов: ${queryPeriod}.`} />
-          <Indicator label="Новые темы для проверки" value={data.current.query_status === "unavailable" ? "—" : formatNumber(data.indicators.review_queue_count, locale)} note={`${data.current.query_status === "partial" ? "Подтверждённая часть: " : ""}Только действующие непроверенные запросы; до медицинской проверки они не становятся задачами SEO OS. Период запросов: ${queryPeriod}.`} />
+          <div><Indicator label="Запросы с ростом спроса" value={monthly && monthly.comparable_count > 0 ? formatNumber(monthly.growing_count, locale) : "—"} period={monthly ? `${monthLabel(selectedMonth)} к ${monthLabel(monthly.previous_period.from.slice(0, 7))}` : "Нет подтверждённых месячных данных"} note="Сравнение полных календарных месяцев по каждому отслеживаемому запросу. Отсутствующие значения не считаются нулём." /><p className="mt-1 px-4 text-xs leading-relaxed text-slate-500">{monthly ? `Получено ${monthly.received_count} / ожидается ${data.monthly_demand?.expected_count ?? "неизвестно"} · ${monthly.comparable_count} сопоставимых` : "Нет подтверждённых месячных данных"}</p></div>
+          {data.historical.rows.length > 0 && data.indicators.largest_opportunity != null ? <Indicator label="Самая большая возможность" value={indicatorValue(data.historical.status, opportunity?.phrase ?? "—")} period={`Исторический срез: ${historicalHeading}`} note={`Категория: ${OPPORTUNITY_LABELS[data.indicators.largest_opportunity]}. Проверенная медицинская тема; это не утверждённая задача, процент или доля рынка. Период тем: ${historicalPeriod}.`} /> : null}
+          <Indicator label="Нерелевантный спрос сейчас" period={`Последние 30 дней: ${queryPeriod}`} value={indicatorValue(data.current.query_status, formatPercentPoints(data.indicators.irrelevant_demand_share, locale))} note={`Доля де-дублированного проверенного спроса в текущем окне, признанная нерелевантной правилами Zaruku. Период запросов: ${queryPeriod}.`} />
+          <Indicator label="Новые темы для проверки" period={`Последние 30 дней: ${queryPeriod}`} value={data.current.query_status === "unavailable" ? "—" : formatNumber(data.indicators.review_queue_count, locale)} note={`${data.current.query_status === "partial" ? "Подтверждённая часть: " : ""}Только действующие непроверенные запросы; до медицинской проверки они не становятся задачами SEO OS. Период запросов: ${queryPeriod}.`} />
         </div>
         <p className="mt-4 max-w-4xl text-xs leading-relaxed text-slate-500">Доля нерелевантного спроса среди запросов, найденных Wordstat. Определяется правилами Zaruku, а не Яндексом. Не является долей нецелевого трафика на сайте.</p>
       </Panel>

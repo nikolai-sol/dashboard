@@ -9,7 +9,7 @@ import { reviewedSource, rejectShadowOverrides } from './stage-zaruku-shadow-con
 const ROOT = path.resolve(import.meta.dirname, '..');
 const REF = 'refs/heads/release/zaruku';
 const BASE = 'ee950f3917d0f8616b6229d4049410a0afb7e380';
-export const REPOSITORY_AUTHORITY = Object.freeze({version:2,url:'git@github.com:nikolai-sol/dashboard.git',ref:REF,base:BASE,approvedPredecessor:'243c475e4ffcdddea1a56fb2e80759e998792f84'});
+export const REPOSITORY_AUTHORITY = Object.freeze({version:2,url:'git@github.com:nikolai-sol/dashboard.git',ref:REF,base:BASE,approvedPredecessor:'6a219e298d77d4008e52ab6fc454e23ad2bbc9fd'});
 const fail = () => { throw new Error('Zaruku exact release authority refused'); };
 
 function validSource(source, expected) {

@@ -26,6 +26,9 @@ test("monthly main table is compact while raw rolling detail preserves dates and
   const header = markup.slice(0, markup.indexOf("Сводка спроса"));
   assert.doesNotMatch(header, /Сопоставление · 10–31 июля/);
   const summary = markup.slice(markup.indexOf("Сводка спроса"), markup.indexOf("Спрос по месяцам"));
+  assert.match(summary, /сентябрь 2026.*август 2026/);
+  assert.equal((summary.match(/data-wordstat-card-period/g) ?? []).length, 4);
+  assert.match(summary, /лечение рака/);
   assert.doesNotMatch(summary, /Предыдущий сопоставимый период Wordstat не собирался/);
 });
 

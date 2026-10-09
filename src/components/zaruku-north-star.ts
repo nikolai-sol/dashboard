@@ -7,6 +7,7 @@ import type {
   ZarukuSeoTaskRow,
   ZarukuSeoTaskStatus,
   IntentView,
+  IntentPeriod,
 } from "@/lib/types";
 
 const BASELINES = {
@@ -41,6 +42,11 @@ export type NorthStarKpi = {
   delta: number | null;
   goal: NorthStarGoal;
   period: string | null;
+  source?: "webmaster_intent" | "alice_official" | "alice_legacy" | "seo_decisions";
+  comparisonPeriod?: string | null;
+  availabilityNote?: string;
+  visibleAvailability?: string;
+  guardCount?: number | null;
   note?: string;
   tooltip?: string;
   guardValue?: number | null;
@@ -116,6 +122,15 @@ function delta(value: number | null, baseline: number) {
   return value == null ? null : value - baseline;
 }
 
+function intentAvailability(period: IntentPeriod) {
+  return `Доступно: ${period.availableRanges.map(range => `${range.from} — ${range.to}`).join(", ") || "нет данных"}; нет данных: ${period.missingDates.join(", ") || "нет"}${period.completeness === "unverified" ? "; полнота не подтверждена" : ""}`;
+}
+
+export function intentRemainder(period: IntentPeriod) {
+  const share = (total: number | null, medical: number | null, noise: number | null) => total != null && total > 0 && medical != null && noise != null ? (total - medical - noise) / total * 100 : null;
+  return { impressionShare: share(period.impressions, period.medicalImpressions, period.noiseImpressions), clickShare: share(period.clicks, period.medicalClicks, period.noiseClicks) };
+}
+
 export function buildNorthStarKpis({
   aiRows,
   aliceSnapshots = [],
@@ -141,6 +156,10 @@ export function buildNorthStarKpis({
       delta: intentView?.deltas.noiseImpressionPp ?? null,
       goal: "down",
       period: intentView ? `${intentView.current.requested.from} — ${intentView.current.requested.to}` : null,
+      source: "webmaster_intent",
+      visibleAvailability: intentView && intentView.current.completeness !== "complete" ? `Доступно: ${intentView.current.availableRanges.map(range => `${range.from} — ${range.to}`).join(", ") || "нет данных"}` : undefined,
+      comparisonPeriod: intentView ? `${intentView.previous.requested.from} — ${intentView.previous.requested.to}` : null,
+      availabilityNote: intentView ? `${intentAvailability(intentView.current)}. Сравнение: ${intentAvailability(intentView.previous)}` : "Нет данных за выбранный период",
       tooltip: "Доля показов по настроенным чужим брендам. Доля внутри сайта, не рыночная доля",
       series: [],
     },
@@ -153,6 +172,11 @@ export function buildNorthStarKpis({
       goal: "up",
       period: intentView ? `${intentView.current.requested.from} — ${intentView.current.requested.to}` : null,
       guardValue: intentView?.current.medicalClickShare ?? null,
+      guardCount: intentView?.current.medicalClicks ?? null,
+      visibleAvailability: intentView && intentView.current.completeness !== "complete" ? `Доступно: ${intentView.current.availableRanges.map(range => `${range.from} — ${range.to}`).join(", ") || "нет данных"}` : undefined,
+      source: "webmaster_intent",
+      comparisonPeriod: intentView ? `${intentView.previous.requested.from} — ${intentView.previous.requested.to}` : null,
+      availabilityNote: intentView ? `${intentAvailability(intentView.current)}. Сравнение: ${intentAvailability(intentView.previous)}` : "Нет данных за выбранный период",
       guardBaseline: BASELINES.medicalIntentClicks,
       series: [],
     },
@@ -164,6 +188,8 @@ export function buildNorthStarKpis({
       delta: null,
       goal: "up",
       period: officialAlice?.month ?? ai?.period ?? null,
+      source: officialAlice ? "alice_official" : "alice_legacy",
+      tooltip: officialAlice ? "Официальная SoV из Яндекс Вебмастера. Не доля присутствия в строках выгрузки." : "Доля проверенных AI-сценариев, где портал присутствует в ответе Алисы или связанном источнике.",
       note: officialAlice
         ? "Официальная SoV, Яндекс Вебмастер, ручная выгрузка, ежемесячно"
         : ai
@@ -269,7 +295,7 @@ export function buildWeeklyFocus({
 
   return {
     seo: opportunity
-      ? `Фокус SEO: ${opportunity.section ?? opportunity.target_url ?? "раздел не задан"} — ${readableOpportunityType(opportunity.opportunity_type)}`
+      ? `Фокус SEO: ${opportunity.decision === "approved" ? "принято" : "ожидает решения"} — ${opportunity.title} · ${opportunity.section ?? opportunity.target_url ?? "раздел не задан"} — ${readableOpportunityType(opportunity.opportunity_type)}`
       : "Фокус SEO: нет ожидающих или принятых возможностей на выбранной неделе",
     ai: officialAlice
       ? `ИИ: официальная видимость в Алисе AI — ${officialAlice.officialSovPct.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}% за ${officialAlice.month} · ручная выгрузка`

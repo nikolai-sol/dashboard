@@ -257,13 +257,22 @@ export function classifyWordstatOpportunity(row: WordstatOpportunityInput): Zaru
 }
 
 export function buildZarukuWordstatQueries(accountId: string, nowUtc: string | Date = new Date()): Record<
-  "historicalRows" | "currentQueries" | "currentRegions" | "observedDays" | "monthlyDemand",
+  "historicalRows" | "currentQueries" | "currentRegions" | "observedDays" | "monthlyDemand" | "activeRegistry",
   WordstatSqlQuery
 > {
   const normalizedAccountId = requireAccountId(accountId);
   const currentUtcDate = requireUtcDate(nowUtc);
   const yesterday = new Date(Date.parse(currentUtcDate) - 86_400_000).toISOString().slice(0, 10);
   return {
+    activeRegistry: {
+      sql: `/* wordstat:active-registry */
+        SELECT seed_hash, registry_version, phrase_text AS query, 'all' AS region_scope, 'all' AS device_type
+        FROM canonical_wordstat_seed_registry
+        WHERE analytics_account_id = ? AND analytics_account_id = '66624469'
+          AND registry_version = ? AND is_active = 1
+        ORDER BY seed_hash`,
+      params: [normalizedAccountId, "wordstat-v1"],
+    },
     monthlyDemand: {
       sql: `
         /* wordstat:monthly-demand */
@@ -1540,12 +1549,16 @@ export async function loadZarukuWordstatData(
     query(queries.currentRegions),
     query(queries.observedDays),
     query(queries.monthlyDemand),
+    query(queries.activeRegistry),
   ]);
   const historicalRows = valueOrEmpty<HistoricalDbRow>(settled[0]);
   const queryRows = valueOrEmpty<CurrentQueryDbRow>(settled[1]);
   const regionRows = valueOrEmpty<CurrentRegionDbRow>(settled[2]);
   const observedRows = valueOrEmpty<ObservedDbRow>(settled[3]);
   const monthlyRows = valueOrEmpty<MonthlyDbRow>(settled[4]);
+  const expectedSeeds = settled[5].status === "rejected" ? null : [...new Map(valueOrEmpty<ZarukuWordstatMonthlyRow>(settled[5])
+    .filter(row => row.seed_hash && row.registry_version === "wordstat-v1" && row.region_scope === "all" && row.device_type === "all")
+    .map(row => [row.seed_hash, { seed_hash: row.seed_hash, registry_version: row.registry_version, query: asString(row.query), region_scope: "all", device_type: "all" }])).values()];
   const monthly = normalizeMonthlyRows(monthlyRows, nowUtc);
   const availableMonths = [...new Set(monthly.map(row => row.month_from.slice(0, 7)))].sort();
   const monthlyKey = (row: ZarukuWordstatMonthlyRow) => JSON.stringify([row.registry_version, row.seed_hash, formatDate(row.month_from), formatDate(row.month_to), row.region_scope, row.device_type]);
@@ -1624,7 +1637,7 @@ export async function loadZarukuWordstatData(
 
   return {
     status,
-    monthly_demand: { rows: monthly, available_months: availableMonths, default_month: availableMonths.at(-1) ?? null },
+    monthly_demand: { rows: monthly, available_months: availableMonths, default_month: availableMonths.at(-1) ?? null, expected_count: expectedSeeds?.length ?? null, expected_seeds: expectedSeeds },
     observed_demand: { days: observedDays, confirmed_dates: [...new Set(observedDays.map((day) => day.date))].sort(),
       growth: calculateWordstatWeeklyGrowth(observedDays, nowUtc) },
     observed_regions: observedRegions,

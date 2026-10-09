@@ -38,6 +38,13 @@ const augustSnapshot: ZarukuAliceVisibilitySnapshot = {
   versions: [],
 };
 
+test("competitor frequencies explain overlapping query-level denominators", () => {
+  const markup = renderToStaticMarkup(createElement(ZarukuAliceVisibilityTab, { data: { status: "available", snapshots: [augustSnapshot] } as ZarukuAliceVisibilityData }));
+  assert.match(markup, /% запросов в выгрузке/);
+  assert.match(markup, /несколько сайтов/);
+  assert.match(markup, /не складываются/);
+});
+
 const julySnapshot: ZarukuAliceVisibilitySnapshot = {
   ...augustSnapshot,
   id: "july",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { calculateWordstatMonthlyGrowth } from "./zaruku-wordstat-monthly";
 
 type SqlQuery = { sql: string; params: Array<string | number> };
 type DbRow = Record<string, unknown>;
@@ -35,6 +36,33 @@ test("Wordstat historical UTC yesterday bounds use aligned parameters across cal
     ]);
     assert.equal(historicalRows.sql.includes(yesterday), false);
   }
+});
+
+test("monthly coverage keeps 27 expected, 26 received/comparable and unknown registry", async () => {
+  const { buildZarukuWordstatQueries, loadZarukuWordstatData } = await wordstatModule();
+  const sql = buildZarukuWordstatQueries("66624469").activeRegistry;
+  assert.match(sql.sql, /FROM canonical_wordstat_seed_registry/);
+  assert.match(sql.sql, /analytics_account_id = \?/);
+  assert.match(sql.sql, /is_active = 1/);
+  assert.match(sql.sql, /registry_version = \?/);
+  assert.deepEqual(sql.params, ["66624469", "wordstat-v1"]);
+  const expected = Array.from({ length: 27 }, (_, i) => ({ seed_hash: `seed-${i}`, registry_version: "wordstat-v1", query: `query ${i}`, region_scope: "all", device_type: "all" }));
+  const rows = expected.slice(0, 26).flatMap(seed => ["2026-08", "2026-09"].map(month => ({ ...seed, topic: "Онкология", cluster: null, month_from: `${month}-01`, month_to: `${month}-${month.endsWith("09") ? "30" : "31"}`, count: month.endsWith("08") ? 0 : 10 })));
+  const data = await loadZarukuWordstatData("66624469", async q => q.sql.includes("wordstat:active-registry") ? expected : q.sql.includes("wordstat:monthly-demand") ? rows : [], new Date("2026-10-09T12:00:00Z"));
+  assert.equal(data.monthly_demand?.expected_count, 27);
+  const growth = calculateWordstatMonthlyGrowth(data.monthly_demand!.rows, "2026-09", data.monthly_demand!.expected_seeds);
+  assert.equal(growth.received_count, 26);
+  assert.equal(growth.comparable_count, 26);
+  assert.equal(growth.rows.find(r => r.seed_hash === "seed-26")?.current_count, null);
+  assert.equal(growth.rows[0].new_from_zero, true);
+  assert.equal(growth.rows[0].percent_change, null);
+  assert.equal(growth.rows[0].topic, "Онкология");
+  assert.equal(growth.rows.find(r => r.seed_hash === "seed-26")?.count, undefined);
+  assert.equal(calculateWordstatMonthlyGrowth([...rows, { ...rows[1], registry_version: "another-registry", seed_hash: "outside" }, { ...rows[1], seed_hash: "inactive-excluded" }], "2026-09", expected).received_count, 26);
+  assert.equal(calculateWordstatMonthlyGrowth([...rows, rows[1]], "2026-09", expected).received_count, 25);
+  const unknown = await loadZarukuWordstatData("66624469", async q => { if (q.sql.includes("wordstat:active-registry")) throw new Error("fixture registry unavailable"); return q.sql.includes("wordstat:monthly-demand") ? rows : []; }, new Date("2026-10-09T12:00:00Z"));
+  assert.equal(unknown.monthly_demand?.expected_count, null);
+  assert.equal(unknown.monthly_demand?.expected_seeds, null);
 });
 
 test("Wordstat ranking aliases do not use the MySQL reserved ROW_NUMBER keyword", async () => {
@@ -106,6 +134,7 @@ function fakeQuery(rows: Partial<Record<"metadata" | "historical-period" | "hist
     queries,
     run: async (query: SqlQuery) => {
       queries.push(query);
+      if (query.sql.includes("wordstat:active-registry")) return [];
       if (query.sql.includes("wordstat:monthly-demand")) return [];
       if (query.sql.includes("wordstat:observed-days")) return rows["observed-days"] ?? [];
       if (query.sql.includes("wordstat:metadata")) return rows.metadata ?? [];
@@ -162,7 +191,7 @@ test("monthly loader keeps missing, zero, invalid buckets and publication distin
     ? [{ ...base, month_from: new Date("2026-08-01"), month_to: new Date("2026-08-31") }] : [], new Date("2026-10-08"));
   assert.match(dateObjects.latest_confirmed_publication_at ?? "", /2026-10-08/);
   const empty = await loadZarukuWordstatData("66624469", async () => [], new Date("2026-10-08"));
-  assert.deepEqual(empty.monthly_demand, { rows: [], available_months: [], default_month: null });
+  assert.deepEqual(empty.monthly_demand, { rows: [], available_months: [], default_month: null, expected_count: 0, expected_seeds: [] });
 });
 
 test("missing optional monthly table does not change confirmed rolling freshness or fabricate monthly counts", async () => {
@@ -175,7 +204,7 @@ test("missing optional monthly table does not change confirmed rolling freshness
     if (q.sql.includes("wordstat:monthly-demand")) throw new Error("optional table unavailable");
     return fixture.run(q);
   }, now);
-  assert.deepEqual(missing.monthly_demand, { rows: [], available_months: [], default_month: null });
+  assert.deepEqual(missing.monthly_demand, { rows: [], available_months: [], default_month: null, expected_count: 0, expected_seeds: [] });
   assert.equal(missing.current.query_status, baseline.current.query_status);
   assert.equal(missing.current.region_status, baseline.current.region_status);
   assert.equal(missing.source_freshness?.freshness_status, baseline.source_freshness?.freshness_status);
@@ -903,7 +932,7 @@ test("Wordstat SQL scopes run state by endpoint family and selects the latest re
   const { buildZarukuWordstatQueries } = await wordstatModule();
   const queries = buildZarukuWordstatQueries("66624469");
 
-  assert.deepEqual(Object.keys(queries).sort(), ["currentQueries", "currentRegions", "historicalRows", "monthlyDemand", "observedDays"]);
+  assert.deepEqual(Object.keys(queries).sort(), ["activeRegistry", "currentQueries", "currentRegions", "historicalRows", "monthlyDemand", "observedDays"]);
   assert.doesNotMatch(queries.currentQueries.sql, /wordstat:metadata/i);
   assert.match(queries.currentQueries.sql, /:current'[\s\S]*:all'/i);
   assert.match(queries.currentRegions.sql, /:regions'[\s\S]*:all'/i);

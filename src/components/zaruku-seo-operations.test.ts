@@ -39,6 +39,14 @@ test("buildOpportunityDecisionSummary leaves approve rate unavailable without de
   assert.equal(summary.comparison_approve_rate, null);
 });
 
+test("approval arithmetic compares 50 to 75 as 25 percentage points with real decided scope", () => {
+  const previous = opportunities.filter(row => row.week === "2026-W28");
+  const current = ["approved", "approved", "approved", "rejected"].map((decision, i) => ({ ...opportunities[1], week: "2026-W29", opportunity_id: String(i), decision: decision as ZarukuSeoOpportunityRow["decision"] }));
+  const result = buildOpportunityDecisionSummary([...previous, ...current], "2026-W29", "2026-W28");
+  assert.equal(result.approve_rate_delta, 25);
+  assert.equal(result.counts.approved + result.counts.rejected, 4);
+});
+
 const tasks: ZarukuSeoTaskRow[] = [
   { week: "2026-W28", task_id: "medical", section: "/articles/", title: "Medical review", status: "awaiting_medical_review", notion_url: null },
   { week: "2026-W28", task_id: "missing-target", section: "/articles/", title: "Needs target page", status: "needs_target_page", notion_url: null },
