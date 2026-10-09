@@ -735,6 +735,16 @@ function usage() {
   return "usage: runtime-artifact-policy.mjs [--prepare|--stamp|--boot] zaruku <artifact-root> --trusted-manifest <external-path>";
 }
 
+// CLI-only opt-in; programmatic callers retain the verifier's 15-second default.
+export function cliBootOptions(trustedManifestPath, timeoutValue) {
+  if (timeoutValue === undefined) return { trustedManifestPath };
+  const timeoutMs = Number(timeoutValue);
+  if (!/^[1-9][0-9]*$/.test(timeoutValue) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 15000 || timeoutMs > 60000) {
+    throw new Error("Invalid ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS: expected an integer from 15000 to 60000");
+  }
+  return { trustedManifestPath, timeoutMs };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const manifestIndex = args.indexOf("--trusted-manifest");
@@ -755,7 +765,8 @@ async function main() {
       assertRuntimeArtifact(artifactRoot, scope, trustedManifestPath);
     }
   } else if (boot) {
-    await verifyRuntimeArtifactBoot(artifactRoot, scope, { trustedManifestPath });
+    const options = cliBootOptions(trustedManifestPath, process.env.ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS);
+    await verifyRuntimeArtifactBoot(artifactRoot, scope, options);
     console.log("Zaruku standalone loopback boot/health passed");
   } else {
     assertRuntimeArtifact(artifactRoot, scope, trustedManifestPath);

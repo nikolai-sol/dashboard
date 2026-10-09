@@ -808,3 +808,40 @@ test("the Zaruku workspace stamps then verifies its standalone artifact", () => 
     "node --import tsx ../../scripts/assert-no-private-public-assets.ts --release --scope zaruku .next-zaruku/standalone --trusted-manifest .next-zaruku/trusted-runtime-manifest.json",
   );
 });
+
+
+test('CLI boot options preserve the existing default and propagate only bounded explicit deadlines',()=>{
+  assert.equal(typeof runtimePolicy.cliBootOptions,'function');
+  assert.deepEqual(runtimePolicy.cliBootOptions('/trusted',undefined),{trustedManifestPath:'/trusted'});
+  for(const value of ['15000','15001','30000','59999','60000']){
+    assert.deepEqual(runtimePolicy.cliBootOptions('/trusted',value),{trustedManifestPath:'/trusted',timeoutMs:Number(value)});
+  }
+});
+
+test('CLI boot options reject malformed or out-of-range values without echoing input',()=>{
+  assert.equal(typeof runtimePolicy.cliBootOptions,'function');
+  for(const value of ['', '0','14999','60001','015000','+15000','-15000','15000.0','1.5e4',' 15000','15000\n','Infinity','NaN','9007199254740993','PRIVATE_SENTINEL']){
+    assert.throws(()=>runtimePolicy.cliBootOptions('/trusted',value),error=>{
+      assert.equal(error.message,'Invalid ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS: expected an integer from 15000 to 60000');
+      return true;
+    });
+  }
+});
+
+test('real boot CLI rejects invalid timeout before touching an unavailable artifact',()=>{
+  const result=spawnSync(process.execPath,['scripts/runtime-artifact-policy.mjs','--boot','zaruku','/missing-artifact','--trusted-manifest','/missing-manifest'],{
+    encoding:'utf8',timeout:10000,env:{ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS:'60001'},
+  });
+  assert.equal(result.status,1);
+  assert.match(result.stderr,/Invalid ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS/);
+  assert.doesNotMatch(result.stderr,/ENOENT|60001/);
+});
+
+test('non-boot CLI does not interpret the process-scoped boot timeout',()=>{
+  const result=spawnSync(process.execPath,['scripts/runtime-artifact-policy.mjs','zaruku','/missing-artifact','--trusted-manifest','/missing-manifest'],{
+    encoding:'utf8',timeout:10000,env:{ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS:'PRIVATE_SENTINEL'},
+  });
+  assert.equal(result.status,1);
+  assert.match(result.stderr,/missing artifact root/);
+  assert.doesNotMatch(result.stderr,/BOOT_TIMEOUT|PRIVATE_SENTINEL/);
+});
