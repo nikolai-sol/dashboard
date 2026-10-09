@@ -30,8 +30,8 @@ export interface RegionalSourcePage {
   id: number; regionKey: string; regionName: string; stage: string; period: string;
   publicationDate: string | null; data: string; url: string | null; verification: string;
   geography: string; checkedAt: string | null; restriction: string;
-  evidenceRef: string | null; rawSha256: string | null; remoteArchive: boolean | null;
-  httpStatus: number | null; sourceHttpStatusRaw: string | null;
+  evidenceRef?: string | null; rawSha256: string | null; remoteArchive?: boolean | null;
+  httpStatus?: number | null; sourceHttpStatusRaw?: string | null;
 }
 export interface RegionalSnapshot { id: string; label: string; checkedAt: string; }
 export interface RegionalModuleData {

@@ -20,6 +20,15 @@ export async function isRegionalModuleEnabled(dashboardId:number,run:RegionalQue
   const row=rows[0];if(!row||!['lyzobact','lisobact'].includes(String(row.client_id)))return false;
   try {const config=object(row.config);return object(config.lyzobact_regions).enabled===true;}catch{return false;}
 }
+
+/** Public access is a separate, default-deny opt-in for this single regional module. */
+export async function isRegionalModulePublicReadEnabled(dashboardId:number,run:RegionalQueryRunner=query):Promise<boolean>{
+ if(dashboardId!==49)return false;
+ const rows=await run('SELECT client_id, is_active, config FROM dashboards WHERE id = ? AND is_active = TRUE LIMIT 1',[dashboardId]);
+ const row=rows[0];if(!row||row.client_id!=='lyzobact'||(row.is_active!==1&&row.is_active!==true))return false;
+ try{const config=object(object(row.config).lyzobact_regions);return config.enabled===true&&config.public_read===true;}catch{return false;}
+}
+
 function rowPayload(value:unknown):RegionalRow{
   const r=object(value);
   if(typeof r.regionKey!=='string'||typeof r.name!=='string'||typeof r.period!=='string'||typeof r.checkedAt!=='string'||typeof r.sourceQuality!=='string'||typeof r.isHistorical!=='boolean'||typeof r.isAutumn2026!=='boolean')throw new Error('Invalid stored region');
