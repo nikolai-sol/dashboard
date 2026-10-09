@@ -40,11 +40,11 @@ test('creative controls are absent for isolated dashboard editors',()=>{
 
 test('creative column preset and checkbox selection survive API normalization and reload',()=>{
  let data=fixture();const render=()=>Step({data,onChange:next=>{data=next;}});
- const preset=elements(render()).find(e=>e.type==='button'&&Children.toArray(e.props.children).includes('Size, impressions, CTR / Размер, показы, CTR'));
+ const preset=elements(render()).find(e=>e.type==='button'&&Children.toArray(e.props.children).includes('Apply preset: Size, impressions, CTR / Применить набор: размер, показы, CTR'));
  assert.ok(preset);preset.props.onClick!();
  data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
  assert.deepEqual(data.config.section_field_overrides?.creative_performance?.visible_fields,['size','impressions','ctr']);
- const panel=elements(render()).find(e=>e.type==='div'&&elements(e.props.children).some(c=>c.type==='h5'&&Children.toArray(c.props.children).includes('Creative performance columns / Колонки креативов'))&&elements(e.props.children).filter(c=>c.type==='input').length===10);
+ const panel=elements(render()).find(e=>e.type==='div'&&elements(e.props.children).some(c=>c.type==='h5'&&Children.toArray(c.props.children).includes('Эффективность креативов — колонки / Creative performance columns'))&&elements(e.props.children).filter(c=>c.type==='input').length===10);
  assert.ok(panel);
  const inputs=elements(panel.props.children).filter(e=>e.type==='input');assert.equal(inputs.filter(e=>e.props.checked).length,3);
  inputs[6].props.onChange!({target:{checked:true}});
@@ -65,4 +65,39 @@ test('Plus toggle and preview columns persist separately from original table',()
  data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
  assert.ok(!data.config.section_field_overrides?.creative_performance_plus?.visible_fields.includes('preview'));
  assert.ok(!data.config.section_field_overrides?.creative_performance?.visible_fields.includes('preview'));
+});
+
+import Table from '../CreativePerformanceTable';
+import { normalizeDashboardSectionFieldOverrides } from '../../lib/dashboard-section-fields';
+import type { CreativeRow } from '../../lib/creative-performance-contract';
+
+test('saved original hidden impressions remains independent of Plus and weighted CTR',()=>{
+ let data=fixture();data.config.section_field_overrides=normalizeDashboardSectionFieldOverrides({
+  creative_performance:{visible_fields:['size','ctr','name','impressions']},
+  creative_performance_plus:{visible_fields:['name','size','impressions','clicks','ctr','preview']},
+ });
+ const render=()=>Step({data,onChange:next=>{data=next;}});
+ const impressions=elements(render()).find(e=>e.type==='label'&&Children.toArray(e.props.children).includes('Impressions'));
+ assert.ok(impressions);
+ elements(impressions.props.children).find(e=>e.type==='input')!.props.onChange!({target:{checked:false}});
+ data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
+ const saved=normalizeDashboardSectionFieldOverrides(data.config.section_field_overrides);
+ assert.deepEqual(saved.creative_performance?.visible_fields,['size','ctr','name']);
+ assert.deepEqual(saved.creative_performance_plus?.visible_fields,['name','size','impressions','clicks','ctr','preview']);
+ const row:CreativeRow={source_key:'hybrid',platform_account_id:'advertiser',platform_campaign_id:'f_861',platform_creative_id:'one',line_key:'line',channel:'Display',name:'m1',size:'160 × 600',impressions:100,clicks:10,spend:null,ctr:10,cpc:null,postclick:null,availability:'Platform creative data',preview_urls:['http://preview.hybrid.ai?id=sample']};
+ const rows=[row,{...row,platform_creative_id:'two',impressions:900,clicks:18,ctr:2}];
+ const original=renderToStaticMarkup(<Table data={{rows,has_mappings:false,selected_columns:saved.creative_performance?.visible_fields}}/>);
+ const plus=renderToStaticMarkup(<Table variant="plus" data={{rows,has_mappings:false,selected_columns:saved.creative_performance_plus?.visible_fields}}/>);
+ assert.deepEqual([...original.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(m=>m[1]),['Size','CTR %','Creative name']);
+ assert.doesNotMatch(original,/>Impressions<|>Clicks<|href=/);
+ assert.match(original,/>2.8<\/td>/);assert.equal((original.match(/<td\b/g)||[]).length,3);
+ assert.deepEqual([...plus.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(m=>m[1]),['Creative name','Size','Impressions','Clicks','CTR %','Preview']);assert.match(plus,/>1,000<\/td>/);assert.match(plus,/>2.8<\/td>/);assert.match(plus,/href="http:\/\/preview.hybrid.ai\/?\?id=sample"/);
+});
+
+test('creative panels identify their exact table and label presets as actions',()=>{
+ const html=renderToStaticMarkup(Step({data:fixture(),onChange:()=>{}}));
+ assert.match(html,/Эффективность креативов — колонки \/ Creative performance columns/);
+ assert.match(html,/Each table has separate column settings/);
+ assert.match(html,/Apply preset: Size, impressions, CTR/);
+ assert.match(html,/platform or imported preview links/);
 });

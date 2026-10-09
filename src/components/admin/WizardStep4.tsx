@@ -556,8 +556,9 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {isMediaCreativeDashboard(data.dashboard_type) && <div className="rounded-lg border border-slate-200 p-4">
-            <h5 className="text-sm font-semibold text-slate-900">Creative performance columns / Колонки креативов</h5>
-            <button type="button" className="mt-2 text-sm text-blue-700" onClick={() => patchSectionFieldOverrides({creative_performance: {visible_fields: ['size', 'impressions', 'ctr']}})}>Size, impressions, CTR / Размер, показы, CTR</button>
+            <h5 className="text-sm font-semibold text-slate-900">Эффективность креативов — колонки / Creative performance columns</h5>
+            <p className="mt-1 text-xs text-slate-500">Each table has separate column settings. These settings apply only to “Эффективность креативов”; configure “Эффективность креативов +” in the next panel.</p>
+            <button type="button" className="mt-2 text-sm text-blue-700" onClick={() => patchSectionFieldOverrides({creative_performance: {visible_fields: ['size', 'impressions', 'ctr']}})}>Apply preset: Size, impressions, CTR / Применить набор: размер, показы, CTR</button>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {DEFAULT_CREATIVE_FIELDS.map(field => {
                 const current = sectionFieldOverrides.creative_performance?.visible_fields ?? [];
@@ -572,7 +573,7 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
 
           {isMediaCreativeDashboard(data.dashboard_type) && <div className="rounded-lg border border-slate-200 p-4">
             <h5 className="text-sm font-semibold text-slate-900">Эффективность креативов + — колонки</h5>
-            <p className="mt-1 text-xs text-slate-500">Только привязанные креативы с импортированными ссылками на превью.</p>
+            <p className="mt-1 text-xs text-slate-500">These settings apply only to “Эффективность креативов +”. This table contains bound creatives with platform or imported preview links.</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {CREATIVE_PLUS_FIELDS.map(field => {
                 const current = sectionFieldOverrides.creative_performance_plus?.visible_fields ?? [];
