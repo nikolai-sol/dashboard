@@ -6,7 +6,7 @@ import Step from './WizardStep4';
 import type { DashboardFormData } from '../../lib/admin-ui-types';
 import { normalizeDashboardPayload } from '../../lib/admin-dashboards';
 
-type Props = {children?:ReactNode; type?:string; checked?:boolean; onChange?:(event:{target:{checked:boolean}})=>void; onClick?:()=>void;};
+type Props = {children?:ReactNode; type?:string; checked?:boolean; onChange?:(event:{target:{checked:boolean; valueAsNumber?:number}})=>void; onClick?:()=>void;};
 function elements(node:ReactNode):ReactElement<Props>[] {
  return Children.toArray(node).flatMap(child=>isValidElement<Props>(child)?[child,...elements(child.props.children)]:[]);
 }
@@ -60,8 +60,8 @@ test('Plus toggle and preview columns persist separately from original table',()
  data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
  assert.equal(data.config.show_creative_performance_plus,true);assert.equal(toggle().props.checked,true);
  assert.ok(data.config.section_order?.includes('creative_performance_plus'));assert.equal(creativeControl(render()).props.checked,true);
- const panel=elements(render()).find(e=>e.type==='div'&&elements(e.props.children).some(c=>c.type==='h5'&&Children.toArray(c.props.children).includes('Эффективность креативов + — колонки'))&&elements(e.props.children).filter(c=>c.type==='input').length===11);
- assert.ok(panel);const inputs=elements(panel.props.children).filter(e=>e.type==='input');assert.equal(inputs[10].props.checked,true);inputs[10].props.onChange!({target:{checked:false}});
+ const panel=elements(render()).find(e=>e.type==='div'&&elements(e.props.children).some(c=>c.type==='h5'&&Children.toArray(c.props.children).includes('Эффективность креативов + — колонки'))&&elements(e.props.children).filter(c=>c.type==='input'&&c.props.type==='checkbox').length===11);
+ assert.ok(panel);const inputs=elements(panel.props.children).filter(e=>e.type==='input'&&e.props.type==='checkbox');assert.equal(inputs[10].props.checked,true);inputs[10].props.onChange!({target:{checked:false}});
  data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
  assert.ok(!data.config.section_field_overrides?.creative_performance_plus?.visible_fields.includes('preview'));
  assert.ok(!data.config.section_field_overrides?.creative_performance?.visible_fields.includes('preview'));
@@ -100,4 +100,31 @@ test('creative panels identify their exact table and label presets as actions',(
  assert.match(html,/Each table has separate column settings/);
  assert.match(html,/Apply preset: Size, impressions, CTR/);
  assert.match(html,/platform or imported preview links/);
+});
+
+
+test('Plus minimum saves and reloads without changing columns or being lost on checkbox edits',()=>{
+ let data=fixture();data.config.show_creative_performance=false;data.config.section_field_overrides=normalizeDashboardSectionFieldOverrides({creative_performance_plus:{visible_fields:['size','ctr','preview','name']}});
+ const render=()=>Step({data,onChange:next=>{data=next;}});
+ const label=elements(render()).find(e=>e.type==='label'&&Children.toArray(e.props.children).includes('Minimum impressions / Минимум показов'));assert.ok(label);
+ const input=elements(label.props.children).find(e=>e.type==='input');assert.ok(input);input.props.onChange!({target:{checked:false,valueAsNumber:1000}});
+ data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};
+ assert.equal(data.config.section_field_overrides?.creative_performance_plus?.min_impressions,1000);
+ assert.deepEqual(data.config.section_field_overrides?.creative_performance_plus?.visible_fields,['size','ctr','preview','name']);assert.equal(data.config.show_creative_performance,false);
+ const preview=elements(render()).find(e=>e.type==='label'&&Children.toArray(e.props.children).includes('Превью'));assert.ok(preview);elements(preview.props.children).find(e=>e.type==='input')!.props.onChange!({target:{checked:false}});
+ data={...data,config:JSON.parse(JSON.stringify(normalizeDashboardPayload(data).config))};assert.equal(data.config.section_field_overrides?.creative_performance_plus?.min_impressions,1000);
+ assert.deepEqual(data.config.section_field_overrides?.creative_performance_plus?.visible_fields,['size','ctr','name']);
+});
+test('invalid Plus minimum normalizes to zero while valid safe integer is retained',()=>{
+ for(const value of [-1,NaN,Infinity,1.5,Number.MAX_SAFE_INTEGER+1,'1000',null])assert.equal(normalizeDashboardSectionFieldOverrides({creative_performance_plus:{min_impressions:value}}).creative_performance_plus?.min_impressions,0);
+ assert.equal(normalizeDashboardSectionFieldOverrides({creative_performance_plus:{min_impressions:1000}}).creative_performance_plus?.min_impressions,1000);
+});
+
+
+test('Plus numeric control normalizes invalid input before persisting config',()=>{
+ let data=fixture();const render=()=>Step({data,onChange:next=>{data=next;}});
+ for(const value of [-1,NaN,Infinity,1.5,Number.MAX_SAFE_INTEGER+1]){
+  const label=elements(render()).find(e=>e.type==='label'&&Children.toArray(e.props.children).includes('Minimum impressions / Минимум показов'));assert.ok(label);elements(label.props.children).find(e=>e.type==='input')!.props.onChange!({target:{checked:false,valueAsNumber:value}});
+  assert.equal(data.config.section_field_overrides?.creative_performance_plus?.min_impressions,0);
+ }
 });

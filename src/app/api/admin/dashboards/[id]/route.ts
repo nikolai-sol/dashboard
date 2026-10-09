@@ -1,4 +1,4 @@
-import { preserveCreativeMappingNamespace } from '@/lib/creative-performance-contract';
+import { preserveCreativeMappingNamespace, preserveCreativeMinimumImpressions } from '@/lib/creative-performance-contract';
 import { NextResponse } from "next/server";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import pool from "@/lib/db";
@@ -118,6 +118,7 @@ export async function PUT(
 
     const existingConfig = parseConfig(existingRow.config);
     preserveCreativeMappingNamespace(config, existingConfig);
+    preserveCreativeMinimumImpressions(config, existingConfig);
     if (
       !Object.prototype.hasOwnProperty.call(payload.config, "ai_summary_authoring") &&
       Object.prototype.hasOwnProperty.call(existingConfig, "ai_summary_authoring")

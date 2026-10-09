@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react';
 import { creativeDimensions, groupCreativeRows, searchCreativeGroups } from '@/lib/creative-performance-aggregation';
 import { creativePlusFields, safeCreativePreviewUrl } from '@/lib/creative-preview-plus';
-import { creativeFields, creativeFieldLabel, creativeFieldValue, type CreativePerformance } from '@/lib/creative-performance-contract';
+import { normalizeCreativeMinimumImpressions, creativeFields, creativeFieldLabel, creativeFieldValue, type CreativePerformance } from '@/lib/creative-performance-contract';
 export default function CreativePerformanceTable({ data, locale = 'en-US', showSpend = true, variant = 'standard' }: {
     data: CreativePerformance;
     locale?: string;
@@ -14,7 +14,8 @@ export default function CreativePerformanceTable({ data, locale = 'en-US', showS
     const [page, setPage] = useState(0);
     const ru = locale.startsWith('ru');
     const fields = useMemo(() => variant === 'plus' ? creativePlusFields(data.selected_columns, showSpend) : creativeFields(data.selected_columns, showSpend), [data.selected_columns, showSpend, variant]);
-    const grouped = useMemo(() => groupCreativeRows(data.rows, fields), [data.rows, fields]);
+    const minimum = variant === 'plus' ? normalizeCreativeMinimumImpressions(data.min_impressions) : 0;
+    const grouped = useMemo(() => groupCreativeRows(data.rows, fields, minimum), [data.rows, fields, minimum]);
     const rows = useMemo(() => searchCreativeGroups(grouped, fields, search), [grouped, fields, search]);
     const hasDimensions = creativeDimensions(fields).length > 0;
     const safePage = Math.min(page, Math.max(0, Math.ceil(rows.length / 50) - 1));
@@ -26,6 +27,7 @@ export default function CreativePerformanceTable({ data, locale = 'en-US', showS
     return <section className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
   <h2 className="text-lg font-semibold">{variant === 'plus' ? 'Эффективность креативов +' : ru ? 'Эффективность креативов' : 'Creative performance'}</h2>
   <p className="mt-1 text-sm text-gray-500">{ru ? 'Данные рекламных платформ. Строки Hybrid могут представлять группы креативов. Неизвестные значения: —.' : 'Advertising platform data. Hybrid rows may represent creative groups. Unknown values are shown as —.'}</p>
+  {minimum > 0 && <p className="mt-1 text-sm text-gray-500">{ru ? `Группы с показами не менее ${minimum.toLocaleString(locale)} за выбранный период. Группировка по видимым колонкам; неизвестные показы исключены.` : `Groups with at least ${minimum.toLocaleString(locale)} impressions for the selected period. Grouped by visible columns; unknown impressions are excluded.`}</p>}
   {hasCost && <p className="mt-1 text-sm text-gray-500">{ru ? 'Единицы платформы; валюта не подтверждена.' : 'Platform-reported units; currency not verified.'}{rows.some(row => row.mixed_cost_basis) && (ru ? ' Расход и CPC объединённых кабинетов с неподтверждёнными единицами: —.' : 'Spend and CPC are unavailable for groups combining accounts with unverified units.')}</p>}
   <input aria-label="Search creatives" disabled={!hasDimensions} placeholder={hasDimensions ? (ru ? 'Поиск по видимым описаниям' : 'Search visible descriptions') : (ru ? 'Нет описательных колонок для поиска' : 'No descriptive columns to search')} value={hasDimensions ? search : ''} onChange={e => { setSearch(e.target.value); setPage(0); }} className="my-4 w-full rounded border p-2 print:hidden"/>
   <div className="overflow-x-auto print:overflow-visible"><table className="w-full text-sm print:text-[7px]">
@@ -41,7 +43,7 @@ export default function CreativePerformanceTable({ data, locale = 'en-US', showS
     }), ...(data.has_mappings ? [r.postclick?.visits, r.postclick?.users, r.postclick?.pageviews, r.postclick?.page_depth, r.postclick?.goal_reaches, r.postclick?.conversion_rate, r.postclick?.bounce_rate, r.postclick?.avg_visit_duration].map(fmt) : [])].map((v, i) => <td key={i} className="whitespace-nowrap border-b px-3 py-2 print:whitespace-normal print:px-1">{v}</td>)}
    </tr>)}</tbody>
   </table></div>
-  {!rows.length && <p className="py-4 text-gray-500">{ru ? 'Нет данных по креативам за выбранный период.' : 'No creative-level platform data for this period.'}</p>}
+  {!rows.length && <p className="py-4 text-gray-500">{minimum > 0 && search.trim() && grouped.length ? (ru ? 'Нет групп креативов, соответствующих поиску.' : 'No creative groups match this search.') : minimum > 0 && data.rows.length ? (ru ? 'Нет групп креативов, соответствующих минимуму показов за выбранный период.' : 'No creative groups meet the minimum impressions for this period.') : (ru ? 'Нет данных по креативам за выбранный период.' : 'No creative-level platform data for this period.')}</p>}
   <div className="mt-3 flex items-center gap-3 text-sm print:hidden"><button disabled={!safePage} onClick={() => setPage(safePage - 1)}>{ru ? 'Назад' : 'Previous'}</button><span>{rows.length} · {ru ? 'Страница' : 'Page'} {safePage + 1}</span><button disabled={(safePage + 1) * 50 >= rows.length} onClick={() => setPage(safePage + 1)}>{ru ? 'Далее' : 'Next'}</button></div>
   {data.has_mappings && data.analytics_through && <p className="mt-2 text-xs text-gray-500">{ru?'Метрика по завершённым дням до':'Metrica completed days through'} {data.analytics_through} (UTC)</p>}
       {data.has_mappings && <p className="mt-2 text-xs text-gray-500">{ru ? 'Атрибуция Метрики: last. * Пользователи недоступны, если нельзя исключить повторы между датами или UTM. Наведите курсор на строку, чтобы увидеть статус данных.' : 'Metrica attribution: last. * Users are unavailable when deduplication across dates or UTM tuples cannot be established. Hover a row for its collection or mapping status.'}</p>}

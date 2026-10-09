@@ -3705,7 +3705,7 @@ export async function loadDashboardData(
           : undefined,
       traffic_sources: trafficSources.length > 0 ? trafficSources : undefined,
       creative_performance: creativePerformance && config.show_creative_performance !== false ? { ...creativePerformance, selected_columns: sectionFieldOverrides.creative_performance?.visible_fields } : undefined,
-      creative_performance_plus: creativePerformance && config.show_creative_performance_plus === true ? { rows: selectCreativePreviewRows(creativePerformance.rows, config.creative_preview_links), has_mappings: false, selected_columns: sectionFieldOverrides.creative_performance_plus?.visible_fields } : undefined,
+      creative_performance_plus: creativePerformance && config.show_creative_performance_plus === true ? { rows: selectCreativePreviewRows(creativePerformance.rows, config.creative_preview_links), has_mappings: false, selected_columns: sectionFieldOverrides.creative_performance_plus?.visible_fields, min_impressions: sectionFieldOverrides.creative_performance_plus?.min_impressions } : undefined,
       postclick_analytics: postclickAnalytics
         ? {
             ...postclickAnalytics,

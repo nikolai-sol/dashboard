@@ -1,5 +1,5 @@
 import { resolvePlatformIdFromSourceKey } from "./source-mapping";
-import { creativeFieldValue, type CreativeFieldId, type CreativeRow } from './creative-performance-contract';
+import { normalizeCreativeMinimumImpressions, creativeFieldValue, type CreativeFieldId, type CreativeRow } from './creative-performance-contract';
 
 const DIMENSIONS = new Set<CreativeFieldId>(['source_account', 'campaign_id', 'creative_id', 'name', 'size']);
 export interface CreativeGroup extends CreativeRow {
@@ -13,7 +13,7 @@ export function creativeDimensions(fields: readonly CreativeFieldId[]): Creative
 const sumComplete = (a: number | null, b: number | null): number | null => a !== null && b !== null ? a + b : null;
 
 /** Input must already satisfy the selected period and source/channel filters. */
-export function groupCreativeRows(rows: readonly CreativeRow[], fields: readonly CreativeFieldId[]): CreativeGroup[] {
+export function groupCreativeRows(rows: readonly CreativeRow[], fields: readonly CreativeFieldId[], minImpressions = 0): CreativeGroup[] {
     const dimensions = creativeDimensions(fields);
     const groups = new Map<string, {row: CreativeGroup; costBasis: string}>();
     for (const input of rows) {
@@ -37,10 +37,11 @@ export function groupCreativeRows(rows: readonly CreativeRow[], fields: readonly
         // Creative Metrica is paused; do not invent additive analytics across groups.
         row.postclick = null;
     }
+    const minimum = normalizeCreativeMinimumImpressions(minImpressions);
     return [...groups.values()].map(({row}) => ({...row,
         ctr: row.impressions !== null && row.impressions > 0 && row.clicks !== null ? 100 * row.clicks / row.impressions : null,
         cpc: row.clicks !== null && row.clicks > 0 && row.spend !== null ? row.spend / row.clicks : null,
-    }));
+    })).filter(row => minimum === 0 || (row.impressions !== null && row.impressions >= minimum));
 }
 export function searchCreativeGroups(rows: CreativeGroup[], fields: readonly CreativeFieldId[], search: string): CreativeGroup[] {
     const dimensions = creativeDimensions(fields);

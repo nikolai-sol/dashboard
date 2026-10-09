@@ -30,3 +30,17 @@ test('Plus is separate and renders all grouped previews as safe clickable links'
  assert.match(html,/Эффективность креативов \+/);assert.match(html,/<details/);assert.match(html,/href="https:\/\/px.adhigh.net\/creative_preview\?c=1"/);assert.match(html,/href="https:\/\/px.adhigh.net\/creative_preview\?c=2"/);
  assert.equal((html.match(/<td\b/g)||[]).length,4);assert.match(html,/>200<\/td>/);assert.doesNotMatch(html,/UTM|Metrica/);
 });
+
+
+test('Plus threshold applies after grouping with hidden impressions and preserves previews',()=>{
+ const url='http://preview.hybrid.ai?id=sample';
+ const html=renderToStaticMarkup(<Table variant="plus" data={{rows:[{...row,name:'Kept',impressions:600,clicks:6,preview_urls:[url]},{...row,name:'Kept',platform_creative_id:'second',impressions:600,clicks:12,preview_urls:[url]},{...row,name:'Excluded',impressions:999}],has_mappings:false,min_impressions:1000,selected_columns:['name','ctr','preview']}}/>);
+ assert.match(html,/Kept/);assert.doesNotMatch(html,/Excluded|>Impressions</);assert.match(html,/>1.5<\/td>/);assert.match(html,/at least 1,000 impressions/);assert.match(html,/href="http:\/\/preview.hybrid.ai/);
+});
+test('below-threshold data is distinguished from absent facts and original table stays unchanged',()=>{
+ const data={rows:[row],has_mappings:false,min_impressions:1000,selected_columns:['name'] as const};
+ const plus=renderToStaticMarkup(<Table variant="plus" data={{...data,selected_columns:[...data.selected_columns]}}/>);
+ assert.doesNotMatch(plus,/Banner 160x600|No creative-level platform data/);assert.match(plus,/No creative groups meet the minimum/);
+ const original=renderToStaticMarkup(<Table data={{...data,selected_columns:[...data.selected_columns]}}/>);
+ assert.match(original,/Banner 160x600/);assert.doesNotMatch(original,/at least|minimum/);
+});

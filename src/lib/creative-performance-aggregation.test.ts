@@ -47,3 +47,18 @@ test('platform selection excludes a different source sharing the same plan chann
  assert.deepEqual(filterCreativeRows(input,[]),[]);
  assert.deepEqual(filterCreativeRows(input,['Display'],[]),[]);
 });
+
+
+test('minimum impressions filters after visible grouping and keeps the exact boundary with hidden counts',()=>{
+ const input=[{...row,name:'merged',impressions:600,clicks:6},{...row,name:'merged',platform_creative_id:'second',impressions:600,clicks:12},{...row,name:'below',impressions:999},{...row,name:'boundary',impressions:1000,clicks:5}];
+ const groups=groupCreativeRows(input,['name','ctr'],1000);
+ assert.deepEqual(groups.map(r=>[r.name,r.impressions,r.clicks,r.ctr]),[['merged',1200,18,1.5],['boundary',1000,5,.5]]);
+ assert.equal(input[0].impressions,600);assert.equal(input.length,4);
+ assert.deepEqual(searchCreativeGroups(groups,['name','ctr'],'below'),[]);
+ assert.deepEqual(groups.map(r=>creativeExcelColumns(['name','ctr'],false).map(c=>c.value(r))),[['merged',1.5],['boundary',.5]]);
+});
+test('zero minimum retains unknown and zero counts; positive minimum cannot qualify unknown counts',()=>{
+ const input=[{...row,name:'unknown',impressions:null},{...row,name:'zero',impressions:0},{...row,name:'small',impressions:1}];
+ assert.equal(groupCreativeRows(input,['name'],0).length,3);
+ assert.deepEqual(groupCreativeRows(input,['name'],1).map(r=>r.name),['small']);
+});

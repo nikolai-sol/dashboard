@@ -40,6 +40,8 @@ export interface CreativeRow extends CreativeTarget {
 export interface CreativePerformance {
     rows: CreativeRow[];
     selected_columns?: CreativeFieldId[];
+    /** Plus display cutoff, applied after visible-dimension grouping. Zero preserves all groups. */
+    min_impressions?: number;
     has_mappings: boolean;
     analytics_through?: string;
 }
@@ -133,4 +135,24 @@ export function creativeExcelColumns(value: unknown, showSpend: boolean) {
     return creativeFields(value, showSpend).flatMap(field => field === 'source_account'
         ? [{label: 'Source', value: (row: CreativeRow): string | number | null => row.source_key}, {label: 'Account', value: (row: CreativeRow): string | number | null => row.platform_account_id}]
         : [{label: field === 'name' ? 'Creative' : creativeFieldLabel(field), value: (row: CreativeRow) => creativeFieldValue(row, field)}]);
+}
+
+/** Invalid settings use the backwards-compatible zero cutoff. */
+export function normalizeCreativeMinimumImpressions(value: unknown): number {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+/** An older business editor omitting this new key cannot clear the saved cutoff. Explicit zero can. */
+export function preserveCreativeMinimumImpressions(config: Record<string, unknown>, existing: Record<string, unknown>): void {
+    const record = (value: unknown): Record<string, unknown> | undefined =>
+        value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+    const incomingOverrides = record(config.section_field_overrides);
+    const incomingPlus = record(incomingOverrides?.creative_performance_plus);
+    if (incomingPlus && Object.prototype.hasOwnProperty.call(incomingPlus, 'min_impressions')) {
+        incomingPlus.min_impressions = normalizeCreativeMinimumImpressions(incomingPlus.min_impressions);
+        return;
+    }
+    const savedPlus = record(record(existing.section_field_overrides)?.creative_performance_plus);
+    if (!savedPlus || !Object.prototype.hasOwnProperty.call(savedPlus, 'min_impressions')) return;
+    config.section_field_overrides = {...incomingOverrides, creative_performance_plus: {...incomingPlus, min_impressions: normalizeCreativeMinimumImpressions(savedPlus.min_impressions)}};
 }

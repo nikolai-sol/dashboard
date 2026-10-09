@@ -67,3 +67,34 @@ test('workbook uses the exact shared selected fields and retains legacy default 
  assert.equal(creativeContract.creativeFieldValue({...row,clicks:null},'ctr'),null);
  assert.equal(creativeContract.creativeFieldValue({...row,impressions:0},'ctr'),null);
 });
+
+
+test('stale business config preserves only omitted Plus minimum without replacing current column edits',()=>{
+ assert.equal(typeof creativeContract.preserveCreativeMinimumImpressions,'function');
+ const existing={section_field_overrides:{creative_performance_plus:{visible_fields:['size','ctr'],min_impressions:1000}},creative_preview_links:['retained']};const before=JSON.stringify(existing);
+ for(const config of [{title:'edit'},{section_field_overrides:{creative_performance_plus:{visible_fields:['name','preview']}}}]as Record<string,unknown>[]){
+  creativeContract.preserveCreativeMinimumImpressions(config,existing);
+  const overrides=config.section_field_overrides as {creative_performance_plus:{min_impressions:number;visible_fields?:string[]}};assert.equal(overrides.creative_performance_plus.min_impressions,1000);
+  if('title'in config)assert.equal(config.title,'edit');else assert.deepEqual(overrides.creative_performance_plus.visible_fields,['name','preview']);
+  assert.equal(config.creative_preview_links,undefined);
+ }
+ assert.equal(JSON.stringify(existing),before);
+});
+test('explicit zero clears Plus minimum and no saved setting stays absent',()=>{
+ assert.equal(typeof creativeContract.preserveCreativeMinimumImpressions,'function');
+ const config={section_field_overrides:{creative_performance_plus:{visible_fields:['size'],min_impressions:0}}};
+ creativeContract.preserveCreativeMinimumImpressions(config,{section_field_overrides:{creative_performance_plus:{min_impressions:1000}}});assert.equal(config.section_field_overrides.creative_performance_plus.min_impressions,0);
+ const untouched={title:'edit'};creativeContract.preserveCreativeMinimumImpressions(untouched,{});assert.deepEqual(untouched,{title:'edit'});
+});
+
+
+test('business save preserves all imported preview mappings while normalizing explicit invalid cutoff',()=>{
+ const links=Array.from({length:254},(_,i)=>({id:String(i),url:'https://example.test/preview'}));
+ const existing={creative_preview_links:links,section_field_overrides:{creative_performance_plus:{min_impressions:1000}}};
+ for(const value of [-1,NaN,Infinity,1.5,Number.MAX_SAFE_INTEGER+1,true,'1000',null]){
+  const config:Record<string,unknown>={creative_preview_links:[],section_field_overrides:{creative_performance_plus:{visible_fields:['size','ctr','preview','name'],min_impressions:value}}};
+  preserveCreativeMappingNamespace(config,existing);creativeContract.preserveCreativeMinimumImpressions(config,existing);
+  assert.equal(config.creative_preview_links,links);assert.equal(links.length,254);
+  assert.equal((config.section_field_overrides as typeof existing.section_field_overrides).creative_performance_plus.min_impressions,0);
+ }
+});

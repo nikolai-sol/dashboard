@@ -921,7 +921,7 @@ export async function GET(
       const hasCost = fields.some(field => field === 'spend' || field === 'cpc');
       ws.addRow([...columns.map(column => column.label), ...(mapped ? ["Visits", "Users (non-additive)", "Pageviews", "Page depth", "Goals", "CR %", "Bounce %", "Duration (s)", "Availability"] : [])]);
       styleHeaderRow(ws.getRow(1));
-      const creativeRows = groupCreativeRows(filterCreativeRows(creativeData.rows, data.plan_vs_fact.map(row => row.channel)), fields);
+      const creativeRows = groupCreativeRows(filterCreativeRows(creativeData.rows, data.plan_vs_fact.map(row => row.channel)), fields, plus ? creativeData.min_impressions : 0);
       for (const r of creativeRows) {
         const excelRow = ws.addRow([...columns.map(column => column.value(r)), ...(mapped?[r.postclick?.visits??null,r.postclick?.users??null,r.postclick?.pageviews??null,r.postclick?.page_depth??null,r.postclick?.goal_reaches??null,r.postclick?.conversion_rate??null,r.postclick?.bounce_rate??null,r.postclick?.avg_visit_duration??null,r.availability]:[])]);
         if (plus) {
@@ -933,6 +933,7 @@ export async function GET(
           }
         }
       }
+      if (plus && (creativeData.min_impressions ?? 0) > 0) ws.addRow([`Groups with at least ${creativeData.min_impressions!.toLocaleString("en-US")} impressions for the selected period. Grouped by visible columns; unknown impressions are excluded.`]);
       if (hasCost) ws.addRow(["Platform-reported units; currency not verified." + (creativeRows.some(row => row.mixed_cost_basis) ? " Spend and CPC are unavailable for groups combining accounts with unverified units." : "")]);
       if(mapped) ws.addRow([`Metrica: last attribution; completed days through ${creativeData.analytics_through ?? "unavailable"} (UTC)`]);
       autoFit(ws);

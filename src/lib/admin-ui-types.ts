@@ -116,7 +116,7 @@ export type DashboardPromopagesFieldId =
 
 export type DashboardSectionFieldOverridesForm = {
   creative_performance?: { visible_fields: CreativeFieldId[] };
-  creative_performance_plus?: { visible_fields: CreativeFieldId[] };
+  creative_performance_plus?: { visible_fields: CreativeFieldId[]; min_impressions?: number };
   trend_chart?: {
     visible_metrics: string[];
   };

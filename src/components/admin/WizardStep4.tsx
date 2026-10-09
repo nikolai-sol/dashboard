@@ -1,7 +1,7 @@
 "use client";
 
 import { CREATIVE_PLUS_FIELDS } from "@/lib/creative-preview-plus";
-import { DEFAULT_CREATIVE_FIELDS, creativeFieldLabel, isMediaCreativeDashboard } from "@/lib/creative-performance-contract";
+import { DEFAULT_CREATIVE_FIELDS, normalizeCreativeMinimumImpressions, creativeFieldLabel, isMediaCreativeDashboard } from "@/lib/creative-performance-contract";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type {
   CustomKpiCardForm,
@@ -574,11 +574,15 @@ export default function WizardStep4({ data, onChange }: WizardStep4Props) {
           {isMediaCreativeDashboard(data.dashboard_type) && <div className="rounded-lg border border-slate-200 p-4">
             <h5 className="text-sm font-semibold text-slate-900">Эффективность креативов + — колонки</h5>
             <p className="mt-1 text-xs text-slate-500">These settings apply only to “Эффективность креативов +”. This table contains bound creatives with platform or imported preview links.</p>
+            <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">Minimum impressions / Минимум показов
+              <input type="number" min={0} step={1} value={sectionFieldOverrides.creative_performance_plus?.min_impressions ?? 0} onChange={e => patchSectionFieldOverrides({creative_performance_plus: {...sectionFieldOverrides.creative_performance_plus!, min_impressions: normalizeCreativeMinimumImpressions(e.target.valueAsNumber)}})} className="w-28 rounded border border-slate-300 p-2" />
+            </label>
+            <p className="mt-1 text-xs text-slate-500">Applied after grouping for the selected period, even when impressions are hidden. Use a nonnegative whole number; 0 or invalid values show all groups.</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {CREATIVE_PLUS_FIELDS.map(field => {
                 const current = sectionFieldOverrides.creative_performance_plus?.visible_fields ?? [];
                 return <label key={`creative-plus-${field}`} className="inline-flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={current.includes(field)} onChange={e => patchSectionFieldOverrides({creative_performance_plus: {visible_fields: e.target.checked ? [...current, field] : current.filter(f => f !== field)}})} />
+                  <input type="checkbox" checked={current.includes(field)} onChange={e => patchSectionFieldOverrides({creative_performance_plus: {...sectionFieldOverrides.creative_performance_plus, visible_fields: e.target.checked ? [...current, field] : current.filter(f => f !== field)}})} />
                   {creativeFieldLabel(field, true)}
                 </label>;
               })}
