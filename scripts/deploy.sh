@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_SOURCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/deployment-stage-timing.sh"
 REPO_ROOT_DIR="$(cd "$APP_SOURCE_DIR/.." && pwd)"
 CANONICAL_SOURCE_DIRS=("$REPO_ROOT_DIR")
 if [[ "$APP_SOURCE_DIR" == *"/dashboard-next/.worktrees/"* ]]; then
@@ -122,6 +123,8 @@ cleanup() {
   local status=$?
   trap - EXIT
   set +e
+  stage_timing_end "$status"
+  stage_timing_begin deploy.cleanup
   rm -f "$TMP_ENV"
   if [[ "$LOCK_RELEASE_REQUIRED" -eq 1 ]]; then
     if ! release_deploy_lock; then
@@ -131,6 +134,7 @@ cleanup() {
       fi
     fi
   fi
+  stage_timing_end "$status"
   if [[ "$status" -eq 0 && "$DEPLOY_SUCCEEDED" -eq 1 ]]; then
     echo "Deploy complete. Active source SHA: $BUILD_SOURCE_SHA"
   fi
@@ -189,12 +193,18 @@ copy_canonical_file() {
 
 cd "$APP_SOURCE_DIR"
 
+stage_timing_begin deploy.source
 verify_production_deploy_source
+stage_timing_end 0
 BUILD_SOURCE_SHA="$(git -C "$APP_SOURCE_DIR" rev-parse HEAD)"
 
 echo "Building standalone bundle for release $RELEASE_ID..."
+stage_timing_begin deploy.install
 npm ci
+stage_timing_end 0
+stage_timing_begin deploy.predeploy
 npm run predeploy:verify
+stage_timing_end 0
 
 STANDALONE_DIR=".next/standalone"
 PACKAGE_DIR="$STANDALONE_DIR"
@@ -211,12 +221,17 @@ if [ ! -f "$PACKAGE_DIR/server.js" ]; then
   PACKAGE_DIR="$(dirname "${SERVER_CANDIDATES[0]}")"
 fi
 echo "Using standalone package root $PACKAGE_DIR..."
+stage_timing_begin deploy.normalize
 bash scripts/normalize-standalone-runtime-links.sh "$PACKAGE_DIR"
+stage_timing_end 0
 
 echo "Rendering production env from VPS secrets..."
+stage_timing_begin deploy.env
 bash scripts/render-production-env.sh "$TMP_ENV"
+stage_timing_end 0
 
 echo "Packaging build artifacts..."
+stage_timing_begin deploy.package
 rm -rf "$PACKAGE_DIR/.next/static" "$PACKAGE_DIR/public" "$PACKAGE_DIR/src" "$PACKAGE_DIR/ecosystem.config.js" "$PACKAGE_DIR/package.json" "$PACKAGE_DIR/.env" "$PACKAGE_DIR/scripts" "$PACKAGE_DIR/ABBOTT-UNRESOLVED-PAGE-DIRECTIONS.csv" "$PACKAGE_DIR/ABBOTT-UNRESOLVED-PAGE-DIRECTIONS-SUMMARY.json"
 mkdir -p "$PACKAGE_DIR/.next" "$PACKAGE_DIR/src/schemas" "$PACKAGE_DIR/src/db" "$PACKAGE_DIR/scripts"
 cp -R .next/static "$PACKAGE_DIR/.next/static"
@@ -258,14 +273,24 @@ copy_canonical_file wordstat_api.py
 copy_canonical_file probe_yandex_wordstat_access.py
 copy_canonical_file fetch_yandex_wordstat_canonical.py
 
+stage_timing_end 0
+stage_timing_begin deploy.lock
 acquire_deploy_lock
+stage_timing_end 0
+stage_timing_begin deploy.locked-source
 verify_deploy_source_under_lock
+stage_timing_end 0
 printf '%s\n' "$BUILD_SOURCE_SHA" > "$PACKAGE_DIR/.release-source-sha"
 
+stage_timing_begin deploy.release-security
 npm run security:public-assets -- --release "$PACKAGE_DIR"
+stage_timing_end 0
+stage_timing_begin deploy.release-validation
 bash scripts/validate-production-release.sh "$PACKAGE_DIR" "$PACKAGE_DIR/.env"
+stage_timing_end 0
 
 echo "Uploading staged release to VPS..."
+stage_timing_begin deploy.upload
 PREPARE_REMOTE_COMMAND="$(build_remote_bash_command "$RELEASES_DIR" "$BACKUPS_DIR")"
 "$SSH_BIN" "$VPS" "$PREPARE_REMOTE_COMMAND" <<'REMOTE'
 set -euo pipefail
@@ -274,12 +299,17 @@ BACKUPS_DIR="$2"
 mkdir -p "$RELEASES_DIR" "$BACKUPS_DIR" /var/log
 REMOTE
 rsync -avz --delete "$PACKAGE_DIR/" "$VPS:$REMOTE_STAGE_DIR/"
+stage_timing_end 0
 
 echo "Activating staged release with automatic rollback on failure..."
+stage_timing_begin deploy.activate
 ACTIVATE_REMOTE_COMMAND="$(build_remote_bash_command "$APP_DIR" "$BACKUPS_DIR" "$REMOTE_STAGE_DIR" \
   "$APP_NAME" "$APP_PORT" "$KEEP_BACKUPS" "$RELEASE_ID" "$PUBLIC_APP_HOST" "$BUILD_SOURCE_SHA")"
 "$SSH_BIN" "$VPS" "$ACTIVATE_REMOTE_COMMAND" \
   < "$SCRIPT_DIR/activate-release.sh"
+stage_timing_end 0
 
+stage_timing_begin deploy.attest
 attest_active_release
+stage_timing_end 0
 DEPLOY_SUCCEEDED=1

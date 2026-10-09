@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd -P -- "$SCRIPT_DIR/.." && pwd)"
 VERIFY_SCRIPT="$SCRIPT_DIR/predeploy-verify.sh"
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/predeploy-verify.XXXXXX")"
 FAKE_BIN="$TMP_DIR/bin"
 COMMAND_LOG="$TMP_DIR/commands.log"
 export COMMAND_LOG
@@ -78,7 +78,6 @@ node --test scripts/runtime-artifact-policy.test.mjs
 --workspace apps/zaruku run verify:boot
 bash scripts/verify-zaruku-shadow.test.sh
 run test:abbott-contract-wiring
-run test:abbott-contract
 run security:public-assets
 run typecheck
 exec -- tsc --noEmit -p apps/zaruku/tsconfig.json
@@ -95,10 +94,14 @@ cmp -s "$TMP_DIR/expected.log" "$COMMAND_LOG" || {
 }
 
 : > "$COMMAND_LOG"
-if FAIL_COMMAND='run test:release-runtime' PATH="$FAKE_BIN:$PATH" /bin/bash "$VERIFY_SCRIPT" \
-  > "$TMP_DIR/failure.log" 2>&1; then
-  fail "predeploy verification ignored a failed required command"
-fi
+set +e
+FAIL_COMMAND='run test:release-runtime' PATH="$FAKE_BIN:$PATH" /bin/bash "$VERIFY_SCRIPT" \
+  > "$TMP_DIR/failure.log" 2>&1
+failure_status=$?
+set -e
+[[ "$failure_status" -eq 73 ]] || fail "predeploy verification lost the failed command's status73"
+grep -Eq '^\[stage\] predeploy.release-runtime end utc=.* elapsed_s=[0-9]+ status=73$' "$TMP_DIR/failure.log" \
+  || fail "predeploy failed stage has no original-status timing"
 if grep -Fqx 'run test:abbott-contract-wiring' "$COMMAND_LOG"; then
   fail "predeploy verification continued after a failed required command"
 fi
@@ -134,7 +137,6 @@ const required = [
   "npm --workspace apps/zaruku run verify:boot",
   "bash scripts/verify-zaruku-shadow.test.sh",
   "npm run test:abbott-contract-wiring",
-  "npm run test:abbott-contract",
   "npm run security:public-assets",
   "npm run typecheck",
   "npm exec -- tsc --noEmit -p apps/zaruku/tsconfig.json",

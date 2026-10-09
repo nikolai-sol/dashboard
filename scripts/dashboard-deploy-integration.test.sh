@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_SCRIPT_DIR="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dashboard-deploy-integration.XXXXXX")"
 FIXTURE_ROOT="$TMP_DIR/workspace"
 FIXTURE_APP="$FIXTURE_ROOT/dashboard-next"
 REMOTE_ROOT="$TMP_DIR/remote"
@@ -25,6 +25,7 @@ fail() {
 
 mkdir -p "$FIXTURE_APP/scripts" "$FIXTURE_APP/src/schemas" "$FIXTURE_APP/src/db/migrations" "$FAKE_BIN"
 cp "$SOURCE_SCRIPT_DIR/deploy.sh" "$FIXTURE_APP/scripts/"
+cp "$SOURCE_SCRIPT_DIR/deployment-stage-timing.sh" "$FIXTURE_APP/scripts/"
 cp "$SOURCE_SCRIPT_DIR/verify-deploy-source.sh" "$FIXTURE_APP/scripts/"
 cp "$SOURCE_SCRIPT_DIR/dashboard-deploy-lock.sh" "$FIXTURE_APP/scripts/"
 cp "$SOURCE_SCRIPT_DIR/activate-release.sh" "$FIXTURE_APP/scripts/"
@@ -45,6 +46,7 @@ SH
 cat > "$FIXTURE_APP/scripts/render-production-env.sh" <<'SH'
 #!/bin/bash
 printf '%s\n' 'SAFE_ENV=value' > "$1"
+printf 'Wrote %s\n' "$1"
 SH
 cat > "$FIXTURE_APP/scripts/validate-production-release.sh" <<'SH'
 #!/bin/bash
@@ -245,12 +247,24 @@ grep -Fqx "$CANDIDATE_SHA" "$REMOTE_ROOT/app/.release-source-sha" \
 [[ -f "$REMOTE_ROOT/app/scripts/dashboard-deploy-lock.sh" ]] \
   || fail "successful deploy did not package the shared rollback lock authority"
 
+grep -Eq '^\[stage\] deploy.install start utc=' "$TMP_DIR/success.log" || fail 'install stage start is missing'
+grep -Eq '^\[stage\] deploy.cleanup end utc=.* elapsed_s=[0-9]+ status=0$' "$TMP_DIR/success.log" || fail 'successful cleanup timing is missing'
+TMP_ENV_PATH="$(sed -n 's/^Wrote //p' "$TMP_DIR/success.log")"
+[[ -n "$TMP_ENV_PATH" && ! -e "$TMP_ENV_PATH" ]] || fail 'successful EXIT did not remove exact temp env'
+
 rm -f "$READ_COUNT_FILE"
 : > "$EVENT_LOG"
 export FAIL_PACKAGE_SECURITY=1
-if run_deploy 20260904010102-command-failure > "$TMP_DIR/command-failure.log" 2>&1; then
-  fail "injected post-lock command failure did not stop deploy"
-fi
+set +e
+run_deploy 20260904010102-command-failure > "$TMP_DIR/command-failure.log" 2>&1
+failure_status=$?
+set -e
+[[ "$failure_status" -eq 91 ]] || fail 'post-lock failure did not retain its original status91'
+grep -Eq '^\[stage\] deploy.release-security end utc=.* elapsed_s=[0-9]+ status=91$' "$TMP_DIR/command-failure.log" || fail 'failed release stage timing is missing'
+grep -Eq '^\[stage\] deploy.cleanup end utc=.* status=91$' "$TMP_DIR/command-failure.log" || fail 'failed cleanup lost original status'
+TMP_ENV_PATH="$(sed -n 's/^Wrote //p' "$TMP_DIR/command-failure.log")"
+[[ -n "$TMP_ENV_PATH" && ! -e "$TMP_ENV_PATH" ]] || fail 'failed EXIT did not remove exact temp env'
+if grep -Eq '^(rsync:|activate$)' "$EVENT_LOG"; then fail 'failed security continued to upload/activation'; fi
 unset FAIL_PACKAGE_SECURITY
 [[ ! -e "$SIMULATED_LOCK_DIR" ]] || fail "EXIT cleanup did not release lock after command failure"
 grep -Fq 'release:' "$EVENT_LOG" || fail "command failure did not trigger token-aware release"

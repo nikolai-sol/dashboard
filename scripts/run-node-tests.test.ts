@@ -35,3 +35,21 @@ test("node test runner scopes discovery to an explicitly requested application r
   assert.ok(files.length > 0);
   assert.ok(files.every((file) => file.startsWith("apps/zaruku/src/") && /\.test\.tsx?$/.test(file)));
 });
+
+test("predeploy covers every standalone Abbott contract file once without repeating that command", () => {
+  const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+  const prefix = "node --import tsx --test ";
+  const command = manifest.scripts["test:abbott-contract"];
+  assert.ok(typeof command === "string" && command.startsWith(prefix));
+  const abbottFiles = command.slice(prefix.length).split(" ");
+  assert.equal(abbottFiles.length, 10);
+  assert.ok(abbottFiles.every((file: string) => /^src\/[A-Za-z0-9_./-]+\.test\.tsx?$/.test(file)));
+  const listed = spawnSync(process.execPath, ["scripts/run-node-tests.mjs", "--list"], {encoding: "utf8"});
+  assert.equal(listed.status, 0, listed.stderr);
+  const discovered = JSON.parse(listed.stdout) as string[];
+  for (const file of abbottFiles) assert.equal(discovered.filter(found => found === file).length, 1, file);
+  const predeploy = readFileSync("scripts/predeploy-verify.sh", "utf8");
+  assert.ok(/^npm test$/m.test(predeploy));
+  assert.ok(/^npm run test:abbott-contract-wiring$/m.test(predeploy));
+  assert.ok(!/^npm run test:abbott-contract$/m.test(predeploy), "duplicate standalone Abbott command remains");
+});

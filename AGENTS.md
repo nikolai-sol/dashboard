@@ -440,6 +440,8 @@ ssh beget 'cd /root/reportingdash-rollout/dashboard-next && PUBLIC_APP_HOST=5.35
 curl -s https://dashboards.adreports.ru/api/health
 ```
 
+Deployment and predeploy logs emit fixed stage labels, UTC boundaries, elapsed seconds and exit status, without command arguments or environment values. Recursive `npm test` includes all ten Abbott contract files; predeploy keeps Abbott wiring checks and avoids repeating the standalone contract invocation. The standalone `test:abbott-contract` command remains available. All other full release gates remain mandatory; no Media fast profile is implemented.
+
 The source-lineage and Abbott-contract checks are mandatory release gates. Do not bypass them and do
 not deploy a dashboard gitlink from a parallel history that omits either gate.
 
