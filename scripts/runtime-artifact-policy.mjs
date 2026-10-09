@@ -740,7 +740,7 @@ export function cliBootOptions(trustedManifestPath, timeoutValue) {
   if (timeoutValue === undefined) return { trustedManifestPath };
   const timeoutMs = Number(timeoutValue);
   if (!/^[1-9][0-9]*$/.test(timeoutValue) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 15000 || timeoutMs > 60000) {
-    throw new Error("Invalid ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS: expected an integer from 15000 to 60000");
+    throw new Error("Invalid ARTIFACT_BOOT_TIMEOUT_MS: expected an integer from 15000 to 60000");
   }
   return { trustedManifestPath, timeoutMs };
 }
@@ -765,7 +765,7 @@ async function main() {
       assertRuntimeArtifact(artifactRoot, scope, trustedManifestPath);
     }
   } else if (boot) {
-    const options = cliBootOptions(trustedManifestPath, process.env.ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS);
+    const options = cliBootOptions(trustedManifestPath, process.env.ARTIFACT_BOOT_TIMEOUT_MS);
     await verifyRuntimeArtifactBoot(artifactRoot, scope, options);
     console.log("Zaruku standalone loopback boot/health passed");
   } else {

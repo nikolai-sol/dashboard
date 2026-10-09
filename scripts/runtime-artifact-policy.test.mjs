@@ -822,7 +822,7 @@ test('CLI boot options reject malformed or out-of-range values without echoing i
   assert.equal(typeof runtimePolicy.cliBootOptions,'function');
   for(const value of ['', '0','14999','60001','015000','+15000','-15000','15000.0','1.5e4',' 15000','15000\n','Infinity','NaN','9007199254740993','PRIVATE_SENTINEL']){
     assert.throws(()=>runtimePolicy.cliBootOptions('/trusted',value),error=>{
-      assert.equal(error.message,'Invalid ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS: expected an integer from 15000 to 60000');
+      assert.equal(error.message,'Invalid ARTIFACT_BOOT_TIMEOUT_MS: expected an integer from 15000 to 60000');
       return true;
     });
   }
@@ -830,18 +830,30 @@ test('CLI boot options reject malformed or out-of-range values without echoing i
 
 test('real boot CLI rejects invalid timeout before touching an unavailable artifact',()=>{
   const result=spawnSync(process.execPath,['scripts/runtime-artifact-policy.mjs','--boot','zaruku','/missing-artifact','--trusted-manifest','/missing-manifest'],{
-    encoding:'utf8',timeout:10000,env:{ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS:'60001'},
+    encoding:'utf8',timeout:10000,env:{ARTIFACT_BOOT_TIMEOUT_MS:'60001'},
   });
   assert.equal(result.status,1);
-  assert.match(result.stderr,/Invalid ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS/);
+  assert.match(result.stderr,/Invalid ARTIFACT_BOOT_TIMEOUT_MS/);
   assert.doesNotMatch(result.stderr,/ENOENT|60001/);
 });
 
 test('non-boot CLI does not interpret the process-scoped boot timeout',()=>{
   const result=spawnSync(process.execPath,['scripts/runtime-artifact-policy.mjs','zaruku','/missing-artifact','--trusted-manifest','/missing-manifest'],{
-    encoding:'utf8',timeout:10000,env:{ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS:'PRIVATE_SENTINEL'},
+    encoding:'utf8',timeout:10000,env:{ARTIFACT_BOOT_TIMEOUT_MS:'PRIVATE_SENTINEL'},
   });
   assert.equal(result.status,1);
   assert.match(result.stderr,/missing artifact root/);
   assert.doesNotMatch(result.stderr,/BOOT_TIMEOUT|PRIVATE_SENTINEL/);
+});
+
+test('inherited boot timeout coexists with release authority while reserved namespaces remain rejected',()=>{
+  const code="import {assertReleaseAuthorityInvocation} from './scripts/freeze-zaruku-shadow-release.mjs'; assertReleaseAuthorityInvocation([]);";
+  for(const [key,status] of [['ARTIFACT_BOOT_TIMEOUT_MS',0],['ZARUKU_ARTIFACT_BOOT_TIMEOUT_MS',1],['RUNTIME_ARTIFACT_BOOT_TIMEOUT_MS',1]]){
+    const result=spawnSync(process.execPath,['--input-type=module','-e',code],{
+      encoding:'utf8',timeout:10000,env:{[key]:'60000'},
+    });
+    assert.equal(result.status,status,key);
+    if(status===0)assert.equal(result.stderr,'');
+    else assert.match(result.stderr,/Refusing Zaruku reviewed control operation/);
+  }
 });
