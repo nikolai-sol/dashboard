@@ -50,7 +50,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
     for (const source of new Set(eligible.map(b => String(b.source_key)))) {
         const [facts] = await executor.execute<RowDataPacket[]>(`SELECT f.platform_account_id,f.platform_campaign_id,f.platform_creative_id,
    f.report_date,SUM(f.impressions) impressions,SUM(f.clicks) clicks,SUM(f.spend) spend,COUNT(*) fact_rows,COUNT(f.spend) spend_rows,COUNT(f.impressions) impressions_rows,COUNT(f.clicks) clicks_rows,
-   MAX(c.creative_name) creative_name,MAX(CAST(c.raw_payload AS CHAR)) raw_payload,${source === 'hybrid' ? 'MAX(f.native_creative)' : '0'} native_creative
+   MAX(c.creative_name) creative_name,MAX(c.preview_url) preview_url,MAX(CAST(c.raw_payload AS CHAR)) raw_payload,${source === 'hybrid' ? 'MAX(f.native_creative)' : '0'} native_creative
    FROM ${source === 'hybrid' ? hybridCreativeFactTable() : advertisingFactTable(source, true)} f
    LEFT JOIN canonical_source_creatives c ON c.source_key=f.source_key COLLATE utf8mb4_unicode_ci AND c.platform_account_id=f.platform_account_id COLLATE utf8mb4_unicode_ci AND c.platform_creative_id=f.platform_creative_id COLLATE utf8mb4_unicode_ci
    WHERE f.source_key=? AND f.fact_scope=? AND f.report_date BETWEEN ? AND ?
@@ -72,7 +72,7 @@ export async function loadCreativePerformance(dashboardId: number, from: string,
             const key = creativeKey(target);
             let row = aggregate.get(key);
             if (!row) {
-                row = { ...target, channel: String(b.channel), name: source === 'hybrid' && !Number(f.native_creative) ? `${f.platform_creative_id} (creative group)` : String(f.creative_name ?? f.platform_creative_id), size: creativeSize(f.raw_payload), impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, postclick: null, availability: 'No UTM mapping' };
+                row = { ...target, ...(typeof f.preview_url === 'string' ? {canonical_preview_url: f.preview_url} : {}), channel: String(b.channel), name: source === 'hybrid' && !Number(f.native_creative) ? `${f.platform_creative_id} (creative group)` : String(f.creative_name ?? f.platform_creative_id), size: creativeSize(f.raw_payload), impressions: 0, clicks: 0, spend: 0, ctr: null, cpc: null, postclick: null, availability: 'No UTM mapping' };
                 aggregate.set(key, row);
             }
             // A partial SUM is not a complete numerator or denominator for CTR.

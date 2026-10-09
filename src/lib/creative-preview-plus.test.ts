@@ -46,3 +46,25 @@ test('Plus Excel enumerates all URLs and preserves weighted percent points',()=>
  assert.deepEqual(columns.map(c=>c.label),['Size','Preview','Impressions','CTR %']);
  assert.deepEqual(columns.map(c=>c.value(groups[0])),['160 × 600',url+'\nhttps://example.org/second',1000,1.9]);
 });
+
+test('canonical preview fallback supports actual Hybrid HTTP only, preserving configured overrides',()=>{
+ const actual='http://preview.hybrid.ai/?id=opaque';
+ assert.equal(preview.safeCreativePreviewUrl(actual),actual);
+ for(const bad of ['http://preview.hybrid.ai.evil.test/?id=x','http://user@preview.hybrid.ai/?id=x','http://preview.hybrid.ai:8080/?id=x','javascript:alert(1)','http://elsewhere.test/?id=x'])assert.equal(preview.safeCreativePreviewUrl(bad),null);
+ const native={...row,source_key:'hybrid',platform_account_id:'native-account',platform_creative_id:'native-banner',canonical_preview_url:actual};
+ assert.deepEqual(preview.selectCreativePreviewRows([native],undefined)[0]?.preview_urls,[actual]);
+ const override={source_key:native.source_key,platform_account_id:native.platform_account_id,platform_creative_id:native.platform_creative_id,preview_url:url};
+ assert.deepEqual(preview.selectCreativePreviewRows([native],[override])[0].preview_urls,[url]);
+ assert.equal(preview.selectCreativePreviewRows([native],[{...override,preview_url:'javascript:alert(1)'}]).length,0);
+ const separate=preview.selectCreativePreviewRows([native,{...native,platform_account_id:'other-account',canonical_preview_url:undefined}],[override]);
+ assert.equal(separate.length,1);assert.equal(separate[0].platform_account_id,'native-account');
+ assert.equal(preview.selectCreativePreviewRows([native],[override,{...override,preview_url:'https://example.org/conflict'}]).length,0);
+ assert.equal(preview.selectCreativePreviewRows([{...native,canonical_preview_url:'http://evil.test'}],[]).length,0);
+});
+test('many native instances sharing one catalog preview retain all metrics and one grouped link',()=>{
+ const actual='http://preview.hybrid.ai/?id=same';
+ const rows=preview.selectCreativePreviewRows([{...row,canonical_preview_url:actual},{...row,platform_creative_id:'other',canonical_preview_url:actual,impressions:900,clicks:9}],[]);
+ assert.equal(rows.length,2);
+ const grouped=groupCreativeRows(rows,['size','impressions','clicks','ctr','preview']);
+ assert.equal(grouped[0].impressions,1000);assert.equal(grouped[0].clicks,19);assert.equal(grouped[0].ctr,1.9);assert.deepEqual(grouped[0].preview_urls,[actual]);
+});

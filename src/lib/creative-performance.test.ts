@@ -83,3 +83,13 @@ test('creative CTR weights daily impressions and preserves unknown clicks and ze
  assert.equal((await run([{impressions:100,clicks:0}])).ctr,0);
  assert.equal((await run([{impressions:0,clicks:0}])).ctr,null);
 });
+
+test('catalog preview reaches only already-bound exact creative rows without changing metrics or original preview column',async()=>{
+ const b={...bindings[0],source_key:'hybrid'};let query='';
+ const executor={execute:async(sql:string)=>{if(sql.includes('SELECT DISTINCT line_key'))return[[b]];query=sql;return[[{...b,platform_creative_id:'native-1',native_creative:1,creative_name:'Banner',preview_url:'http://preview.hybrid.ai/?id=actual',raw_payload:{},report_date:'2026-09-29',impressions:80,clicks:4,spend:null,fact_rows:1,impressions_rows:1,clicks_rows:1,spend_rows:0}]];}} as unknown as Pick<typeof pool,'execute'>;
+ const data=await loadCreativePerformance(42,'2026-09-01','2026-09-30',[],undefined,[],{executor,platformOnly:true});
+ assert.match(query,/MAX\(c\.preview_url\) preview_url/);
+ assert.equal(data.rows[0].canonical_preview_url,'http://preview.hybrid.ai/?id=actual');
+ assert.equal(data.rows[0].preview_urls,undefined);assert.equal(data.rows[0].impressions,80);assert.equal(data.rows[0].clicks,4);
+ assert.match(query,/b\.dashboard_id=\?/);assert.match(query,/c\.platform_account_id=f\.platform_account_id/);assert.match(query,/c\.platform_creative_id=f\.platform_creative_id/);
+});

@@ -10,28 +10,31 @@ export function safeCreativePreviewUrl(value: unknown): string | null {
     if (typeof value !== 'string' || value.length > 4096) return null;
     try {
         const url = new URL(value);
-        return url.protocol === 'https:' && !url.username && !url.password ? url.href : null;
+        const allowed = url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'preview.hybrid.ai' && !url.port);
+        return allowed && !url.username && !url.password ? url.href : null;
     } catch { return null; }
 }
 const identity = (value: Record<string, unknown>) => JSON.stringify([value.source_key, value.platform_account_id, value.platform_creative_id]);
 /** Links enrich only already-bound canonical rows; they never create platform facts. */
 export function selectCreativePreviewRows(rows: readonly CreativeRow[], mappings: unknown): CreativeRow[] {
-    if (!Array.isArray(mappings) || mappings.length > 5000) return [];
+    if (Array.isArray(mappings) && mappings.length > 5000) return [];
+    const configured = new Set<string>();
     const links = new Map<string, string>();
     const conflicts = new Set<string>();
-    for (const value of mappings) {
+    for (const value of Array.isArray(mappings) ? mappings : []) {
         if (!value || typeof value !== 'object') continue;
         const link = value as Record<string, unknown>;
         if (['source_key', 'platform_account_id', 'platform_creative_id'].some(k => typeof link[k] !== 'string' || !(link[k] as string).trim())) continue;
+        const key = identity(link);
+        configured.add(key);
         const url = safeCreativePreviewUrl(link.preview_url);
         if (!url) continue;
-        const key = identity(link);
         if (links.has(key) && links.get(key) !== url) conflicts.add(key);
         links.set(key, url);
     }
     return rows.flatMap(row => {
         const key = identity(row as unknown as Record<string, unknown>);
-        const url = links.get(key);
+        const url = configured.has(key) ? links.get(key) : safeCreativePreviewUrl(row.canonical_preview_url);
         return url && !conflicts.has(key) ? [{...row, preview_urls: [url], postclick: null}] : [];
     });
 }

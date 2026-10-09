@@ -14,6 +14,8 @@ export interface CreativeMapping extends CreativeTarget {
     tuples: UtmTuple[];
 }
 export interface CreativeRow extends CreativeTarget {
+    /** Catalog metadata for the exact native identity; Plus applies overrides and URL policy. */
+    canonical_preview_url?: string;
     preview_urls?: string[];
     channel: string;
     name: string;
