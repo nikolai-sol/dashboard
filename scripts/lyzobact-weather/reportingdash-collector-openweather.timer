@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for local 09:00 Lysobact weather centres each hour
+
+[Timer]
+OnCalendar=*-*-* *:00:00 UTC
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=reportingdash-collector-openweather.service
+
+[Install]
+WantedBy=timers.target

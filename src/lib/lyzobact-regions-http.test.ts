@@ -33,3 +33,9 @@ test('public opt-in cannot authorize another id, client, slug, disabled module o
   assert.equal((await h(new Request('https://test/api'),{params:{id:slug}})).status,status);assert.equal(reads,0);
  }
 });
+
+test('public weather is a dated allowlist independent of selected audit',async()=>{
+ const payload={dashboardId:49,status:'ready',snapshots:[],selectedSnapshotId:'old-audit',rows:[],sourcePages:[],weather:{status:'ready',provider:'OpenWeather',checkedAt:'2026-10-12T08:00:00Z',secret:'private-key',regions:[{regionKey:'Test',centreName:'City',timeZone:'Europe/Moscow',dueDate:'2026-10-12',temperatureC:11.99,observedAt:'2026-10-12T05:00:00Z',retrievedAt:'2026-10-12T06:00:00Z',status:'active',consecutiveColdMornings:7,secret:'private-key',days:[{date:'2026-10-12',temperatureC:11.99,secret:'private-key'}]}]}};
+ const h=createRegionalGetHandler({authorize:async()=>({authorized:true,context:{...context,id:49,client_id:'lyzobact',auth_mode:'public'}}),enabled:async()=>true,publicRead:async()=>true,load:async()=>payload});
+ const r=await h(new Request('https://test/api'),{params:{id:'lyzobact'}});assert.equal(r.status,200);const body=await r.json();assert.equal(body.weather.regions[0].dueDate,'2026-10-12');assert.equal(body.selectedSnapshotId,'old-audit');assert.doesNotMatch(JSON.stringify(body),/private-key|secret/);
+});

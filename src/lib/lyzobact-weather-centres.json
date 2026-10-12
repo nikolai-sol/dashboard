@@ -1,0 +1,852 @@
+[
+  {
+    "regionKey": "Altai Krai",
+    "centreId": "1510853",
+    "centreName": "Барнаул",
+    "latitude": 53.36199,
+    "longitude": 83.72786,
+    "timeZone": "Asia/Barnaul",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Amur",
+    "centreId": "2026609",
+    "centreName": "Благовещенск",
+    "latitude": 50.27593,
+    "longitude": 127.52637,
+    "timeZone": "Asia/Yakutsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Arkhangelsk",
+    "centreId": "581049",
+    "centreName": "Архангельск",
+    "latitude": 64.5461,
+    "longitude": 40.55183,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Astrakhan Oblast",
+    "centreId": "580497",
+    "centreName": "Астрахань",
+    "latitude": 46.34968,
+    "longitude": 48.04076,
+    "timeZone": "Europe/Astrakhan",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Belgorod",
+    "centreId": "578072",
+    "centreName": "Белгород",
+    "latitude": 50.60343,
+    "longitude": 36.58091,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Bryansk",
+    "centreId": "571476",
+    "centreName": "Брянск",
+    "latitude": 53.27096,
+    "longitude": 34.32143,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Vladimir",
+    "centreId": "473247",
+    "centreName": "Владимир",
+    "latitude": 56.13854,
+    "longitude": 40.39976,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Volgograd Oblast",
+    "centreId": "472757",
+    "centreName": "Волгоград",
+    "latitude": 48.71378,
+    "longitude": 44.4976,
+    "timeZone": "Europe/Volgograd",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Vologda",
+    "centreId": "472459",
+    "centreName": "Вологда",
+    "latitude": 59.2239,
+    "longitude": 39.88398,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Voronezh",
+    "centreId": "472045",
+    "centreName": "Воронеж",
+    "latitude": 51.66833,
+    "longitude": 39.19204,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Jewish Autonomous Oblast",
+    "centreId": "2026643",
+    "centreName": "Биробиджан",
+    "latitude": 48.793,
+    "longitude": 132.92033,
+    "timeZone": "Asia/Vladivostok",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Zabaykalsky",
+    "centreId": "2025339",
+    "centreName": "Чита",
+    "latitude": 52.04311,
+    "longitude": 113.49171,
+    "timeZone": "Asia/Chita",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Ivanovo",
+    "centreId": "555312",
+    "centreName": "Иваново",
+    "latitude": 56.99988,
+    "longitude": 40.97257,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Irkutsk",
+    "centreId": "2023469",
+    "centreName": "Иркутск",
+    "latitude": 52.29566,
+    "longitude": 104.29076,
+    "timeZone": "Asia/Irkutsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kabardino-Balkaria",
+    "centreId": "523523",
+    "centreName": "Нальчик",
+    "latitude": 43.49806,
+    "longitude": 43.61889,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kaliningrad",
+    "centreId": "554234",
+    "centreName": "Калининград",
+    "latitude": 54.70639,
+    "longitude": 20.51102,
+    "timeZone": "Europe/Kaliningrad",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kaluga",
+    "centreId": "553915",
+    "centreName": "Калуга",
+    "latitude": 54.53063,
+    "longitude": 36.27,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kamchatka",
+    "centreId": "2122104",
+    "centreName": "Петропавловск-Камчатский",
+    "latitude": 53.06393,
+    "longitude": 158.62751,
+    "timeZone": "Asia/Kamchatka",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Karachay-Cherkessia",
+    "centreId": "569154",
+    "centreName": "Черкесск",
+    "latitude": 44.22375,
+    "longitude": 42.04624,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kemerovo",
+    "centreId": "1503901",
+    "centreName": "Кемерово",
+    "latitude": 55.35417,
+    "longitude": 86.10435,
+    "timeZone": "Asia/Novokuznetsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kirov Oblast",
+    "centreId": "548408",
+    "centreName": "Киров",
+    "latitude": 58.59809,
+    "longitude": 49.65783,
+    "timeZone": "Europe/Kirov",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kostroma",
+    "centreId": "543878",
+    "centreName": "Кострома",
+    "latitude": 57.76638,
+    "longitude": 40.92828,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Krasnodar Krai",
+    "centreId": "542420",
+    "centreName": "Краснодар",
+    "latitude": 45.04534,
+    "longitude": 38.98178,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Krasnoyarsk",
+    "centreId": "1502026",
+    "centreName": "Красноярск",
+    "latitude": 56.03742,
+    "longitude": 92.93136,
+    "timeZone": "Asia/Krasnoyarsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kurgan",
+    "centreId": "1501321",
+    "centreName": "Курган",
+    "latitude": 55.44905,
+    "longitude": 65.34344,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kursk",
+    "centreId": "538560",
+    "centreName": "Курск",
+    "latitude": 51.72689,
+    "longitude": 36.18457,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Leningrad Oblast",
+    "centreId": "561887",
+    "centreName": "Гатчина",
+    "latitude": 59.57639,
+    "longitude": 30.12833,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Гатчина — отдельная от Санкт-Петербурга городская точка; GeoNames всё ещё классифицирует её PPLA2."
+  },
+  {
+    "regionKey": "Lipetsk",
+    "centreId": "535121",
+    "centreName": "Липецк",
+    "latitude": 52.5876,
+    "longitude": 39.55151,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Magadan",
+    "centreId": "2123628",
+    "centreName": "Магадан",
+    "latitude": 59.56274,
+    "longitude": 150.80211,
+    "timeZone": "Asia/Magadan",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Moscow city",
+    "centreId": "524901",
+    "centreName": "Москва",
+    "latitude": 55.75204,
+    "longitude": 37.61781,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Moscow Oblast",
+    "centreId": "524901",
+    "centreName": "Москва",
+    "latitude": 55.75204,
+    "longitude": 37.61781,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Москва — согласованный городской прокси Московской области; та же точка, что для Москвы."
+  },
+  {
+    "regionKey": "Murmansk",
+    "centreId": "524305",
+    "centreName": "Мурманск",
+    "latitude": 68.96778,
+    "longitude": 33.09922,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Nenets AO",
+    "centreId": "523392",
+    "centreName": "Нарьян-Мар",
+    "latitude": 67.63869,
+    "longitude": 53.00371,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Nizhny Novgorod Oblast",
+    "centreId": "520555",
+    "centreName": "Нижний Новгород",
+    "latitude": 56.32867,
+    "longitude": 44.00205,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Novgorod",
+    "centreId": "519336",
+    "centreName": "Великий Новгород",
+    "latitude": 58.52131,
+    "longitude": 31.27104,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Novosibirsk",
+    "centreId": "1496747",
+    "centreName": "Новосибирск",
+    "latitude": 55.02259,
+    "longitude": 82.93175,
+    "timeZone": "Asia/Novosibirsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Omsk",
+    "centreId": "1496153",
+    "centreName": "Омск",
+    "latitude": 54.99244,
+    "longitude": 73.36859,
+    "timeZone": "Asia/Omsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Orenburg Oblast",
+    "centreId": "515003",
+    "centreName": "Оренбург",
+    "latitude": 51.76712,
+    "longitude": 55.09883,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Oryol",
+    "centreId": "515012",
+    "centreName": "Орёл",
+    "latitude": 52.96879,
+    "longitude": 36.0791,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Penza Oblast",
+    "centreId": "511565",
+    "centreName": "Пенза",
+    "latitude": 53.19568,
+    "longitude": 45.01075,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Perm Krai",
+    "centreId": "511196",
+    "centreName": "Пермь",
+    "latitude": 58.01046,
+    "longitude": 56.25017,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Primorsky",
+    "centreId": "2013348",
+    "centreName": "Владивосток",
+    "latitude": 43.10562,
+    "longitude": 131.87353,
+    "timeZone": "Asia/Vladivostok",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Pskov",
+    "centreId": "504341",
+    "centreName": "Псков",
+    "latitude": 57.81922,
+    "longitude": 28.33181,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Adygea",
+    "centreId": "528293",
+    "centreName": "Майкоп",
+    "latitude": 44.60789,
+    "longitude": 40.10242,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Altai Republic",
+    "centreId": "1506271",
+    "centreName": "Горно-Алтайск",
+    "latitude": 51.96056,
+    "longitude": 85.91892,
+    "timeZone": "Asia/Barnaul",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Bashkortostan",
+    "centreId": "479561",
+    "centreName": "Уфа",
+    "latitude": 54.74306,
+    "longitude": 55.96779,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Buryatia",
+    "centreId": "2014407",
+    "centreName": "Улан-Удэ",
+    "latitude": 51.82648,
+    "longitude": 107.59979,
+    "timeZone": "Asia/Irkutsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Dagestan",
+    "centreId": "532096",
+    "centreName": "Махачкала",
+    "latitude": 42.97782,
+    "longitude": 47.50027,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Ingushetia",
+    "centreId": "6313621",
+    "centreName": "Магас",
+    "latitude": 43.22257,
+    "longitude": 44.77261,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities5000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Kalmykia",
+    "centreId": "563514",
+    "centreName": "Элиста",
+    "latitude": 46.30794,
+    "longitude": 44.25537,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Karelia",
+    "centreId": "509820",
+    "centreName": "Петрозаводск",
+    "latitude": 61.78491,
+    "longitude": 34.34691,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Komi",
+    "centreId": "485239",
+    "centreName": "Сыктывкар",
+    "latitude": 61.66393,
+    "longitude": 50.8163,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Crimea",
+    "centreId": "693805",
+    "centreName": "Симферополь",
+    "latitude": 44.95719,
+    "longitude": 34.11079,
+    "timeZone": "Europe/Simferopol",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Mari El",
+    "centreId": "466806",
+    "centreName": "Йошкар-Ола",
+    "latitude": 56.63877,
+    "longitude": 47.89078,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Mordovia",
+    "centreId": "498698",
+    "centreName": "Саранск",
+    "latitude": 54.18485,
+    "longitude": 45.17166,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Sakha",
+    "centreId": "2013159",
+    "centreName": "Якутск",
+    "latitude": 62.03114,
+    "longitude": 129.72288,
+    "timeZone": "Asia/Yakutsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "North Ossetia-Alania",
+    "centreId": "473249",
+    "centreName": "Владикавказ",
+    "latitude": 43.04101,
+    "longitude": 44.66986,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Tatarstan",
+    "centreId": "551487",
+    "centreName": "Казань",
+    "latitude": 55.78874,
+    "longitude": 49.12214,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Tuva",
+    "centreId": "1500973",
+    "centreName": "Кызыл",
+    "latitude": 51.71108,
+    "longitude": 94.43776,
+    "timeZone": "Asia/Krasnoyarsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Khakassia",
+    "centreId": "1512236",
+    "centreName": "Абакан",
+    "latitude": 53.7154,
+    "longitude": 91.42593,
+    "timeZone": "Asia/Krasnoyarsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Rostov Oblast",
+    "centreId": "501175",
+    "centreName": "Ростов-на-Дону",
+    "latitude": 47.21997,
+    "longitude": 39.70769,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Ryazan",
+    "centreId": "500096",
+    "centreName": "Рязань",
+    "latitude": 54.62696,
+    "longitude": 39.70415,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Samara Oblast",
+    "centreId": "499099",
+    "centreName": "Самара",
+    "latitude": 53.20767,
+    "longitude": 50.13553,
+    "timeZone": "Europe/Samara",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Saint Petersburg",
+    "centreId": "498817",
+    "centreName": "Санкт-Петербург",
+    "latitude": 59.93863,
+    "longitude": 30.31413,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Saratov Oblast",
+    "centreId": "498677",
+    "centreName": "Саратов",
+    "latitude": 51.54048,
+    "longitude": 45.9901,
+    "timeZone": "Europe/Saratov",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Sakhalin",
+    "centreId": "2119441",
+    "centreName": "Южно-Сахалинск",
+    "latitude": 46.9543,
+    "longitude": 142.73559,
+    "timeZone": "Asia/Sakhalin",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Sverdlovsk",
+    "centreId": "1486209",
+    "centreName": "Екатеринбург",
+    "latitude": 56.85733,
+    "longitude": 60.61529,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Sevastopol",
+    "centreId": "694423",
+    "centreName": "Севастополь",
+    "latitude": 44.60795,
+    "longitude": 33.52134,
+    "timeZone": "Europe/Simferopol",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Smolensk",
+    "centreId": "491687",
+    "centreName": "Смоленск",
+    "latitude": 54.77826,
+    "longitude": 32.05088,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Stavropol Krai",
+    "centreId": "487846",
+    "centreName": "Ставрополь",
+    "latitude": 45.03442,
+    "longitude": 41.9642,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Tambov",
+    "centreId": "484646",
+    "centreName": "Тамбов",
+    "latitude": 52.73632,
+    "longitude": 41.44102,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Tver",
+    "centreId": "480060",
+    "centreName": "Тверь",
+    "latitude": 56.85836,
+    "longitude": 35.90057,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Tomsk",
+    "centreId": "1489425",
+    "centreName": "Томск",
+    "latitude": 56.50049,
+    "longitude": 84.98216,
+    "timeZone": "Asia/Tomsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Tula",
+    "centreId": "480562",
+    "centreName": "Тула",
+    "latitude": 54.19609,
+    "longitude": 37.61822,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Tyumen",
+    "centreId": "1488754",
+    "centreName": "Тюмень",
+    "latitude": 57.15222,
+    "longitude": 65.52722,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Udmurtia",
+    "centreId": "554840",
+    "centreName": "Ижевск",
+    "latitude": 56.85225,
+    "longitude": 53.19862,
+    "timeZone": "Europe/Samara",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Ulyanovsk Oblast",
+    "centreId": "479123",
+    "centreName": "Ульяновск",
+    "latitude": 54.32824,
+    "longitude": 48.38657,
+    "timeZone": "Europe/Ulyanovsk",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Khabarovsk",
+    "centreId": "2022890",
+    "centreName": "Хабаровск",
+    "latitude": 48.46204,
+    "longitude": 135.0971,
+    "timeZone": "Asia/Vladivostok",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Yugra",
+    "centreId": "1503772",
+    "centreName": "Ханты-Мансийск",
+    "latitude": 61.00187,
+    "longitude": 69.02728,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Chelyabinsk",
+    "centreId": "1508291",
+    "centreName": "Челябинск",
+    "latitude": 55.1611,
+    "longitude": 61.42877,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Chechnya",
+    "centreId": "558418",
+    "centreName": "Грозный",
+    "latitude": 43.31195,
+    "longitude": 45.68895,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Chuvashia",
+    "centreId": "569696",
+    "centreName": "Чебоксары",
+    "latitude": 56.13218,
+    "longitude": 47.246,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Chukotka",
+    "centreId": "2127202",
+    "centreName": "Анадырь",
+    "latitude": 64.73424,
+    "longitude": 177.5103,
+    "timeZone": "Asia/Anadyr",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Yamalo-Nenets",
+    "centreId": "1493197",
+    "centreName": "Салехард",
+    "latitude": 66.53373,
+    "longitude": 66.60955,
+    "timeZone": "Asia/Yekaterinburg",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  },
+  {
+    "regionKey": "Yaroslavl",
+    "centreId": "468902",
+    "centreName": "Ярославль",
+    "latitude": 57.62987,
+    "longitude": 39.87368,
+    "timeZone": "Europe/Moscow",
+    "sourceUrl": "https://download.geonames.org/export/dump/cities15000.zip",
+    "mappingNote": "Городская точка — погодный прокси региона, не средняя температура всей территории."
+  }
+]

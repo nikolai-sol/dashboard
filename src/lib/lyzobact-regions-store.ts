@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2';
 import type { RegionalModuleData, RegionalRow, RegionalSourcePage } from './lyzobact-regions-types';
 import {validateRegionalWordstat} from './lyzobact-wordstat';
+import {loadRegionalWeather} from './lyzobact-weather-store';
 export type RegionalQueryRunner = (sql:string,params:readonly (number|string)[])=>Promise<Record<string,unknown>[]>;
 const query:RegionalQueryRunner=async(sql,params)=>{
   // Loaded only when executing a runtime query; offline importer/tests need no credentials.
@@ -58,6 +59,7 @@ export async function loadRegionalModule(dashboardId:number,snapshotId?:string,r
     const rows=observations.map(r=>{const parsed=rowPayload(r.payload_json);if(parsed.regionKey!==r.region_key)throw new Error('Region identity mismatch');return parsed});
     const sourcePages=pages.map(r=>{const parsed=sourcePayload(r.payload_json);if(parsed.regionKey!==r.region_key||parsed.id!==Number(r.source_ordinal))throw new Error('Source identity mismatch');return parsed});
     if(new Set(rows.map(r=>r.regionKey)).size!==rows.length||sourcePages.some(p=>!rows.some(r=>r.regionKey===p.regionKey)))throw new Error('Invalid snapshot relationships');
-    return {dashboardId,status:'ready',snapshots:publicSnapshots,selectedSnapshotId:id,rows,sourcePages};
+    const weather=await loadRegionalWeather(run);
+    return {dashboardId,status:'ready',snapshots:publicSnapshots,selectedSnapshotId:id,rows,sourcePages,weather};
   }catch(error){return {...empty,status:'unavailable',errorCode:(error as {code?:string})?.code==='ER_NO_SUCH_TABLE'?'schema_missing':'read_failed'};}
 }

@@ -1,0 +1,25 @@
+[Unit]
+Description=ReportingDash Lysobact morning weather collector
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=900
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=reportingdash-openweather
+Group=reportingdash-openweather
+EnvironmentFile=/etc/reportingdash/collectors/openweather.env
+WorkingDirectory=/opt/reportingdash/collectors/openweather/current
+ExecStart=/usr/bin/flock -n /run/reportingdash/collectors/openweather/collector.lock /opt/reportingdash/collectors/openweather/venv/bin/python /opt/reportingdash/collectors/openweather/current/collector_release_launcher.py --source openweather --python /opt/reportingdash/collectors/openweather/venv/bin/python --
+RuntimeDirectory=reportingdash/collectors/openweather
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=600
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077

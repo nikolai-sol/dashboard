@@ -35,6 +35,7 @@ export interface RegionalSourcePage {
 }
 export interface RegionalSnapshot { id: string; label: string; checkedAt: string; }
 export interface RegionalModuleData {
+  weather?: import('./lyzobact-weather').RegionalWeatherData;
   dashboardId: number;
   status: 'ready' | 'not_imported' | 'snapshot_not_found' | 'unavailable';
   errorCode?: 'schema_missing' | 'read_failed';

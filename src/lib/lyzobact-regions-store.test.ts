@@ -15,3 +15,13 @@ test('public gate is exact49 with active exactclient and literal boolean flags',
   assert.equal(await gate!(id,async(sql)=>{assert.match(sql,/is_active = TRUE/);return[{client_id,is_active,config:{lyzobact_regions:{enabled,public_read}}}]}),expected);
  }
 });
+test('weather table failure cannot suppress or rewrite the selected immutable audit',async()=>{
+ const payload={regionKey:'Moscow',name:'Москва',period:'39 неделя 2026',checkedAt:'2026-10-06',sourceQuality:'Первичный текст',sourceQualityKind:'primary_autumn',isHistorical:false,isAutumn2026:true,cases:42,casesPrior:null,reportedWowPct:null,calculatedWowPct:null,wordstatWowPct:null,temperatureC:null,campaignStatus:'unknown'};
+ const before=JSON.stringify(payload);let weatherRead=false;
+ const result=await loadRegionalModule(49,'old-audit',async sql=>{
+  if(sql.includes('canonical_fact_lyzobact_weather_daily')){weatherRead=true;throw Object.assign(Error('private database'),{code:'ER_NO_SUCH_TABLE'});}
+  if(sql.includes('FROM lyzobact_regions_snapshots'))return [{id:'old-audit',label:'Old audit',checked_at:'2026-10-06',region_count:1,source_count:0}];
+  if(sql.includes('FROM lyzobact_regions_observations'))return [{region_key:'Moscow',payload_json:payload}];return [];
+ });
+ assert(weatherRead);assert.equal(result.status,'ready');assert.equal(result.selectedSnapshotId,'old-audit');assert.equal(result.weather?.status,'unavailable');assert.deepEqual(result.rows,[payload]);assert.equal(JSON.stringify(payload),before);assert.doesNotMatch(JSON.stringify(result),/private database/);
+});

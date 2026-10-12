@@ -13,7 +13,8 @@ function publicPayload(input:unknown){
  return {dashboardId:data.dashboardId,status:data.status,selectedSnapshotId:data.selectedSnapshotId,
   snapshots:data.snapshots.map(({id,label,checkedAt})=>({id,label,checkedAt})),
   rows:data.rows.map(row=>({...selectFields(row,publicRowKeys),...(row.wordstat?{wordstat:{...selectFields(row.wordstat,publicWordstatKeys),baskets:row.wordstat.baskets.map(basket=>selectFields(basket,publicBasketKeys))}}:{})})),
-  sourcePages:data.sourcePages.map(page=>selectFields(page,publicSourceKeys))};
+  sourcePages:data.sourcePages.map(page=>selectFields(page,publicSourceKeys)),
+  ...(data.weather?{weather:{status:data.weather.status,provider:data.weather.provider,checkedAt:data.weather.checkedAt,regions:data.weather.regions.map(row=>({...selectFields(row,['regionKey','centreName','timeZone','dueDate','temperatureC','observedAt','retrievedAt','status','consecutiveColdMornings'] as const),days:row.days.map(({date,temperatureC})=>({date,temperatureC}))}))}}:{})};
 }
 type Access = {authorized:boolean;audience?:string;context:null|{id:number;client_id:string;client_name:string;dashboard_name:string;auth_mode:string}};
 type Dependencies = {authorize:(request:Request,id:string)=>Promise<Access>;enabled:(id:number)=>Promise<boolean>;publicRead?:(id:number)=>Promise<boolean>;load:(id:number,snapshot?:string)=>Promise<unknown>};
