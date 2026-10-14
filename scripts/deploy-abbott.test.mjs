@@ -1261,7 +1261,7 @@ function captureBuildEnvironment(inherited) {
   const context = {
     fs, path, os, createHash, randomUUID, isDeepStrictEqual, Buffer, RUNTIME_MANIFESTS,
     process: { env: inherited, execPath: process.execPath, getuid: () => 501, geteuid: () => 501 },
-    execFileSync: (command, args, options) => calls.push({ command, args, environment: { ...options.env } }),
+    execFileSync: (command, args, options) => calls.push({ command, args, environment: { ...options.env }, timeout: options.timeout }),
     testRoot: root,
   };
   const source = read('scripts/abbott-deploy-runtime.mjs')
@@ -1281,6 +1281,11 @@ test('build children retain only explicit storage directories and fixed clean en
     }));
     const calls = captureBuildEnvironment({ ...storage, HOME: '/untrusted', NODE_OPTIONS: '--inspect', METRIKA_TOKEN: 'private-sentinel' });
     assert.equal(calls.length, 3);
+    assert.deepEqual(calls.map(call => ({ args: Array.from(call.args), timeout: call.timeout })), [
+      { args: ['ci'], timeout: 30 * 60_000 },
+      { args: ['run', 'test:abbott-runtime'], timeout: 120 * 60_000 },
+      { args: ['run', 'verify:artifact', '--workspace', 'dashboard-abbott'], timeout: 10 * 60_000 },
+    ]);
     for (const call of calls) {
       assert.deepEqual(call.environment, {
         PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: os.homedir(),

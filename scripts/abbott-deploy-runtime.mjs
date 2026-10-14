@@ -206,7 +206,12 @@ function build(authority) {
     environment[key] = directory;
   }
   const npm = path.join(path.dirname(process.execPath), 'npm');
-  for (const args of [['ci'], ['run', `test:${authority.scope}-runtime`], ['run', 'verify:artifact', '--workspace', `dashboard-${authority.scope}`]]) execFileSync(npm, args, { cwd: ROOT, env: environment, stdio: ['ignore', 'ignore', 'pipe'], timeout: 600000 });
+  const steps = [
+    { args: ['ci'], timeout: 30 * 60_000 },
+    { args: ['run', `test:${authority.scope}-runtime`], timeout: 120 * 60_000 },
+    { args: ['run', 'verify:artifact', '--workspace', `dashboard-${authority.scope}`], timeout: 10 * 60_000 },
+  ];
+  for (const { args, timeout } of steps) execFileSync(npm, args, { cwd: ROOT, env: environment, stdio: ['ignore', 'ignore', 'pipe'], timeout });
 }
 
 async function main() {
