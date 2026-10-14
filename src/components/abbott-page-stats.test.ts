@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   ABBOTT_UNMAPPED_LABEL,
+  buildAbbottMnnOptions,
+  formatAbbottMnnValues,
   buildAbbottPageDimensionOptions,
   buildAbbottPageStatsExportRows,
   buildAbbottPageviewsByDirection,
@@ -293,4 +295,64 @@ test("export rows label unmapped page metadata without changing metrics", () => 
     "Анонимные сессии": 31,
     "Средняя сессия Bitrix, мин": 2.08,
   });
+});
+
+
+const approvedMnnSpellings = [
+  ["селетра", "Селетра", "селектра", "Селектра"],
+  ["супразофен", "супразофен", "супрозафен", "Супрозафен"],
+  ["трайкоор", "Трайкоор", "трайкор", "Трайкор"],
+  ["физотенз", "физотенз", "физиотенз", "Физиотенз"],
+] as const;
+
+for (const [rawKey, rawLabel, canonicalKey, canonicalLabel] of approvedMnnSpellings) {
+  test(`approved MNN spelling ${rawLabel} is canonical even when no correct label exists`, () => {
+    const row = { ...sampleRow, mnn: [{ key: rawKey, label: rawLabel }] };
+    const options = buildAbbottMnnOptions([row]);
+    assert.deepEqual(options, [{ value: canonicalKey, label: canonicalLabel }]);
+    assert.equal(formatAbbottMnnValues(row.mnn, options), canonicalLabel);
+    assert.equal(formatAbbottMnnValues(row.mnn, []), canonicalLabel);
+    assert.equal(buildAbbottPageStatsExportRows([row])[0].МНН, canonicalLabel);
+    assert.equal(matchesSelectedMnn(row.mnn, [canonicalKey]), true);
+    assert.equal(matchesSelectedMnn([{ key: canonicalKey, label: canonicalLabel }], [rawKey]), true);
+  });
+
+  test(`MNN search keeps raw and corrected ${canonicalLabel} names searchable`, () => {
+    const row = { ...sampleRow, mnn: [{ key: rawKey, label: rawLabel }] };
+    const canonicalRow = { ...sampleRow, mnn: [{ key: canonicalKey, label: canonicalLabel }] };
+    for (const query of [rawLabel, rawKey, canonicalLabel, canonicalKey]) {
+      const filters = { query, pageTitleQuery: "", direction: "", mnn: [], materialTypes: [], access: "" };
+      assert.deepEqual(filterAbbottPageStatsRows([row], filters), [row]);
+      assert.deepEqual(filterAbbottPageStatsRows([canonicalRow], filters), [canonicalRow]);
+    }
+  });
+}
+
+test("canonical MNN duplicates collapse within an article without changing other values or metrics", () => {
+  const row = {
+    ...sampleRow,
+    mnn: [
+      { key: "трайкоор", label: "Трайкоор" },
+      { key: "омега", label: "омега" },
+      { key: "трайкор", label: "Трайкор®" },
+      { key: "физио", label: "физио" },
+      { key: "супра", label: "супра" },
+      { key: "трайкор супра", label: "трайкор супра" },
+      { key: "бетасерк 24 мг", label: "Бетасерк 24 мг" },
+      { key: "неизвестное", label: "Неизвестное название" },
+    ],
+  };
+  const before = structuredClone(row);
+  const options = buildAbbottMnnOptions([row]);
+  assert.equal(options.filter((option) => option.value === "трайкор").length, 1);
+  assert.equal(formatAbbottMnnValues(row.mnn, options),
+    "Трайкор; омега; физио; супра; трайкор супра; Бетасерк 24 мг; Неизвестное название");
+  const exported = buildAbbottPageStatsExportRows([row]);
+  assert.equal(exported.length, 1);
+  assert.equal(exported[0].МНН, formatAbbottMnnValues(row.mnn, options));
+  const { МНН: _beforeMnn, ...beforeMetrics } = buildAbbottPageStatsExportRows([sampleRow])[0];
+  const { МНН: _afterMnn, ...afterMetrics } = exported[0];
+  assert.deepEqual(afterMetrics, beforeMetrics);
+  assert.deepEqual(summarizeAbbottPageStats([row]), { pageviews: 157, users: 122 });
+  assert.deepEqual(row, before);
 });

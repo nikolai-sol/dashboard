@@ -26,6 +26,16 @@ type AbbottPageStatsFilters = {
 
 const ABBOTT_MNN_KEY_ALIASES = new Map([
   ["физотенз", "физиотенз"],
+  ["селетра", "селектра"],
+  ["супразофен", "супрозафен"],
+  ["трайкоор", "трайкор"],
+]);
+
+const ABBOTT_MNN_CANONICAL_LABELS = new Map([
+  ["физиотенз", "Физиотенз"],
+  ["селектра", "Селектра"],
+  ["супрозафен", "Супрозафен"],
+  ["трайкор", "Трайкор"],
 ]);
 
 function canonicalAbbottMnnKey(value: string | null | undefined) {
@@ -79,7 +89,7 @@ export function buildAbbottMnnOptions(rows: readonly AbbottBiPageStatRow[]) {
   });
   const options = [...labelsByKey].map(([value, labels]) => ({
     value,
-    label: canonicalAbbottMnnLabel(labels),
+    label: ABBOTT_MNN_CANONICAL_LABELS.get(value) ?? canonicalAbbottMnnLabel(labels),
   }));
   if (hasUnmapped) options.push({ value: ABBOTT_UNMAPPED_LABEL, label: ABBOTT_UNMAPPED_LABEL });
   return options.sort((left, right) => left.label.localeCompare(right.label, "ru"));
@@ -91,8 +101,16 @@ export function formatAbbottMnnValues(
 ) {
   if (!mnn?.length) return ABBOTT_UNMAPPED_LABEL;
   const labels = new Map(options.map((option) => [option.value, option.label]));
-  return mnn.map((value) => labels.get(canonicalAbbottMnnKey(value.key)) ?? value.label.replace(/[®™]/g, "").trim())
-    .filter(Boolean)
+  const seen = new Set<string>();
+  return mnn.map((value) => {
+    const key = canonicalAbbottMnnKey(value.key);
+    const label = ABBOTT_MNN_CANONICAL_LABELS.get(key)
+      ?? labels.get(key) ?? value.label.replace(/[®™]/g, "").trim();
+    const identity = key || label;
+    if (seen.has(identity)) return "";
+    seen.add(identity);
+    return label;
+  }).filter(Boolean)
     .join("; ") || ABBOTT_UNMAPPED_LABEL;
 }
 
@@ -139,6 +157,7 @@ export function matchesPageStatsSearch(pageTitle: string, url: string, query: st
 
 export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: AbbottPageStatsFilters) {
   const normalizedQuery = normalizeSearchValue(filters.query);
+  const normalizedMnnQuery = canonicalAbbottMnnKey(filters.query);
   return rows.filter((row) => {
     if (
       normalizedQuery &&
@@ -146,7 +165,7 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
         row.page_title,
         row.url,
         row.direction,
-        ...(row.mnn ?? []).map((value) => value.label),
+        ...(row.mnn ?? []).flatMap((value) => [value.key, value.label]),
         row.material_type,
         row.access,
         row.pageviews,
@@ -154,7 +173,9 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
         row.bitrix_pageviews,
         row.bitrix_sessions,
         row.bitrix_users,
-      ].some((value) => normalizeSearchValue(String(value ?? "")).includes(normalizedQuery))
+      ].some((value) => normalizeSearchValue(String(value ?? "")).includes(normalizedQuery)) &&
+      !(normalizedMnnQuery && (row.mnn ?? []).some((value) =>
+        canonicalAbbottMnnKey(value.key).includes(normalizedMnnQuery)))
     ) {
       return false;
     }
