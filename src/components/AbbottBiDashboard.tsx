@@ -33,7 +33,7 @@ import {
   summarizeAbbottPageMetadataCoverage,
   summarizeAbbottPageStats,
 } from "./abbott-page-stats";
-import { abbottTrafficSourceLabel, abbottTrafficSourceOption } from "./abbott-localization";
+import { abbottTrafficSourceLabel, abbottTrafficSourceOptions, availableAbbottTrafficSource } from "./abbott-localization";
 import { selectAbbottSummaryRows } from "./abbott-summary";
 import {
   buildAbbottUtmSourceOptions,
@@ -968,22 +968,41 @@ export default function AbbottBiDashboard({
     setPageByTab((prev) => ({ ...prev, [activeTab]: 1 }));
   };
 
+  const usersSummarySourceRows = useMemo(
+    () =>
+      selectAbbottSummaryRows({
+        trafficRows: data.traffic_summary ?? [],
+        behaviorRows: data.users_summary,
+        behaviorRowsWithoutAdmins: data.users_summary_without_admins ?? data.users_summary,
+        filters: {
+          user_id: usersSummaryUserIdFilter,
+          user_id_traffic: filtersByTab.users_summary.user_id_traffic,
+          direction: filtersByTab.users_summary.direction,
+        },
+        showUserIdAnalytics,
+      }),
+    [
+      data.traffic_summary,
+      data.users_summary,
+      data.users_summary_without_admins,
+      filtersByTab.users_summary,
+      showUserIdAnalytics,
+      usersSummaryUserIdFilter,
+    ],
+  );
+
   const usersSummaryOptions = useMemo(
     () => {
-      const trafficRows = data.traffic_summary ?? [];
       return {
         user_id: buildAbbottAdminUserOptions(
           data.users_summary.filter((row) => row.has_user_id).map((row) => row.user_id),
           adminUserFilterAvailable,
         ),
-        traffic_source: uniqOptions([
-          ...data.users_summary.map((row) => row.traffic_source),
-          ...trafficRows.map((row) => row.traffic_source),
-        ]).map((option) => abbottTrafficSourceOption(option.value)),
+        traffic_source: abbottTrafficSourceOptions(usersSummarySourceRows),
         direction: uniqOptions(data.users_summary.map((row) => row.direction)),
       };
     },
-    [adminUserFilterAvailable, data.traffic_summary, data.users_summary],
+    [adminUserFilterAvailable, data.users_summary, usersSummarySourceRows],
   );
 
   const userActionsOptions = useMemo(
@@ -992,12 +1011,30 @@ export default function AbbottBiDashboard({
         data.user_actions.filter((row) => row.has_user_id).map((row) => row.user_id),
         adminUserFilterAvailable,
       ),
-      traffic_source: uniqOptions(data.user_actions.map((row) => row.traffic_source)).map((option) => abbottTrafficSourceOption(option.value)),
+      traffic_source: abbottTrafficSourceOptions(data.user_actions),
       utm_source: buildAbbottUtmSourceOptions(data.user_actions),
       direction: uniqOptions(data.user_actions.map((row) => row.direction)),
     }),
     [adminUserFilterAvailable, data.user_actions],
   );
+
+  const usersSummaryTrafficSource = availableAbbottTrafficSource(
+    filtersByTab.users_summary.traffic_source, usersSummaryOptions.traffic_source,
+  );
+  const userActionsTrafficSource = availableAbbottTrafficSource(
+    filtersByTab.user_actions.traffic_source, userActionsOptions.traffic_source,
+  );
+
+  useEffect(() => {
+    if (viewPending) return;
+    if (activeTab !== "users_summary" && activeTab !== "user_actions") return;
+    if (data.read_contract && data.read_contract.view !== activeTab) return;
+    const value = activeTab === "users_summary" ? usersSummaryTrafficSource : userActionsTrafficSource;
+    setFiltersByTab(previous => previous[activeTab].traffic_source === value ? previous : {
+      ...previous,
+      [activeTab]: { ...previous[activeTab], traffic_source: value },
+    });
+  }, [activeTab, data.read_contract, viewPending, usersSummaryTrafficSource, userActionsTrafficSource]);
 
   const pageStatsOptions = useMemo(
     () => ({
@@ -1049,29 +1086,6 @@ export default function AbbottBiDashboard({
     );
   }, [data.page_stats]);
 
-  const usersSummarySourceRows = useMemo(
-    () =>
-      selectAbbottSummaryRows({
-        trafficRows: data.traffic_summary ?? [],
-        behaviorRows: data.users_summary,
-        behaviorRowsWithoutAdmins: data.users_summary_without_admins ?? data.users_summary,
-        filters: {
-          user_id: usersSummaryUserIdFilter,
-          user_id_traffic: filtersByTab.users_summary.user_id_traffic,
-          direction: filtersByTab.users_summary.direction,
-        },
-        showUserIdAnalytics,
-      }),
-    [
-      data.traffic_summary,
-      data.users_summary,
-      data.users_summary_without_admins,
-      filtersByTab.users_summary,
-      showUserIdAnalytics,
-      usersSummaryUserIdFilter,
-    ],
-  );
-
   const userBehaviorSummaryActive =
     isAbbottAggregateUserFilter(usersSummaryUserIdFilter)
     || usersSummarySourceRows.length === 0
@@ -1094,7 +1108,7 @@ export default function AbbottBiDashboard({
         if (filters.user_id_traffic === "with_user_id" && !row.has_user_id) return false;
         if (filters.user_id_traffic === "without_user_id" && row.has_user_id) return false;
       }
-      if (filters.traffic_source && row.traffic_source !== filters.traffic_source) return false;
+      if (usersSummaryTrafficSource && row.traffic_source !== usersSummaryTrafficSource) return false;
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       return true;
     });
@@ -1104,6 +1118,7 @@ export default function AbbottBiDashboard({
     showUserIdAnalytics,
     usersSummarySourceRows,
     usersSummaryUserIdFilter,
+    usersSummaryTrafficSource,
   ]);
 
   const userActionsSelection = useMemo(
@@ -1113,6 +1128,7 @@ export default function AbbottBiDashboard({
         {
           query: queryByTab.user_actions,
           ...filtersByTab.user_actions,
+          traffic_source: userActionsTrafficSource,
           user_id: userActionsUserIdFilter,
           traffic_source_label: abbottTrafficSourceLabel,
         },
@@ -1124,6 +1140,7 @@ export default function AbbottBiDashboard({
       filtersByTab.user_actions,
       pageByTab.user_actions,
       queryByTab.user_actions,
+      userActionsTrafficSource,
       userActionsUserIdFilter,
     ],
   );
@@ -1684,7 +1701,7 @@ export default function AbbottBiDashboard({
         ) : null}
         <SelectField
           label="Источник"
-          value={filtersByTab.users_summary.traffic_source}
+          value={usersSummaryTrafficSource}
           options={usersSummaryOptions.traffic_source}
           onChange={(value) => setSelectFilter("users_summary", "traffic_source", value)}
           theme={theme}
@@ -1719,7 +1736,7 @@ export default function AbbottBiDashboard({
         />
         <SelectField
           label="Источник"
-          value={filtersByTab.user_actions.traffic_source}
+          value={userActionsTrafficSource}
           options={userActionsOptions.traffic_source}
           onChange={(value) => setSelectFilter("user_actions", "traffic_source", value)}
           theme={theme}

@@ -67,35 +67,15 @@ test("does not expose ordinary English dashboard copy", () => {
   assert.equal(source.includes("SQL dump"), false);
 });
 
-test("localizes traffic sources at display boundaries while preserving raw filters", () => {
-  assert.match(
-    source,
-    /import \{ abbottTrafficSourceLabel, abbottTrafficSourceOption \} from "\.\/abbott-localization";/,
-  );
-  assert.ok(
-    source.match(/\.map\(\(option\) => abbottTrafficSourceOption\(option\.value\)\)/g)?.length === 2,
-    "both traffic-source option lists must use localized labels with raw values",
-  );
-  assert.ok(
-    source.match(/traffic_source: abbottTrafficSourceLabel\(row\.traffic_source\)/g)?.length === 2,
-    "both traffic-source tables must use localized labels",
-  );
-  assert.ok(
-    (source.match(/abbottTrafficSourceLabel\(row\.traffic_source\)/g)?.length ?? 0) >= 4
-      && source.includes("traffic_source_label: abbottTrafficSourceLabel"),
-    "traffic-source search and display rows must be localized, including delegated action filtering",
-  );
-  assert.match(source, /label: abbottTrafficSourceLabel\(label\)/);
-  assert.equal(
-    source.match(/row\.traffic_source !== filters\.traffic_source/g)?.length,
-    1,
-    "the summary table must keep exact raw traffic-source filtering",
-  );
-  assert.match(
-    userActionFilterSource,
-    /row\.traffic_source\.trim\(\) !== filters\.traffic_source/,
-    "the action table must compare the displayed normalized source without relabeling stored data",
-  );
+test("uses native source options from the displayed population and clears only loaded stale selections", () => {
+  assert.match(source, /abbottTrafficSourceOptions\(usersSummarySourceRows\)/);
+  assert.match(source, /abbottTrafficSourceOptions\(data\.user_actions\)/);
+  assert.doesNotMatch(source, /\.\.\.data\.users_summary\.map\(\(row\) => row\.traffic_source\)/);
+  assert.match(source, /if \(viewPending\) return/);
+  assert.match(source, /data\.read_contract\.view !== activeTab/);
+  assert.match(source, /availableAbbottTrafficSource/);
+  assert.match(source, /row\.traffic_source !== usersSummaryTrafficSource/);
+  assert.match(source, /traffic_source: userActionsTrafficSource/);
 });
 
 test("gives chart tooltip metrics Russian display names", () => {
