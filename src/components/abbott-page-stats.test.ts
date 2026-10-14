@@ -40,6 +40,105 @@ const sampleRow: AbbottBiPageStatRow = {
   bitrix_avg_session_duration: 124.5,
 };
 
+const reviewedArticleMnnCases = [
+  {
+    id: 9918,
+    url: "https://abbottpro.ru/academy/articles/narusheniya-obmena-lipidov-v-svete-rossiyskikh-klinicheskikh-rekomendatsiy-2023-goda-povtorenie-proy",
+    raw: ["супра", "трайкор"],
+    expected: "Супрозафен; Трайкор",
+  },
+  {
+    id: 19209,
+    url: "https://abbottpro.ru/academy/videos/vozmozhnosti-vnedreniya-ranney-stratifikatsii-serdechno-sosudistogo-riska",
+    raw: ["Омакор", "супра", "трайкор"],
+    expected: "Омакор; Супрозафен; Трайкор",
+  },
+  {
+    id: 19239,
+    url: "https://abbottpro.ru/academy/videos/suprozafen-odno-resheniye-dlya-dvukh-tseley-terapii-smeshannoy-dislipidemii",
+    raw: ["супра"],
+    expected: "Супрозафен",
+  },
+  {
+    id: 19443,
+    url: "https://abbottpro.ru/academy/videos/satellitniy-simpozium-gipertriglitseridemiya-stranstviye-v-reshenii-problemy-riska-ssz-i-pankreatita",
+    raw: ["Омакор", "трайкор супра"],
+    expected: "Омакор; Трайкор; Супрозафен",
+  },
+];
+
+const noPageFilters = {
+  query: "", pageTitleQuery: "", direction: "", mnn: [] as string[], materialTypes: [] as string[], access: "",
+};
+
+for (const article of reviewedArticleMnnCases) {
+  test(`reviewed article ${article.id} uses the same MNN correction in options, filter, search, table and export`, () => {
+    const row: AbbottBiPageStatRow = {
+      ...sampleRow, page_title: "Материал", url: article.url,
+      mnn: article.raw.map((label) => ({ key: label.toLocaleLowerCase("ru"), label })),
+    };
+    const before = structuredClone(row);
+    const options = buildAbbottMnnOptions([row]);
+    assert.ok(options.some((option) => option.value === "супрозафен" && option.label === "Супрозафен"));
+    assert.ok(options.every((option) => !["супра", "трайкор супра"].includes(option.value)));
+    assert.equal(formatAbbottMnnValues(row.mnn, options, row.url), article.expected);
+    assert.equal(buildAbbottPageStatsExportRows([row])[0].МНН, article.expected);
+    assert.deepEqual(filterAbbottPageStatsRows([row], { ...noPageFilters, mnn: ["супрозафен"] }), [row]);
+    assert.deepEqual(filterAbbottPageStatsRows([row], { ...noPageFilters, query: "Супрозафен" }), [row]);
+    assert.deepEqual(filterAbbottPageStatsRows([row], { ...noPageFilters, query: "супра" }), [row]);
+    assert.deepEqual(summarizeAbbottPageStats([row]), { pageviews: 157, users: 122 });
+    assert.deepEqual(row, before);
+  });
+}
+
+test("article MNN rules do not normalize unreviewed articles, foreign hosts, or unrelated source keys", () => {
+  const known = reviewedArticleMnnCases[0].url;
+  const unreviewedUrls = [
+    "https://abbottpro.ru/academy/videos/kontrol-triglitseridov-kak-faktor-snizheniya-serdechno-sosudistogo-riska",
+    "https://abbottpro.ru/academy/videos/kak-priumnozhit-nashi-sily-v-borbe-za-znaniya",
+    known.replace("https://abbottpro.ru", "https://other.example"),
+    known.replace("https://", "http://"),
+    `${known}/other`,
+    "",
+  ];
+  for (const url of unreviewedUrls) {
+    const row = { ...sampleRow, url, page_title: "Материал", mnn: [{ key: "супра", label: "супра" }] };
+    assert.equal(buildAbbottPageStatsExportRows([row])[0].МНН, "супра");
+    assert.deepEqual(filterAbbottPageStatsRows([row], { ...noPageFilters, mnn: ["супрозафен"] }), []);
+  }
+  const otherKey = { ...sampleRow, url: known, mnn: [{ key: "трайкор супра", label: "трайкор супра" }] };
+  assert.equal(buildAbbottPageStatsExportRows([otherKey])[0].МНН, "трайкор супра");
+  assert.equal(buildAbbottPageStatsExportRows([{ ...otherKey, mnn: [] }])[0].МНН, ABBOTT_UNMAPPED_LABEL);
+});
+
+test("reviewed compound correction is idempotent, deduplicates products and retains unknown values", () => {
+  const row = {
+    ...sampleRow, url: reviewedArticleMnnCases[3].url,
+    mnn: [
+      { key: "омакор", label: "Омакор" },
+      { key: "трайкор супра", label: "трайкор супра" },
+      { key: "супрозафен", label: "Супрозафен" },
+      { key: "трайкор", label: "Трайкор" },
+      { key: "особое", label: "Особое" },
+    ],
+  };
+  const before = structuredClone(row);
+  for (const url of [row.url, `${row.url}/`, `${row.url}/?utm_source=test#section`]) {
+    assert.equal(buildAbbottPageStatsExportRows([{ ...row, url }])[0].МНН, "Омакор; Трайкор; Супрозафен; Особое");
+  }
+  assert.deepEqual(row, before);
+  const canonical = { ...row, mnn: row.mnn.filter((value) => value.key !== "трайкор супра") };
+  assert.equal(buildAbbottPageStatsExportRows([canonical])[0].МНН, "Омакор; Супрозафен; Трайкор; Особое");
+});
+
+test("mixed article options keep unresolved supra separate from the reviewed product", () => {
+  const known = { ...sampleRow, url: reviewedArticleMnnCases[0].url, mnn: [{ key: "супра", label: "супра" }] };
+  const unresolved = { ...known, url: "https://abbottpro.ru/academy/videos/kak-priumnozhit-nashi-sily-v-borbe-za-znaniya" };
+  assert.deepEqual(buildAbbottMnnOptions([known, unresolved]).map((x) => x.value).sort(), ["супра", "супрозафен"]);
+  assert.deepEqual(filterAbbottPageStatsRows([known, unresolved], { ...noPageFilters, mnn: ["супра"] }), [unresolved]);
+  assert.deepEqual(filterAbbottPageStatsRows([known, unresolved], { ...noPageFilters, mnn: ["супрозафен"] }), [known]);
+});
+
 test("empty material selection keeps all material types", () => {
   assert.equal(matchesSelectedMaterialType("Видео", []), true);
   assert.equal(matchesSelectedMaterialType(null, []), true);

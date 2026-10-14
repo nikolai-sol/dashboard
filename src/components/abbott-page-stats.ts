@@ -38,6 +38,33 @@ const ABBOTT_MNN_CANONICAL_LABELS = new Map([
   ["трайкор", "Трайкор"],
 ]);
 
+// Snapshot 116: the exact article URL/title and approval version link these
+// source rows to explicit product IDs. This is not a global abbreviation alias.
+const ABBOTT_ARTICLE_MNN_CORRECTIONS = new Map<string, { sourceKey: string; values: AbbottMnnValue[] }>([
+  // Entity 9918, RUS2328734 (v1.0), Супрозафен [620836].
+  ["https://abbottpro.ru/academy/articles/narusheniya-obmena-lipidov-v-svete-rossiyskikh-klinicheskikh-rekomendatsiy-2023-goda-povtorenie-proy",
+    { sourceKey: "супра", values: [{ key: "супрозафен", label: "Супрозафен" }] }],
+  // Entity 19209, RUS2360485 (v1.1), Супрозафен [620836].
+  ["https://abbottpro.ru/academy/videos/vozmozhnosti-vnedreniya-ranney-stratifikatsii-serdechno-sosudistogo-riska",
+    { sourceKey: "супра", values: [{ key: "супрозафен", label: "Супрозафен" }] }],
+  // Entity 19239, RUS2355578 (v1.0), Супрозафен [620836].
+  ["https://abbottpro.ru/academy/videos/suprozafen-odno-resheniye-dlya-dvukh-tseley-terapii-smeshannoy-dislipidemii",
+    { sourceKey: "супра", values: [{ key: "супрозафен", label: "Супрозафен" }] }],
+  // Entity 19443, RUS2350051 (v1.1), Трайкор [620838] / Супрозафен [620836].
+  ["https://abbottpro.ru/academy/videos/satellitniy-simpozium-gipertriglitseridemiya-stranstviye-v-reshenii-problemy-riska-ssz-i-pankreatita",
+    { sourceKey: "трайкор супра", values: [
+      { key: "трайкор", label: "Трайкор" },
+      { key: "супрозафен", label: "Супрозафен" },
+    ] }],
+]);
+
+function articleAbbottMnnValues(mnn: readonly AbbottMnnValue[] | null | undefined, url = "") {
+  const articleUrl = url.trim().split(/[?#]/, 1)[0].replace(/\/+$/, "");
+  const correction = ABBOTT_ARTICLE_MNN_CORRECTIONS.get(articleUrl);
+  return (mnn ?? []).flatMap((value) => correction && canonicalAbbottMnnKey(value.key) === correction.sourceKey
+    ? correction.values : [value]);
+}
+
 function canonicalAbbottMnnKey(value: string | null | undefined) {
   const normalized = String(value ?? "")
     .replace(/[®™]/g, "")
@@ -51,9 +78,9 @@ export function matchesSelectedMaterialType(materialType: string | null, selecte
   return selectedTypes.includes(labelAbbottPageDimension(materialType));
 }
 
-export function matchesSelectedMnn(mnn: AbbottMnnValue[] | null | undefined, selectedMnn: string[]) {
+export function matchesSelectedMnn(mnn: AbbottMnnValue[] | null | undefined, selectedMnn: string[], url = "") {
   if (selectedMnn.length === 0) return true;
-  const values = (mnn ?? []).map((value) => canonicalAbbottMnnKey(value.key)).filter(Boolean);
+  const values = articleAbbottMnnValues(mnn, url).map((value) => canonicalAbbottMnnKey(value.key)).filter(Boolean);
   if (values.length === 0) return selectedMnn.includes(ABBOTT_UNMAPPED_LABEL);
   const selected = selectedMnn.map(canonicalAbbottMnnKey);
   return values.some((value) => selected.includes(value));
@@ -80,7 +107,7 @@ export function buildAbbottMnnOptions(rows: readonly AbbottBiPageStatRow[]) {
   let hasUnmapped = false;
   rows.forEach((row) => {
     if (!row.mnn?.length) hasUnmapped = true;
-    row.mnn?.forEach(({ key, label }) => {
+    articleAbbottMnnValues(row.mnn, row.url).forEach(({ key, label }) => {
       const normalizedKey = canonicalAbbottMnnKey(key);
       const normalizedLabel = label.trim();
       if (!normalizedKey || !normalizedLabel) return;
@@ -98,11 +125,12 @@ export function buildAbbottMnnOptions(rows: readonly AbbottBiPageStatRow[]) {
 export function formatAbbottMnnValues(
   mnn: readonly AbbottMnnValue[] | null | undefined,
   options: readonly { value: string; label: string }[],
+  url = "",
 ) {
   if (!mnn?.length) return ABBOTT_UNMAPPED_LABEL;
   const labels = new Map(options.map((option) => [option.value, option.label]));
   const seen = new Set<string>();
-  return mnn.map((value) => {
+  return articleAbbottMnnValues(mnn, url).map((value) => {
     const key = canonicalAbbottMnnKey(value.key);
     const label = ABBOTT_MNN_CANONICAL_LABELS.get(key)
       ?? labels.get(key) ?? value.label.replace(/[®™]/g, "").trim();
@@ -174,14 +202,14 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
         row.bitrix_sessions,
         row.bitrix_users,
       ].some((value) => normalizeSearchValue(String(value ?? "")).includes(normalizedQuery)) &&
-      !(normalizedMnnQuery && (row.mnn ?? []).some((value) =>
+      !(normalizedMnnQuery && articleAbbottMnnValues(row.mnn, row.url).some((value) =>
         canonicalAbbottMnnKey(value.key).includes(normalizedMnnQuery)))
     ) {
       return false;
     }
     if (!matchesPageStatsSearch(row.page_title, row.url, filters.pageTitleQuery)) return false;
     if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
-    if (!matchesSelectedMnn(row.mnn, filters.mnn)) return false;
+    if (!matchesSelectedMnn(row.mnn, filters.mnn, row.url)) return false;
     if (!matchesSelectedMaterialType(row.material_type, filters.materialTypes)) return false;
     if (filters.access && (row.access ?? "") !== filters.access) return false;
     return true;
@@ -226,7 +254,7 @@ export function buildAbbottPageStatsExportRows(rows: AbbottBiPageStatRow[]): Arr
     "Заголовок страницы": row.page_title || "—",
     URL: row.url || "—",
     Направление: labelAbbottPageDimension(row.direction),
-    МНН: formatAbbottMnnValues(row.mnn, mnnOptions),
+    МНН: formatAbbottMnnValues(row.mnn, mnnOptions, row.url),
     "Тип материала": labelAbbottPageDimension(row.material_type),
     Доступ: labelAbbottPageDimension(row.access),
     "Просмотры Метрики": row.pageviews,

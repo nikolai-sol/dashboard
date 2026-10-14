@@ -1542,7 +1542,7 @@ export default function AbbottBiDashboard({
       page_title: row.page_title || "—",
       url: row.url || "—",
       direction: labelAbbottPageDimension(row.direction),
-      mnn: formatAbbottMnnValues(row.mnn, pageStatsOptions.mnn),
+      mnn: formatAbbottMnnValues(row.mnn, pageStatsOptions.mnn, row.url),
       material_type: labelAbbottPageDimension(row.material_type),
       access: labelAbbottPageDimension(row.access),
       pageviews: formatNumber(row.pageviews, locale),
