@@ -1,3 +1,4 @@
+import { buildPostClickReachSql } from "./postclick-reach-sql";
 import { loadCreativePerformance } from './creative-performance';
 import { selectCreativePreviewRows } from './creative-preview-plus';
 import { isMediaCreativeDashboard } from './creative-performance-contract';
@@ -1772,6 +1773,7 @@ async function buildPostClickAnalytics(
   configTo: string,
   selectedGoalIds: string[],
   goalMode: "all" | "selected",
+  frequencyOverrides: FrequencyOverrideItem[],
 ): Promise<DashboardData["postclick_analytics"] | undefined> {
   if (!metrikaAccountIds.length) {
     return undefined;
@@ -1874,6 +1876,8 @@ async function buildPostClickAnalytics(
     [dashboardId, dateFrom, dateTo, ...metrikaAccountIds],
   );
 
+  const reachSql = buildPostClickReachSql(frequencyOverrides);
+
   const [adsRows] = await pool.execute<PostClickAdsFactRow[]>(
     `
       SELECT
@@ -1895,7 +1899,7 @@ async function buildPostClickAnalytics(
         COALESCE(SUM(f.impressions), 0) AS impressions,
         COALESCE(SUM(f.clicks), 0) AS clicks,
         COALESCE(SUM(f.views), 0) AS views,
-        COALESCE(SUM(f.reach), 0) AS reach,
+        COALESCE(SUM(${reachSql.expression}), 0) AS reach,
         COALESCE(SUM(f.spend), 0) AS spend,
         COALESCE(SUM(f.video_views_25), 0) AS video_views_25,
         COALESCE(SUM(f.video_views_50), 0) AS video_views_50,
@@ -1905,13 +1909,17 @@ async function buildPostClickAnalytics(
       JOIN ${advertisingFactsSql}
         ON f.source_key COLLATE utf8mb4_unicode_ci = b.source_key
        AND f.platform_campaign_id COLLATE utf8mb4_unicode_ci = b.platform_campaign_id
+       AND (NULLIF(TRIM(b.platform_account_id), '') IS NULL
+         OR f.platform_account_id COLLATE utf8mb4_unicode_ci = b.platform_account_id)
+       AND (b.effective_from IS NULL OR f.report_date >= b.effective_from)
+       AND (b.effective_to IS NULL OR f.report_date <= b.effective_to)
       WHERE b.dashboard_id = ?
         AND f.report_date >= ?
         AND f.report_date <= ?
       GROUP BY b.line_key, f.report_date
       ORDER BY f.report_date, b.line_key
     `,
-    [...advertisingFactsParams, dashboardId, dateFrom, dateTo],
+    [...reachSql.params, ...advertisingFactsParams, dashboardId, dateFrom, dateTo],
   );
 
   const [campaignTrafficRows] = await pool.execute<PostClickCampaignTrafficFactRow[]>(
@@ -2050,7 +2058,7 @@ async function buildPostClickAnalytics(
         COALESCE(SUM(f.impressions), 0) AS impressions,
         COALESCE(SUM(f.clicks), 0) AS clicks,
         COALESCE(SUM(f.views), 0) AS views,
-        COALESCE(SUM(f.reach), 0) AS reach,
+        COALESCE(SUM(${reachSql.expression}), 0) AS reach,
         COALESCE(SUM(f.spend), 0) AS spend,
         COALESCE(SUM(f.video_views_25), 0) AS video_views_25,
         COALESCE(SUM(f.video_views_50), 0) AS video_views_50,
@@ -2073,6 +2081,8 @@ async function buildPostClickAnalytics(
         ON f.source_key COLLATE utf8mb4_unicode_ci = mp.source_key
        AND f.platform_account_id COLLATE utf8mb4_unicode_ci = mp.platform_account_id COLLATE utf8mb4_unicode_ci
        AND f.platform_campaign_id COLLATE utf8mb4_unicode_ci = mp.platform_campaign_id COLLATE utf8mb4_unicode_ci
+       AND (mp.effective_from IS NULL OR f.report_date >= mp.effective_from)
+       AND (mp.effective_to IS NULL OR f.report_date <= mp.effective_to)
        AND f.report_date = m.report_date
        AND (
          f.platform_campaign_id COLLATE utf8mb4_unicode_ci = NULLIF(TRIM(m.utm_campaign), '')
@@ -2083,6 +2093,7 @@ async function buildPostClickAnalytics(
       ORDER BY m.report_date, b.line_key
     `,
     [
+      ...reachSql.params,
       dashboardId,
       dateFrom,
       dateTo,
@@ -2238,10 +2249,10 @@ async function buildPostClickAnalytics(
       visits,
       users: Number(row.users ?? 0),
       pageviews: Number(row.pageviews ?? 0),
-      page_depth: Number(Number(row.page_depth ?? 0).toFixed(2)),
+      page_depth: Number(row.page_depth ?? 0),
       goal_reaches: goalReaches,
-      bounce_rate: Number(Number(row.bounce_rate ?? 0).toFixed(2)),
-      avg_visit_duration: Number(Number(row.avg_visit_duration ?? 0).toFixed(2)),
+      bounce_rate: Number(row.bounce_rate ?? 0),
+      avg_visit_duration: Number(row.avg_visit_duration ?? 0),
       conversion_rate: visits > 0 ? Number(((goalReaches / visits) * 100).toFixed(2)) : 0,
       impressions,
       clicks,
@@ -2286,10 +2297,10 @@ async function buildPostClickAnalytics(
       visits,
       users: Number(row.users ?? 0),
       pageviews: Number(row.pageviews ?? 0),
-      page_depth: Number(Number(row.page_depth ?? 0).toFixed(2)),
+      page_depth: Number(row.page_depth ?? 0),
       goal_reaches: goalReaches,
-      bounce_rate: Number(Number(row.bounce_rate ?? 0).toFixed(2)),
-      avg_visit_duration: Number(Number(row.avg_visit_duration ?? 0).toFixed(2)),
+      bounce_rate: Number(row.bounce_rate ?? 0),
+      avg_visit_duration: Number(row.avg_visit_duration ?? 0),
       conversion_rate: visits > 0 ? Number(((goalReaches / visits) * 100).toFixed(2)) : 0,
       impressions,
       clicks,
@@ -2443,7 +2454,7 @@ async function buildPostClickAnalytics(
         impressions: totals.impressions,
         clicks: totals.clicks,
         views: totals.views,
-        reach: totals.reach,
+        reach: Math.round(totals.reach),
         spend,
         ctr: totals.impressions > 0 ? Number(((totals.clicks / totals.impressions) * 100).toFixed(2)) : 0,
         cpm: totals.impressions > 0 ? Number(((spend / totals.impressions) * 1000).toFixed(2)) : 0,
@@ -3547,6 +3558,7 @@ export async function loadDashboardData(
       String(config.period_to ?? range.to),
       metrikaSettings.selected_goal_ids,
       metrikaSettings.goal_mode,
+      frequencyOverrides,
     );
     const creativePerformance = isMediaCreativeDashboard(dashboardType) && (config.show_creative_performance !== false || config.show_creative_performance_plus === true) ? await loadCreativePerformance(dashboard.id, range.from > String(config.period_from ?? range.from) ? range.from : String(config.period_from ?? range.from), range.to < String(config.period_to ?? range.to) ? range.to : String(config.period_to ?? range.to), [], planByChannel.map(row => ({line_key: row.line_key || row.channel, channel: row.channel})), [], {platformOnly: true}) : undefined;
     let sectionOrder = getSectionOrder(config, dashboardType, showSpend);

@@ -45,7 +45,7 @@ test("between dashboard reads active publications without switching other ad sou
   assert.equal((loaderReadModel.match(/report_date <= \?/g) ?? []).length, 3);
   assert.match(
     loader,
-    /\[\.\.\.advertisingFactsParams, dashboardId, dateFrom, dateTo\]/,
+    /\[\.\.\.reachSql\.params, \.\.\.advertisingFactsParams, dashboardId, dateFrom, dateTo\]/,
   );
   assert.match(
     loader,
