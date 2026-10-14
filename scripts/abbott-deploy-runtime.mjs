@@ -196,6 +196,15 @@ function prepareTransport(authority) {
 function build(authority) {
   if (process.getuid() === 0 || process.geteuid() === 0) fail('Runtime builds require an unprivileged account');
   const environment = { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: os.homedir(), CI: '1', NEXT_TELEMETRY_DISABLED: '1' };
+  // Retain explicit task-owned storage paths without inheriting runtime authority or secrets.
+  for (const key of ['TMPDIR', 'npm_config_cache', 'PUPPETEER_CACHE_DIR']) {
+    const directory = process.env[key];
+    if (directory === undefined) continue;
+    try {
+      if (!path.isAbsolute(directory) || fs.realpathSync(directory) !== directory || !fs.statSync(directory).isDirectory()) fail('Invalid build storage directory');
+    } catch { fail('Invalid build storage directory'); }
+    environment[key] = directory;
+  }
   const npm = path.join(path.dirname(process.execPath), 'npm');
   for (const args of [['ci'], ['run', `test:${authority.scope}-runtime`], ['run', 'verify:artifact', '--workspace', `dashboard-${authority.scope}`]]) execFileSync(npm, args, { cwd: ROOT, env: environment, stdio: ['ignore', 'ignore', 'pipe'], timeout: 600000 });
 }

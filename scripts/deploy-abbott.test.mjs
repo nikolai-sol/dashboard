@@ -1255,3 +1255,44 @@ test('identity proof binds launcher and release independently of listener owners
   for (const invalid of [listener.replace('pid=123', 'pid=456'), listener.replace('127.0.0.1:3004', '0.0.0.0:3004'), listener + '\n' + listener]) assert.throws(() => installer.assertRuntimeListener(proof, invalid));
 });
 test('acknowledged worker exposes only the generic include-shape refusal',async()=>{for(const reason of ['include','include_forged','include_private']){const f=fixture();try{f.platform.deploymentPreflight=note=>{note('preflight_nginx',reason);throw Object.assign(Error('private-token'),{stage:'complete',reason:'include_private',stdout:'private-token'});};const result=await f.installer.transactAcknowledged({action:'inspect'},new AbortController().signal,f.platform);assert.deepEqual(JSON.parse(JSON.stringify(result)),{status:'REFUSED',record:null,diagnostic:{stage:'preflight_nginx',reason:reason==='include'?'include':'unknown'}});assert.equal(f.events.length,0);assert.equal(fs.existsSync(f.map('/var/www/.dashboard-abbott-deploy.lock')),false);assert.doesNotMatch(JSON.stringify(result),/private/);}finally{f.cleanup();}}});
+
+function captureBuildEnvironment(inherited) {
+  const calls = [];
+  const context = {
+    fs, path, os, createHash, randomUUID, isDeepStrictEqual, Buffer, RUNTIME_MANIFESTS,
+    process: { env: inherited, execPath: process.execPath, getuid: () => 501, geteuid: () => 501 },
+    execFileSync: (command, args, options) => calls.push({ command, args, environment: { ...options.env } }),
+    testRoot: root,
+  };
+  const source = read('scripts/abbott-deploy-runtime.mjs')
+    .replace(/^import .*;\n/gm, '')
+    .replaceAll('export function ', 'function ').replaceAll('export const ', 'const ')
+    .replace("const ROOT = path.resolve(import.meta.dirname, '..');", 'const ROOT = testRoot;')
+    .split('\nif (process.argv[1]')[0];
+  vm.runInNewContext(source + '\nbuild(RUNTIME_MANIFESTS.abbott);', context);
+  return calls;
+}
+
+test('build children retain only explicit storage directories and fixed clean environment', () => {
+  const fixture = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'abbott-build-storage-')));
+  try {
+    const storage = Object.fromEntries(['TMPDIR', 'npm_config_cache', 'PUPPETEER_CACHE_DIR'].map(key => {
+      const directory = path.join(fixture, key); fs.mkdirSync(directory); return [key, directory];
+    }));
+    const calls = captureBuildEnvironment({ ...storage, HOME: '/untrusted', NODE_OPTIONS: '--inspect', METRIKA_TOKEN: 'private-sentinel' });
+    assert.equal(calls.length, 3);
+    for (const call of calls) {
+      assert.deepEqual(call.environment, {
+        PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: os.homedir(),
+        CI: '1', NEXT_TELEMETRY_DISABLED: '1', ...storage,
+      });
+    }
+    const defaults = captureBuildEnvironment({});
+    assert.deepEqual(defaults[0].environment, { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: os.homedir(), CI: '1', NEXT_TELEMETRY_DISABLED: '1' });
+    for (const key of Object.keys(storage)) {
+      for (const value of ['relative-cache', path.join(fixture, 'missing')]) assert.throws(() => captureBuildEnvironment({ [key]: value }), /storage directory/);
+    }
+    const link = path.join(fixture, 'cache-link'); fs.symlinkSync(storage.npm_config_cache, link);
+    assert.throws(() => captureBuildEnvironment({ npm_config_cache: link }), /storage directory/);
+  } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
+});
