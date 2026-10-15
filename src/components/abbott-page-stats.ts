@@ -2,6 +2,26 @@ import type { AbbottBiPageStatRow, AbbottMnnValue } from "@/lib/types";
 
 export const ABBOTT_UNMAPPED_LABEL = "Не определено";
 
+// Presentation of the existing Abbott content-registry ACCESS_LABELS contract.
+// The empty filter value is separate from the real content-access code "all".
+const ABBOTT_ACCESS_LABELS = new Map([
+  ["all", "Все"],
+  ["doctors", "Врачи"],
+  ["pharmacists", "Фармацевты"],
+  ["unspecified", "Не указано"],
+]);
+
+export function labelAbbottAccess(value: string | null | undefined) {
+  const normalized = String(value ?? "").trim().toLocaleLowerCase("ru");
+  return ABBOTT_ACCESS_LABELS.get(normalized)
+    ?? [...ABBOTT_ACCESS_LABELS.values()].find((label) => label.toLocaleLowerCase("ru") === normalized)
+    ?? "Не указано";
+}
+
+export function matchesSelectedAbbottAccess(value: string | null | undefined, selectedValue: string) {
+  return !selectedValue || labelAbbottAccess(value) === labelAbbottAccess(selectedValue);
+}
+
 export function labelAbbottPageDimension(value: string | null | undefined) {
   const normalized = String(value ?? "").trim();
   return normalized || ABBOTT_UNMAPPED_LABEL;
@@ -196,6 +216,7 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
         ...(row.mnn ?? []).flatMap((value) => [value.key, value.label]),
         row.material_type,
         row.access,
+        labelAbbottAccess(row.access),
         row.pageviews,
         row.users,
         row.bitrix_pageviews,
@@ -211,7 +232,7 @@ export function filterAbbottPageStatsRows(rows: AbbottBiPageStatRow[], filters: 
     if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
     if (!matchesSelectedMnn(row.mnn, filters.mnn, row.url)) return false;
     if (!matchesSelectedMaterialType(row.material_type, filters.materialTypes)) return false;
-    if (filters.access && (row.access ?? "") !== filters.access) return false;
+    if (!matchesSelectedAbbottAccess(row.access, filters.access)) return false;
     return true;
   });
 }
@@ -256,7 +277,7 @@ export function buildAbbottPageStatsExportRows(rows: AbbottBiPageStatRow[]): Arr
     Направление: labelAbbottPageDimension(row.direction),
     МНН: formatAbbottMnnValues(row.mnn, mnnOptions, row.url),
     "Тип материала": labelAbbottPageDimension(row.material_type),
-    Доступ: labelAbbottPageDimension(row.access),
+    Доступ: labelAbbottAccess(row.access),
     "Просмотры Метрики": row.pageviews,
     "Пользователи Метрики (page-level)": row.users,
     "Просмотры Bitrix": row.bitrix_pageviews,

@@ -26,6 +26,8 @@ import {
   buildAbbottPageDimensionOptions,
   groupAbbottPageStatsByDimension,
   labelAbbottPageDimension,
+  labelAbbottAccess,
+  matchesSelectedAbbottAccess,
   limitAbbottPageDimensionGroups,
   matchesPageStatsSearch,
   matchesSelectedPageDimension,
@@ -1041,7 +1043,7 @@ export default function AbbottBiDashboard({
       direction: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.direction),
       mnn: buildAbbottMnnOptions(data.page_stats),
       material_type: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.material_type),
-      access: buildAbbottPageDimensionOptions(data.page_stats, (row) => row.access),
+      access: buildAbbottPageDimensionOptions(data.page_stats, (row) => labelAbbottAccess(row.access)),
     }),
     [data.page_stats],
   );
@@ -1050,7 +1052,7 @@ export default function AbbottBiDashboard({
     () => ({
       direction: uniqOptions(data.bitrix_pages.map((row) => row.direction)),
       material_type: uniqOptions(data.bitrix_pages.map((row) => row.material_type)),
-      access: uniqOptions(data.bitrix_pages.map((row) => row.access)),
+      access: buildAbbottPageDimensionOptions(data.bitrix_pages, (row) => labelAbbottAccess(row.access)),
     }),
     [data.bitrix_pages],
   );
@@ -1181,6 +1183,7 @@ export default function AbbottBiDashboard({
             row.direction,
             row.material_type,
             row.access,
+            labelAbbottAccess(row.access),
             row.pageviews,
             row.sessions,
             row.users,
@@ -1194,7 +1197,7 @@ export default function AbbottBiDashboard({
         return false;
       if (filters.direction && (row.direction ?? "") !== filters.direction) return false;
       if (filters.material_type && (row.material_type ?? "") !== filters.material_type) return false;
-      if (filters.access && (row.access ?? "") !== filters.access) return false;
+      if (!matchesSelectedAbbottAccess(row.access, filters.access)) return false;
       return true;
     });
   }, [data.bitrix_pages, filtersByTab.bitrix_pages, queryByTab.bitrix_pages]);
@@ -1346,7 +1349,7 @@ export default function AbbottBiDashboard({
     [pageStatRows],
   );
   const pageAccessData = useMemo(
-    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => row.access, (row) => row.users),
+    () => groupAbbottPageStatsByDimension(pageStatRows, (row) => labelAbbottAccess(row.access), (row) => row.users),
     [pageStatRows],
   );
   const bitrixDirectionData = useMemo(
@@ -1561,7 +1564,7 @@ export default function AbbottBiDashboard({
       direction: labelAbbottPageDimension(row.direction),
       mnn: formatAbbottMnnValues(row.mnn, pageStatsOptions.mnn, row.url),
       material_type: labelAbbottPageDimension(row.material_type),
-      access: labelAbbottPageDimension(row.access),
+      access: labelAbbottAccess(row.access),
       pageviews: formatNumber(row.pageviews, locale),
       users: formatNumber(row.users, locale),
       ...(data.bitrix_period_active
@@ -1593,7 +1596,7 @@ export default function AbbottBiDashboard({
       url: row.url,
       direction: row.direction ?? "—",
       material_type: row.material_type ?? "—",
-      access: row.access ?? "—",
+      access: labelAbbottAccess(row.access),
       pageviews: formatNumber(row.pageviews, locale),
       sessions: formatNumber(row.sessions, locale),
       users: formatNumber(row.users, locale),
@@ -1795,6 +1798,7 @@ export default function AbbottBiDashboard({
         />
         <SelectField
           label="Доступ"
+          allLabel="Любой доступ"
           value={filtersByTab.page_stats.access}
           options={pageStatsOptions.access}
           onChange={(value) => setSelectFilter("page_stats", "access", value)}
@@ -1820,6 +1824,7 @@ export default function AbbottBiDashboard({
         />
         <SelectField
           label="Доступ"
+          allLabel="Любой доступ"
           value={filtersByTab.bitrix_pages.access}
           options={bitrixPageOptions.access}
           onChange={(value) => setSelectFilter("bitrix_pages", "access", value)}

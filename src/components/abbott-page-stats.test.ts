@@ -10,6 +10,7 @@ import {
   filterAbbottPageStatsRows,
   groupAbbottPageStatsByDimension,
   labelAbbottPageDimension,
+  labelAbbottAccess,
   limitAbbottPageDimensionGroups,
   matchesPageStatsSearch,
   matchesSelectedPageDimension,
@@ -70,6 +71,48 @@ const reviewedArticleMnnCases = [
 const noPageFilters = {
   query: "", pageTitleQuery: "", direction: "", mnn: [] as string[], materialTypes: [] as string[], access: "",
 };
+
+test("access filtering groups missing and unsupported labels under unspecified", () => {
+  const aliases = [null, "", "  ", "Не определено", "Не указано", "unspecified", "undetermined", "Неизвестная аудитория"];
+  const rows = [...aliases, "Врачи", "Фармацевты", "Все"].map((access, index) => ({
+    ...sampleRow, url: `https://abbottpro.ru/access-${index}`, access,
+  }));
+  const before = structuredClone(rows);
+  for (const selected of ["Не указано", "unspecified", "Не определено"]) {
+    assert.deepEqual(filterAbbottPageStatsRows(rows, { ...noPageFilters, access: selected }), rows.slice(0, aliases.length));
+  }
+  assert.deepEqual(rows, before);
+  const options = buildAbbottPageDimensionOptions(rows, row => labelAbbottAccess(row.access));
+  assert.deepEqual(options.map(option => option.value).sort(), ["Врачи", "Все", "Не указано", "Фармацевты"].sort());
+  assert.deepEqual(buildAbbottPageDimensionOptions([], row => labelAbbottAccess(row)), []);
+  assert.deepEqual(groupAbbottPageStatsByDimension(rows.slice(0, aliases.length), row => labelAbbottAccess(row.access), row => row.users), [
+    { label: "Не указано", value: aliases.length * sampleRow.users },
+  ]);
+  assert.equal(filterAbbottPageStatsRows(rows, { ...noPageFilters, query: "Не указано" }).length, aliases.length);
+});
+
+test("actual all access stays distinct from the unfiltered sentinel", () => {
+  const rows = ["Все", "all", "Врачи", "doctors", "Фармацевты", "pharmacists", null].map((access, index) => ({
+    ...sampleRow, url: `https://abbottpro.ru/access-${index}`, access,
+  }));
+  assert.deepEqual(filterAbbottPageStatsRows(rows, { ...noPageFilters, access: "" }), rows);
+  for (const [selection, start] of [["Все", 0], ["Врачи", 2], ["Фармацевты", 4]] as const) {
+    assert.deepEqual(filterAbbottPageStatsRows(rows, { ...noPageFilters, access: selection }), rows.slice(start, start + 2));
+  }
+  assert.deepEqual(summarizeAbbottPageStats(filterAbbottPageStatsRows(rows, noPageFilters)), summarizeAbbottPageStats(rows));
+});
+
+test("access exports use only canonical dictionary labels without changing row identity or metrics", () => {
+  const rows = ["all", "DOCTORS", " pharmacists ", null, "Не определено", "Неизвестная аудитория"].map((access, index) => ({
+    ...sampleRow, url: `https://abbottpro.ru/access-${index}`, access,
+  }));
+  const before = structuredClone(rows);
+  const exported = buildAbbottPageStatsExportRows(rows);
+  assert.deepEqual(exported.map(row => row.Доступ), ["Все", "Врачи", "Фармацевты", "Не указано", "Не указано", "Не указано"]);
+  assert.deepEqual(exported.map(row => row.URL), rows.map(row => row.url));
+  assert.deepEqual(exported.map(row => row["Просмотры Метрики"]), rows.map(row => row.pageviews));
+  assert.deepEqual(rows, before);
+});
 
 for (const article of reviewedArticleMnnCases) {
   test(`reviewed article ${article.id} uses the same MNN correction in options, filter, search, table and export`, () => {
@@ -384,7 +427,7 @@ test("export rows label unmapped page metadata without changing metrics", () => 
     Направление: ABBOTT_UNMAPPED_LABEL,
     МНН: "Омакор; Трайкор",
     "Тип материала": ABBOTT_UNMAPPED_LABEL,
-    Доступ: ABBOTT_UNMAPPED_LABEL,
+    Доступ: "Не указано",
     "Просмотры Метрики": 157,
     "Пользователи Метрики (page-level)": 122,
     "Просмотры Bitrix": 150,

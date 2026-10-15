@@ -140,7 +140,17 @@ test("separates period-wide return frequency from the Metrika interval controls"
 test("labels unmapped page metadata in the page table and exports", () => {
   assert.match(source, /labelAbbottPageDimension\(row\.direction\)/);
   assert.match(source, /labelAbbottPageDimension\(row\.material_type\)/);
-  assert.match(source, /labelAbbottPageDimension\(row\.access\)/);
+  assert.match(source, /labelAbbottAccess\(row\.access\)/);
+});
+
+test("both access selectors distinguish any access and share canonical access matching", () => {
+  const accessSelectors = [...source.matchAll(/<SelectField\s+label="Доступ"[\s\S]*?\/>/g)];
+  assert.equal(accessSelectors.length, 2);
+  for (const [selector] of accessSelectors) assert.match(selector, /allLabel="Любой доступ"/);
+  assert.match(source, /access: buildAbbottPageDimensionOptions\(data\.page_stats, \(row\) => labelAbbottAccess\(row\.access\)\)/);
+  assert.match(source, /access: buildAbbottPageDimensionOptions\(data\.bitrix_pages, \(row\) => labelAbbottAccess\(row\.access\)\)/);
+  assert.match(source, /matchesSelectedAbbottAccess\(row\.access, filters\.access\)/);
+  assert.match(source, /groupAbbottPageStatsByDimension\(pageStatRows, \(row\) => labelAbbottAccess\(row\.access\)/);
 });
 
 test("places the multi-value MNN filter and column immediately after direction", () => {
