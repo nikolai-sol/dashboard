@@ -1,21 +1,21 @@
-const ABBOTT_TRAFFIC_SOURCE_LABELS: Record<string, string> = {
-  "Direct traffic": "Прямые заходы",
-  "Link traffic": "Переходы по ссылкам",
-  "Search engine traffic": "Переходы из поисковых систем",
-  "Internal traffic": "Внутренние переходы",
-  "Unknown traffic": "Неизвестный источник",
-  "Registered portal behavior": "Зарегистрированное поведение на портале",
-};
-
+// Source values belong to Metrica. Keep labels and filter identities identical.
 export function abbottTrafficSourceLabel(raw: string): string {
-  const normalized = raw.trim();
-  if (!normalized) return "Неизвестный источник";
-  return ABBOTT_TRAFFIC_SOURCE_LABELS[normalized] ?? raw;
+  return raw;
 }
 
 export function abbottTrafficSourceOption(raw: string): { value: string; label: string } {
-  return {
-    value: raw,
-    label: abbottTrafficSourceLabel(raw),
-  };
+  return { value: raw, label: raw };
+}
+
+export function abbottTrafficSourceOptions(rows: readonly { traffic_source: string }[]) {
+  return [...new Set(rows.map(row => row.traffic_source).filter(value => value.trim()))]
+    .sort((left, right) => left.localeCompare(right, "ru"))
+    .map(abbottTrafficSourceOption);
+}
+
+export function availableAbbottTrafficSource(
+  value: string,
+  options: readonly { value: string }[],
+): string {
+  return options.some(option => option.value === value) ? value : "";
 }
